@@ -3882,16 +3882,86 @@ mod tests {
             keys.extend(spec.menu.iter().copied());
         }
         keys.extend(crate::menus::UI_COMMANDS.iter().map(|(_, label, _, _)| *label));
+        // Tool names reach `tr` from the Tools panel.
+        keys.extend(designcraft_tools::TOOL_GROUPS.iter().flat_map(|group| group.iter()).map(|tool| tool.label));
+        // So do the About window's tab names, app descriptions and the credits' column and sort labels.
+        keys.extend(crate::about::ABOUT_TABS);
+        keys.extend(crate::about::SIBLINGS.iter().map(|(_, _, what)| *what));
+        keys.extend(crate::credits::NameMode::ALL.iter().map(|mode| mode.label()));
+        keys.extend(crate::credits::SortKey::ALL.iter().flat_map(|key| [key.label().0, key.label().1]));
         // UI labels passed to `tr` that no other catalog has yet.
         keys.extend([
+            "(any)",
+            "(unchanged)",
+            "[No Language]",
+            "Cell Number:",
+            "Change fill to:",
+            "Chinese: Simplified",
+            "Chinese: Traditional",
             "Don't Save",
+            "Email Address:",
+            "Email:",
+            "Find fill:",
             "Group with",
             "H:",
+            "Message:",
+            "Organization:",
+            "Phone:",
             "W:",
             "Resize panel window",
             "Resize panels",
+            "Subject:",
+            "Text:",
             "Unsaved Changes",
             "“{}” has changes that are not saved. Save them before closing?",
+            "% of all commits",
+            "{count} conflict(s): {names}",
+            "{count} match(es)",
+            "{count} replacement(s) made",
+            "{contributors} contributors · {commits} commits",
+            "{label}: {name} (double-click: Color Picker)",
+            "All",
+            "Align To",
+            "Auto Rename",
+            "Character Style",
+            "Company",
+            "DesignCraft page",
+            "Equal fixed heights for the selected rows; cell text may become overset.",
+            "Found",
+            "Grab bag",
+            "Key Object",
+            "layer",
+            "layers",
+            "Lines +/−",
+            "New Cell Style",
+            "New Table Style",
+            "No contributor data was built into this copy.",
+            "No matches",
+            "No model credits were built into this copy.",
+            "Object Style",
+            "Paragraph Style",
+            "Press keys…",
+            "Range:",
+            "Redefine Document Style",
+            "Report an issue",
+            "Reverse the order",
+            "Story {story} ← story {parent}",
+            "Story Editor — {count} words",
+            "Text Anchor",
+            "Use Document Style Definition",
+            // Status-bar messages.
+            "Alternate layout",
+            "Couldn't write recovery data: {error}",
+            "Export a PDF, IDML or package to share — no cloud account needed.",
+            "Import cancelled: the originating document has closed",
+            "Invalid panel layout; restored the default dock",
+            "PDF import cancelled: the originating document has closed",
+            "Packaged {count} files into {dir}",
+            "Relinked {count}",
+            "Sent {count} page(s) to {printer}",
+            "the default printer",
+            "{name}: import cancelled while a dialog is open; choose the file again",
+            "{name}: {count} step(s) done",
         ]);
         // A new English string falls back to English until it is translated, so only stale
         // entries (keys nothing passes to `tr` any more) fail.
@@ -3920,6 +3990,8 @@ mod tests {
         assert_eq!(tr("cs", "Leading"), "Proklad");
         assert_eq!(tr("cs", "Unknown label"), "Unknown label");
         assert_eq!(tr_context("cs", "Group", "selection"), "Skupina");
+        assert_eq!(tr_context("cs", "Name", "contributors"), "Jméno");
+        assert_eq!(tr_context("cs", "Name", "unknown"), "Název");
         assert_eq!(tr("cs", "Group"), "Seskupit");
         assert_eq!(tr_context("cs", "Columns", "table"), tr("cs", "Columns"));
         assert_eq!(style_name("cs", "[Basic Paragraph]"), "[Základní odstavec]");
@@ -3942,11 +4014,22 @@ mod tests {
         assert_eq!(count_label("cs", "items", 1), "1 položka");
         assert_eq!(count_label("cs", "objects", 7), "7 objektů");
         assert_eq!(count_label("cs", "warnings", 3), "3 varování");
+        assert_eq!(count_label("cs", "layer", 1), "1 vrstva");
+        assert_eq!(count_label("cs", "layers", 3), "3 vrstvy");
+        assert_eq!(count_label("cs", "layers", 8), "8 vrstev");
         // A noun without plural forms keeps the plain translation.
         assert_eq!(count_label("cs", "a new noun", 3), "3 a new noun");
         for (noun, forms) in cs::PLURALS {
             assert!(forms.iter().all(|form| !form.is_empty()), "{noun}");
             assert!(forms.contains(&tr("cs", noun)), "{noun}: the catalog row is one of the plural forms");
+        }
+    }
+
+    #[test]
+    fn czech_translates_every_tool_name() {
+        for tool in designcraft_tools::TOOL_GROUPS.iter().flat_map(|group| group.iter()) {
+            assert_ne!(tr("cs", tool.label), tool.label, "{}", tool.id);
+            assert_eq!(tr("", tool.label), tool.label);
         }
     }
 
