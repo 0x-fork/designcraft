@@ -77,7 +77,7 @@ impl Session {
         }
     }
 
-    fn with_ctx<T>(&mut self, view: ViewInfo, f: impl FnOnce(&mut dyn designcraft_tools::Tool, &ToolContext) -> T) -> Option<T> {
+    fn with_ctx<T>(&mut self, view: ViewInfo, f: impl FnOnce(&mut Self, &ToolContext) -> T) -> Option<T> {
         let st = self.active()?;
         let doc = st.doc.clone();
         let sel = st.selection.clone();
@@ -94,27 +94,34 @@ impl Session {
             snap: view.snap,
             unit: view.unit,
         };
-        Some(f(self.tool.as_mut(), &cx))
+        Some(f(self, &cx))
     }
 
     pub fn pointer(&mut self, ev: &PointerEvent, view: ViewInfo) -> Result<()> {
-        let actions = self.with_ctx(view, |t, cx| t.pointer(cx, ev)).unwrap_or_default();
+        let actions = self.with_ctx(view, |s, cx| s.tool.pointer(cx, ev)).unwrap_or_default();
+        self.run_actions(actions)
+    }
+
+    /// Dispatch a temporary view tool without replacing the active tool or its state.
+    /// Its actions use the same execution path as the selected tool's gestures.
+    pub fn pointer_with_tool(&mut self, tool: &mut dyn designcraft_tools::Tool, ev: &PointerEvent, view: ViewInfo) -> Result<()> {
+        let actions = self.with_ctx(view, |_, cx| tool.pointer(cx, ev)).unwrap_or_default();
         self.run_actions(actions)
     }
 
     pub fn tool_key(&mut self, key: ToolKey, mods: Mods, view: ViewInfo) -> Result<bool> {
-        let actions = self.with_ctx(view, |t, cx| t.key(cx, key, mods)).unwrap_or_default();
+        let actions = self.with_ctx(view, |s, cx| s.tool.key(cx, key, mods)).unwrap_or_default();
         let handled = !actions.is_empty();
         self.run_actions(actions)?;
         Ok(handled)
     }
 
     pub fn overlays(&mut self, view: ViewInfo) -> Vec<Overlay> {
-        self.with_ctx(view, |t, cx| t.overlays(cx)).unwrap_or_default()
+        self.with_ctx(view, |s, cx| s.tool.overlays(cx)).unwrap_or_default()
     }
 
     pub fn cursor(&mut self, p: designcraft_geom::Point, mods: Mods, view: ViewInfo) -> Cursor {
-        self.with_ctx(view, |t, cx| t.cursor(cx, p, mods)).unwrap_or_default()
+        self.with_ctx(view, |s, cx| s.tool.cursor(cx, p, mods)).unwrap_or_default()
     }
 
     pub fn tool_busy(&self) -> bool {
@@ -122,7 +129,7 @@ impl Session {
     }
 
     pub fn wants_text(&mut self) -> bool {
-        self.with_ctx(ViewInfo::at_zoom(1.0), |t, cx| t.wants_text(cx)).unwrap_or(false)
+        self.with_ctx(ViewInfo::at_zoom(1.0), |s, cx| s.tool.wants_text(cx)).unwrap_or(false)
     }
 
     pub fn run_actions(&mut self, actions: Vec<Action>) -> Result<()> {

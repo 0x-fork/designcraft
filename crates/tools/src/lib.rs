@@ -30,6 +30,7 @@ use serde_json::Value;
 
 pub use catalog::{TOOL_GROUPS, ToolInfo, tool_for_shortcut, tool_info};
 pub use layout::CanvasLayout;
+pub use nav::ZoomTool;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mods {

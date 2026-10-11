@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (stage re-normalized to pre-alpha by the core-workflow gate; earlier today: major, first version) · **Target:** Adobe InDesign 2026 (21.6, Medium Dark, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (spring-loaded Zoom navigation) · **Target:** Adobe InDesign 2026 (21.6, Medium Dark, macOS)
 
 Tools, handles, snapping, nudging, modifiers, shortcuts, panels, menus, context menus and feel,
 against InDesign 2026. The look was measured from the running app
@@ -58,6 +58,14 @@ Counted 2026-10-10: 27 rows, 11 ✓, 14 ~, 2 ✗ → **67% presence**, scoring �
 for real work is lower, ~45%, because threading is missing and three of the ~ rows (copy/paste,
 context menus, typing at a caret) are things a layout artist does every minute, and their failures stop work.
 
+Navigation also supports held Space as Hand and held Cmd+Space as Zoom (Ctrl+Space on
+Windows/Linux), with Alt-click zooming out. Releasing restores the previous tool and its state.
+The temporary Zoom uses the selected Zoom tool's click and horizontal scrubby drag behavior;
+marquee zoom is not implemented. It is suppressed while typing in a document text frame or a
+focused text field, and does not interrupt an existing tool drag. Synthetic canvas input tests
+cover the cursors, click anchors, scrub/release ownership, restoration, typing guards and undo
+history (DC-1).
+
 ## Remaining effort
 
 | Work | Opus 5.5 h |
@@ -73,5 +81,6 @@ context menus, typing at a caret) are things a layout artist does every minute, 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Added held Cmd+Space / Cmd+Alt+Space Zoom navigation and canvas input regression tests |
 | 2026-10-10 | minor | Threading row corrected to ✗ after checking the code (no out-port interaction, no thread command) |
 | 2026-10-10 | major | Created: measured menu coverage, 27-row interaction checklist from the code and issues |
