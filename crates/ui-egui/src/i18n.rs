@@ -3063,12 +3063,27 @@ mod tests {
         keys.extend(crate::menus::UI_COMMANDS.iter().map(|(_, label, _, _)| *label));
         // UI labels passed to `tr` that no other catalog has yet.
         keys.extend([
+            "(any)",
+            "(unchanged)",
+            "[No Language]",
+            "Cell Number:",
+            "Change fill to:",
+            "Chinese: Simplified",
+            "Chinese: Traditional",
             "Don't Save",
+            "Email Address:",
+            "Email:",
+            "Find fill:",
             "Group with",
             "H:",
+            "Message:",
+            "Organization:",
+            "Phone:",
             "W:",
             "Resize panel window",
             "Resize panels",
+            "Subject:",
+            "Text:",
             "Unsaved Changes",
             "“{}” has changes that are not saved. Save them before closing?",
         ]);
