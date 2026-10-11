@@ -1793,6 +1793,17 @@ pub fn checked(app: &DesignApp, id: &str, params: &Value) -> Option<bool> {
         "view.proofColors" => app.ui.proof_colors,
         "view.flattenerPreview" => app.ui.flattener_preview,
         "view.tagMarkers" => app.ui.tag_markers,
+        "view.screenMode" => {
+            let mode = match params.get("mode").and_then(Value::as_str) {
+                Some("normal") => crate::ScreenMode::Normal,
+                Some("preview") => crate::ScreenMode::Preview,
+                Some("bleed") => crate::ScreenMode::Bleed,
+                Some("slug") => crate::ScreenMode::Slug,
+                Some("presentation") => crate::ScreenMode::Presentation,
+                _ => return None,
+            };
+            app.ui.screen_mode == mode
+        }
         "view.rotateSpread" => match params.get("angle").and_then(Value::as_i64) {
             Some(0) => app.session.active().is_some_and(|st| st.doc.spreads.iter().all(|sp| sp.pages.first().is_none_or(|p| p.view_rotation == 0))),
             _ => return None,
@@ -2317,6 +2328,36 @@ mod tests {
         assert!(typ.contains(&"view.hiddenCharacters") && !view.contains(&"view.hiddenCharacters"));
         // W still toggles Normal / Preview without a menu entry.
         assert_eq!(ui_label("view.togglePreview").and_then(|c| c.1), Some("W"));
+    }
+
+    /// The submenu paths of a menu bar menu ("View/Screen Mode"), as Edit › Menus keys them.
+    fn submenu_paths(title: &str) -> Vec<String> {
+        let items = MENUS.iter().find(|(t, _)| *t == title).map(|(_, items)| *items).unwrap_or_default();
+        let mut stack = vec![title.to_string()];
+        let mut out = Vec::new();
+        for e in items {
+            if let Some(name) = e.strip_prefix('>') {
+                let path = format!("{}/{name}", stack.last().map_or("", String::as_str));
+                out.push(path.clone());
+                stack.push(path);
+            } else if *e == "<" {
+                stack.pop();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn screen_mode_shows_the_current_mode_and_view_submenus_are_translated() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let mode = |app: &DesignApp, m: &str| checked(app, "view.screenMode", &json!({ "mode": m }));
+        assert_eq!((mode(&app, "normal"), mode(&app, "preview")), (Some(true), Some(false)));
+        app.ui.screen_mode = crate::ScreenMode::Preview;
+        assert_eq!((mode(&app, "normal"), mode(&app, "preview")), (Some(false), Some(true)));
+        // Every View submenu has its Japanese path (Edit › Menus shows them).
+        for path in submenu_paths("View") {
+            assert_ne!(crate::i18n::tr("ja", &path), path, "{path} has no Japanese row");
+        }
     }
 
     fn walk(items: &[Item], out: &mut Vec<(String, String, Value)>) {
