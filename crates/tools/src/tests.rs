@@ -1205,6 +1205,8 @@ fn live_corner_diamonds_follow_a_rotated_frame() {
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, to.x, to.y));
     let got = corner_preview(&a);
     assert!(got.iter().all(|(shape, size)| shape == "rounded" && (size - 25.0).abs() < 1e-6), "{got:?}");
+}
+
 #[test]
 fn pen_cursor_shows_add_delete_and_close() {
     let mut d = Document::new(&NewDocument::default());
