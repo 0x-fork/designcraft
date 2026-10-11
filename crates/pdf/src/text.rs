@@ -7,8 +7,10 @@
 //! can select, search and copy it.
 //!
 //! Composed lines hold their glyphs in text order, so content streams list text in reading order
-//! even where right-to-left text is drawn leftwards. Viewers that order text by position instead
-//! read the ActualText that a line with right-to-left text carries.
+//! even where right-to-left text is drawn leftwards. Right-to-left lines and runs carry no
+//! ActualText of their own: poppler orders right-to-left glyphs by itself, but it positions an
+//! ActualText with the transform in force where its span ends (losing a span over several runs)
+//! and reverses the characters of one in a right-to-left line.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -226,7 +228,6 @@ impl Exporter<'_> {
         }
         for l in &ft.lines {
             let gs = &l.glyphs;
-            let line_span = self.start_rtl_line(s, cs, ft, gs, story);
             let mut i = 0;
             while i < gs.len() {
                 let g = &gs[i];
@@ -251,15 +252,8 @@ impl Exporter<'_> {
                     continue;
                 }
                 let j = run_end(ft, gs, i);
-                if line_span {
-                    self.run(s, cs, &gs[i..j], l.baseline, story);
-                } else {
-                    self.tagged_run(s, cs, &gs[i..j], l.baseline, story);
-                }
+                self.tagged_run(s, cs, &gs[i..j], l.baseline, story);
                 i = j;
-            }
-            if line_span {
-                s.end_tagged();
             }
         }
         self.as_artifact(s, |me, s| {
@@ -276,47 +270,6 @@ impl Exporter<'_> {
                 }
             }
         });
-    }
-
-    /// Open a span over a line with right-to-left text whose ActualText is the line's text in
-    /// reading order (tagged under its paragraph while a story is being tagged). Viewers that order
-    /// text by position would otherwise read it in visual order. Marked content can't nest, so only
-    /// in untagged exports and in tagged stories (not inside artifacts or figures).
-    fn start_rtl_line(&mut self, s: &mut Surface, cs: &ComposedStory, ft: &FrameText, gs: &[PlacedGlyph], story: &str) -> bool {
-        if ft.vertical || !gs.iter().any(|g| g.rtl && g.visible) || (self.opts.tagged && self.tag_story.is_none()) {
-            return false;
-        }
-        let mut text = String::new();
-        let mut i = 0;
-        while i < gs.len() {
-            let g = &gs[i];
-            if !g.visible || g.sx <= 0.0 || g.sy <= 0.0 {
-                i += 1;
-                continue;
-            }
-            let j = run_end(ft, gs, i);
-            // Only runs `run` draws.
-            let painted = cs.styles.get(g.style as usize).is_some_and(|st| {
-                self.swatch_color(&st.fill, st.fill_tint).is_some()
-                    || (st.stroke != designcraft_color::swatch::NONE
-                        && st.stroke_weight > 0.0
-                        && self.swatch_color(&st.stroke, st.stroke_tint).is_some())
-            });
-            if painted && let Some(run) = gs.get(i..j) {
-                text.push_str(&self.run_text(run, story).0);
-            }
-            i = j;
-        }
-        if text.is_empty() {
-            return false;
-        }
-        let id = s.start_tagged(ContentTag::Span(SpanTag::empty().with_actual_text(Some(&text))));
-        if let Some(sid) = self.tag_story {
-            let byte = gs.first().map_or(0, |g| g.byte);
-            let pi = self.doc.story(sid).map_or(0, |st| st.para_at(byte.min(st.len())));
-            self.para_tags.entry((sid, pi)).or_default().push(id);
-        }
-        true
     }
 
     /// Table fragments: cell fills, cell text (real text), edges and the border.

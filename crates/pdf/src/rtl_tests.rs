@@ -1,6 +1,6 @@
 //! Right-to-left text in exported PDFs: content streams list it in reading order with marks after
-//! their letters, lines with right-to-left text carry their reading-order text as ActualText, and
-//! glyphs stay where composition put them.
+//! their letters, ActualText never spans more than a cluster, and glyphs stay where composition
+//! put them.
 
 use designcraft_compose::{Cache, ComposeOptions, compose_story};
 use designcraft_doc::build::NewDocument;
@@ -45,8 +45,8 @@ fn rtl() -> ParaAttrs {
     ParaAttrs { direction: Some(TextDirection::RightToLeft), ..ParaAttrs::default() }
 }
 
-/// The ActualText of every line span (marked content with an MCID) on the first page.
-fn line_actual_texts(bytes: &[u8]) -> Vec<String> {
+/// The ActualText of every marked-content span on the first page.
+fn actual_texts(bytes: &[u8]) -> Vec<String> {
     use hayro_syntax::content::ops::TypedInstruction;
     use hayro_syntax::object::{Dict, Object};
     let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).expect("parse");
@@ -57,9 +57,6 @@ fn line_actual_texts(bytes: &[u8]) -> Vec<String> {
         let TypedInstruction::BeginMarkedContentWithProperties(op) = op else { continue };
         let Object::Dict(props) = op.1 else { continue };
         let props: &Dict<'_> = props;
-        if !props.contains_key(b"MCID") {
-            continue;
-        }
         let Some(s) = props.get::<hayro_syntax::object::String>(b"ActualText") else { continue };
         let units: Vec<u16> = s.as_bytes().chunks_exact(2).map(|b| u16::from_be_bytes([b[0], b[1]])).collect();
         let text = String::from_utf16(&units).expect("UTF-16");
@@ -76,11 +73,9 @@ fn hebrew_extracts_in_reading_order_with_points_on_their_letters() {
     let bytes = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
     // Glyph by glyph (ToUnicode, content order): each point right after its letter, once.
     assert_eq!(extract_text(&bytes)[0], lines.concat());
-    // Viewers that order text by position read each line's ActualText.
-    assert_eq!(line_actual_texts(&bytes), lines);
-    // Tagged, the span is the line's tag under its paragraph.
+    assert!(actual_texts(&bytes).is_empty());
     let tagged = export_pdf(&d, &Cache::new(), &PdfOptions { tagged: true, ..PdfOptions::default() }).unwrap();
-    assert_eq!(line_actual_texts(&tagged), lines);
+    assert!(actual_texts(&tagged).is_empty());
     assert_eq!(extract_text(&tagged)[0], lines.concat());
 }
 
@@ -91,10 +86,7 @@ fn hebrew_words_in_left_to_right_lines_extract_in_reading_order() {
     let d = doc(text, HEBREW, Rect::new(36.0, 36.0, 576.0, 300.0), ParaAttrs::default());
     let bytes = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
     assert_eq!(extract_text(&bytes)[0], text);
-    assert_eq!(line_actual_texts(&bytes), [text]);
-    // A line without right-to-left text has no line span.
-    let d = doc("abc def", HEBREW, Rect::new(36.0, 36.0, 576.0, 300.0), ParaAttrs::default());
-    assert!(line_actual_texts(&export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap()).is_empty());
+    assert!(actual_texts(&bytes).is_empty());
 }
 
 /// Device origin of every glyph drawn on the first page.
@@ -168,8 +160,8 @@ fn kashidas_extract_as_no_text() {
     let bytes = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
     let words: Vec<String> = extract_text(&bytes)[0].split([' ', '\u{FFFD}']).filter(|w| !w.is_empty()).map(str::to_string).collect();
     assert!(words.iter().all(|w| w == "بسم" || w == "الله"), "{words:?}");
-    let spans = line_actual_texts(&bytes);
-    assert!(spans.len() > 1 && spans.iter().all(|t| !t.contains('\u{640}') && text.contains(t.trim())), "{spans:?}");
+    let spans = actual_texts(&bytes);
+    assert!(spans.iter().all(|t| !t.contains('\u{640}') && !t.contains(' ')), "{spans:?}");
 }
 
 #[test]
@@ -186,7 +178,53 @@ fn arabic_ligatures_extract_their_letters() {
     }
     let bytes = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
     assert_eq!(extract_text(&bytes)[0], text);
-    assert_eq!(line_actual_texts(&bytes), [text]);
+}
+
+/// How many marked-content sections the first page opens while an ActualText span is open.
+/// Viewers such as poppler drop the text before an ActualText span nested in another.
+fn opened_inside_actual_text(bytes: &[u8]) -> usize {
+    use hayro_syntax::content::ops::TypedInstruction;
+    use hayro_syntax::object::Object;
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).expect("parse");
+    let page = &pdf.pages()[0];
+    let (mut open, mut nested) = (Vec::new(), 0);
+    let mut ops = page.typed_operations();
+    while let Some(op) = ops.next() {
+        let actual = match op {
+            TypedInstruction::BeginMarkedContentWithProperties(op) => matches!(op.1, Object::Dict(d) if d.contains_key(b"ActualText")),
+            TypedInstruction::BeginMarkedContent(_) => false,
+            TypedInstruction::EndMarkedContent(_) => {
+                open.pop();
+                continue;
+            }
+            _ => continue,
+        };
+        nested += usize::from(open.contains(&true));
+        open.push(actual);
+    }
+    nested
+}
+
+#[test]
+fn right_to_left_lines_carry_actual_text_only_on_their_clusters() {
+    // Shadda clusters on contextual forms and pointed letters, in a system font with Arabic and
+    // Hebrew (skipped without one): krilla gives such clusters an ActualText span of their own,
+    // which must not nest in another (poppler drops the text before a nested one).
+    let lines = ["سيّد الكلّ مُحَمَّد", "ישראל אַבְרָהָם יִצְחָק"];
+    let mut d = doc(&lines.join("\n"), designcraft_fonts::DEFAULT_FAMILY, Rect::new(36.0, 36.0, 576.0, 300.0), rtl());
+    d.settings.glyph_fallback = true;
+    let sid = *d.stories.keys().next().unwrap();
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let glyphs: Vec<_> = cs.frames[0].lines.iter().flat_map(|l| &l.glyphs).collect();
+    if glyphs.iter().any(|g| g.gid == 0) || !glyphs.windows(2).any(|w| w[1].len == 0 && w[1].byte == w[0].byte) {
+        return;
+    }
+    for tagged in [false, true] {
+        let bytes = export_pdf(&d, &Cache::new(), &PdfOptions { tagged, ..PdfOptions::default() }).unwrap();
+        assert_eq!(opened_inside_actual_text(&bytes), 0, "tagged: {tagged}");
+        let spans = actual_texts(&bytes);
+        assert!(!spans.is_empty() && spans.iter().all(|t| !t.contains(' ') && t.chars().count() <= 3), "tagged: {tagged}: {spans:?}");
+    }
 }
 
 /// A slanted (shatai) glyph in a right-to-left line is drawn inside the line's span, not in a span
