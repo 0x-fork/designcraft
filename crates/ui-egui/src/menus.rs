@@ -403,34 +403,6 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:type.sizeDown",
             "-",
             "ui:view.hiddenCharacters",
-            "ui:view.taggedFrames",
-            ">Rotate Spread",
-            "ui:view.rotateSpread|90° CW|{\"angle\": 90}",
-            "ui:view.rotateSpread|90° CCW|{\"angle\": -90}",
-            "ui:view.rotateSpread|180°|{\"angle\": 180}",
-            "ui:view.rotateSpread|Clear Rotation|{\"angle\": 0}",
-            "<",
-            ">Proof Setup",
-            "ui:view.proofSetup|Working CMYK|{\"target\": \"workingCmyk\"}",
-            "ui:view.proofSetup|Internet Standard RGB (sRGB)|{\"target\": \"srgb\"}",
-            "ui:view.proofSetup|Legacy Macintosh RGB|{\"target\": \"legacyMacRgb\"}",
-            "ui:view.proofSetup|Monitor RGB|{\"target\": \"monitorRgb\"}",
-            "ui:view.proofSetup|Color Blindness – Protanopia|{\"target\": \"protanopia\"}",
-            "ui:view.proofSetup|Color Blindness – Deuteranopia|{\"target\": \"deuteranopia\"}",
-            "-",
-            "ui:view.proofSetup|Simulate Paper Color|{\"simulatePaper\": \"toggle\"}",
-            "<",
-            "ui:view.proofColors",
-            "ui:view.flattenerPreview",
-            "ui:view.tagMarkers",
-            ">Separations Preview",
-            "ui:view.separations|Off|{\"plate\": null, \"inkLimit\": null}",
-            "ui:view.separations|Cyan|{\"plate\": \"cyan\"}",
-            "ui:view.separations|Magenta|{\"plate\": \"magenta\"}",
-            "ui:view.separations|Yellow|{\"plate\": \"yellow\"}",
-            "ui:view.separations|Black|{\"plate\": \"black\"}",
-            "ui:view.separations|Ink Limit 300%|{\"inkLimit\": 300}",
-            "<",
             "-",
             ">Hyperlinks & Cross-References",
             "cmd:hyperlink.create",
@@ -620,6 +592,28 @@ pub const MENUS: &[(&str, &[&str])] = &[
     (
         "View",
         &[
+            "ui:view.overprintPreview",
+            ">Proof Setup",
+            "ui:view.proofSetup|Working CMYK|{\"target\": \"workingCmyk\"}",
+            "ui:view.proofSetup|Internet Standard RGB (sRGB)|{\"target\": \"srgb\"}",
+            "ui:view.proofSetup|Legacy Macintosh RGB|{\"target\": \"legacyMacRgb\"}",
+            "ui:view.proofSetup|Monitor RGB|{\"target\": \"monitorRgb\"}",
+            "ui:view.proofSetup|Color Blindness – Protanopia|{\"target\": \"protanopia\"}",
+            "ui:view.proofSetup|Color Blindness – Deuteranopia|{\"target\": \"deuteranopia\"}",
+            "-",
+            "ui:view.proofSetup|Simulate Paper Color|{\"simulatePaper\": \"toggle\"}",
+            "<",
+            "ui:view.proofColors",
+            ">Separations Preview",
+            "ui:view.separations|Off|{\"plate\": null, \"inkLimit\": null}",
+            "ui:view.separations|Cyan|{\"plate\": \"cyan\"}",
+            "ui:view.separations|Magenta|{\"plate\": \"magenta\"}",
+            "ui:view.separations|Yellow|{\"plate\": \"yellow\"}",
+            "ui:view.separations|Black|{\"plate\": \"black\"}",
+            "ui:view.separations|Ink Limit 300%|{\"inkLimit\": 300}",
+            "<",
+            "ui:view.flattenerPreview",
+            "-",
             "ui:view.zoomIn",
             "ui:view.zoomOut",
             "ui:view.fitPage",
@@ -628,8 +622,20 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:view.actualSize",
             "ui:view.entirePasteboard",
             "-",
-            "ui:view.overprintPreview",
-            "ui:view.togglePreview",
+            ">Rotate Spread",
+            "ui:view.rotateSpread|90° CW|{\"angle\": 90}",
+            "ui:view.rotateSpread|90° CCW|{\"angle\": -90}",
+            "ui:view.rotateSpread|180°|{\"angle\": 180}",
+            "ui:view.rotateSpread|Clear Rotation|{\"angle\": 0}",
+            "<",
+            "-",
+            ">Screen Mode",
+            "ui:view.screenMode|Normal|{\"mode\": \"normal\"}",
+            "ui:view.screenMode|Preview|{\"mode\": \"preview\"}",
+            "ui:view.screenMode|Bleed|{\"mode\": \"bleed\"}",
+            "ui:view.screenMode|Slug|{\"mode\": \"slug\"}",
+            "ui:view.screenMode|Presentation|{\"mode\": \"presentation\"}",
+            "<",
             ">Display Performance",
             "ui:view.fastDisplay",
             "ui:view.typicalDisplay",
@@ -637,10 +643,11 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "<",
             "-",
             "ui:view.rulers",
+            "-",
+            ">Extras",
             "ui:view.frameEdges",
             "ui:view.textThreads",
-            "ui:view.hiddenCharacters",
-            "-",
+            "<",
             ">Grids & Guides",
             "ui:view.guides",
             "ui:view.snapToGuides",
@@ -649,6 +656,11 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:view.baselineGrid",
             "-",
             "ui:app.deleteAllGuides",
+            "<",
+            "-",
+            ">Structure",
+            "ui:view.taggedFrames",
+            "ui:view.tagMarkers",
             "<",
         ],
     ),
@@ -2278,6 +2290,34 @@ pub fn quick_apply_items(session: &designcraft_engine::Session, query: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The entries (command ids) of a menu bar menu, submenus included.
+    fn menu_ids(title: &str) -> Vec<&'static str> {
+        let items = MENUS.iter().find(|(t, _)| *t == title).map(|(_, items)| *items).unwrap_or_default();
+        items.iter().filter_map(|e| e.split_once(':').map(|(_, rest)| rest.split('|').next().unwrap_or(rest))).collect()
+    }
+
+    #[test]
+    fn view_items_are_in_the_view_menu_as_in_indesign() {
+        let (view, typ) = (menu_ids("View"), menu_ids("Type"));
+        for id in [
+            "view.rotateSpread",
+            "view.proofSetup",
+            "view.proofColors",
+            "view.flattenerPreview",
+            "view.separations",
+            "view.taggedFrames",
+            "view.tagMarkers",
+        ] {
+            assert!(view.contains(&id), "{id} is in View");
+            assert!(!typ.contains(&id), "{id} isn't in Type");
+        }
+        // Screen Mode and Extras are View submenus; Show Hidden Characters stays in Type.
+        assert!(view.contains(&"view.screenMode") && view.contains(&"view.frameEdges"));
+        assert!(typ.contains(&"view.hiddenCharacters") && !view.contains(&"view.hiddenCharacters"));
+        // W still toggles Normal / Preview without a menu entry.
+        assert_eq!(ui_label("view.togglePreview").and_then(|c| c.1), Some("W"));
+    }
 
     fn walk(items: &[Item], out: &mut Vec<(String, String, Value)>) {
         for it in items {
