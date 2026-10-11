@@ -2656,7 +2656,8 @@ fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Resul
     let name = d.s("name");
     // What the Justification section showed: the style's own values, or a new style's Based On.
     let shown = if d.b("new") { d.s("basedOn") } else { name.clone() };
-    let base = app.session.active().map(|st| serde_json::to_value(st.doc.styles.resolve_para_style(&shown).0).unwrap_or_default()).unwrap_or_default();
+    let base =
+        app.session.active().map(|st| serde_json::to_value(st.doc.styles.resolve_para_style(&shown).0).unwrap_or_default()).unwrap_or_default();
     if let Err(e) = check_justification(d, "p.", &base) {
         // The caller shows the reason in the dialog's status line.
         d.fields.insert("section".into(), json!("justify"));
