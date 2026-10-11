@@ -423,8 +423,9 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
             .map(|(w, h)| (w.round().max(1.0) as u32, h.round().max(1.0) as u32))
             .ok_or_else(|| bad("file.place", "can't read that PDF page"))?,
     };
-    // 72 ppi by default unless the file says otherwise; scale so it fits the page when huge.
-    let (nw, nh) = eps_size.unwrap_or((pw as f64, ph as f64));
+    // 72 ppi by default unless the file says otherwise; scale so it fits the page when huge. PDF pages
+    // and SVGs keep their exact size: rounding it to whole points would stretch them unevenly.
+    let (nw, nh) = eps_size.or_else(|| designcraft_render::natural_size(&bytes, pdf_page as usize)).unwrap_or((pw as f64, ph as f64));
     // Image Import Options › Crop to: the graphic spans that box of the PDF page.
     let is_pdf = designcraft_render::is_pdf(&bytes);
     let pdf_crop = match str_param(p, "pdfCrop") {
@@ -570,6 +571,7 @@ pub(crate) fn read_source(p: &Value) -> Result<(Vec<u8>, String, Option<String>)
 fn place_load(s: &mut Session, p: &Value) -> Result<Value> {
     let (bytes, name, link) = read_source(p)?;
     let (pw, ph) = designcraft_render::image_size(&bytes).ok_or_else(|| bad("place.load", "unsupported or corrupt image"))?;
+    let natural = designcraft_render::natural_size(&bytes, 0).unwrap_or((pw as f64, ph as f64));
     let aid = s.edit(|d, _| {
         let fresh = AssetId(d.alloc());
         let mime = designcraft_render::image_mime(&bytes).to_string();
@@ -583,7 +585,7 @@ fn place_load(s: &mut Session, p: &Value) -> Result<Value> {
             ..Default::default()
         }))
     })?;
-    s.loaded = Some((aid, (pw as f64, ph as f64)));
+    s.loaded = Some((aid, natural));
     s.set_tool("placeGun");
     Ok(json!({"asset": aid.0, "name": name, "width": pw, "height": ph}))
 }
@@ -939,6 +941,24 @@ mod pdf_crop_tests {
         assert!(!dark(97, 97), "the bleed is outside the trim box");
         assert!(!dark(103, 103), "the page is offset by its bleed");
         assert!(dark(110, 110), "the square inside the trim box");
+    }
+
+    #[test]
+    fn placed_pdf_keeps_its_exact_page_size() {
+        // A 100.4 x 50.4 pt page placed 100.4 pt wide is 50.4 pt tall, not stretched to whole points.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 100.4, "height": 50.4, "pages": 1})).unwrap();
+        let b64 = s.execute("file.exportPdf", &json!({})).unwrap()["base64"].as_str().unwrap().to_string();
+        let mut t = Session::new();
+        t.execute("file.new", &json!({})).unwrap();
+        let r = t.execute("file.place", &json!({"base64": b64, "name": "a.pdf", "width": 100.4, "x": 0, "y": 0})).unwrap();
+        let id = designcraft_doc::ItemId(r["id"].as_u64().unwrap());
+        let d = &t.doc().unwrap().doc;
+        let it = d.item(id).unwrap();
+        let b = it.bounds();
+        assert!((b.width() - 100.4).abs() < 1e-3 && (b.height() - 50.4).abs() < 1e-3, "{b:?}");
+        let designcraft_doc::Content::Graphic(g) = &it.content else { panic!("not a graphic") };
+        assert!((g.size.0 - 100.4).abs() < 1e-3 && (g.size.1 - 50.4).abs() < 1e-3, "{:?}", g.size);
     }
 }
 
