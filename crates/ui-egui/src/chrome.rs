@@ -10,6 +10,13 @@ use crate::theme::{Tokens, semibold};
 use crate::widgets::{caption, measure, number};
 use crate::{DesignApp, icons};
 
+/// Width of the app bar's right-hand slot: what is left of the row, minus a pixel of slack so
+/// that rounding at fractional scales (115%) never makes the row a hair wider than the scroll
+/// area and shows a needless scroll bar. Never narrower than the controls themselves.
+fn tools_slot_width(available: f32, tools_w: f32) -> f32 {
+    (available - 1.0).max(tools_w)
+}
+
 pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let left = if app.integrated_titlebar { 78 } else { 8 };
@@ -40,7 +47,7 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                         crate::menus::menu_bar(app, ui);
                     }
                     menus_end = ui.min_rect().max.x;
-                    let size = vec2(ui.available_width().max(tools_w), ui.available_height());
+                    let size = vec2(tools_slot_width(ui.available_width(), tools_w), ui.available_height());
                     let tools = ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(4.0);
                         // Search field.
@@ -768,6 +775,12 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     use crate::test_window::{self, wheel};
+
+    #[test]
+    fn the_app_bar_tools_slot_leaves_slack_when_everything_fits() {
+        assert!(super::tools_slot_width(500.0, 300.0) < 500.0, "a full-width slot can overflow by a rounding error");
+        assert_eq!(super::tools_slot_width(200.0, 300.0), 300.0, "a narrow window still scrolls");
+    }
 
     /// The Control panel's last control with nothing selected.
     const LAST_CONTROL: &str = "Jump to Next Column";
