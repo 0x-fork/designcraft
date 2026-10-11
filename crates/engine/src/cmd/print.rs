@@ -50,8 +50,13 @@ fn print_with(
     let d = &s.doc()?.doc;
     let opts = super::export::options(p, d.page_count())?;
     let copies = p.get("copies").and_then(Value::as_u64).unwrap_or(1).clamp(1, 999) as u32;
-    let job =
-        craft_print::Job { printer: str_param(p, "printer").map(str::to_string), copies, title: d.title.clone(), ..craft_print::Job::default() };
+    let job = craft_print::Job {
+        printer: str_param(p, "printer").map(str::to_string),
+        copies,
+        scaling: craft_print::Scaling::ShrinkToFit,
+        title: d.title.clone(),
+        ..craft_print::Job::default()
+    };
     let dry = p.get("dryRun").and_then(Value::as_bool).unwrap_or(false);
     let pdf = designcraft_pdf::export_pdf(d, &s.cache, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
     let command = craft_print::command_preview(&job).map_err(|e| bad("file.print", e.to_string()))?;
@@ -76,7 +81,8 @@ mod tests {
         let command: Vec<&str> = r["command"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         if craft_print::backend() == Some(craft_print::Backend::Cups) {
             assert_eq!(&command[..5], ["lp", "-d", "Office", "-n", "2"]);
-            assert!(command.contains(&"fit-to-page=false"));
+            assert!(command.contains(&"print-scaling=auto-fit"));
+            assert!(!command.iter().any(|a| a.starts_with("sides=")));
         } else {
             assert_eq!(command[0], "powershell");
         }
@@ -101,6 +107,8 @@ mod tests {
             assert!(pdf.starts_with(b"%PDF-"));
             assert_eq!(job.printer.as_deref(), Some("Office (east)"));
             assert_eq!(job.copies, 2);
+            assert_eq!(job.duplex, None);
+            assert_eq!(job.scaling, craft_print::Scaling::ShrinkToFit);
             assert!(!job.title.is_empty());
             Ok("request id is Office-1".into())
         })

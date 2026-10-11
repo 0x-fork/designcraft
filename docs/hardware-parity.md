@@ -1,6 +1,6 @@
 # Hardware and platform parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shared print spooler; native Windows validation pending) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shared print spooler; Windows CI passes) · **Target:** Adobe InDesign 2026 (21.6)
 
 What InDesign does with hardware, per platform, against DesignCraft. Layout is not a
 GPU-hungry workload, so this dimension carries little weight, but a start that fails on a
@@ -55,5 +55,6 @@ the developers don't use daily.
 |---|---|---|
 | 2026-10-10 | major | Created from the code, InDesign 2026's GPU Performance features and the issue tracker |
 
-Windows submission now uses shared craft-print. It preserves PDF sheet size/orientation and
-duplex binding edges; printer-driver options UI and physical output validation remain open.
+Windows submission now uses shared craft-print. It selects matching or default driver paper,
+shrinks oversized sheets to the printable area without enlarging smaller ones, and preserves
+the queue's duplex default; printer-driver options UI and physical output validation remain open.
