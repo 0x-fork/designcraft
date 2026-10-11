@@ -505,8 +505,14 @@ pub(crate) fn close_visible(app: &mut DesignApp) -> Result<(), String> {
 // Legacy inspection fields are derived from the shared layout after customization.
 fn sync_legacy(app: &mut DesignApp) {
     if let Some(layout) = &app.ui.docking {
-        app.ui.floating =
-            layout.floating.iter().flat_map(|group| group.panels.iter().map(|id| (id.clone(), [group.rect[0], group.rect[1]]))).collect();
+        // Float-only panels aren't in the layout; they keep their place in the list.
+        let float_only: Vec<(String, [f32; 2])> = app.ui.floating.iter().filter(|(id, _)| crate::dock::float_only(id)).cloned().collect();
+        app.ui.floating = layout
+            .floating
+            .iter()
+            .flat_map(|group| group.panels.iter().map(|id| (id.clone(), [group.rect[0], group.rect[1]])))
+            .chain(float_only)
+            .collect();
     }
 }
 

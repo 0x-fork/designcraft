@@ -234,8 +234,18 @@ pub fn panel_body(app: &mut DesignApp, ui: &mut egui::Ui, id: &str) {
     }
 }
 
+/// Panels that only float, outside the dock and the docking layout (the Tabs panel).
+pub(crate) fn float_only(id: &str) -> bool {
+    FLOATING_PANELS.iter().any(|p| p.0 == id)
+}
+
 /// Tear panel `id` off the dock into a floating window at `at`.
 pub fn float_panel(app: &mut DesignApp, id: &str, at: egui::Pos2) {
+    if float_only(id) {
+        app.ui.floating.retain(|(p, _)| p != id);
+        app.ui.floating.push((id.to_string(), [at.x, at.y]));
+        return;
+    }
     if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.float", &serde_json::json!({"panel":id,"x":at.x,"y":at.y})) {
         app.status(error);
     }
@@ -243,7 +253,7 @@ pub fn float_panel(app: &mut DesignApp, id: &str, at: egui::Pos2) {
 
 /// Put a floating panel back in the dock's icon column.
 pub fn dock_panel(app: &mut DesignApp, id: &str) {
-    if app.ui.docking.is_some() {
+    if app.ui.docking.is_some() && !float_only(id) {
         if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.dock", &serde_json::json!({"panel":id})) {
             app.status(error);
         }
@@ -254,11 +264,13 @@ pub fn dock_panel(app: &mut DesignApp, id: &str) {
 
 /// Floating panels: movable, resizable windows; "Dock" returns one to the icon column.
 pub fn floating(app: &mut DesignApp, ctx: &egui::Context) {
-    if app.ui.docking.is_some() {
-        return;
-    }
+    // A customized layout draws its own floating groups; float-only panels are drawn here.
+    let customized = app.ui.docking.is_some();
     let t = Tokens::get(ctx);
     for (id, at) in app.ui.floating.clone() {
+        if customized && !float_only(&id) {
+            continue;
+        }
         let label = crate::i18n::tr(&app.ui.language, panel_label(&id)).to_owned();
         let docks = ICON_PANELS.iter().any(|p| p.0 == id);
         let mut open = true;
