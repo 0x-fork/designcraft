@@ -780,7 +780,7 @@ fn convert_shape_menu(app: &mut DesignApp, resp: &egui::Response) {
         ] {
             if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
                 if let Err(e) = app.run("object.convertShape", json!({"to": to})) {
-                    app.status(format!("Convert Shape: {e}"));
+                    app.status_error("Convert Shape", e);
                 }
                 ui.close();
             }
@@ -1908,7 +1908,7 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         {
             let r = app.run("links.relinkFolder", json!({"dir": dir.to_string_lossy()}));
             if let Ok(v) = r {
-                app.status(format!("Relinked {}", v["relinked"]));
+                app.status(crate::i18n::tr(&app.ui.language, "Relinked {count}").replace("{count}", &v["relinked"].to_string()));
             }
         }
     });

@@ -140,7 +140,7 @@ fn user_dictionary(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
                     Ok(_) => {
                         d.fields.insert("word".into(), json!(""));
                     }
-                    Err(e) => app.status(format!("User Dictionary: {e}")),
+                    Err(e) => app.status_error("User Dictionary", e),
                 }
             }
         }
@@ -1474,7 +1474,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                             let f = app.session.execute("color.settings", &json!({})).unwrap_or_default();
                             d.fields.insert("profiles".into(), f["profiles"].clone());
                         }
-                        Err(e) => app.status(format!("Color Settings: {e}")),
+                        Err(e) => app.status_error("Color Settings", e),
                     }
                 }
             }
@@ -1931,7 +1931,8 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 json!({"printer": if printer.is_empty() { Value::Null } else { json!(printer) }, "copies": d.n("copies").unwrap_or(1.0).max(1.0) as u64,
                     "pages": pages, "spreads": d.b("spreads"), "marks": d.b("marks"), "bleed": d.b("bleed")}),
             )?;
-            app.status(format!("Sent {} page(s) to {}", r["pages"], r["printer"].as_str().unwrap_or("the default printer")));
+            let printer = r["printer"].as_str().unwrap_or_else(|| crate::i18n::tr(&app.ui.language, "the default printer"));
+            app.status(crate::i18n::tr(&app.ui.language, "Sent {count} page(s) to {printer}").replace("{count}", &r["pages"].to_string()).replace("{printer}", printer));
             Ok(r)
         }
         "pdfExport" => {

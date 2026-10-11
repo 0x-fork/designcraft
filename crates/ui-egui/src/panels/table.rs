@@ -36,7 +36,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         if ui.small_button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Graphic…"))).clicked()
             && let Err(e) = app.run("app.graphicCell", json!({}))
         {
-            app.status(format!("Table: {e}"));
+            app.status_error("Table", e);
         }
         if ui.small_button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Text"))).clicked() {
             let _ = app.run("table.textCell", json!({}));
@@ -55,7 +55,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             if ui.add_enabled(ok, egui::Button::new(crate::rtl::widget(ui, label)).small()).clicked()
                 && let Err(e) = app.run(id, json!({"from": from, "to": to}))
             {
-                app.status(format!("Table: {e}"));
+                app.status_error("Table", e);
             }
         }
     });
@@ -145,7 +145,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         .clicked()
         && let Err(e) = app.run("table.distributeRows", json!({}))
     {
-        app.status(format!("Table: {e}"));
+        app.status_error("Table", e);
     }
     divider(ui);
     caption(ui, crate::i18n::tr(&app.ui.language, "Cell Text"));

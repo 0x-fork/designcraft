@@ -34,7 +34,7 @@ pub fn hyperlinks(app: &mut DesignApp, ui: &mut egui::Ui) {
         {
             let p = if let Some(m) = url.strip_prefix("mailto:") { json!({"email": m}) } else { json!({"url": url}) };
             if let Err(e) = app.run("hyperlink.create", p) {
-                app.status(format!("Hyperlinks: {e}"));
+                app.status_error("Hyperlinks", e);
             }
         }
     });
@@ -176,7 +176,7 @@ pub fn tags(app: &mut DesignApp, ui: &mut egui::Ui) {
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "New"))).clicked() && !name.trim().is_empty() {
             match app.run("xml.newTag", json!({"name": name.trim()})) {
                 Ok(_) => name.clear(),
-                Err(e) => app.status(format!("Tags: {e}")),
+                Err(e) => app.status_error("Tags", e),
             }
         }
     });
@@ -232,7 +232,7 @@ pub fn tags(app: &mut DesignApp, ui: &mut egui::Ui) {
         {
             match app.run("xml.loadDtd", json!({"path": path})) {
                 Ok(_) => problems = None,
-                Err(e) => app.status(format!("Load DTD: {e}")),
+                Err(e) => app.status_error("Load DTD", e),
             }
         }
         let has_dtd = info["dtd"].as_bool().unwrap_or(false);
@@ -281,7 +281,7 @@ pub fn tags(app: &mut DesignApp, ui: &mut egui::Ui) {
             && let Some(path) = app.services.pick_open.as_mut().and_then(|f| f("xml"))
             && let Err(e) = app.run("file.importXml", json!({"path": path}))
         {
-            app.status(format!("Import XML: {e}"));
+            app.status_error("Import XML", e);
         }
     });
 }
@@ -310,7 +310,7 @@ pub fn states(app: &mut DesignApp, ui: &mut egui::Ui) {
             .clicked()
             && let Err(e) = app.run("states.create", json!({}))
         {
-            app.status(format!("Object States: {e}"));
+            app.status_error("Object States", e);
         }
         return;
     }
@@ -398,7 +398,7 @@ pub fn buttons(app: &mut DesignApp, ui: &mut egui::Ui) {
     if let Some(p) = params
         && let Err(e) = app.run("button.set", p)
     {
-        app.status(format!("Buttons: {e}"));
+        app.status_error("Buttons", e);
     }
     crate::rtl::label(
         ui,
@@ -565,7 +565,7 @@ pub fn liquid(app: &mut DesignApp, ui: &mut egui::Ui) {
     if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Create"))).clicked()
         && let Err(e) = app.run("layout.createAlternate", json!({"name": name, "width": w, "height": h}))
     {
-        app.status(format!("Alternate layout: {e}"));
+        app.status_error("Alternate layout", e);
     }
     ui.data_mut(|x| x.insert_temp(key, (name, w, h)));
 }
@@ -598,7 +598,7 @@ pub fn media(app: &mut DesignApp, ui: &mut egui::Ui) {
             && let Some(path) = app.services.pick_open.as_mut().and_then(|f| f("place"))
             && let Err(e) = app.run("media.options", json!({"poster": {"path": path}}))
         {
-            app.status(format!("Media: {e}"));
+            app.status_error("Media", e);
         }
         if !m["poster"].is_null() && ui.small_button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "None"))).clicked() {
             let _ = app.run("media.options", json!({"poster": null}));

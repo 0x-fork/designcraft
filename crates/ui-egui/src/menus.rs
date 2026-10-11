@@ -848,11 +848,11 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                 Some(dir) => {
                     let r = app.run("file.package", json!({"dir": dir}));
                     if let Ok(v) = &r {
-                        app.status(format!(
-                            "Packaged {} files into {}",
-                            v["files"].as_array().map_or(0, |f| f.len()),
-                            v["dir"].as_str().unwrap_or("")
-                        ));
+                        app.status(
+                            crate::i18n::tr(&app.ui.language, "Packaged {count} files into {dir}")
+                                .replace("{count}", &v["files"].as_array().map_or(0, |f| f.len()).to_string())
+                                .replace("{dir}", v["dir"].as_str().unwrap_or("")),
+                        );
                     }
                     r
                 }

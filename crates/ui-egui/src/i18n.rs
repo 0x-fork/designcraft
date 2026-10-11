@@ -3088,6 +3088,19 @@ mod tests {
             "Text:",
             "Unsaved Changes",
             "“{}” has changes that are not saved. Save them before closing?",
+            // Status-bar messages.
+            "Alternate layout",
+            "Couldn't write recovery data: {error}",
+            "Export a PDF, IDML or package to share — no cloud account needed.",
+            "Import cancelled: the originating document has closed",
+            "Invalid panel layout; restored the default dock",
+            "PDF import cancelled: the originating document has closed",
+            "Packaged {count} files into {dir}",
+            "Relinked {count}",
+            "Sent {count} page(s) to {printer}",
+            "the default printer",
+            "{name}: import cancelled while a dialog is open; choose the file again",
+            "{name}: {count} step(s) done",
         ]);
         // A new English string falls back to English until it is translated, so only stale
         // entries (keys nothing passes to `tr` any more) fail.
