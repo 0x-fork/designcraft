@@ -944,7 +944,11 @@ fn save_swatches(s: &mut Session, p: &Value) -> Result<Value> {
     let bytes = designcraft_color::ase::write(&chosen);
     match str_param(p, "path") {
         Some(path) => {
-            std::fs::write(path, &bytes).map_err(|e| bad("swatch.save", format!("{path}: {e}")))?;
+            #[cfg(not(target_arch = "wasm32"))]
+            let written = crate::atomic::write_atomic(std::path::Path::new(path), &bytes);
+            #[cfg(target_arch = "wasm32")]
+            let written = std::fs::write(path, &bytes);
+            written.map_err(|e| bad("swatch.save", format!("{path}: {e}")))?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
         None => Ok(json!({"base64": super::file::base64_encode(&bytes)})),

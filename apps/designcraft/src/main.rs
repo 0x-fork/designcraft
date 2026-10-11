@@ -20,6 +20,7 @@ mod gpu;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod profile;
 
 use designcraft_engine::Session;
 use designcraft_ui_egui::{DesignApp, Services};
@@ -93,27 +94,13 @@ fn discard_marked_text() {
     }
 }
 
-/// The per-user settings directory: `ui.json`, `prefs.json`, `gpu.json` and `logs/` live here.
-fn config_dir() -> Option<std::path::PathBuf> {
-    if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/DesignCraft"))
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("DesignCraft"))
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("designcraft"))
-    }
-}
-
 /// `DESIGNCRAFT_NO_PREFS`: read and write nothing in the settings directory (tests, demos).
 fn no_prefs() -> bool {
     std::env::var_os("DESIGNCRAFT_NO_PREFS").is_some()
 }
 
 fn prefs_path() -> Option<std::path::PathBuf> {
-    config_dir().map(|b| b.join("ui.json"))
+    profile::config_dir().map(|b| b.join("ui.json"))
 }
 
 fn load_prefs(app: &mut DesignApp) {
@@ -122,7 +109,7 @@ fn load_prefs(app: &mut DesignApp) {
     }
     if let Some(p) = prefs_path()
         && let Ok(bytes) = std::fs::read(&p)
-        && let Ok(ui) = serde_json::from_slice::<designcraft_ui_egui::UiState>(&bytes)
+        && let Ok(ui) = designcraft_ui_egui::UiState::from_preferences_json(&bytes)
     {
         app.ui = ui;
     }
@@ -337,7 +324,7 @@ fn main() -> std::process::ExitCode {
     }
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
-    if let (Some(logger), Some(dir)) = (logger, config_dir()) {
+    if let (Some(logger), Some(dir)) = (logger, profile::config_dir()) {
         match logger.attach_dir(&dir.join("logs")) {
             Ok(path) => log::info!("DesignCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
             // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.
@@ -362,7 +349,7 @@ fn main() -> std::process::ExitCode {
     // The graphics backend, decided before the window exists: a driver that faults takes the
     // process down before any Rust code can catch it (see `gpu::backend`).
     let fallback = gpu::backend::Fallback::begin(
-        if no_prefs() { None } else { config_dir().map(|d| d.join(gpu::backend::FILE)) },
+        if no_prefs() { None } else { profile::config_dir().map(|d| d.join(gpu::backend::FILE)) },
         env!("CARGO_PKG_VERSION"),
         &gpu::backend::skipped_backends(&skip),
     );
@@ -441,7 +428,7 @@ fn main() -> std::process::ExitCode {
                 }
                 let mut session = Session::new();
                 // Crash recovery: reopen what a previous run left unsaved, then keep it current.
-                session.recovery_dir = designcraft_engine::recovery::default_dir();
+                session.recovery_dir = profile::recovery_dir();
                 let recovered = session.execute("file.recovery.open", &serde_json::json!({})).ok();
                 let mut app = DesignApp::new(session, services());
                 if let Some(line) = restarted.or_else(|| created.status_line()) {
