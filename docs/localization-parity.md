@@ -11,7 +11,7 @@ Script-specific typesetting detail: [cjk.md](cjk.md), [cjk-typography.md](cjk-ty
 ## How it was measured
 
 Interface strings live in `crates/ui-egui/src/i18n.rs` (a shared table with German, French,
-Spanish, Japanese and Simplified Chinese columns) and `crates/ui-egui/src/i18n/{ar,it,ja,pt_br,uk}.rs`.
+Spanish, Japanese and Simplified Chinese columns) and `crates/ui-egui/src/i18n/{ar,cs,it,ja,pt_br,uk}.rs`.
 Untranslated strings fall back to English. A script (2026-10-10) built the set of English
 interface strings as the union of every catalog's keys, every engine command label and every
 literal passed to `tr`/`t` in the UI crate: **1,724 strings**. A further ~145 capitalized literals
@@ -47,10 +47,11 @@ string is translated and its script renders and edits correctly; none but Englis
 
 | Language | Code | UI strings translated | Status |
 |---|---|---|---|
+| Czech | cs | 1,722 (99%), plural categories handled | partial |
 | Italian | it | 1,464 (85%) | partial |
 | Ukrainian | uk | 1,432 (83%), plural categories handled | partial |
 
-DesignCraft ships **2** interface languages beyond the twelve; InDesign ships 17 beyond its
+DesignCraft ships **3** interface languages beyond the twelve; InDesign ships 17 beyond its
 eight of the twelve (cs, da, el, en_GB, fi, hu, it, nb, nl, pl, ro, ru, sq, sv, tr, uk, zh_TW).
 
 ## Document languages
@@ -78,3 +79,4 @@ locale shaping. See [typography-parity.md](typography-parity.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-10 | major | Created: catalogs measured (1,724 strings), the twelve key languages plus Italian and Ukrainian |
+| 2026-10-11 | minor | Czech (cs) added: 1,722 strings, plural categories handled |
