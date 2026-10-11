@@ -497,8 +497,9 @@ pub struct DesignApp {
     /// A control-channel request is being handled: commands it runs never read or write the
     /// user's system clipboard (a control client must not see or replace it).
     pub(crate) in_control: bool,
-    /// What the last object copy put on the system clipboard (no native menu): without it the
-    /// paste keys produce no paste event. It is never pasted as text.
+    /// The system clipboard's text that stands for the last object copy: what that copy put there
+    /// (no native menu: without it the paste keys produce no paste event), or what it held then
+    /// (native menu). It is never pasted as text: Paste with it pastes the copied objects.
     object_clip_text: Option<String>,
 }
 
@@ -601,7 +602,10 @@ impl DesignApp {
                         self.object_clip_text = Some(self.copied_objects_text());
                         self.object_clip_text.clone()
                     }
-                    None => None,
+                    None => {
+                        self.object_clip_text = self.services.clipboard_text.as_mut().and_then(|f| f());
+                        None
+                    }
                 };
                 if let (Some(t), Some(ctx)) = (text, &self.egui_ctx) {
                     ctx.copy_text(t);
@@ -613,10 +617,12 @@ impl DesignApp {
         r
     }
 
-    /// Paste into text without the clipboard's text (a menu, not the paste keys): read it here.
+    /// Paste without the clipboard's text (a menu, not the paste keys): read it here. With no
+    /// insertion point, text that doesn't stand for copied objects becomes a new text frame
+    /// centred in the view.
     fn with_system_clipboard(&mut self, id: &str, mut params: Value) -> Value {
         let typing = self.session.active().is_some_and(|d| d.selection.text.is_some());
-        if !typing || !matches!(id, "edit.paste" | "edit.pasteWithoutFormatting") {
+        if !matches!(id, "edit.paste" | "edit.pasteWithoutFormatting") || !(typing || id == "edit.paste") {
             return params;
         }
         if params.get("text").is_none()
@@ -632,6 +638,15 @@ impl DesignApp {
             && let Some(o) = params.as_object_mut()
         {
             o.remove("text");
+        }
+        if !typing
+            && params.get("text").and_then(Value::as_str).is_some_and(|t| !t.is_empty())
+            && let Some((spread, at)) = canvas::view_centre(self)
+            && let Ok(spread) = serde_json::to_value(spread)
+            && let Some(o) = params.as_object_mut()
+        {
+            o.entry("spread").or_insert(spread);
+            o.entry("at").or_insert(json!([at.x, at.y]));
         }
         params
     }
