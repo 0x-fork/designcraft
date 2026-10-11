@@ -2718,6 +2718,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Inward", ["Inward", "Inward", "Inward", "Inward", "向内"]),
     ("Metrics", ["Metrics", "Metrics", "Metrics", "Metrics", "度量"]),
     ("Optical", ["Optical", "Optical", "Optical", "Optical", "视觉"]),
+    (
+        "Optical Margin Alignment",
+        ["Optischer Randausgleich", "Marges optiques", "Alineación de márgenes ópticos", "オプティカルマージン揃え", "视觉边距对齐"],
+    ),
     ("Applies to fill", ["Applies to fill", "Applies to fill", "Applies to fill", "Applies to fill", "应用于填色"]),
     ("Applies to text", ["Applies to text", "Applies to text", "Applies to text", "Applies to text", "应用于文本"]),
     ("Gray", ["Gray", "Gray", "Gray", "Gray", "灰度"]),
