@@ -1844,6 +1844,14 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
         crate::dialogs::open_print(app);
         return;
     }
+    if params.is_null() && id == "layout.createGuides" {
+        crate::dialogs::open_create_guides(app);
+        return;
+    }
+    if params.is_null() && id == "layout.marginsAndColumns" {
+        crate::dialogs::open_margins_and_columns(app);
+        return;
+    }
     if params.is_null() && id == "object.textFrameOptions" {
         app.ui.dialog = Some(crate::dialogs::Dialog::new("textFrameOptions", json!({})));
         return;

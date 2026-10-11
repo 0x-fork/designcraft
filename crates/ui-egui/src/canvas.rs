@@ -153,6 +153,38 @@ pub fn current_page(app: &DesignApp) -> Option<usize> {
     Some(st.doc.first_page_of_spread(si) + pi)
 }
 
+/// The spread (document or parent) under the view centre and the page index within it: where
+/// commands that act "on the page I am working on" should go.
+pub fn current_spread_page(app: &DesignApp) -> Option<(SpreadRef, usize)> {
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let i = current_slot(app, &layout)?;
+    let slot = layout.slots.get(i)?;
+    let v = app.view()?;
+    let r = app.canvas_rect?;
+    let c = slot.to_spread(Point::new(v.origin.x + r.width() as f64 / 2.0 / v.zoom, slot.bounds.center().y));
+    let pg = st.doc.spread(slot.spread)?.page_at_x(c.x).unwrap_or(0);
+    Some((slot.spread, pg))
+}
+
+/// While parent spreads are being edited: (parent spread index, page index within it) under the
+/// view centre. `None` when document pages are shown.
+pub fn current_parent_page(app: &DesignApp) -> Option<(usize, usize)> {
+    let st = app.session.active()?;
+    if !st.editing_parents {
+        return None;
+    }
+    let layout = CanvasLayout::new(&st.doc, true);
+    let i = current_slot(app, &layout)?;
+    let slot = layout.slots.get(i)?;
+    let SpreadRef::Parent(pi) = slot.spread else { return None };
+    let v = app.view()?;
+    let r = app.canvas_rect?;
+    let c = slot.to_spread(Point::new(v.origin.x + r.width() as f64 / 2.0 / v.zoom, slot.bounds.center().y));
+    let qi = st.doc.parents.get(pi)?.page_at_x(c.x).unwrap_or(0);
+    Some((pi, qi))
+}
+
 /// Scroll so absolute page `abs` is centred (keeps zoom).
 pub fn go_to_page(app: &mut DesignApp, abs: usize) {
     let Some(st) = app.session.active() else { return };
@@ -603,11 +635,17 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
             painter.rect_stroke(rect(br), 0.0, Stroke::new(hair(painter), c32(s.bleed_color)), StrokeKind::Middle);
         }
         let pasteboard = m.inverse().transform_rect_bbox(layout.pasteboard);
-        for p in &sp.pages {
+        let first_abs = match slot.spread {
+            SpreadRef::Doc(si) => Some(doc.first_page_of_spread(si)),
+            _ => None,
+        };
+        for (pidx, p) in sp.pages.iter().enumerate() {
             let pr = p.bounds();
             if !app.ui.guides {
                 continue;
             }
+            // Guides set on the applied parent page show on this page too.
+            let inherited = first_abs.map(|f| doc.inherited_guides(f + pidx)).unwrap_or_default();
             // Baseline grid.
             if app.ui.baseline_grid && xf.zoom >= s.baseline_grid.view_threshold {
                 let g = &s.baseline_grid;
@@ -634,7 +672,7 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
                     }
                 }
             }
-            for g in p.guides.iter().filter(|g| g.visible_in(doc)) {
+            for g in p.guides.iter().chain(inherited.iter()).filter(|g| g.visible_in(doc)) {
                 // Spread guides cross the pasteboard; page guides their page.
                 let span = if g.spread { pasteboard } else { pr };
                 let (a, bb) = match g.orientation {

@@ -12,6 +12,10 @@ use crate::theme::semibold;
 pub struct Dialog {
     pub id: String,
     pub fields: Map<String, Value>,
+    /// The document's ruler unit: what a bare number such as `12` means in a measurement field.
+    /// Set from the active document when the dialog is shown or confirmed (picas without one).
+    #[serde(skip)]
+    pub unit: Unit,
 }
 
 impl Dialog {
@@ -75,7 +79,7 @@ impl Dialog {
                 }
             }
         }
-        Dialog { id: id.into(), fields }
+        Dialog { id: id.into(), fields, unit: Unit::Picas }
     }
     fn s(&self, k: &str) -> String {
         match self.fields.get(k) {
@@ -87,7 +91,7 @@ impl Dialog {
     fn m(&self, k: &str) -> Option<f64> {
         match self.fields.get(k) {
             Some(Value::Number(n)) => n.as_f64(),
-            Some(Value::String(s)) => parse_measure(s, Unit::Picas).ok(),
+            Some(Value::String(s)) => parse_measure(s, self.unit).ok(),
             _ => None,
         }
     }
@@ -589,6 +593,50 @@ fn confirm_text_frame_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Val
 }
 
 /// File › Document Setup, filled from the document.
+/// The active document's ruler unit (picas without a document).
+fn doc_unit(app: &DesignApp) -> Unit {
+    app.session.active().map(|s| s.doc.settings.horizontal_units).unwrap_or(Unit::Picas)
+}
+
+/// Layout › Create Guides…: guides go on the page in view (or the parent page being edited), not
+/// on the first page, and the gutters are typed in the document's ruler unit.
+pub fn open_create_guides(app: &mut DesignApp) {
+    let unit = doc_unit(app);
+    let Some((spread, page)) = crate::canvas::current_spread_page(app) else { return };
+    let gutter = json!(format_measure(12.0, unit));
+    app.ui.dialog = Some(Dialog::new(
+        "createGuides",
+        json!({"rows": 0, "columns": 0, "rowGutter": gutter, "columnGutter": gutter, "fitTo": "margins", "removeExisting": false,
+            "spread": serde_json::to_value(spread).unwrap_or(json!(0)), "page": page}),
+    ));
+}
+
+/// Layout › Margins and Columns…: the margins and columns of the page in view (or of the parent
+/// page while parents are edited), shown and typed in the document's ruler unit.
+pub fn open_margins_and_columns(app: &mut DesignApp) {
+    let unit = doc_unit(app);
+    let parent = crate::canvas::current_parent_page(app);
+    let cur = crate::canvas::current_page(app).unwrap_or(0);
+    let Some(st) = app.session.active() else { return };
+    let page = match parent {
+        Some((pi, qi)) => st.doc.parents.get(pi).and_then(|s| s.pages.get(qi)),
+        None => st.doc.page(cur),
+    };
+    let Some(pg) = page else { return };
+    let fm = |v: f64| json!(format_measure(v, unit));
+    let mut f = json!({
+        "columns": pg.columns.count, "gutter": fm(pg.columns.gutter),
+        "marginTop": fm(pg.margins.top), "marginBottom": fm(pg.margins.bottom),
+        "marginInside": fm(pg.margins.inside), "marginOutside": fm(pg.margins.outside),
+        "adjustLayout": false, "allPages": false, "page": cur,
+    });
+    if let Some((pi, qi)) = parent {
+        f["parent"] = json!(pi);
+        f["parentPage"] = json!(qi);
+    }
+    app.ui.dialog = Some(Dialog::new("marginsAndColumns", f));
+}
+
 pub fn open_document_setup(app: &mut DesignApp) {
     let Ok(cur) = app.session.execute("layout.documentSetup", &json!({})) else { return };
     let units = app.session.active().map(|s| s.doc.settings.horizontal_units).unwrap_or(Unit::Picas);
@@ -1116,6 +1164,7 @@ fn check(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
 
 pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.dialog.clone() else { return };
+    d.unit = doc_unit(app);
     let mut result: Option<bool> = None;
     let alert_title = d.s("title");
     let title = match d.id.as_str() {
@@ -1125,6 +1174,8 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "frameSize" => crate::i18n::tr(&app.ui.language, "Rectangle"),
         "goToPage" => crate::i18n::tr(&app.ui.language, "Go to Page"),
         "insertTable" => crate::i18n::tr(&app.ui.language, "Create Table"),
+        "createGuides" => crate::i18n::tr(&app.ui.language, "Create Guides"),
+        "marginsAndColumns" => crate::i18n::tr(&app.ui.language, "Margins and Columns"),
         "textFrameOptions" => crate::i18n::tr(&app.ui.language, "Text Frame Options"),
         "documentSetup" => crate::i18n::tr(&app.ui.language, "Document Setup"),
         "findChange" => crate::i18n::tr(&app.ui.language, "Find/Change"),
@@ -1685,6 +1736,61 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                     ui.end_row();
                 });
             }
+            "createGuides" => {
+                let u = d.unit.suffix();
+                egui::Grid::new("cg").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    for (key, label, unit) in [
+                        ("rows", "Rows: Number", false),
+                        ("rowGutter", "Rows: Gutter", true),
+                        ("columns", "Columns: Number", false),
+                        ("columnGutter", "Columns: Gutter", true),
+                    ] {
+                        let text = crate::i18n::tr(&app.ui.language, label);
+                        ui.label(crate::rtl::widget(ui, if unit { format!("{text} ({u})") } else { text.to_string() }));
+                        text_field(ui, &mut d, key, 80.0);
+                        ui.end_row();
+                    }
+                    ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Fit Guides to")));
+                    combo(ui, &mut d, "fitTo", &[("margins", "Margins"), ("page", "Page")]);
+                    ui.end_row();
+                });
+                ui.add_space(4.0);
+                check(ui, &mut d, "removeExisting", crate::i18n::tr(&app.ui.language, "Remove Existing Ruler Guides"));
+                ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Applies to the page in view.")));
+                if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+                    ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+                }
+            }
+            "marginsAndColumns" => {
+                let u = d.unit.suffix();
+                egui::Grid::new("mac").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Columns")));
+                    text_field(ui, &mut d, "columns", 80.0);
+                    ui.end_row();
+                    for (key, label) in [
+                        ("gutter", "Gutter"),
+                        ("marginTop", "Top"),
+                        ("marginBottom", "Bottom"),
+                        ("marginInside", "Inside"),
+                        ("marginOutside", "Outside"),
+                    ] {
+                        // The unit is shown next to every measurement so it is never a guess.
+                        ui.label(crate::rtl::widget(ui, format!("{} ({})", crate::i18n::tr(&app.ui.language, label), u)));
+                        text_field(ui, &mut d, key, 80.0);
+                        ui.end_row();
+                    }
+                });
+                ui.add_space(4.0);
+                if d.fields.contains_key("parent") {
+                    ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Applies to the parent page in view.")));
+                } else {
+                    check(ui, &mut d, "allPages", crate::i18n::tr(&app.ui.language, "Apply to all pages"));
+                }
+                check(ui, &mut d, "adjustLayout", crate::i18n::tr(&app.ui.language, "Adjust Layout"));
+                if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+                    ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+                }
+            }
             "textFrameOptions" => {
                 seed_text_frame_options(app, &mut d);
                 text_frame_options_dialog(app, ui, &mut d);
@@ -1743,11 +1849,55 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
 
 /// Apply the open dialog.
 pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
-    let Some(d) = app.ui.dialog.take() else { return Err("no dialog open".into()) };
+    let Some(mut d) = app.ui.dialog.take() else { return Err("no dialog open".into()) };
+    d.unit = doc_unit(app);
     if d.id != "pdfImport" || !d.b("async") {
         app.cancel_pdf_import();
     }
     match d.id.as_str() {
+        "createGuides" => {
+            let (Some(row_gutter), Some(column_gutter)) =
+                (d.m("rowGutter").filter(|x| *x >= 0.0), d.m("columnGutter").filter(|x| *x >= 0.0))
+            else {
+                let mut d = d.clone();
+                d.fields.insert("status".into(), json!("Enter a valid gutter, e.g. 12 or 12 mm."));
+                app.ui.dialog = Some(d);
+                return Err("invalid gutter".into());
+            };
+            app.run(
+                "layout.createGuides",
+                json!({"rows": d.n("rows").unwrap_or(0.0).max(0.0) as u64, "columns": d.n("columns").unwrap_or(0.0).max(0.0) as u64,
+                    "rowGutter": row_gutter, "columnGutter": column_gutter, "fitTo": d.s("fitTo"),
+                    "removeExisting": d.b("removeExisting"), "spread": d.fields.get("spread").cloned().unwrap_or(json!(0)),
+                    "page": d.fields.get("page").cloned().unwrap_or(json!(0))}),
+            )
+        }
+        "marginsAndColumns" => {
+            // A value that does not parse is an error shown in the dialog, never a silent 0.
+            let mut v = Map::new();
+            for (k, key) in [("top", "marginTop"), ("bottom", "marginBottom"), ("inside", "marginInside"), ("outside", "marginOutside"), ("gutter", "gutter")] {
+                match d.m(key).filter(|x| *x >= 0.0) {
+                    Some(x) => {
+                        v.insert(k.into(), json!(x));
+                    }
+                    None => {
+                        let mut d = d.clone();
+                        d.fields.insert("status".into(), json!(format!("Enter a valid {k} value, e.g. 12 or 12 mm.")));
+                        app.ui.dialog = Some(d);
+                        return Err(format!("invalid {k}"));
+                    }
+                }
+            }
+            let gutter = v.remove("gutter").unwrap_or(json!(12.0));
+            let mut p = json!({"margins": v, "columns": d.n("columns").unwrap_or(1.0).max(1.0) as u64, "gutter": gutter, "adjustLayout": d.b("adjustLayout")});
+            if let Some(pi) = d.fields.get("parent").and_then(Value::as_u64) {
+                p["parent"] = json!(pi);
+                p["pages"] = json!([d.fields.get("parentPage").and_then(Value::as_u64).unwrap_or(0)]);
+            } else if !d.b("allPages") {
+                p["pages"] = json!([d.fields.get("page").and_then(Value::as_u64).unwrap_or(0)]);
+            }
+            app.run("layout.marginsAndColumns", p)
+        }
         "newDocument" => {
             let margins = json!({"top": d.m("marginTop").unwrap_or(36.0), "bottom": d.m("marginBottom").unwrap_or(36.0), "inside": d.m("marginInside").unwrap_or(36.0), "outside": d.m("marginOutside").unwrap_or(36.0)});
             app.run(
