@@ -1783,6 +1783,32 @@ fn em_box_first_baseline_in_a_latin_font_with_a_one_em_typo_box_follows_the_cap_
 }
 
 #[test]
+fn em_box_first_baseline_ignores_baseline_shift() {
+    use designcraft_doc::FirstBaseline;
+    let db = designcraft_fonts::FontDb::global();
+    // Source Sans 3's `BASE` em box tops 0.83 em above the baseline.
+    db.add_font(test_font("EmBoxShft 830", Some(&[])));
+    let (mut d, sid, fid) = doc_with("Hxg Hxg", Rect::new(36.0, 36.0, 300.0, 300.0), ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    st.format_chars(0..7, |f| {
+        f.over.font_family = Some("EmBoxShft 830".into());
+        f.over.font_style = Some("Regular".into());
+        f.over.size = Some(10.0);
+    });
+    st.format_chars(4..7, |f| f.over.baseline_shift = Some(1.0));
+    d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.first_baseline = FirstBaseline::EmboxHeight;
+    let frames = compose_story(&d, sid, &ComposeOptions::default()).frames;
+    let line = &frames[0].lines[0];
+    // The unshifted run's baseline stays 8.3 pt below the frame top; the shifted run is drawn 1 pt
+    // higher.
+    assert!((line.baseline - 36.0 - 8.3).abs() < 0.01, "{}", line.baseline);
+    let ys: Vec<f64> = line.glyphs.iter().map(|g| g.y).collect();
+    assert_eq!(ys.len(), 7, "{ys:?}");
+    assert!(ys[..3].iter().all(|y| y.abs() < 0.01), "{ys:?}");
+    assert!(ys[4..].iter().all(|y| (y + 1.0).abs() < 0.01), "{ys:?}");
+}
+
+#[test]
 fn ascent_first_baseline_falls_back_to_the_ascent_without_a_usable_typo_ascender() {
     let db = designcraft_fonts::FontDb::global();
     // No OS/2 table, a negative and an absurd typo ascender: the (hhea) ascent, 1 em.

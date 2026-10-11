@@ -2178,14 +2178,16 @@ fn line_metrics(
     let reference = src.iter().max_by(|a, b| a.size.total_cmp(&b.size));
     let mut own_text = false;
     for g in src {
-        let shift = g.shift + reference.map_or(0.0, |r| cjk_alignment_shift(g, r));
+        let align = reference.map_or(0.0, |r| cjk_alignment_shift(g, r));
+        let shift = g.shift + align;
         let up = shift.max(0.0);
         asc = asc.max(g.ascent + up);
         // A list's bullet or number doesn't raise the Ascent offset: only the line's own text does.
         if !g.list_label {
             own_text = true;
             tops.typo_ascent = tops.typo_ascent.max(g.typo_ascent + up);
-            tops.em = tops.em.max(em_box_top(&g.face, g.size) + up);
+            // The em box sits at the unshifted baseline: a baseline shift moves only the drawn glyphs.
+            tops.em = tops.em.max(em_box_top(&g.face, g.size) + align.max(0.0));
         }
         tops.cap = tops.cap.max(g.cap + up);
         tops.xh = tops.xh.max(g.xh + up);
