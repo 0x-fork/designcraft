@@ -11,6 +11,7 @@ pub mod canvas;
 pub mod chrome;
 pub mod control;
 pub mod credits;
+pub mod cursors;
 pub mod dialogs;
 pub mod dock;
 pub mod i18n;
@@ -510,6 +511,8 @@ pub struct DesignApp {
     last_time: f64,
     /// When recovery data was last written (seconds, egui time).
     pub last_recovery: f64,
+    /// The tool cursor bitmaps handed to the OS.
+    pub cursors: cursors::Images,
 }
 
 impl DesignApp {
@@ -547,6 +550,7 @@ impl DesignApp {
             native_shortcuts: Default::default(),
             last_time: 0.0,
             last_recovery: 0.0,
+            cursors: cursors::Images::default(),
         }
     }
 
