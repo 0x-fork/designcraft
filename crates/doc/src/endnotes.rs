@@ -108,6 +108,17 @@ impl Story {
         }
     }
 
+    /// Make the endnote list match the reference characters (after wholesale text changes).
+    pub fn fix_endnotes(&mut self) {
+        let n = self.text.matches(ENDNOTE_REF).count();
+        if n < self.endnotes.len() {
+            self.endnotes.truncate(n);
+        } else if n > self.endnotes.len() {
+            let k = self.endnotes.len();
+            self.endnotes_inserted(k, n - k);
+        }
+    }
+
     pub(crate) fn check_endnotes(&self) -> Result<(), String> {
         let n = self.text.matches(ENDNOTE_REF).count();
         if n != self.endnotes.len() {
