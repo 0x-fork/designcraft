@@ -278,6 +278,8 @@ pub fn system(c: Cursor) -> egui::CursorIcon {
         Cursor::ZoomOut => C::ZoomOut,
         Cursor::Eyedropper => C::Crosshair,
         Cursor::LoadedText | Cursor::LoadedGraphic => C::Copy,
+        Cursor::ThreadLink => C::Alias,
+        Cursor::Unthread => C::NoDrop,
         Cursor::NotAllowed => C::NotAllowed,
     }
 }
