@@ -38,7 +38,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "app.language",
         "Interface Language",
         None,
-        "{lang: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk} — menus and panel names (the macOS menu bar follows on the next launch)",
+        "{lang: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk|cs} — menus and panel names (the macOS menu bar follows on the next launch)",
     ),
     (
         "app.flattener",
@@ -265,6 +265,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.language|Português (Brasil)|{\"lang\": \"pt-br\"}",
             "ui:app.language|Italiano|{\"lang\": \"it\"}",
             "ui:app.language|Українська|{\"lang\": \"uk\"}",
+            "ui:app.language|Čeština|{\"lang\": \"cs\"}",
             "<",
             ">Transparency Flattener Presets",
             "ui:app.flattener|None (keep transparency)|{\"preset\": \"\"}",

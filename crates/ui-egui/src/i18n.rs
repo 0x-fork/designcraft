@@ -4,6 +4,7 @@
 use std::{collections::HashMap, sync::OnceLock};
 
 mod ar;
+mod cs;
 mod it;
 mod ja;
 mod pt_br;
@@ -21,6 +22,7 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("pt-br", "Português (Brasil)"),
     ("it", "Italiano"),
     ("uk", "Українська"),
+    ("cs", "Čeština"),
 ];
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
@@ -2837,6 +2839,7 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     static UKRAINIAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static PORTUGUESE_BR: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static ITALIAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    static CZECH: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     if lang == "ar" {
         return ARABIC.get_or_init(|| ar::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
     }
@@ -2856,6 +2859,9 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     if lang == "uk" {
         return UKRAINIAN.get_or_init(|| uk::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
     }
+    if lang == "cs" {
+        return CZECH.get_or_init(|| cs::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
+    }
     let Some(c) = column(lang) else { return s };
     TRANSLATIONS.get_or_init(|| TABLE.iter().copied().collect()).get(s).and_then(|row| row.get(c)).copied().unwrap_or(s)
 }
@@ -2864,6 +2870,9 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
 pub fn tr_context<'a>(lang: &str, s: &'a str, context: &str) -> &'a str {
     if lang == "uk" {
         return uk::CONTEXT.iter().find(|(key, scope, _)| *key == s && *scope == context).map_or_else(|| tr(lang, s), |(_, _, text)| text);
+    }
+    if lang == "cs" {
+        return cs::CONTEXT.iter().find(|(key, scope, _)| *key == s && *scope == context).map_or_else(|| tr(lang, s), |(_, _, text)| text);
     }
     tr(lang, s)
 }
@@ -2874,9 +2883,23 @@ pub(crate) fn ukrainian_catalog() -> Vec<&'static str> {
 }
 
 /// Count captions in Ukrainian put the category before the value so every count uses
-/// a grammatical form; other languages keep the existing value-first caption.
+/// a grammatical form; Czech picks the plural form for the count (1, 2–4, other); other
+/// languages keep the existing value-first caption.
 pub fn count_label(lang: &str, noun: &str, count: usize) -> String {
-    if lang == "uk" { format!("{}: {count}", tr(lang, noun)) } else { format!("{count} {}", tr(lang, noun)) }
+    if lang == "uk" {
+        return format!("{}: {count}", tr(lang, noun));
+    }
+    if lang == "cs"
+        && let Some((_, [one, few, other])) = cs::PLURALS.iter().find(|(key, _)| *key == noun)
+    {
+        let form = match count {
+            1 => one,
+            2..=4 => few,
+            _ => other,
+        };
+        return format!("{count} {form}");
+    }
+    format!("{count} {}", tr(lang, noun))
 }
 
 /// Localize reserved built-in style names only; user-defined names are document data.
