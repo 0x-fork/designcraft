@@ -243,7 +243,7 @@ impl Document {
                     st.xrefs.extend(other.xrefs.iter().cloned());
                     st.index_refs.extend(other.index_refs.iter().cloned());
                     st.objects.extend(other.objects.iter().cloned());
-                    st.rev += 1;
+                    st.rev = st.rev.wrapping_add(1);
                 }
                 let at = st.frames.iter().position(|f| *f == from).map_or(st.frames.len(), |p| p + 1);
                 for (k, f) in after.iter().enumerate() {
@@ -276,7 +276,7 @@ impl Document {
             it.content = Content::Text(TextFrame { story: fs, options: TextFrameOptions::default() });
         }
         if let Some(st) = self.story_mut(fs) {
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
         }
         Ok(())
     }
@@ -289,7 +289,7 @@ impl Document {
             let st = self.story_mut(sid).ok_or(DocError::NoStory(sid))?;
             let p = st.frames.iter().position(|f| *f == frame).ok_or(DocError::NoItem(frame))?;
             let tail = st.frames.split_off(p + 1);
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
             (tail, st.vertical, st.direction)
         };
         if tail.is_empty() {
@@ -399,7 +399,7 @@ impl Document {
         st.index_refs.clear();
         st.objects.clear();
         st.fix_marks();
-        st.rev += 1;
+        st.rev = st.rev.wrapping_add(1);
         Ok(())
     }
 }

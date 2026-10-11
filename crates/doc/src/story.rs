@@ -8,7 +8,9 @@
 //!   the "typing" format).
 //!
 //! Special characters: `\t` tab, `\u{2028}` forced line break, [`PAGE_NUMBER`], [`SECTION_MARKER`],
-//! [`COLUMN_BREAK`], [`FRAME_BREAK`], [`PAGE_BREAK`], `\u{AD}` discretionary hyphen,
+//! break characters ([`COLUMN_BREAK`], [`FRAME_BREAK`], [`PAGE_BREAK`], [`ODD_PAGE_BREAK`],
+//! [`EVEN_PAGE_BREAK`]; each ends its paragraph, so it is followed by `\n`, see
+//! [`is_break_char`]), `\u{AD}` discretionary hyphen,
 //! `\u{2011}` non-breaking hyphen, `\u{A0}` non-breaking space, [`INDENT_HERE`], [`RIGHT_INDENT_TAB`],
 //! [`TABLE_ANCHOR`] (a table, see [`crate::table`]), [`crate::notes::FOOTNOTE_REF`] (a footnote),
 //! [`crate::xref::ANCHOR_MARK`] / [`crate::xref::XREF_MARK`] (text anchor / cross-reference).
@@ -34,6 +36,30 @@ pub const PREV_PAGE_NUMBER: char = '\u{E008}';
 /// Anchor of a table: alone in its paragraph, whose [`ParaFormat::table`] names the table.
 pub const TABLE_ANCHOR: char = '\u{E009}';
 pub const FORCED_LINE_BREAK: char = '\u{2028}';
+pub const ODD_PAGE_BREAK: char = '\u{E011}';
+pub const EVEN_PAGE_BREAK: char = '\u{E012}';
+
+/// A column, frame or page break character. It ends its paragraph: the story stores it as the
+/// paragraph's last character, followed by the `\n` separator (also at the end of the story), and
+/// the next paragraph starts in the next column, frame or page. A break inside a paragraph (from
+/// an older document or a raw edit) still moves the rest of that paragraph on.
+pub fn is_break_char(c: char) -> bool {
+    matches!(c, COLUMN_BREAK | FRAME_BREAK | PAGE_BREAK | ODD_PAGE_BREAK | EVEN_PAGE_BREAK)
+}
+
+/// `text` with a `\n` after every break character that isn't followed by one. `next` is the
+/// character after the text (None at the end of the story).
+pub fn end_paragraphs_at_breaks(text: &str, next: Option<char>) -> String {
+    let mut out = String::with_capacity(text.len() + 1);
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if is_break_char(c) && chars.peek().copied().or(next) != Some('\n') {
+            out.push('\n');
+        }
+    }
+    out
+}
 
 pub const BASIC_PARAGRAPH: &str = "[Basic Paragraph]";
 pub const NO_CHAR_STYLE: &str = "[None]";
@@ -266,7 +292,24 @@ impl Story {
         // Character runs.
         self.splice_runs(pos, 0, text.len(), fmt);
         self.normalize();
-        self.rev += 1;
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// End the paragraph after every break character that isn't followed by a `\n`.
+    pub fn end_paragraphs_at_breaks(&mut self) {
+        let at: Vec<usize> = self
+            .text
+            .char_indices()
+            .filter(|&(i, c)| is_break_char(c) && !self.text[i + c.len_utf8()..].starts_with('\n'))
+            .map(|(i, c)| i + c.len_utf8())
+            .collect();
+        for &pos in at.iter().rev() {
+            let fmt = self.char_format_at(pos).clone();
+            self.insert_with_raw(pos, "\n", fmt);
+        }
+        if !at.is_empty() {
+            self.fix_tables();
+        }
     }
 
     /// Delete the byte range (clamped to char boundaries). Merged paragraphs keep the first one's format.
@@ -303,7 +346,7 @@ impl Story {
         self.remove_run_bytes(a, b - a);
         self.normalize();
         self.fix_tables();
-        self.rev += 1;
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// Replace a range with text (delete + insert using the format at the start of the range).
@@ -344,7 +387,7 @@ impl Story {
             start = end;
         }
         self.normalize();
-        self.rev += 1;
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// Apply `f` to every paragraph intersecting `range` (an empty range = the paragraph at it).
@@ -356,7 +399,7 @@ impl Story {
             f(p);
             p.table = table;
         }
-        self.rev += 1;
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// Plain text of a range.
@@ -536,6 +579,31 @@ mod tests {
         s.delete(1..2); // inside 'é' (2 bytes): clamps
         s.check().unwrap();
         s.format_chars(0..3, |f| f.over.size = Some(9.0));
+        s.check().unwrap();
+    }
+
+    #[test]
+    fn saved_revision_wraps_without_stopping_edits() {
+        let mut s = st("seed");
+        s.rev = u64::MAX;
+        // Revisions are serialized; a valid saved story can reach the boundary.
+        let bytes = serde_json::to_vec(&s).unwrap();
+        let mut s: Story = serde_json::from_slice(&bytes).unwrap();
+        s.insert(s.len(), " text");
+        assert_eq!(s.rev, 0);
+        assert_eq!(s.text, "seed text");
+        s.rev = u64::MAX;
+        s.delete(4..s.len());
+        assert_eq!(s.rev, 0);
+        assert_eq!(s.text, "seed");
+        s.rev = u64::MAX;
+        s.format_chars(0..s.len(), |f| f.over.size = Some(18.0));
+        assert_eq!(s.rev, 0);
+        assert_eq!(s.char_format_at(0).over.size, Some(18.0));
+        s.rev = u64::MAX;
+        s.format_paras(0..s.len(), |p| p.style = "Heading".into());
+        assert_eq!(s.rev, 0);
+        assert_eq!(s.paras[0].style, "Heading");
         s.check().unwrap();
     }
 

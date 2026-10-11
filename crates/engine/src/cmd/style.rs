@@ -547,7 +547,7 @@ fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &
                     rename_char_refs(&mut f.para, from, to);
                 }
             }
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
         });
     }
 }

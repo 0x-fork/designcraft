@@ -123,7 +123,7 @@ impl Story {
             }
             self.fix_tables();
         }
-        self.rev += 1;
+        self.rev = self.rev.wrapping_add(1);
         end
     }
 }
