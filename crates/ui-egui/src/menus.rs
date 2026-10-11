@@ -3621,6 +3621,67 @@ mod tests {
     }
 
     #[test]
+    fn paste_with_no_insertion_point_makes_a_text_frame_from_other_apps_text() {
+        // #518: text copied in another app pastes as a new, selected text frame; the text an
+        // object copy stands for still pastes the objects. One paste each way, with and without
+        // a native menu.
+        let selected_text = |app: &crate::DesignApp| {
+            let d = app.session.active().unwrap();
+            let it = d.doc.item(*d.selection.items.first()?)?;
+            Some(d.doc.story(it.text_frame()?.story)?.text.clone())
+        };
+        let ctx = egui::Context::default();
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        native_frame(&mut app, &ctx, vec![], None);
+        native_frame(&mut app, &ctx, vec![], None);
+        // The paste keys without a native menu: a paste event.
+        native_frame(&mut app, &ctx, vec![egui::Event::Paste("From elsewhere".into())], None);
+        assert_eq!(document_items(&app), (1, 1), "pasted once");
+        assert_eq!(selected_text(&app).as_deref(), Some("From elsewhere"));
+        let id = app.session.execute("frame.create", &json!({"rect": [72, 72, 200, 160]})).unwrap()["id"].clone();
+        app.session.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        let copied = native_frame(&mut app, &ctx, vec![egui::Event::Copy], None)
+            .platform_output
+            .commands
+            .into_iter()
+            .find_map(|c| match c {
+                egui::OutputCommand::CopyText(t) => Some(t),
+                _ => None,
+            })
+            .expect("copying objects puts text on the system clipboard");
+        native_frame(&mut app, &ctx, vec![egui::Event::Paste(copied)], None);
+        assert_eq!(document_items(&app), (3, 1));
+        assert_eq!(selected_text(&app), None, "the copied rectangle, not a text frame");
+
+        // A native menu: Paste reads the system clipboard.
+        let clip = std::rc::Rc::new(std::cell::RefCell::new(Some("Menu text".to_string())));
+        let read = clip.clone();
+        let services = crate::Services { clipboard_text: Some(Box::new(move || read.borrow().clone())), ..Default::default() };
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), services);
+        app.native_menu = true;
+        app.session.execute("file.new", &json!({})).unwrap();
+        native_frame(&mut app, &ctx, vec![], None);
+        native_frame(&mut app, &ctx, vec![], None);
+        native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        native_frame(&mut app, &ctx, vec![], None);
+        assert_eq!(document_items(&app), (1, 1), "pasted once");
+        assert_eq!(selected_text(&app).as_deref(), Some("Menu text"));
+        // Objects copied since that text was copied paste as objects.
+        let id = app.session.execute("frame.create", &json!({"rect": [72, 72, 200, 160]})).unwrap()["id"].clone();
+        app.session.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        native_frame(&mut app, &ctx, vec![], Some("edit.copy"));
+        native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        assert_eq!(document_items(&app), (3, 1));
+        assert_eq!(selected_text(&app), None, "the copied rectangle, not a text frame");
+        // Newer text from another app wins.
+        *clip.borrow_mut() = Some("Newer".into());
+        native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        assert_eq!(document_items(&app), (4, 1));
+        assert_eq!(selected_text(&app).as_deref(), Some("Newer"));
+    }
+
+    #[test]
     fn sample_scripts_run() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", &json!({})).unwrap();

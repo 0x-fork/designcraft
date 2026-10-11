@@ -150,6 +150,17 @@ pub fn current_spread(app: &DesignApp) -> Option<SpreadRef> {
     Some(layout.slots.get(current_slot(app, &layout)?)?.spread)
 }
 
+/// The spread nearest the view centre and the centre in that spread's coordinates.
+pub fn view_centre(app: &DesignApp) -> Option<(SpreadRef, Point)> {
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let slot = layout.slots.get(current_slot(app, &layout)?)?;
+    let v = app.view()?;
+    let r = app.canvas_rect?;
+    let c = Point::new(v.origin.x + r.width() as f64 / 2.0 / v.zoom, v.origin.y + r.height() as f64 / 2.0 / v.zoom);
+    Some((slot.spread, slot.to_spread(c)))
+}
+
 /// Absolute page index under the view centre.
 pub fn current_page(app: &DesignApp) -> Option<usize> {
     let st = app.session.active()?;
@@ -1954,13 +1965,14 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
             }
             // Without a native menu bar the copy and paste keys arrive only as these events.
             egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) if !app.native_menu => {
-                let id = match e {
-                    egui::Event::Copy => "edit.copy",
-                    egui::Event::Cut => "edit.cut",
-                    _ => "edit.paste",
+                let (id, params) = match e {
+                    egui::Event::Copy => ("edit.copy", serde_json::Value::Null),
+                    egui::Event::Cut => ("edit.cut", serde_json::Value::Null),
+                    egui::Event::Paste(t) => ("edit.paste", json!({"text": t})),
+                    _ => continue,
                 };
                 if crate::menus::enabled(app, id) {
-                    crate::menus::activate(app, id, &serde_json::Value::Null);
+                    crate::menus::activate(app, id, &params);
                 }
             }
             egui::Event::Key { key, pressed: true, modifiers, .. } => {

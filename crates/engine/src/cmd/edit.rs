@@ -20,13 +20,6 @@ fn has_clip(s: &Session) -> std::result::Result<(), String> {
     if s.clipboard.is_some() || text { Ok(()) } else { Err("clipboard is empty".into()) }
 }
 
-fn has_clip_or_text(s: &Session) -> std::result::Result<(), String> {
-    if s.active().is_some_and(|d| d.selection.text.is_some()) {
-        return Ok(());
-    }
-    has_clip(s)
-}
-
 fn has_selection_or_text(s: &Session) -> std::result::Result<(), String> {
     if s.active().and_then(|d| d.selection.text).is_some_and(|t| !t.is_caret()) {
         return Ok(());
@@ -89,6 +82,56 @@ fn paste_text(s: &mut Session, text: Option<String>, formatted: bool) -> Result<
     }
     let text = text.or_else(|| clip.map(|(_, p)| p)).ok_or_else(|| super::bad("edit.paste", "clipboard is empty"))?;
     s.execute("text.insert", &json!({"text": text.replace("\r\n", "\n").replace('\r', "\n"), "raw": true}))
+}
+
+/// Pasted text with no insertion point: a new text frame holding it, as wide as the first column
+/// of the page's margin area and as tall as the text (at most the margin area's height), centred
+/// on `at` (spread coordinates) or else on the margin area. The frame ends up selected.
+fn paste_text_frame(s: &mut Session, p: &Value, text: &str) -> Result<Value> {
+    use designcraft_geom::{Point, Rect, shapes};
+    const LIMIT: f64 = 1.0e5;
+    let sr = super::spread_param(p, "spread");
+    let at = super::point_param(p, "at")
+        .filter(|a| a.x.is_finite() && a.y.is_finite())
+        .map(|a| Point::new(a.x.clamp(-LIMIT, LIMIT), a.y.clamp(-LIMIT, LIMIT)));
+    let lid = s.doc()?.active_layer;
+    let cache = s.cache.clone();
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    s.edit(|d, sel| {
+        let sp = d.spread(sr).ok_or_else(|| super::bad("edit.paste", "no such spread"))?;
+        let page = at.and_then(|a| sp.page_at_x(a.x)).and_then(|i| sp.pages.get(i)).or_else(|| sp.pages.first());
+        let page = page.ok_or_else(|| super::bad("edit.paste", "the spread has no pages"))?;
+        let margins = page.margin_rect();
+        let column = page.column_rects().first().copied().unwrap_or(margins);
+        let w = column.width().max(12.0);
+        let max_h = margins.height().max(12.0);
+        let c = at.unwrap_or(Point::new(column.center().x, margins.center().y));
+        let rect = |h: f64| Rect::new(c.x - w / 2.0, c.y - h / 2.0, c.x + w / 2.0, c.y + h / 2.0);
+        let para = designcraft_doc::ParaFormat { style: d.styles.default_paragraph.clone(), ..Default::default() };
+        let (id, sid) = d.add_text_frame(sr, rect(max_h), lid, &text, para)?;
+        // Shrink to the composed text unless it already fills the frame.
+        let composed = cache.get(d, sid, None);
+        if !composed.is_overset()
+            && let Some(ft) = composed.frame(id)
+        {
+            let inset = d.item(id).and_then(|i| i.text_frame()).map_or(0.0, |tf| tf.options.inset[0] + tf.options.inset[2]);
+            let h = (ft.content_height + inset + 0.5).clamp(12.0, max_h);
+            if h.is_finite()
+                && h < max_h
+                && let Some(it) = d.item_mut(id)
+            {
+                it.path = shapes::rectangle(rect(h));
+                // Keep the full height if the last line no longer fits.
+                if cache.get(d, sid, None).is_overset()
+                    && let Some(it) = d.item_mut(id)
+                {
+                    it.path = shapes::rectangle(rect(max_h));
+                }
+            }
+        }
+        *sel = Selection::items(vec![id]);
+        Ok(json!({"id": id.0, "story": sid.0}))
+    })
 }
 
 fn strip_objects(st: &designcraft_doc::Story) -> designcraft_doc::Story {
@@ -237,11 +280,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paste",
             ["Edit"],
             Some("Cmd+V"),
-            "{inPlace?: bool, spread?: index (0), text?: the system clipboard's text (pastes it unless it is what was copied here)}",
-            has_clip_or_text,
+            "{inPlace?: bool, spread?: index (0), text?: the system clipboard's text (pastes it unless it is what was copied here; with no insertion point it becomes a new text frame), at?: [x, y] (spread coords: the new text frame's centre)}",
+            // The system clipboard may hold text from another app, so Paste is always available.
+            has_doc,
             |s, p| {
+                let text = super::str_param(p, "text").filter(|t| !t.is_empty());
                 if s.doc()?.selection.text.is_some() {
-                    return paste_text(s, super::str_param(p, "text").map(str::to_string), true);
+                    return paste_text(s, text.map(str::to_string), true);
+                }
+                if let Some(text) = text {
+                    return paste_text_frame(s, p, text);
                 }
                 let Some(clip) = s.clipboard.clone() else {
                     return Err(super::bad("edit.paste", "clipboard is empty"));
@@ -341,6 +389,46 @@ mod text_clipboard_tests {
     fn frame(s: &mut Session, text: &str) -> designcraft_doc::StoryId {
         let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": text})).unwrap();
         s.doc().unwrap().doc.item(ItemId(r["id"].as_u64().unwrap())).unwrap().text_frame().unwrap().story
+    }
+
+    #[test]
+    fn paste_text_with_no_insertion_point_makes_a_text_frame() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let items = |s: &Session| s.doc().unwrap().doc.spreads[0].items.len();
+        // Text from another app, nothing copied here: a new, selected text frame.
+        let r = s.execute("edit.paste", &json!({"text": "From elsewhere\r\nSecond line"})).unwrap();
+        let id = ItemId(r["id"].as_u64().unwrap());
+        let d = s.doc().unwrap();
+        assert_eq!(d.selection.items, vec![id]);
+        assert!(d.selection.text.is_none(), "selected as an object");
+        let it = d.doc.item(id).unwrap();
+        assert_eq!(d.doc.story(it.text_frame().unwrap().story).unwrap().text, "From elsewhere\nSecond line");
+        let page = &d.doc.spreads[0].pages[0];
+        let (b, m) = (it.bounds(), page.margin_rect());
+        assert!((b.width() - page.column_rects()[0].width()).abs() < 1e-6, "{b:?}");
+        assert!(b.height() < m.height() / 2.0, "fits two lines: {b:?}");
+        assert!((b.center().y - m.center().y).abs() < 1e-6, "{b:?}");
+        assert!(!s.cache.get(&d.doc, it.text_frame().unwrap().story, None).is_overset());
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(items(&s), 0, "one undo removes it");
+        // Centred on `at`; hostile numbers are clamped.
+        let r = s.execute("edit.paste", &json!({"text": "Here", "at": [200.0, 300.0]})).unwrap();
+        let b = s.doc().unwrap().doc.item(ItemId(r["id"].as_u64().unwrap())).unwrap().bounds();
+        assert!((b.center().x - 200.0).abs() < 1e-6 && (b.center().y - 300.0).abs() < 1e-6, "{b:?}");
+        assert!(s.execute("edit.paste", &json!({"text": "Far", "at": [1e300, -1e300], "spread": 99})).is_err());
+        s.execute("edit.paste", &json!({"text": "Far", "at": [1e300, -1e300]})).unwrap();
+        // Copied objects paste when no text is given.
+        s.execute("edit.deselectAll", &json!({})).unwrap();
+        let rect = s.execute("frame.create", &json!({"rect": [72, 72, 200, 160]})).unwrap()["id"].clone();
+        s.execute("selection.set", &json!({"ids": [rect]})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        let n = items(&s);
+        let r = s.execute("edit.paste", &json!({})).unwrap();
+        assert_eq!(r["ids"].as_array().unwrap().len(), 1);
+        assert_eq!(items(&s), n + 1);
+        assert!(s.doc().unwrap().doc.item(ItemId(r["ids"][0].as_u64().unwrap())).unwrap().text_frame().is_none());
+        s.doc().unwrap().doc.check().unwrap();
     }
 
     #[test]
