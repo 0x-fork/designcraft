@@ -1585,7 +1585,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Step and Repeat", "Duplizieren und versetzt einfügen"),
     ("Table of Contents", "Inhaltsverzeichnis"),
     ("Type on a Path Options", "Optionen für Text auf Pfad"),
-    ("Edit/Interface Language", "Bearbeiten/Sprache der Oberfläche"),
     ("Edit/Spelling", "Bearbeiten/Rechtschreibung"),
     ("Edit/Transparency Blend Space", "Bearbeiten/Transparenzfüllraum"),
     ("Edit/Transparency Flattener Presets", "Bearbeiten/Transparenzreduzierungsvorgaben"),

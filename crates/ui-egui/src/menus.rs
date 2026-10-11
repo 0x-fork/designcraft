@@ -48,7 +48,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "app.language",
         "Interface Language",
         None,
-        "{lang?: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk} — menus and panel names (the macOS menu bar follows on the next launch); without lang, opens Preferences, where it is the first setting",
+        "{lang?: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk|ru} — menus and panel names (the macOS menu bar follows at once); without lang, opens Preferences, where it is the first setting",
     ),
     (
         "app.flattener",
@@ -3146,11 +3146,7 @@ mod tests {
         assert_eq!(restored.language, "ru");
         assert_eq!(crate::i18n::tr(&restored.language, "File"), "Файл");
         assert_eq!(crate::i18n::tr(&restored.language, "A custom name"), "A custom name");
-        assert!(menu_tree().iter().flat_map(|(_, entries)| entries.iter()).any(|entry| {
-            matches!(entry, Item::Sub(label, children) if label == "Interface Language" && children.iter().any(|child| {
-                matches!(child, Item::Cmd { label, id, params, .. } if label == "Русский" && id == "app.language" && params["lang"] == "ru")
-            }))
-        }));
+        assert!(crate::i18n::LANGUAGES.contains(&("ru", "Русский")), "Preferences lists Russian by its own name");
     }
 
     #[test]

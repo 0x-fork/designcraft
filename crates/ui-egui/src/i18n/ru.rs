@@ -1567,7 +1567,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Step and Repeat", "Шаг и повтор"),
     ("Table of Contents", "Оглавление"),
     ("Type on a Path Options", "Параметры текста по контуру"),
-    ("Edit/Interface Language", "Редактирование/Язык интерфейса"),
     ("Edit/Spelling", "Редактирование/Орфография"),
     ("Edit/Transparency Blend Space", "Редактирование/Пространство наложения прозрачности"),
     ("Edit/Transparency Flattener Presets", "Редактирование/Стили сведения прозрачности"),

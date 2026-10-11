@@ -87,9 +87,9 @@ impl NativeMenu {
                 menus::activate_native(app, ctx, &cmd.clone(), &params.clone());
             }
         }
-        // Edit › Interface Language and Show CJK Features: the system menu bar follows at once,
-        // like the panels (the new menu replaces the old one as the application's menu before
-        // that one is dropped).
+        // Interface Language and Show CJK Features (set in Preferences or by `app.language`, or put
+        // back by Cancel): the system menu bar follows at once, like the panels (the new menu
+        // replaces the old one as the application's menu before that one is dropped).
         if app.ui.language != self.shown_for.0 || designcraft_ui_egui::cjk_features(app) != self.shown_for.1 {
             *self = Self::install(app);
         }
