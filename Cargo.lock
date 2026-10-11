@@ -2300,7 +2300,7 @@ checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 [[package]]
 name = "indd"
 version = "0.1.0"
-source = "git+https://github.com/aiongg/indd-utils?branch=main#bff0fd4dc689f7048de43c612ff95a152cd90867"
+source = "git+https://github.com/aiongg/indd-utils?branch=main#867c967a5ff0c19a9e3b5389f3bf8dacf802b8dd"
 
 [[package]]
 name = "indexmap"
