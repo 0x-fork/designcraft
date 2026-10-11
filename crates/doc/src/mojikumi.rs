@@ -19,9 +19,20 @@ impl Aki {
     }
 }
 
+/// Built-in base sets. They differ only at line boundaries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Base {
+    /// Opening punctuation at line start and closing punctuation at line end take ½ em.
+    LineEndHalfEm,
+    /// As `LineEndHalfEm`, but closing punctuation at line end keeps its full 1 em.
+    LineEndOneEm,
+    /// Punctuation keeps its full em at both line boundaries.
+    Chinese,
+}
+
 /// Resolved table; custom rows override the base preset in document order.
 pub struct Rules<'a> {
-    chinese: bool,
+    base: Base,
     rows: &'a [MojikumiAki],
     assumed_base: bool,
 }
@@ -33,16 +44,19 @@ impl<'a> Rules<'a> {
         let key = name.strip_prefix("MojikumiTable/").unwrap_or(name);
         let table = styles.mojikumi_tables.iter().find(|t| t.name == key);
         // A custom table whose base set is missing (IDML leaves `BasedOnMojikumiSet`
-        // out when it cannot name the base) keeps its rows on the half-em default set.
-        let assumed_base = table.is_some_and(|t| t.based_on.is_empty());
+        // out when it cannot name the base) or is `Nothing` keeps its rows on the
+        // half-em default set.
+        let baseless = |t: &crate::cjk::MojikumiTable| matches!(t.based_on.trim_start_matches("$ID/"), "" | "Nothing");
+        let assumed_base = table.is_some_and(baseless);
         let base = match table {
-            Some(t) if t.based_on.is_empty() => "LineEndAllOneHalfEmEnum",
+            Some(t) if baseless(t) => "LineEndAllOneHalfEmEnum",
             Some(t) => t.based_on.as_str(),
             None => key,
         };
-        let chinese = match base.trim_start_matches("$ID/") {
-            "SimpChineseDefault" | "TradChineseDefault" => true,
-            "LineEndAllOneHalfEmEnum" | "kMojikumiDefaultName1" => false,
+        let base_set = match base.trim_start_matches("$ID/") {
+            "SimpChineseDefault" | "TradChineseDefault" => Base::Chinese,
+            "LineEndAllOneHalfEmEnum" | "kMojikumiDefaultName1" => Base::LineEndHalfEm,
+            "LineEndAllOneEmEnum" | "kMojikumiDefaultName10" => Base::LineEndOneEm,
             _ => return Err(format!("unknown base preset `{base}`")),
         };
         let rows = table.map_or(&[][..], |t| t.overrides.as_slice());
@@ -58,7 +72,7 @@ impl<'a> Rules<'a> {
                 return Err("invalid spacing range or priority".into());
             }
         }
-        Ok(Some(Self { chinese, rows, assumed_base }))
+        Ok(Some(Self { base: base_set, rows, assumed_base }))
     }
 
     /// True when the table names no base set and the default one was used.
@@ -103,13 +117,14 @@ impl<'a> Rules<'a> {
                 discrete: row.does_not_float,
             };
         }
-        // Boundaries: Chinese keeps full punctuation; the half-em Japanese set
-        // trims opening punctuation at line start and closing punctuation at end.
+        // Boundaries: Chinese keeps full punctuation; the Japanese line-end sets
+        // trim opening punctuation at line start, and the half-em set also trims
+        // closing punctuation at line end.
         if matches!(left, 22 | 23) {
-            return Aki::fixed(if self.chinese { leading(right) } else { 0.0 });
+            return Aki::fixed(if self.base == Base::Chinese { leading(right) } else { 0.0 });
         }
         if right == 22 {
-            return Aki::fixed(if self.chinese { trailing(left) } else { 0.0 });
+            return Aki::fixed(if self.base == Base::LineEndHalfEm { 0.0 } else { trailing(left) });
         }
         let punctuation = trailing(left).max(leading(right));
         if punctuation > 0.0 {
@@ -220,5 +235,42 @@ mod tests {
         assert_ne!(class('１'), class('1'));
         assert_ne!(class('，'), class('、'));
         assert_ne!(class('「'), class('（'));
+    }
+
+    #[test]
+    fn one_em_line_end_set_keeps_closing_punctuation_full_at_line_end_only() {
+        let styles = Styles::default();
+        let one = Rules::resolve(&styles, "LineEndAllOneEmEnum").unwrap().unwrap();
+        let half = Rules::resolve(&styles, "LineEndAllOneHalfEmEnum").unwrap().unwrap();
+        assert_eq!(one.pair(class('。'), 22).desired, 0.5);
+        assert_eq!(one.pair(class('」'), 22).desired, 0.5);
+        assert_eq!(one.pair(22, class('（')).desired, 0.0);
+        assert_eq!(one.pair(class('。'), class('一')).desired, half.pair(class('。'), class('一')).desired);
+        assert!(Rules::resolve(&styles, "$ID/kMojikumiDefaultName10").unwrap().is_some());
+    }
+
+    #[test]
+    fn nothing_base_set_behaves_like_a_missing_base_set() {
+        let row = MojikumiAki {
+            target_class: 12,
+            side_class: 18,
+            after: true,
+            minimum: 0.25,
+            desired: 0.75,
+            maximum: 1.0,
+            priority: 2,
+            does_not_float: false,
+        };
+        let mut styles = Styles::default();
+        for (name, based_on) in [("Missing", ""), ("Nothing", "Nothing")] {
+            styles.mojikumi_tables.push(MojikumiTable { name: name.into(), based_on: based_on.into(), overrides: vec![row.clone()] });
+        }
+        let missing = Rules::resolve(&styles, "MojikumiTable/Missing").unwrap().unwrap();
+        let nothing = Rules::resolve(&styles, "MojikumiTable/Nothing").unwrap().unwrap();
+        assert!(nothing.assumed_base());
+        for (l, r) in [(12, 18), (22, class('（')), (class('。'), 22), (12, 12)] {
+            let (a, b) = (missing.pair(l, r), nothing.pair(l, r));
+            assert_eq!((a.min, a.desired, a.max, a.priority), (b.min, b.desired, b.max, b.priority), "{l}/{r}");
+        }
     }
 }

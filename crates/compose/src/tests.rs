@@ -4712,6 +4712,29 @@ fn mojikumi_does_not_restore_fullwidth_blanks_to_narrow_tracked_punctuation() {
     }
 }
 
+#[test]
+fn mojikumi_one_em_line_end_set_sets_closing_punctuation_full_width_at_line_end() {
+    let family = "Mojikumi Full Stop";
+    let font = designcraft_fonts::testing::font_mapping(family, &[('（', '‰'), ('一', '‰'), ('。', '‰')]).unwrap();
+    designcraft_fonts::FontDb::global().add_font(font);
+    let text = "（一。";
+    let (mut d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, 200.0, 100.0), ParaAttrs::default());
+    d.story_mut(sid).unwrap().format_chars(0..text.len(), |f| f.over.font_family = Some(family.into()));
+    // Advances of the opening bracket at line start and the full stop at line end.
+    let mut edges = |set: &str| {
+        d.story_mut(sid).unwrap().paras[0].para.mojikumi = Some(set.into());
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        let line = all_lines(&cs)[0];
+        let adv = |c| line.glyphs.iter().find(|g| g.rendered_char == c).map(|g| (g.adv, g.face.units_per_em() * g.sx)).unwrap();
+        (adv('（').0, adv('。').0, adv('。').1)
+    };
+    let (open, stop, em) = edges("Nothing");
+    let half = edges("LineEndAllOneHalfEmEnum");
+    let one = edges("LineEndAllOneEmEnum");
+    assert!((open - half.0 - em * 0.5).abs() < 0.01 && (stop - half.1 - em * 0.5).abs() < 0.01, "half-em set: {half:?} of {open}/{stop}");
+    assert!((open - one.0 - em * 0.5).abs() < 0.01 && (stop - one.1).abs() < 0.01, "one-em set: {one:?} of {open}/{stop}");
+}
+
 fn ruled(text: &str, rect: Rect, columns: u32, edit: impl FnOnce(&mut Document, StoryId)) -> (Document, ItemId, Vec<Rect>) {
     let (mut d, sid, fid) = doc_with(text, rect, ParaAttrs::default());
     {

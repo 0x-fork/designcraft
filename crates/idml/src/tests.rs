@@ -1467,6 +1467,71 @@ fn cjk_mojikumi_table_without_base_set_applies_its_rows() {
     assert_eq!(back.styles.mojikumi_tables, d.styles.mojikumi_tables);
 }
 
+/// `BasedOnMojikumiSet="Nothing"` names no base set: the table resolves as one
+/// without the attribute, and the value survives export.
+#[test]
+fn cjk_mojikumi_table_based_on_nothing_matches_a_table_without_base_set() {
+    let row = r#"<OverrideMojikumiAkiType TargetMojikumiClass="12" SideMojikumiClass="18" SideIsAfterTarget="true" Minimum="0.25" Desired="0.75" Maximum="1" CompressionPriority="2" AkiDoesNotFloat="false"/>"#;
+    let map = DESIGNMAP.replace("</Document>", &format!(r#"<MojikumiTable Self="uMojikumi2" Name="Baseless"><Properties><OverrideMojikumiAkiList>{row}</OverrideMojikumiAkiList></Properties></MojikumiTable>
+    <MojikumiTable Self="uMojikumi3" Name="NoBase" BasedOnMojikumiSet="Nothing"><Properties><OverrideMojikumiAkiList>{row}</OverrideMojikumiAkiList></Properties></MojikumiTable></Document>"#));
+    let story = STORY.replace("<ParagraphStyleRange ", "<ParagraphStyleRange Mojikumi=\"uMojikumi3\" ");
+    let bytes = zip_files(&[
+        ("designmap.xml", &map),
+        ("Resources/Graphic.xml", GRAPHIC),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", PREFS),
+        ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+        ("Spreads/Spread_sp1.xml", SPREAD),
+        ("Stories/Story_s1.xml", &story),
+    ]);
+    let d = import_idml(&bytes).unwrap();
+    let name = d.stories.values().flat_map(|s| &s.paras).find_map(|p| p.para.mojikumi.clone()).unwrap();
+    assert_eq!(name, "MojikumiTable/NoBase");
+    let nothing = designcraft_doc::mojikumi::Rules::resolve(&d.styles, &name).unwrap().unwrap();
+    let missing = designcraft_doc::mojikumi::Rules::resolve(&d.styles, "MojikumiTable/Baseless").unwrap().unwrap();
+    assert!(nothing.assumed_base());
+    let close = designcraft_doc::mojikumi::class('。');
+    for (l, r) in [(12, 18), (22, designcraft_doc::mojikumi::class('（')), (close, 22), (close, 12)] {
+        let (a, b) = (missing.pair(l, r), nothing.pair(l, r));
+        assert_eq!((a.min, a.desired, a.max, a.priority), (b.min, b.desired, b.max, b.priority), "{l}/{r}");
+    }
+    let back = import_idml(&export_idml(&d)).unwrap();
+    assert_eq!(back.styles.mojikumi_tables, d.styles.mojikumi_tables);
+    assert_eq!(back.styles.mojikumi_tables[1].based_on, "Nothing");
+}
+
+/// The built-in `LineEndAllOneEmEnum` set applies directly and as a custom
+/// table's base: closing punctuation at line end keeps its full em.
+#[test]
+fn cjk_mojikumi_line_end_all_one_em_set_applies_and_round_trips() {
+    let map = DESIGNMAP.replace("</Document>", r#"<MojikumiTable Self="uMojikumi4" Name="OneEm" BasedOnMojikumiSet="LineEndAllOneEmEnum"><Properties><OverrideMojikumiAkiList>
+    <OverrideMojikumiAkiType TargetMojikumiClass="12" SideMojikumiClass="18" SideIsAfterTarget="true" Minimum="0.25" Desired="0.75" Maximum="1" CompressionPriority="2" AkiDoesNotFloat="false"/>
+    </OverrideMojikumiAkiList></Properties></MojikumiTable></Document>"#);
+    let story = STORY.replacen("<ParagraphStyleRange ", "<ParagraphStyleRange Mojikumi=\"$ID/LineEndAllOneEmEnum\" ", 1);
+    let bytes = zip_files(&[
+        ("designmap.xml", &map),
+        ("Resources/Graphic.xml", GRAPHIC),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", PREFS),
+        ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+        ("Spreads/Spread_sp1.xml", SPREAD),
+        ("Stories/Story_s1.xml", &story),
+    ]);
+    let d = import_idml(&bytes).unwrap();
+    let name = d.stories.values().flat_map(|s| &s.paras).find_map(|p| p.para.mojikumi.clone()).unwrap();
+    let close = designcraft_doc::mojikumi::class('。');
+    for name in [name.as_str(), "MojikumiTable/OneEm"] {
+        let rules = designcraft_doc::mojikumi::Rules::resolve(&d.styles, name).unwrap().unwrap();
+        assert!(!rules.assumed_base(), "{name}");
+        assert_eq!(rules.pair(close, 22).desired, 0.5, "{name}");
+        assert_eq!(rules.pair(22, designcraft_doc::mojikumi::class('（')).desired, 0.0, "{name}");
+    }
+    let back = import_idml(&export_idml(&d)).unwrap();
+    assert_eq!(back.styles.mojikumi_tables, d.styles.mojikumi_tables);
+    let back_name = back.stories.values().flat_map(|s| &s.paras).find_map(|p| p.para.mojikumi.clone()).unwrap();
+    assert_eq!(back_name, name);
+}
+
 #[test]
 fn arabic_controls_import_independent_xml_and_round_trip() {
     let story = r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">
