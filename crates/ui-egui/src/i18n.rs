@@ -2855,6 +2855,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Show Similar Fonts",
         ["Ähnliche Schriften anzeigen", "Afficher les polices semblables", "Mostrar fuentes similares", "類似フォントを表示", "显示相似字体"],
     ),
+    ("Loading fonts…", ["Schriften werden geladen…", "Chargement des polices…", "Cargando fuentes…", "フォントを読み込み中…", "正在加载字体…"]),
     ("Show Styles", ["Schnitte einblenden", "Afficher les styles", "Mostrar estilos", "スタイルを表示", "显示样式"]),
     ("Hide Styles", ["Schnitte ausblenden", "Masquer les styles", "Ocultar estilos", "スタイルを隠す", "隐藏样式"]),
     ("TrueType font", ["TrueType-Schrift", "Police TrueType", "Fuente TrueType", "TrueType フォント", "TrueType 字体"]),
