@@ -2243,9 +2243,11 @@ fn satisfiable_keep_chain_still_moves_together_to_the_next_frame() {
     assert_eq!(cs.frame(second).unwrap().lines.iter().map(|l| l.para).collect::<Vec<_>>(), [1, 2, 3]);
 }
 
-/// OS/2 field offsets: sTypoAscender, sxHeight, sCapHeight.
+/// OS/2 field offsets: sTypoAscender, sTypoDescender, the high half of ulCodePageRange1, sxHeight,
+/// sCapHeight.
 const TYPO_ASCENDER: usize = 68;
 const TYPO_DESCENDER: usize = 70;
+const CODE_PAGES_HIGH: usize = 78;
 const X_HEIGHT: usize = 86;
 const CAP_HEIGHT: usize = 88;
 
@@ -2367,8 +2369,12 @@ fn em_box_first_baseline_follows_base_then_the_typo_box_or_the_cap_height() {
         db.add_font(b);
         db.face(family, "Regular").declared_em_box()
     };
-    // Typo ascender − descender = 1 em: the typo ascender is the top.
-    assert_eq!(add("EmBoxTypo 850", false, &[(TYPO_ASCENDER, 850), (TYPO_DESCENDER, -150)]), Some((850.0, -150.0)));
+    // Typo ascender − descender = 1 em in a CJK font (JIS code page, bit 17): the typo ascender is
+    // the top.
+    let typo = [(TYPO_ASCENDER, 850), (TYPO_DESCENDER, -150)];
+    assert_eq!(add("EmBoxTypo 850", false, &[typo[0], typo[1], (CODE_PAGES_HIGH, 1 << 1)]), Some((850.0, -150.0)));
+    // In a Latin font the cap height decides: 0.5 em + 660 / 2.
+    assert_eq!(add("EmBoxLatn 850", false, &typo), Some((830.0, -170.0)));
     // Otherwise the em box is centred on half the cap height: 0.5 em + 600 / 2.
     assert_eq!(add("EmBoxCapH 600", false, &[(TYPO_ASCENDER, 700), (CAP_HEIGHT, 600)]), Some((800.0, -200.0)));
     // No OS/2 cap height: the H glyph's top, 656.
@@ -2391,13 +2397,43 @@ fn em_box_first_baseline_follows_base_then_the_typo_box_or_the_cap_height() {
     let close = |a: f64, b: f64| (a - b).abs() < 0.01;
     let asc = first("EmBoxCapH 600", [10.0; 2], FirstBaseline::Ascent);
     assert!(close(asc, 7.0), "{asc}");
-    for (family, top) in [("EmBoxTypo 850", 8.5), ("EmBoxCapH 600", 8.0), ("EmBoxGlyphH 0", 8.28), ("EmBoxBase 850", 8.3)] {
+    for (family, top) in [("EmBoxTypo 850", 8.5), ("EmBoxLatn 850", 8.3), ("EmBoxCapH 600", 8.0), ("EmBoxGlyphH 0", 8.28), ("EmBoxBase 850", 8.3)] {
         let emb = first(family, [10.0; 2], FirstBaseline::EmboxHeight);
         assert!(close(emb, top), "{family}: {emb}");
     }
     // A mixed first line takes its largest size.
     let emb = first("EmBoxCapH 600", [10.0, 20.0], FirstBaseline::EmboxHeight);
     assert!(close(emb, 16.0), "{emb}");
+}
+
+#[test]
+fn em_box_first_baseline_in_a_latin_font_with_a_one_em_typo_box_follows_the_cap_height() {
+    use designcraft_doc::FirstBaseline;
+    // DejaVu Serif: 2048 units per em, typo ascender 1556 and descender -492 (one em), cap height
+    // 1493. Read from the system fonts; the test skips where it isn't installed.
+    let Some(bytes) = designcraft_fonts::system_font_dirs().iter().find_map(|dir| {
+        ["truetype/dejavu/DejaVuSerif.ttf", "dejavu/DejaVuSerif.ttf", "DejaVuSerif.ttf"].iter().find_map(|p| std::fs::read(dir.join(p)).ok())
+    }) else {
+        eprintln!("skipped: DejaVu Serif isn't installed");
+        return;
+    };
+    let db = designcraft_fonts::FontDb::global();
+    db.add_font(bytes);
+    let face = db.face("DejaVu Serif", "Book");
+    assert_eq!(face.family, "DejaVu Serif");
+    let (mut d, sid, fid) = doc_with("Hxg Hxg", Rect::new(36.0, 36.0, 300.0, 300.0), ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    let n = st.len();
+    st.format_chars(0..n, |f| {
+        f.over.font_family = Some("DejaVu Serif".into());
+        f.over.font_style = Some("Book".into());
+        f.over.size = Some(10.0);
+    });
+    d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.first_baseline = FirstBaseline::EmboxHeight;
+    let first = compose_story(&d, sid, &ComposeOptions::default()).frames[0].lines[0].baseline - 36.0;
+    // 0.5 em + cap height / 2, not the 1556-unit typo ascender (7.60 pt).
+    let expected = 5.0 + 1493.0 / 2048.0 * 5.0;
+    assert!((first - expected).abs() < 0.01, "{first}, expected {expected}");
 }
 
 #[test]

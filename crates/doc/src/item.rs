@@ -324,8 +324,9 @@ pub enum FirstBaseline {
     Leading,
     XHeight,
     Fixed,
-    /// The top of the font's em box: its `BASE` em box; else its OS/2 typo ascender when the typo
-    /// ascender and descender span one em; else half an em above half the cap height.
+    /// The top of the font's em box: its `BASE` em box; else, for a CJK font, its OS/2 typo
+    /// ascender when the typo ascender and descender span one em; else half an em above half the
+    /// cap height.
     EmboxHeight,
 }
 
