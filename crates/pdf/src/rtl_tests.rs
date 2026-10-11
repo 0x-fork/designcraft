@@ -168,6 +168,7 @@ fn kashidas_extract_as_no_text() {
     let bytes = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
     let words: Vec<String> = extract_text(&bytes)[0].split([' ', '\u{FFFD}']).filter(|w| !w.is_empty()).map(str::to_string).collect();
     assert!(words.iter().all(|w| w == "بسم" || w == "الله"), "{words:?}");
+    assert_eq!(opened_inside_actual_text(&bytes), 0);
     let spans = line_actual_texts(&bytes);
     assert!(spans.len() > 1 && spans.iter().all(|t| !t.contains('\u{640}') && text.contains(t.trim())), "{spans:?}");
 }
@@ -187,4 +188,49 @@ fn arabic_ligatures_extract_their_letters() {
     let bytes = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
     assert_eq!(extract_text(&bytes)[0], text);
     assert_eq!(line_actual_texts(&bytes), [text]);
+}
+
+/// How many marked-content sections the first page opens while an ActualText span is open.
+/// Viewers such as poppler drop the text before an ActualText span nested in another.
+fn opened_inside_actual_text(bytes: &[u8]) -> usize {
+    use hayro_syntax::content::ops::TypedInstruction;
+    use hayro_syntax::object::Object;
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).expect("parse");
+    let page = &pdf.pages()[0];
+    let (mut open, mut nested) = (Vec::new(), 0);
+    let mut ops = page.typed_operations();
+    while let Some(op) = ops.next() {
+        let actual = match op {
+            TypedInstruction::BeginMarkedContentWithProperties(op) => matches!(op.1, Object::Dict(d) if d.contains_key(b"ActualText")),
+            TypedInstruction::BeginMarkedContent(_) => false,
+            TypedInstruction::EndMarkedContent(_) => {
+                open.pop();
+                continue;
+            }
+            _ => continue,
+        };
+        nested += usize::from(open.contains(&true));
+        open.push(actual);
+    }
+    nested
+}
+
+#[test]
+fn mark_clusters_in_right_to_left_lines_open_no_span_of_their_own() {
+    // Shadda clusters on contextual forms and pointed letters, in a system font with Arabic and
+    // Hebrew (skipped without one): krilla gives such clusters an ActualText span of their own.
+    let lines = ["سيّد الكلّ مُحَمَّد", "ישראל אַבְרָהָם יִצְחָק"];
+    let mut d = doc(&lines.join("\n"), designcraft_fonts::DEFAULT_FAMILY, Rect::new(36.0, 36.0, 576.0, 300.0), rtl());
+    d.settings.glyph_fallback = true;
+    let sid = *d.stories.keys().next().unwrap();
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let glyphs: Vec<_> = cs.frames[0].lines.iter().flat_map(|l| &l.glyphs).collect();
+    if glyphs.iter().any(|g| g.gid == 0) || !glyphs.windows(2).any(|w| w[1].len == 0 && w[1].byte == w[0].byte) {
+        return;
+    }
+    for tagged in [false, true] {
+        let bytes = export_pdf(&d, &Cache::new(), &PdfOptions { tagged, ..PdfOptions::default() }).unwrap();
+        assert_eq!(opened_inside_actual_text(&bytes), 0, "tagged: {tagged}");
+        assert_eq!(line_actual_texts(&bytes), lines, "tagged: {tagged}");
+    }
 }

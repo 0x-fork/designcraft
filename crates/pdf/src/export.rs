@@ -162,6 +162,8 @@ pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) 
         story_tags: HashMap::new(),
         tag_story: None,
         para_tags: HashMap::new(),
+        in_line_span: false,
+        to_unicode: HashMap::new(),
     };
     if ex.rgb_only {
         ex.warn("PDF/A: CMYK colours were converted to RGB (no CMYK output intent profile is available yet)");
@@ -339,6 +341,8 @@ pub fn export_booklet(doc: &Document, cache: &Cache, opts: &BookletOptions) -> R
         story_tags: HashMap::new(),
         tag_story: None,
         para_tags: HashMap::new(),
+        in_line_span: false,
+        to_unicode: HashMap::new(),
     };
     let pairs = booklet_pairs(n, opts.kind);
     // Sheet size from the largest page.
@@ -470,6 +474,11 @@ pub(crate) struct Exporter<'a> {
     pub(crate) tag_story: Option<designcraft_doc::StoryId>,
     /// Marked content of each (story, paragraph index).
     pub(crate) para_tags: HashMap<(designcraft_doc::StoryId, usize), Vec<Identifier>>,
+    /// While a line's ActualText span is open (no marked content may open inside it).
+    pub(crate) in_line_span: bool,
+    /// The text krilla maps each embedded glyph to. It keeps a glyph's first mapping and wraps a
+    /// glyph drawn with other text in an ActualText span.
+    pub(crate) to_unicode: HashMap<(krilla::text::Font, u32), String>,
 }
 
 enum TagEntry {
@@ -1579,6 +1588,8 @@ mod image_content_cache_tests {
             story_tags: HashMap::new(),
             tag_story: None,
             para_tags: HashMap::new(),
+            in_line_span: false,
+            to_unicode: HashMap::new(),
         }
     }
     #[test]

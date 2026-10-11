@@ -184,17 +184,18 @@ impl Exporter<'_> {
         }
     }
 
-    /// A glyph run, tagged under its paragraph while a story is being tagged.
+    /// A glyph run, tagged under its paragraph while a story is being tagged (inside a line span,
+    /// the span is its tag: marked content can't nest).
     fn tagged_run(&mut self, s: &mut Surface, cs: &ComposedStory, gs: &[PlacedGlyph], baseline: f64, story: &str) {
         match self.tag_story {
-            Some(sid) => {
+            Some(sid) if !self.in_line_span => {
                 let pi = self.doc.story(sid).map_or(0, |st| st.para_at(gs[0].byte.min(st.len())));
                 let id = s.start_tagged(ContentTag::Span(SpanTag::empty()));
                 self.run(s, cs, gs, baseline, story);
                 s.end_tagged();
                 self.para_tags.entry((sid, pi)).or_default().push(id);
             }
-            None => self.run(s, cs, gs, baseline, story),
+            _ => self.run(s, cs, gs, baseline, story),
         }
     }
 
@@ -224,6 +225,7 @@ impl Exporter<'_> {
         for l in &ft.lines {
             let gs = &l.glyphs;
             let line_span = self.start_rtl_line(s, cs, ft, gs, story);
+            self.in_line_span = line_span;
             let mut i = 0;
             while i < gs.len() {
                 let g = &gs[i];
@@ -251,6 +253,7 @@ impl Exporter<'_> {
             }
             if line_span {
                 s.end_tagged();
+                self.in_line_span = false;
             }
         }
         self.as_artifact(s, |me, s| {
@@ -443,28 +446,87 @@ impl Exporter<'_> {
         };
         let (text, mut ranges) = self.run_text(glyphs, story);
         let order = split_clusters(glyphs, &text, &mut ranges);
+        let (text, ranges, cuts) = if self.in_line_span {
+            self.line_span_text(&font, glyphs, &order, &text, &ranges)
+        } else {
+            self.note_unicode(&font, order.iter().filter_map(|&i| Some((glyphs.get(i)?.gid, ranges.get(i)?.clone()))), &text);
+            (text, ranges, Vec::new())
+        };
         let k = 1.0 / (hs * size);
         // Glyphs are placed absolutely: each advance reaches the next glyph drawn, a vertical offset
         // (a mark above or below its base) is undone by the skew so it lands where it was composed.
-        let kg: Vec<KrillaGlyph> = order
-            .iter()
-            .enumerate()
-            .filter_map(|(n, &i)| {
-                let g = glyphs.get(i)?;
-                let next = order.get(n + 1).and_then(|&m| glyphs.get(m)).map_or(g.x + g.adv, |m| m.x);
-                let dy = g.y - g0.y;
-                let r = ranges.get(i)?.clone();
-                Some(KrillaGlyph::new(GlyphId::new(g.gid), ((next - g.x) * k) as f32, (tan * dy * k) as f32, (-dy / size) as f32, 0.0, r, None))
-            })
-            .collect();
-        let start = order.first().and_then(|&i| glyphs.get(i)).map_or(0.0, |g| (g.x - g0.x) / hs);
+        let glyph = |n: usize| {
+            let g = glyphs.get(*order.get(n)?)?;
+            let next = order.get(n + 1).and_then(|&m| glyphs.get(m)).map_or(g.x + g.adv, |m| m.x);
+            let dy = g.y - g0.y;
+            let r = ranges.get(*order.get(n)?)?.clone();
+            Some(KrillaGlyph::new(GlyphId::new(g.gid), ((next - g.x) * k) as f32, (tan * dy * k) as f32, (-dy / size) as f32, 0.0, r, None))
+        };
         s.push_transform(&tf(origin));
         s.set_fill(fill.map(|c| solid_fill(c, 1.0)));
         s.set_stroke(stroke.map(|c| Stroke { paint: c.into(), width: st.stroke_weight as f32, ..Default::default() }));
-        s.draw_glyphs(Point::from_xy(start as f32, 0.0), &kg, font, &text, size as f32, false);
+        let mut from = 0;
+        for to in cuts.into_iter().chain([order.len()]) {
+            let kg: Vec<KrillaGlyph> = (from..to).filter_map(glyph).collect();
+            let start = order.get(from).and_then(|&i| glyphs.get(i)).map_or(0.0, |g| (g.x - g0.x) / hs);
+            s.draw_glyphs(Point::from_xy(start as f32, 0.0), &kg, font.clone(), &text, size as f32, false);
+            from = to;
+        }
         s.set_fill(None);
         s.set_stroke(None);
         s.pop();
+    }
+
+    /// Record what krilla maps the glyphs of one draw call to, given in drawing order: the first
+    /// text a glyph is drawn with, except on the glyphs of a cluster after its first. (krilla maps
+    /// every glyph of a cluster only for PDF/A-a, -u and PDF/UA, which exports don't use.)
+    fn note_unicode(&mut self, font: &Font, glyphs: impl IntoIterator<Item = (u32, Range<usize>)>, text: &str) {
+        let mut prev = None;
+        for (gid, r) in glyphs {
+            if prev.as_ref() != Some(&r)
+                && let Some(t) = text.get(r.clone())
+            {
+                self.to_unicode.entry((font.clone(), gid)).or_insert_with(|| t.to_string());
+            }
+            prev = Some(r);
+        }
+    }
+
+    /// Text for a run drawn inside a line span, where krilla must not open ActualText spans of its
+    /// own (it does for a glyph drawn with other text than its font maps it to, and for glyphs in a
+    /// row that share their text). Each glyph gets the text its font maps it to, else its own text,
+    /// a cluster's text going to its first glyph. Returns the text, each glyph's range in it, and
+    /// the positions in `order` where the run must be split into separate draw calls because two
+    /// glyphs in a row have the same empty range.
+    fn line_span_text(
+        &mut self,
+        font: &Font,
+        glyphs: &[PlacedGlyph],
+        order: &[usize],
+        text: &str,
+        ranges: &[Range<usize>],
+    ) -> (String, Vec<Range<usize>>, Vec<usize>) {
+        let mut out = String::new();
+        let mut out_ranges = vec![0..0; glyphs.len()];
+        let mut cuts = Vec::new();
+        let (mut prev, mut prev_out) = (None, None);
+        for (n, &i) in order.iter().enumerate() {
+            let (Some(g), Some(r)) = (glyphs.get(i), ranges.get(i)) else { continue };
+            let own = if prev == Some(r) { "" } else { text.get(r.clone()).unwrap_or_default() };
+            let mapped = self.to_unicode.entry((font.clone(), g.gid)).or_insert_with(|| own.to_string());
+            let a = out.len();
+            out.push_str(mapped);
+            let range = a..out.len();
+            if prev_out.as_ref() == Some(&range) {
+                cuts.push(n);
+            }
+            if let Some(slot) = out_ranges.get_mut(i) {
+                *slot = range.clone();
+            }
+            prev = Some(r);
+            prev_out = Some(range);
+        }
+        (out, out_ranges, cuts)
     }
 
     /// Fallback for faces krilla can't embed: glyph outlines as paths.
@@ -507,23 +569,31 @@ impl Exporter<'_> {
         let Some(font) = self.font(&face) else { return };
         let shaped = designcraft_fonts::shape(&face, text, &[], |c| c);
         let upem = face.upem as f32;
-        let glyphs: Vec<KrillaGlyph> = shaped
+        let ranges: Vec<(u32, Range<usize>)> = shaped
             .iter()
             .enumerate()
             .map(|(i, g)| {
                 let end = shaped.iter().skip(i + 1).map(|n| n.cluster).find(|c| *c != g.cluster).unwrap_or(text.len());
                 let end = if end > g.cluster { end } else { text.len() };
+                (g.gid, g.cluster..end)
+            })
+            .collect();
+        let glyphs: Vec<KrillaGlyph> = shaped
+            .iter()
+            .zip(&ranges)
+            .map(|(g, (_, r))| {
                 KrillaGlyph::new(
                     GlyphId::new(g.gid),
                     g.x_advance as f32 / upem,
                     g.x_offset as f32 / upem,
                     g.y_offset as f32 / upem,
                     0.0,
-                    g.cluster..end,
+                    r.clone(),
                     None,
                 )
             })
             .collect();
+        self.note_unicode(&font, ranges, text);
         s.set_stroke(None);
         s.set_fill(Some(solid_fill(color, 1.0)));
         s.draw_glyphs(Point::from_xy(at.0 as f32, at.1 as f32), &glyphs, font, text, size as f32, false);
