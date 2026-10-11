@@ -68,8 +68,8 @@ pub fn import(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<Document> {
 
 /// Placed PDFs read from IDML name their crop (`PDFCrop`): find where each box sits on its page,
 /// which the IDML reader can't (it doesn't parse PDFs). The box spans the graphic's
-/// `GraphicBounds`; a graphic without bounds takes the box's size. Bounding Box crops render the
-/// page to find the box, so they wait for drawing or export ([`designcraft_render::shown_box`],
+/// `GraphicBounds`; a graphic without bounds takes the box's size. Bounding Box crops interpret
+/// the page's drawing to find the box, so they wait for drawing or export ([`designcraft_render::shown_box`],
 /// [`with_pdf_boxes`]) unless a graphic needs the box's size now.
 pub(crate) fn resolve_pdf_crops(d: &mut Document) {
     use std::collections::{HashMap, HashSet};

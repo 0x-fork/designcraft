@@ -39,9 +39,8 @@
 //!   `GraphicBounds` span the chosen box. Where that box sits on the page needs the PDF parsed,
 //!   which this crate doesn't do: the engine finds it after import (`file.openIdml`), and when the
 //!   PDF's data isn't available the page's crop box fills `GraphicBounds`. The content crops
-//!   (`CropContentVisibleLayers`, `CropContentAllLayers`) are the bounds of the page's
-//!   non-transparent pixels on a render about 2048 pixels on its long side, so they can differ
-//!   from a vector bounding box by a fraction of a point.
+//!   (`CropContentVisibleLayers`, `CropContentAllLayers`) are the bounds of what the page draws:
+//!   its paths, text and images, each cut to the clip in force.
 //! - Unknown elements are ignored; nothing is preserved opaquely for round-trip yet.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
