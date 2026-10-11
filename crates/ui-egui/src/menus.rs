@@ -2662,7 +2662,7 @@ pub fn command_search(app: &DesignApp, query: &str) -> Vec<QuickItem> {
     let mut out: Vec<QuickItem> = Vec::new();
     for (id, label, _) in quick_commands() {
         let shown = crate::i18n::tr(lang, label);
-        if out.len() >= 14 || out.iter().any(|it| it.id == id) || !quick_match(&ql, &[shown, label, id]) {
+        if out.len() >= 14 || !self::shown(app, id) || out.iter().any(|it| it.id == id) || !quick_match(&ql, &[shown, label, id]) {
             continue;
         }
         out.push(QuickItem { label: shown.to_string(), id: id.to_string(), params: Value::Null, shortcut: shortcut_of(app, id), kind: "" });
