@@ -1368,6 +1368,9 @@ impl<'a> Ex<'a> {
         n!(last_line_indent, "LastLineIndent");
         n!(space_before, "SpaceBefore");
         n!(space_after, "SpaceAfter");
+        if let Some(Some(v)) = a.same_para_style_spacing {
+            el.set("SameParaStyleSpacing", num(v));
+        }
         n!(drop_cap_lines, "DropCapLines");
         n!(drop_cap_chars, "DropCapCharacters");
         if let Some(g) = a.grid_align {
