@@ -91,10 +91,12 @@ fn lock(kinds: &SharedKinds) -> std::sync::MutexGuard<'_, Kinds> {
     kinds.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// A family's kind, and whether its file was added within [`ADDED_WITHIN`].
+/// A family's kind, and whether its file was added within [`ADDED_WITHIN`]. Read without keeping
+/// the family loaded: the filters look at every installed family.
 fn family_kind(fonts: &designcraft_fonts::ScopedFonts<'static>, family: &str) -> (FaceKind, bool) {
-    let face = fonts.face(family, &regular(&fonts.styles(family)));
-    (face.kind(), face.added().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < ADDED_WITHIN))
+    fonts
+        .family_kind(family)
+        .map_or((FaceKind::default(), false), |(kind, added)| (kind, added.and_then(|t| t.elapsed().ok()).is_some_and(|age| age < ADDED_WITHIN)))
 }
 
 /// The families' kinds, starting to read them the first time they're needed for `scope`.
