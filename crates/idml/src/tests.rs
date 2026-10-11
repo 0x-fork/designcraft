@@ -11,6 +11,7 @@ mod assets;
 mod decorations;
 mod object_styles;
 mod rtl_binding;
+mod spread_rotation;
 mod variables;
 mod wrap;
 
