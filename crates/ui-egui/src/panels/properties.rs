@@ -1471,6 +1471,7 @@ pub fn paragraph_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             crate::menus::menu_button(ui, "☰", |ui| {
                 for (label, id) in [
                     ("Paragraph Rules…", "app.paragraphRulesDialog"),
+                    ("Justification…", "app.justificationDialog"),
                     ("Paragraph Borders and Shading…", "app.paragraphBordersDialog"),
                     ("Span Columns…", "app.spanColumnsDialog"),
                     ("Bullets and Numbering…", "app.bulletsNumberingDialog"),

@@ -1941,6 +1941,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Lock Layer", "レイヤーをロック"),
     ("Print Layer", "レイヤーをプリント"),
     ("Suppress Text Wrap When Layer is Hidden", "非表示レイヤーのテキストの回り込みを無視"),
+    ("Justification…", "両端揃え…"),
 ];
 
 /// Captions whose Japanese depends on where they appear: (English, context, Japanese).
