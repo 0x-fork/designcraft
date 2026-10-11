@@ -246,7 +246,13 @@ fn document_sections(app: &mut DesignApp, ui: &mut Ui) {
     // Margins.
     section(ui, crate::i18n::tr(&app.ui.language, "Margins"), true);
     let cur = crate::canvas::current_page(app).unwrap_or(0);
-    if let Some(p) = d.page(cur).cloned() {
+    // On a parent spread its page's margins, which the document pages based on it follow.
+    let parent = crate::canvas::current_parent_page(app);
+    let page = match parent {
+        Some((pi, qi)) => d.parents.get(pi).and_then(|sp| sp.pages.get(qi)),
+        None => d.page(cur),
+    };
+    if let Some(p) = page.cloned() {
         let linked = temp_bool(ui, "margins_linked", true);
         let b = block(ui, 2.0 * FIELD_H + 5.0);
         let mut set: Option<designcraft_doc::Margins> = None;
@@ -289,7 +295,11 @@ fn document_sections(app: &mut DesignApp, ui: &mut Ui) {
             set_temp_bool(ui, "margins_linked", !linked);
         }
         if let Some(m) = set {
-            let _ = app.run("layout.marginsAndColumns", json!({"margins": m}));
+            let target = match parent {
+                Some((pi, _)) => json!({"margins": m, "parent": pi}),
+                None => json!({"margins": m}),
+            };
+            let _ = app.run("layout.marginsAndColumns", target);
         }
     }
     ui.add_space(6.0);

@@ -153,6 +153,22 @@ pub fn current_page(app: &DesignApp) -> Option<usize> {
     Some(st.doc.first_page_of_spread(si) + pi)
 }
 
+/// While parent spreads are shown: (parent index, page index) under the view centre, or `None`
+/// when the centre is on a document spread.
+pub fn current_parent_page(app: &DesignApp) -> Option<(usize, usize)> {
+    let st = app.session.active()?;
+    if !st.editing_parents {
+        return None;
+    }
+    let layout = CanvasLayout::new(&st.doc, true);
+    let slot = layout.slots.get(current_slot(app, &layout)?)?;
+    let SpreadRef::Parent(pi) = slot.spread else { return None };
+    let v = app.view()?;
+    let r = app.canvas_rect?;
+    let c = slot.to_spread(Point::new(v.origin.x + r.width() as f64 / 2.0 / v.zoom, slot.bounds.center().y));
+    Some((pi, st.doc.parents.get(pi)?.page_at_x(c.x)?))
+}
+
 /// Scroll so absolute page `abs` is centred (keeps zoom).
 pub fn go_to_page(app: &mut DesignApp, abs: usize) {
     let Some(st) = app.session.active() else { return };
@@ -634,7 +650,8 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
                     }
                 }
             }
-            for g in p.guides.iter().filter(|g| g.visible_in(doc)) {
+            // The page's own guides, then those it shows from its parent page.
+            for g in p.guides.iter().cloned().chain(doc.parent_guides(p)).filter(|g| g.visible_in(doc)) {
                 // Spread guides cross the pasteboard; page guides their page.
                 let span = if g.spread { pasteboard } else { pr };
                 let (a, bb) = match g.orientation {
@@ -1770,6 +1787,26 @@ mod tests {
     fn units(h: &Harness<'_, DesignApp>) -> (Unit, Unit) {
         let s = &h.state().session.doc().unwrap().doc.settings;
         (s.horizontal_units, s.vertical_units)
+    }
+
+    #[test]
+    fn parent_guides_on_a_page_are_not_picked_there() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        // 100 pt into A's right page, which page 1 (a right page at x = 0) shows.
+        let parent_guide = json!({"spread": {"kind": "parent", "index": 0}, "page": 1, "orientation": "vertical", "position": 712});
+        app.run("guide.add", parent_guide).unwrap();
+        let mut h = harness(app);
+        let at = |app: &DesignApp| {
+            let xf = Xf::new(app.canvas_rect.unwrap(), app.view().unwrap());
+            let layout = CanvasLayout::new(&app.session.active().unwrap().doc, false);
+            let slot = layout.slots.iter().find(|s| s.spread == SpreadRef::Doc(0)).unwrap();
+            guide_at(app, &xf, xf.to_screen(slot.xf * Point::new(100.0, 300.0)))
+        };
+        assert_eq!(at(h.state()), None, "the parent's guide is edited on the parent");
+        h.state_mut().run("guide.add", json!({"orientation": "vertical", "position": 100})).unwrap();
+        h.run_steps(2);
+        assert!(matches!(at(h.state()), Some((SpreadRef::Doc(0), 0, 0, _))), "the page's own guide is");
     }
 
     #[test]

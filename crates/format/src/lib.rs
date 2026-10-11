@@ -107,6 +107,7 @@ fn load_zip(bytes: &[u8]) -> Result<Document, FormatError> {
             Arc::make_mut(a).data = Arc::new(data);
         }
     }
+    doc.mark_differing_margins_local();
     doc.check().map_err(|e| FormatError::NotOurs(e.to_string()))?;
     Ok(doc)
 }
@@ -124,6 +125,7 @@ fn load_legacy_json(bytes: &[u8]) -> Result<Document, FormatError> {
             }
         }
     }
+    doc.mark_differing_margins_local();
     doc.check().map_err(|e| FormatError::NotOurs(e.to_string()))?;
     Ok(doc)
 }
