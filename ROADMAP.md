@@ -129,6 +129,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-11** · `object.fill` and `object.stroke` refuse a swatch name the document doesn't have (it painted nothing) and suggest the name meant (`Paper` → `[Paper]`). No readiness percentage change.
 - **2026-10-11** · Japanese captions now cover print ranges, imported style handling and table
   row/column movement, including row-height distribution. Existing translation and RTL helpers
   handle the display; command IDs, stored option values and user-defined style names are unchanged.
