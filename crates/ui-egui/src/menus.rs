@@ -2812,16 +2812,16 @@ mod tests {
         };
         let frame_fill = |app: &crate::DesignApp| app.session.active().unwrap().doc.item(designcraft_doc::ItemId(fid)).unwrap().fill.swatch.clone();
         assert!(!crate::panels::colors_affect_text(&app));
-        crate::panels::apply_swatch(&mut app, false, "Cyan", None).unwrap();
-        assert_eq!(frame_fill(&app), "Cyan");
+        crate::panels::apply_swatch(&mut app, false, "C=100 M=0 Y=0 K=0", None).unwrap();
+        assert_eq!(frame_fill(&app), "C=100 M=0 Y=0 K=0");
         assert_eq!(text_fill(&app), None);
         let r = run_ui(&mut app, "app.formattingAffectsText", &json!({})).unwrap().unwrap();
         assert_eq!(r["on"], true, "toggles on");
         assert!(crate::panels::colors_affect_text(&app));
-        crate::panels::apply_swatch(&mut app, false, "Magenta", Some(0.5)).unwrap();
-        assert_eq!(frame_fill(&app), "Cyan", "the frame is left alone");
-        assert_eq!(text_fill(&app).as_deref(), Some("Magenta"));
-        assert_eq!(crate::panels::color_target(&mut app).map(|t| (t.0, t.1)), Some(("Magenta".to_string(), 0.5)));
+        crate::panels::apply_swatch(&mut app, false, "C=0 M=100 Y=0 K=0", Some(0.5)).unwrap();
+        assert_eq!(frame_fill(&app), "C=100 M=0 Y=0 K=0", "the frame is left alone");
+        assert_eq!(text_fill(&app).as_deref(), Some("C=0 M=100 Y=0 K=0"));
+        assert_eq!(crate::panels::color_target(&mut app).map(|t| (t.0, t.1)), Some(("C=0 M=100 Y=0 K=0".to_string(), 0.5)));
     }
 
     #[test]
