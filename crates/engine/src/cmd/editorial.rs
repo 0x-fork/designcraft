@@ -142,18 +142,21 @@ mod tests {
         s.execute("file.new", &json!({})).unwrap();
         let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Draft copy."})).unwrap();
         let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
-        // A damaged file: a note anchor and an endnote reference without payloads.
+        // A damaged file: a note anchor, an endnote and a footnote reference without payloads.
         let st = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).story_mut(sid).unwrap();
-        st.insert(0, &format!("{}{}", designcraft_doc::NOTE_MARK, designcraft_doc::ENDNOTE_REF));
+        st.insert(0, &format!("{}{}{}", designcraft_doc::NOTE_MARK, designcraft_doc::ENDNOTE_REF, designcraft_doc::FOOTNOTE_REF));
         st.editorial.clear();
         st.endnotes.clear();
+        st.notes.clear();
         let end = st.len();
         s.execute("text.select", &json!({"story": r["story"], "anchor": end, "focus": end})).unwrap();
         s.execute("note.new", &json!({"text": "check this"})).unwrap();
         s.execute("endnote.insert", &json!({"text": "An endnote."})).unwrap();
+        s.execute("footnote.insert", &json!({"text": "A footnote."})).unwrap();
         let st = &s.doc().unwrap().doc.stories[&sid];
         st.check().unwrap();
         assert_eq!(st.editorial[1].text, "check this");
         assert_eq!(st.endnotes[1].text.text, "An endnote.");
+        assert_eq!(st.notes[1].text.text, "A footnote.");
     }
 }
