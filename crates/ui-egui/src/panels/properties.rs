@@ -736,9 +736,6 @@ fn swatch_menu(
             if let Some(v) = p.remove(tint_key) {
                 p.insert("tint".into(), v);
             }
-            if !stroke && !p.contains_key("swatch") {
-                p.insert("swatch".into(), json!(cur));
-            }
             let _ = app.run(if stroke { "object.stroke" } else { "object.fill" }, Value::Object(p));
         }
     };
@@ -2314,6 +2311,34 @@ mod tests {
         h.run_steps(3);
         let fill = h.state().session.active().unwrap().doc.item(designcraft_doc::ids::ItemId(id)).unwrap().fill.clone();
         assert_eq!((fill.swatch.as_str(), fill.tint), (CYAN, 0.25), "the tint, on the same swatch");
+    }
+
+    #[test]
+    fn a_tint_on_several_objects_keeps_each_ones_swatch() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let a = app.run("frame.create", json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        let b = app.run("frame.create", json!({"rect": [220, 72, 300, 200]})).unwrap()["id"].as_u64().unwrap();
+        app.run("object.fill", json!({"swatch": CYAN, "ids": [a]})).unwrap();
+        app.run("object.fill", json!({"swatch": "[Black]", "ids": [b]})).unwrap();
+        app.run("selection.set", json!({"ids": [a, b]})).unwrap();
+        let mut h = panel(app);
+        h.get_by_label("Fill swatch").click();
+        h.run_steps(3);
+        let row = h.get_by_label("Tint:").rect();
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("100%"))
+            .find(|n| (n.rect().center().y - row.center().y).abs() < 8.0)
+            .expect("the Tint field")
+            .click();
+        h.run_steps(2);
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        h.event(egui::Event::Text("25".into()));
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        let doc = &h.state().session.active().unwrap().doc;
+        let fill = |id: u64| doc.item(designcraft_doc::ids::ItemId(id)).unwrap().fill.clone();
+        assert_eq!((fill(a).swatch.as_str(), fill(a).tint), (CYAN, 0.25));
+        assert_eq!((fill(b).swatch.as_str(), fill(b).tint), ("[Black]", 0.25), "the second keeps its own swatch");
     }
 
     #[test]
