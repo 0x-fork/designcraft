@@ -137,7 +137,7 @@ impl Names<'_> {
         for t in st.tables.values_mut() {
             self.table(Arc::make_mut(t));
         }
-        st.rev += 1;
+        st.rev = st.rev.wrapping_add(1);
     }
 }
 
