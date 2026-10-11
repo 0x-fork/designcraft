@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use crate::DesignApp;
 use crate::theme::Tokens;
 
-fn dest_text(d: &Value) -> String {
+fn dest_text(lang: &str, d: &Value) -> String {
     if let Some(u) = d.get("url").and_then(Value::as_str) {
         return u.to_string();
     }
@@ -13,7 +13,7 @@ fn dest_text(d: &Value) -> String {
         return format!("mailto:{e}");
     }
     if let Some(p) = d.get("page").and_then(Value::as_u64) {
-        return format!("Page {}", p + 1);
+        return format!("{} {}", crate::i18n::tr(lang, "Page"), p + 1);
     }
     d.to_string()
 }
@@ -55,7 +55,7 @@ pub fn hyperlinks(app: &mut DesignApp, ui: &mut egui::Ui) {
     for h in list {
         let hid = h["id"].clone();
         ui.horizontal(|ui| {
-            let r = ui.selectable_label(false, h["name"].as_str().unwrap_or("")).on_hover_text(dest_text(&h["dest"]));
+            let r = ui.selectable_label(false, h["name"].as_str().unwrap_or("")).on_hover_text(dest_text(&app.ui.language, &h["dest"]));
             if r.clicked() {
                 let _ = app.run("hyperlink.goToSource", json!({"id": hid}));
             }
@@ -88,7 +88,10 @@ pub fn bookmarks(app: &mut DesignApp, ui: &mut egui::Ui) {
     for (i, b) in list.iter().enumerate() {
         let page = b["page"].as_u64().unwrap_or(0) as usize;
         ui.horizontal(|ui| {
-            if ui.selectable_label(false, b["name"].as_str().unwrap_or("")).on_hover_text(format!("Page {}", app.session.page_label(page))).clicked()
+            if ui
+                .selectable_label(false, b["name"].as_str().unwrap_or(""))
+                .on_hover_text(format!("{} {}", crate::i18n::tr(&app.ui.language, "Page"), app.session.page_label(page)))
+                .clicked()
             {
                 crate::canvas::go_to_page(app, page);
             }

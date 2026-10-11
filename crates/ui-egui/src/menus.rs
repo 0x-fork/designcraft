@@ -2198,7 +2198,7 @@ pub fn palette(app: &mut DesignApp, ctx: &egui::Context) {
                 if let Some(sc) = &it.shortcut {
                     b = b.shortcut_text(shortcut_text(sc));
                 } else if !it.kind.is_empty() {
-                    b = b.shortcut_text(it.kind);
+                    b = b.shortcut_text(crate::i18n::tr(&app.ui.language, it.kind));
                 }
                 // The button aligns its label by the layout it's in: left, like the rows with a shortcut.
                 let size = egui::vec2(460.0, 22.0);

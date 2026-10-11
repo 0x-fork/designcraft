@@ -3063,6 +3063,11 @@ mod tests {
         keys.extend(crate::menus::UI_COMMANDS.iter().map(|(_, label, _, _)| *label));
         // Tool names reach `tr` from the Tools panel.
         keys.extend(designcraft_tools::TOOL_GROUPS.iter().flat_map(|group| group.iter()).map(|tool| tool.label));
+        // So do the About window's tab names, app descriptions and the credits' column and sort labels.
+        keys.extend(crate::about::ABOUT_TABS);
+        keys.extend(crate::about::SIBLINGS.iter().map(|(_, _, what)| *what));
+        keys.extend(crate::credits::NameMode::ALL.iter().map(|mode| mode.label()));
+        keys.extend(crate::credits::SortKey::ALL.iter().flat_map(|key| [key.label().0, key.label().1]));
         // UI labels passed to `tr` that no other catalog has yet.
         keys.extend([
             "(any)",
@@ -3088,6 +3093,41 @@ mod tests {
             "Text:",
             "Unsaved Changes",
             "“{}” has changes that are not saved. Save them before closing?",
+            "% of all commits",
+            "{count} conflict(s): {names}",
+            "{count} match(es)",
+            "{count} replacement(s) made",
+            "{contributors} contributors · {commits} commits",
+            "{label}: {name} (double-click: Color Picker)",
+            "All",
+            "Align To",
+            "Auto Rename",
+            "Character Style",
+            "Company",
+            "DesignCraft page",
+            "Equal fixed heights for the selected rows; cell text may become overset.",
+            "Found",
+            "Grab bag",
+            "Key Object",
+            "layer",
+            "layers",
+            "Lines +/−",
+            "New Cell Style",
+            "New Table Style",
+            "No contributor data was built into this copy.",
+            "No matches",
+            "No model credits were built into this copy.",
+            "Object Style",
+            "Paragraph Style",
+            "Press keys…",
+            "Range:",
+            "Redefine Document Style",
+            "Report an issue",
+            "Reverse the order",
+            "Story {story} ← story {parent}",
+            "Story Editor — {count} words",
+            "Text Anchor",
+            "Use Document Style Definition",
             // Status-bar messages.
             "Alternate layout",
             "Couldn't write recovery data: {error}",
@@ -3130,6 +3170,8 @@ mod tests {
         assert_eq!(tr("cs", "Edit/Interface Language"), "Úpravy/Jazyk rozhraní");
         assert_eq!(tr("cs", "Unknown label"), "Unknown label");
         assert_eq!(tr_context("cs", "Group", "selection"), "Skupina");
+        assert_eq!(tr_context("cs", "Name", "contributors"), "Jméno");
+        assert_eq!(tr_context("cs", "Name", "unknown"), "Název");
         assert_eq!(tr("cs", "Group"), "Seskupit");
         assert_eq!(tr_context("cs", "Columns", "table"), tr("cs", "Columns"));
         assert_eq!(style_name("cs", "[Basic Paragraph]"), "[Základní odstavec]");
@@ -3152,6 +3194,9 @@ mod tests {
         assert_eq!(count_label("cs", "items", 1), "1 položka");
         assert_eq!(count_label("cs", "objects", 7), "7 objektů");
         assert_eq!(count_label("cs", "warnings", 3), "3 varování");
+        assert_eq!(count_label("cs", "layer", 1), "1 vrstva");
+        assert_eq!(count_label("cs", "layers", 3), "3 vrstvy");
+        assert_eq!(count_label("cs", "layers", 8), "8 vrstev");
         // A noun without plural forms keeps the plain translation.
         assert_eq!(count_label("cs", "a new noun", 3), "3 a new noun");
         for (noun, forms) in cs::PLURALS {
