@@ -1669,4 +1669,12 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Lock Layer", "Blocca livello"),
     ("Print Layer", "Stampa livello"),
     ("Suppress Text Wrap When Layer is Hidden", "Elimina contorna con testo se il livello è nascosto"),
+    // Document Setup
+    ("Page Size:", "Dimensioni pagina:"),
+    ("Adjust page elements to document changes", "Adatta gli elementi della pagina alle modifiche del documento"),
+    ("Apply the changes; objects follow the new page size and margins", "Applica le modifiche; gli oggetti seguono le nuove dimensioni e i margini"),
+    ("Inside:", "Interno:"),
+    ("Outside:", "Esterno:"),
+    ("Bleed:", "Pagina al vivo:"),
+    ("Slug:", "Indicazioni:"),
 ];
