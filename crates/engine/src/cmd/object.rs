@@ -26,7 +26,15 @@ pub fn specs() -> Vec<CommandSpec> {
             frame_create
         ),
         cmd!("line.create", "Create Line", [], None, "{spread?, a: [x,y], b: [x,y]}", has_doc, line_create),
-        cmd!("transform.move", "Move", ["Object", "Transform"], None, "{dx, dy, copy?: bool, ids?, toSpread?}", has_selection, transform_move),
+        cmd!(
+            "transform.move",
+            "Move",
+            ["Object", "Transform"],
+            None,
+            "{dx, dy, copy?: bool, ids?, toSpread?} → {moved, ids: the objects moved (with copy, the copies)}",
+            has_selection,
+            transform_move
+        ),
         cmd!(
             "transform.resize",
             "Resize",
@@ -565,7 +573,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Step and Repeat…",
             ["Edit"],
             Some("Cmd+Alt+U"),
-            "{count?: 1..1000, dx?, dy?, rows?, columns?, ids?} — copies of the selection (or ids) offset by (dx, dy); with rows/columns, a grid of at most 1000 cells, and at most 1000 item copies including group contents",
+            "{count?: 1..1000, dx?, dy?, rows?, columns?, ids?} — copies of the selection (or ids) offset by (dx, dy); with rows/columns, a grid of at most 1000 cells, and at most 1000 item copies including group contents → {created, ids: the copies}",
             has_selection,
             step_and_repeat
         ),
@@ -969,7 +977,7 @@ fn transform_move(s: &mut Session, p: &Value) -> Result<Value> {
             }
             it.xf = Affine::translate((dx, dy)) * it.xf;
         }
-        Ok(json!({"moved": ids.len()}))
+        Ok(json!({"moved": ids.len(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
     })
 }
 
@@ -2079,7 +2087,8 @@ fn step_and_repeat(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         *sel = Selection::items(all.clone());
-        Ok(json!({"created": all.len() - ids.len()}))
+        let copies: Vec<u64> = all.iter().skip(ids.len()).map(|i| i.0).collect();
+        Ok(json!({"created": copies.len(), "ids": copies}))
     })
 }
 
@@ -2712,5 +2721,34 @@ mod blend_mode_tests {
         let it = s.doc().unwrap().doc.item(id).cloned().unwrap();
         assert_eq!(it.blend, BlendMode::Multiply, "a rejected value changes nothing");
         assert_eq!(it.opacity, 1.0);
+    }
+}
+
+#[cfg(test)]
+mod copy_ids_tests {
+    use serde_json::json;
+
+    #[test]
+    fn copies_report_their_ids() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = s.execute("frame.create", &json!({"rect": [0, 0, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+        let ids = |r: &serde_json::Value| r["ids"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect::<Vec<_>>();
+        let selected = |s: &crate::Session| s.doc().unwrap().selection.items.iter().map(|i| i.0).collect::<Vec<_>>();
+        // Moving reports what moved; copying reports the copies, which are selected.
+        assert_eq!(ids(&s.execute("transform.move", &json!({"dx": 5, "dy": 0, "ids": [a]})).unwrap()), [a]);
+        let r = s.execute("transform.move", &json!({"dx": 100, "dy": 0, "copy": true, "ids": [a]})).unwrap();
+        let copy = ids(&r);
+        assert!(copy.len() == 1 && copy[0] != a && s.doc().unwrap().doc.item(designcraft_doc::ItemId(copy[0])).is_some(), "{r}");
+        assert_eq!(selected(&s), copy);
+        // Edit › Duplicate.
+        let r = s.execute("edit.duplicate", &json!({})).unwrap();
+        let dup = ids(&r);
+        assert!(dup.len() == 1 && dup[0] != copy[0], "{r}");
+        assert_eq!(selected(&s), dup);
+        // Step and Repeat: every copy.
+        let r = s.execute("edit.stepAndRepeat", &json!({"count": 3, "dx": 0, "dy": 60, "ids": [a]})).unwrap();
+        assert_eq!((r["created"].as_u64(), ids(&r).len()), (Some(3), 3), "{r}");
+        assert!(ids(&r).iter().all(|i| s.doc().unwrap().doc.item(designcraft_doc::ItemId(*i)).is_some()));
     }
 }
