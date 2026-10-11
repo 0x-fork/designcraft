@@ -598,6 +598,19 @@ mod tests {
         assert_eq!(d.parent_page_for(1), None);
     }
 
+    /// A single-sided page applying a two-page parent shows the parent's first page.
+    #[test]
+    fn single_sided_page_shows_first_parent_page() {
+        let mut d = Document::new(&NewDocument { pages: 2, facing_pages: false, ..Default::default() });
+        let extra = d.parents[0].pages[0].clone();
+        Arc::make_mut(&mut d.parents[0]).pages.push(extra);
+        assert_eq!(d.parents[0].pages.len(), 2);
+        assert_eq!(d.parent_page_for(0), Some((0, 0)));
+        assert_eq!(d.parent_page_for(1), Some((0, 0)));
+        Arc::make_mut(&mut d.parents[0]).pages.clear();
+        assert_eq!(d.parent_page_for(0), None);
+    }
+
     #[test]
     fn non_facing_one_page_per_spread() {
         let d = Document::new(&NewDocument { pages: 3, facing_pages: false, ..Default::default() });

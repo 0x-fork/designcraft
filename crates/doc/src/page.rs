@@ -305,14 +305,14 @@ impl Spread {
     }
     /// The parent page (index into this parent spread) shown behind a document page on `side`:
     /// the leftmost page for a left page and the rightmost for a right page, whichever binding
-    /// ordered the list; the last page for a single-sided page or a one-page parent.
+    /// ordered the list; the first page for a single-sided page or a one-page parent.
     pub fn parent_page_for_side(&self, side: PageSide) -> Option<usize> {
         let (l, r) = self.outer_page_indices()?;
         match side {
             _ if self.pages.len() < 2 => Some(l),
             PageSide::Left => Some(l),
             PageSide::Right => Some(r),
-            PageSide::Single => self.pages.len().checked_sub(1),
+            PageSide::Single => Some(0),
         }
     }
     /// Index of the page under spread x (nearest page for the pasteboard).

@@ -1457,6 +1457,21 @@ mod tests {
 
     use super::*;
 
+    /// Snapping offers the parent page the canvas shows: a single-sided page uses a two-page parent's first page.
+    #[test]
+    fn shown_parent_page_matches_page_side() {
+        let two = Document::new(&NewDocument { facing_pages: true, ..Default::default() });
+        assert_eq!(two.parents[0].pages.len(), 2);
+        assert_eq!(two.parents[0].parent_page_for_side(PageSide::Single), Some(0));
+        assert_eq!(two.parents[0].parent_page_for_side(PageSide::Left), Some(0));
+        assert_eq!(two.parents[0].parent_page_for_side(PageSide::Right), Some(1));
+        let mut one = Document::new(&NewDocument { facing_pages: false, ..Default::default() });
+        assert_eq!(one.parents[0].pages.len(), 1);
+        assert_eq!(one.parents[0].parent_page_for_side(PageSide::Single), Some(0));
+        Arc::make_mut(&mut one.parents[0]).pages.clear();
+        assert_eq!(one.parents[0].parent_page_for_side(PageSide::Single), None);
+    }
+
     // The factory flags are const. Pin them anyway.
     #[test]
     #[allow(clippy::assertions_on_constants)]
