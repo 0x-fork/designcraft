@@ -227,10 +227,10 @@ fn right_to_left_lines_carry_actual_text_only_on_their_clusters() {
     }
 }
 
-/// A slanted (shatai) glyph in a right-to-left line is drawn inside the line's span, not in a span
-/// of its own (marked content can't nest).
+/// A slanted (shatai) glyph in a right-to-left line is drawn through its own tagged run; tagged
+/// exports must not nest marked content (krilla panics on it).
 #[test]
-fn shatai_glyphs_in_right_to_left_lines_stay_in_the_line_span() {
+fn shatai_glyphs_in_right_to_left_lines_export_in_reading_order() {
     hebrew_font();
     let text = "דוד & שרה";
     let mut d = doc(text, HEBREW, Rect::new(36.0, 36.0, 576.0, 300.0), rtl());
@@ -238,7 +238,8 @@ fn shatai_glyphs_in_right_to_left_lines_stay_in_the_line_span() {
     d.story_mut(sid).unwrap().format_chars(0.."דוד".len(), |f| f.over.shatai_magnification = Some(30.0));
     for tagged in [false, true] {
         let bytes = export_pdf(&d, &Cache::new(), &PdfOptions { tagged, ..PdfOptions::default() }).unwrap();
-        assert_eq!(line_actual_texts(&bytes), [text], "tagged: {tagged}");
+        assert_eq!(opened_inside_actual_text(&bytes), 0, "tagged: {tagged}");
+        assert!(actual_texts(&bytes).iter().all(|t| !t.contains(' ')), "tagged: {tagged}");
         assert_eq!(extract_text(&bytes)[0], text, "tagged: {tagged}");
     }
 }
