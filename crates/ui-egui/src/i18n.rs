@@ -2945,8 +2945,11 @@ mod tests {
         for (key, expected) in uk::TABLE {
             assert_eq!(tr("uk", key), *expected, "uk: {key}");
         }
+        for (key, expected) in cs::TABLE {
+            assert_eq!(tr("cs", key), *expected, "cs: {key}");
+        }
         let unknown = String::from("A user-defined untranslated label");
-        for lang in ["uk", "ar", "pt-br", "it", "zh", "ja", "de", "fr", "es", "", "unknown"] {
+        for lang in ["cs", "uk", "ar", "pt-br", "it", "zh", "ja", "de", "fr", "es", "", "unknown"] {
             assert!(std::ptr::eq(tr(lang, &unknown), unknown.as_str()));
         }
     }
@@ -3041,6 +3044,90 @@ mod tests {
             assert_eq!(pages, format!("Сторінок: {n}; розворотів: {n}"));
         }
         assert_eq!(count_label("", "objects", 2), "2 objects");
+    }
+
+    #[test]
+    fn czech_catalog_has_no_stale_keys_and_keeps_placeholders_and_markers() {
+        let catalog: HashMap<_, _> = cs::TABLE.iter().copied().collect();
+        assert_eq!(catalog.len(), cs::TABLE.len(), "duplicate Czech keys");
+        let mut keys = std::collections::HashSet::new();
+        keys.extend(TABLE.iter().map(|(key, _)| *key));
+        for table in [ar::TABLE, it::TABLE, ja::TABLE, pt_br::TABLE, uk::TABLE] {
+            keys.extend(table.iter().map(|(key, _)| *key));
+        }
+        // Command labels and menu names reach `tr` from the engine and the UI command table.
+        for spec in designcraft_engine::command_specs() {
+            keys.insert(spec.label);
+            keys.extend(spec.menu.iter().copied());
+        }
+        keys.extend(crate::menus::UI_COMMANDS.iter().map(|(_, label, _, _)| *label));
+        // UI labels passed to `tr` that no other catalog has yet.
+        keys.extend([
+            "Don't Save",
+            "Group with",
+            "H:",
+            "W:",
+            "Resize panel window",
+            "Resize panels",
+            "Unsaved Changes",
+            "“{}” has changes that are not saved. Save them before closing?",
+        ]);
+        // A new English string falls back to English until it is translated, so only stale
+        // entries (keys nothing passes to `tr` any more) fail.
+        let stale: Vec<_> = catalog.keys().filter(|k| !keys.contains(*k)).collect();
+        assert!(stale.is_empty(), "Czech entries for unknown keys: {stale:?}");
+        let placeholders =
+            |s: &str| s.split('{').skip(1).filter_map(|part| part.split_once('}').map(|(name, _)| name.to_owned())).collect::<Vec<_>>();
+        for (key, translation) in cs::TABLE {
+            assert!(!translation.trim().is_empty(), "empty {key}");
+            let mut source = placeholders(key);
+            let mut translated = placeholders(translation);
+            source.sort();
+            translated.sort();
+            assert_eq!(source, translated, "placeholders: {key}");
+            // Dialog ellipses, label colons and padded button captions stay as in English.
+            assert_eq!(key.ends_with('…'), translation.ends_with('…'), "ellipsis: {key}");
+            assert_eq!(key.ends_with(':'), translation.ends_with(':'), "colon: {key}");
+            assert_eq!(key.starts_with(' '), translation.starts_with(' '), "leading space: {key}");
+            assert_eq!(key.ends_with(' '), translation.ends_with(' '), "trailing space: {key}");
+        }
+        assert!(!is_rtl("cs"));
+        assert_eq!(tr("cs", "File"), "Soubor");
+        assert_eq!(tr("cs", "New Document…"), "Nový dokument…");
+        assert_eq!(tr("cs", "Spread"), "Dvoustrana");
+        assert_eq!(tr("cs", "Bleed"), "Spadávka");
+        assert_eq!(tr("cs", "Leading"), "Proklad");
+        assert_eq!(tr("cs", "Edit/Interface Language"), "Úpravy/Jazyk rozhraní");
+        assert_eq!(tr("cs", "Unknown label"), "Unknown label");
+        assert_eq!(tr_context("cs", "Group", "selection"), "Skupina");
+        assert_eq!(tr("cs", "Group"), "Seskupit");
+        assert_eq!(tr_context("cs", "Columns", "table"), tr("cs", "Columns"));
+        assert_eq!(style_name("cs", "[Basic Paragraph]"), "[Základní odstavec]");
+        assert_eq!(style_name("cs", "My layout style"), "My layout style");
+        assert_eq!(workspace_name("cs", "Essentials"), "Základy");
+        assert_eq!(workspace_name("cs", "My workspace"), "My workspace");
+    }
+
+    #[test]
+    fn czech_counts_use_the_plural_form_for_the_number() {
+        for (n, form) in [(0, "chyb"), (1, "chyba"), (2, "chyby"), (4, "chyby"), (5, "chyb"), (11, "chyb"), (22, "chyb")] {
+            assert_eq!(count_label("cs", "errors", n), format!("{n} {form}"));
+        }
+        // The status bar passes the singular noun for one error.
+        assert_eq!(count_label("cs", "error", 1), "1 chyba");
+        assert_eq!(count_label("cs", "pages", 1), "1 stránka");
+        assert_eq!(count_label("cs", "pages", 3), "3 stránky");
+        assert_eq!(count_label("cs", "pages", 5), "5 stránek");
+        assert_eq!(count_label("cs", "stories", 2), "2 články");
+        assert_eq!(count_label("cs", "items", 1), "1 položka");
+        assert_eq!(count_label("cs", "objects", 7), "7 objektů");
+        assert_eq!(count_label("cs", "warnings", 3), "3 varování");
+        // A noun without plural forms keeps the plain translation.
+        assert_eq!(count_label("cs", "a new noun", 3), "3 a new noun");
+        for (noun, forms) in cs::PLURALS {
+            assert!(forms.iter().all(|form| !form.is_empty()), "{noun}");
+            assert!(forms.contains(&tr("cs", noun)), "{noun}: the catalog row is one of the plural forms");
+        }
     }
 
     #[test]
