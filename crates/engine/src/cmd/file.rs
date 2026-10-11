@@ -467,14 +467,14 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
         let id = if let Some(fid) = target_frame {
             let it = d.item_mut(fid).ok_or(designcraft_doc::DocError::NoItem(fid))?;
             let r = it.inner_bounds();
-            // Fill frame proportionally.
+            // Fill the frame proportionally once. Auto-Fit stays off, so resizing the frame crops.
             let k = (r.width() / bw).max(r.height() / bh);
             let (gw, gh) = (bw * k, bh * k);
             it.content = Content::Graphic(Graphic {
                 asset: aid,
                 size: (bw, bh),
                 xf: Affine::translate((r.x0 + (r.width() - gw) / 2.0, r.y0 + (r.height() - gh) / 2.0)) * Affine::scale(k),
-                auto_fit: designcraft_doc::Fitting::FillProportionally,
+                auto_fit: Default::default(),
                 fit_align: 4,
                 crop: [0.0; 4],
                 wrap: Default::default(),
@@ -607,7 +607,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     asset: aid,
                     size: (nw, nh),
                     xf: Affine::translate((r.x0 + (r.width() - nw * k) / 2.0, r.y0 + (r.height() - nh * k) / 2.0)) * Affine::scale(k),
-                    auto_fit: designcraft_doc::Fitting::FillProportionally,
+                    auto_fit: Default::default(),
                     fit_align: 4,
                     crop: [0.0; 4],
                     wrap: Default::default(),
