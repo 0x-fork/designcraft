@@ -3061,6 +3061,8 @@ mod tests {
             keys.extend(spec.menu.iter().copied());
         }
         keys.extend(crate::menus::UI_COMMANDS.iter().map(|(_, label, _, _)| *label));
+        // Tool names reach `tr` from the Tools panel.
+        keys.extend(designcraft_tools::TOOL_GROUPS.iter().flat_map(|group| group.iter()).map(|tool| tool.label));
         // UI labels passed to `tr` that no other catalog has yet.
         keys.extend([
             "(any)",
@@ -3142,6 +3144,14 @@ mod tests {
         for (noun, forms) in cs::PLURALS {
             assert!(forms.iter().all(|form| !form.is_empty()), "{noun}");
             assert!(forms.contains(&tr("cs", noun)), "{noun}: the catalog row is one of the plural forms");
+        }
+    }
+
+    #[test]
+    fn czech_translates_every_tool_name() {
+        for tool in designcraft_tools::TOOL_GROUPS.iter().flat_map(|group| group.iter()) {
+            assert_ne!(tr("cs", tool.label), tool.label, "{}", tool.id);
+            assert_eq!(tr("", tool.label), tool.label);
         }
     }
 
