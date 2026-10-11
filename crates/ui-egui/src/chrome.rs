@@ -984,6 +984,30 @@ mod tests {
     }
 
     #[test]
+    fn the_mac_window_is_not_movable_on_the_title_bar_controls() {
+        use super::{MAC_APP_BAR, MAC_CONTENT_LEFT};
+        let mut app = app();
+        app.integrated_titlebar = true;
+        let mut h = test_window::open(app, vec2(1400.0, 900.0));
+        let bar = test_window::panel_rect(&h, "app_bar");
+        let mid = bar.min.y + MAC_APP_BAR / 2.0;
+        // The search field is the bar's last control: 125 wide, 4 from the 10-wide right margin.
+        let search = pos2(bar.max.x - 10.0 - 4.0 - 60.0, mid);
+        let controls = [rect(&h, "Home").center(), rect(&h, "Share").center(), rect(&h, "File").center(), search];
+        let mut movable_at = |at: egui::Pos2| {
+            h.hover_at(at);
+            h.run_steps(2);
+            crate::title_bar::window_movable(&h.ctx)
+        };
+        for at in [pos2(bar.center().x, mid), pos2(bar.min.x + MAC_CONTENT_LEFT - 4.0, bar.min.y + 4.0), pos2(bar.center().x, 500.0)] {
+            assert!(movable_at(at), "empty title bar or the page at {at:?}");
+        }
+        for at in controls {
+            assert!(!movable_at(at), "control at {at:?}");
+        }
+    }
+
+    #[test]
     fn a_narrow_window_scrolls_the_app_bar() {
         let w = 640.0;
         let mut h = test_window::open(app(), vec2(w, 600.0));

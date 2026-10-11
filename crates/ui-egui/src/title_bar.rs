@@ -2,8 +2,10 @@
 //! when dragged and follows the system's title-bar double-click setting.
 //!
 //! The window has a full-size content view, so AppKit hands every click in the title-bar band to
-//! the app (that is how the bar's own controls work) and neither drags nor zooms the window
-//! itself.
+//! the app (that is how the bar's own controls work) and does not zoom the window. It does move
+//! the window when a drag starts anywhere in the band, on the bar's controls too, unless the
+//! window is not movable. [`window_movable`] tells the macOS shell when the pointer is on a
+//! control, so it can switch that off before the press.
 
 use std::sync::{Once, OnceLock};
 
@@ -70,6 +72,12 @@ pub fn double_click_command(action: DoubleClick, maximized: bool) -> Option<egui
 pub fn empty_area(ui: &mut egui::Ui, rect: egui::Rect) {
     prefetch();
     let resp = ui.interact(rect, ui.id().with("title_bar_empty"), egui::Sense::click());
+    // A control in this layer covers the empty area under the pointer. Another layer on top (a
+    // modal's backdrop, a tooltip) leaves the window movable, as AppKit's own title bar would be.
+    let on_control =
+        ui.ctx().pointer_hover_pos().is_some_and(|p| rect.contains(p) && ui.ctx().layer_id_at(p) == Some(ui.layer_id())) && !resp.hovered();
+    let pass = ui.ctx().cumulative_pass_nr();
+    ui.data_mut(|d| d.insert_temp(movable_id(), (pass, !on_control)));
     if resp.double_clicked() {
         let maximized = ui.input(|i| i.viewport().maximized).unwrap_or(false);
         if let Some(cmd) = double_click_command(action(), maximized) {
@@ -88,6 +96,20 @@ pub fn empty_area(ui: &mut egui::Ui, rect: egui::Rect) {
         // down afterwards.
         ui.data_mut(|d| d.remove::<Option<f64>>(armed));
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+}
+
+fn movable_id() -> egui::Id {
+    egui::Id::new("title_bar_window_movable")
+}
+
+/// Whether AppKit may move the window when a drag starts in the title-bar band: false while the
+/// pointer is on one of the bar's controls, so pressing and dragging it does not move the window.
+/// True when neither this pass nor the one before drew a title bar.
+pub fn window_movable(ctx: &egui::Context) -> bool {
+    match ctx.data(|d| d.get_temp::<(u64, bool)>(movable_id())) {
+        Some((pass, movable)) if ctx.cumulative_pass_nr().saturating_sub(pass) <= 1 => movable,
+        _ => true,
     }
 }
 

@@ -19,6 +19,8 @@ mod control_server;
 mod gpu;
 mod logging;
 #[cfg(target_os = "macos")]
+mod mac_window;
+#[cfg(target_os = "macos")]
 mod native_menu;
 mod profile;
 
@@ -34,6 +36,9 @@ struct App {
     /// Documents and quit requests from Finder, the Dock and Open With.
     #[cfg(target_os = "macos")]
     apple_events: fmv_macos_events::Inbox,
+    /// The window's `movable` flag as last set; see `mac_window`.
+    #[cfg(target_os = "macos")]
+    movable: Option<bool>,
     /// Frames begun so far.
     frames: u32,
 }
@@ -74,6 +79,8 @@ impl eframe::App for App {
         if self.app.take_ime_discard() {
             discard_marked_text();
         }
+        #[cfg(target_os = "macos")]
+        mac_window::sync_movable(ui.ctx(), &mut self.movable);
         self.startup.leave();
     }
     fn on_exit(&mut self) {
@@ -461,6 +468,8 @@ fn main() -> std::process::ExitCode {
                     startup: created,
                     #[cfg(target_os = "macos")]
                     apple_events: events.connect(&cc.egui_ctx),
+                    #[cfg(target_os = "macos")]
+                    movable: None,
                     frames: 0,
                 }))
             }),
