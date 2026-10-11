@@ -14,7 +14,7 @@ against InDesign is **unmeasured**, which is the main gap.
 ## Fidelity: how we'd know
 
 There is no oracle yet. What exists: unit tests of break points and invariants in
-`crates/compose/src/tests.rs` (170 tests in the crate), IDML files built by DesignCraft and opened
+`crates/compose/src/tests.rs` (172 tests in the crate), IDML files built by DesignCraft and opened
 in InDesign 2026 by hand, and user reports comparing the two (#179, #180, #181, #282–#295).
 
 **Needed (gap 4 in [gaps.md](gaps.md)):** a set of synthetic stories (our own text and fonts:
