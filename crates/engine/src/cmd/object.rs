@@ -1023,7 +1023,7 @@ fn linear_inverse(m: Affine, v: Vec2) -> Vec2 {
 /// frame resize refits.
 fn move_content(s: &mut Session, ids: &[ItemId], d: Vec2) -> Result<Value> {
     s.edit(|doc, _| {
-        let mut moved = 0;
+        let mut moved = Vec::new();
         for id in ids {
             let loc = doc.find(*id).ok_or(designcraft_doc::DocError::NoItem(*id))?;
             let parent = doc.parent_xf(&loc);
@@ -1043,9 +1043,9 @@ fn move_content(s: &mut Session, ids: &[ItemId], d: Vec2) -> Result<Value> {
                 }
                 _ => it.xf = Affine::translate(linear_inverse(parent, d)) * it.xf,
             }
-            moved += 1;
+            moved.push(id.0);
         }
-        Ok(json!({"moved": moved}))
+        Ok(json!({"moved": moved.len(), "ids": moved}))
     })
 }
 
@@ -3415,6 +3415,7 @@ mod copy_ids_tests {
         let selected = |s: &crate::Session| s.doc().unwrap().selection.items.iter().map(|i| i.0).collect::<Vec<_>>();
         // Moving reports what moved; copying reports the copies, which are selected.
         assert_eq!(ids(&s.execute("transform.move", &json!({"dx": 5, "dy": 0, "ids": [a]})).unwrap()), [a]);
+        assert_eq!(ids(&s.execute("transform.move", &json!({"dx": 5, "dy": 0, "ids": [a], "content": true})).unwrap()), [a]);
         let r = s.execute("transform.move", &json!({"dx": 100, "dy": 0, "copy": true, "ids": [a]})).unwrap();
         let copy = ids(&r);
         assert!(copy.len() == 1 && copy[0] != a && s.doc().unwrap().doc.item(designcraft_doc::ItemId(copy[0])).is_some(), "{r}");
