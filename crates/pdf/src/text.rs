@@ -7,8 +7,10 @@
 //! can select, search and copy it.
 //!
 //! Composed lines hold their glyphs in text order, so content streams list text in reading order
-//! even where right-to-left text is drawn leftwards. Viewers that order text by position instead
-//! read the ActualText that a line with right-to-left text carries.
+//! even where right-to-left text is drawn leftwards. Right-to-left lines and runs carry no
+//! ActualText of their own: poppler orders right-to-left glyphs by itself, but it positions an
+//! ActualText with the transform in force where its span ends (losing a span over several runs)
+//! and reverses the characters of one in a right-to-left line.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -184,18 +186,17 @@ impl Exporter<'_> {
         }
     }
 
-    /// A glyph run, tagged under its paragraph while a story is being tagged (inside a line span,
-    /// the span is its tag: marked content can't nest).
+    /// A glyph run, tagged under its paragraph while a story is being tagged.
     fn tagged_run(&mut self, s: &mut Surface, cs: &ComposedStory, gs: &[PlacedGlyph], baseline: f64, story: &str) {
         match self.tag_story {
-            Some(sid) if !self.in_line_span => {
+            Some(sid) => {
                 let pi = self.doc.story(sid).map_or(0, |st| st.para_at(gs[0].byte.min(st.len())));
                 let id = s.start_tagged(ContentTag::Span(SpanTag::empty()));
                 self.run(s, cs, gs, baseline, story);
                 s.end_tagged();
                 self.para_tags.entry((sid, pi)).or_default().push(id);
             }
-            _ => self.run(s, cs, gs, baseline, story),
+            None => self.run(s, cs, gs, baseline, story),
         }
     }
 
@@ -224,8 +225,6 @@ impl Exporter<'_> {
         }
         for l in &ft.lines {
             let gs = &l.glyphs;
-            let line_span = self.start_rtl_line(s, cs, ft, gs, story);
-            self.in_line_span = line_span;
             let mut i = 0;
             while i < gs.len() {
                 let g = &gs[i];
@@ -244,16 +243,8 @@ impl Exporter<'_> {
                     continue;
                 }
                 let j = run_end(ft, gs, i);
-                if line_span {
-                    self.run(s, cs, &gs[i..j], l.baseline, story);
-                } else {
-                    self.tagged_run(s, cs, &gs[i..j], l.baseline, story);
-                }
+                self.tagged_run(s, cs, &gs[i..j], l.baseline, story);
                 i = j;
-            }
-            if line_span {
-                s.end_tagged();
-                self.in_line_span = false;
             }
         }
         self.as_artifact(s, |me, s| {
@@ -270,47 +261,6 @@ impl Exporter<'_> {
                 }
             }
         });
-    }
-
-    /// Open a span over a line with right-to-left text whose ActualText is the line's text in
-    /// reading order (tagged under its paragraph while a story is being tagged). Viewers that order
-    /// text by position would otherwise read it in visual order. Marked content can't nest, so only
-    /// in untagged exports and in tagged stories (not inside artifacts or figures).
-    fn start_rtl_line(&mut self, s: &mut Surface, cs: &ComposedStory, ft: &FrameText, gs: &[PlacedGlyph], story: &str) -> bool {
-        if ft.vertical || !gs.iter().any(|g| g.rtl && g.visible) || (self.opts.tagged && self.tag_story.is_none()) {
-            return false;
-        }
-        let mut text = String::new();
-        let mut i = 0;
-        while i < gs.len() {
-            let g = &gs[i];
-            if !g.visible || g.sx <= 0.0 || g.sy <= 0.0 {
-                i += 1;
-                continue;
-            }
-            let j = run_end(ft, gs, i);
-            // Only runs `run` draws.
-            let painted = cs.styles.get(g.style as usize).is_some_and(|st| {
-                self.swatch_color(&st.fill, st.fill_tint).is_some()
-                    || (st.stroke != designcraft_color::swatch::NONE
-                        && st.stroke_weight > 0.0
-                        && self.swatch_color(&st.stroke, st.stroke_tint).is_some())
-            });
-            if painted && let Some(run) = gs.get(i..j) {
-                text.push_str(&self.run_text(run, story).0);
-            }
-            i = j;
-        }
-        if text.is_empty() {
-            return false;
-        }
-        let id = s.start_tagged(ContentTag::Span(SpanTag::empty().with_actual_text(Some(&text))));
-        if let Some(sid) = self.tag_story {
-            let byte = gs.first().map_or(0, |g| g.byte);
-            let pi = self.doc.story(sid).map_or(0, |st| st.para_at(byte.min(st.len())));
-            self.para_tags.entry((sid, pi)).or_default().push(id);
-        }
-        true
     }
 
     /// Table fragments: cell fills, cell text (real text), edges and the border.
@@ -446,87 +396,28 @@ impl Exporter<'_> {
         };
         let (text, mut ranges) = self.run_text(glyphs, story);
         let order = split_clusters(glyphs, &text, &mut ranges);
-        let (text, ranges, cuts) = if self.in_line_span {
-            self.line_span_text(&font, glyphs, &order, &text, &ranges)
-        } else {
-            self.note_unicode(&font, order.iter().filter_map(|&i| Some((glyphs.get(i)?.gid, ranges.get(i)?.clone()))), &text);
-            (text, ranges, Vec::new())
-        };
         let k = 1.0 / (hs * size);
         // Glyphs are placed absolutely: each advance reaches the next glyph drawn, a vertical offset
         // (a mark above or below its base) is undone by the skew so it lands where it was composed.
-        let glyph = |n: usize| {
-            let g = glyphs.get(*order.get(n)?)?;
-            let next = order.get(n + 1).and_then(|&m| glyphs.get(m)).map_or(g.x + g.adv, |m| m.x);
-            let dy = g.y - g0.y;
-            let r = ranges.get(*order.get(n)?)?.clone();
-            Some(KrillaGlyph::new(GlyphId::new(g.gid), ((next - g.x) * k) as f32, (tan * dy * k) as f32, (-dy / size) as f32, 0.0, r, None))
-        };
+        let kg: Vec<KrillaGlyph> = order
+            .iter()
+            .enumerate()
+            .filter_map(|(n, &i)| {
+                let g = glyphs.get(i)?;
+                let next = order.get(n + 1).and_then(|&m| glyphs.get(m)).map_or(g.x + g.adv, |m| m.x);
+                let dy = g.y - g0.y;
+                let r = ranges.get(i)?.clone();
+                Some(KrillaGlyph::new(GlyphId::new(g.gid), ((next - g.x) * k) as f32, (tan * dy * k) as f32, (-dy / size) as f32, 0.0, r, None))
+            })
+            .collect();
+        let start = order.first().and_then(|&i| glyphs.get(i)).map_or(0.0, |g| (g.x - g0.x) / hs);
         s.push_transform(&tf(origin));
         s.set_fill(fill.map(|c| solid_fill(c, 1.0)));
         s.set_stroke(stroke.map(|c| Stroke { paint: c.into(), width: st.stroke_weight as f32, ..Default::default() }));
-        let mut from = 0;
-        for to in cuts.into_iter().chain([order.len()]) {
-            let kg: Vec<KrillaGlyph> = (from..to).filter_map(glyph).collect();
-            let start = order.get(from).and_then(|&i| glyphs.get(i)).map_or(0.0, |g| (g.x - g0.x) / hs);
-            s.draw_glyphs(Point::from_xy(start as f32, 0.0), &kg, font.clone(), &text, size as f32, false);
-            from = to;
-        }
+        s.draw_glyphs(Point::from_xy(start as f32, 0.0), &kg, font, &text, size as f32, false);
         s.set_fill(None);
         s.set_stroke(None);
         s.pop();
-    }
-
-    /// Record what krilla maps the glyphs of one draw call to, given in drawing order: the first
-    /// text a glyph is drawn with, except on the glyphs of a cluster after its first. (krilla maps
-    /// every glyph of a cluster only for PDF/A-a, -u and PDF/UA, which exports don't use.)
-    fn note_unicode(&mut self, font: &Font, glyphs: impl IntoIterator<Item = (u32, Range<usize>)>, text: &str) {
-        let mut prev = None;
-        for (gid, r) in glyphs {
-            if prev.as_ref() != Some(&r)
-                && let Some(t) = text.get(r.clone())
-            {
-                self.to_unicode.entry((font.clone(), gid)).or_insert_with(|| t.to_string());
-            }
-            prev = Some(r);
-        }
-    }
-
-    /// Text for a run drawn inside a line span, where krilla must not open ActualText spans of its
-    /// own (it does for a glyph drawn with other text than its font maps it to, and for glyphs in a
-    /// row that share their text). Each glyph gets the text its font maps it to, else its own text,
-    /// a cluster's text going to its first glyph. Returns the text, each glyph's range in it, and
-    /// the positions in `order` where the run must be split into separate draw calls because two
-    /// glyphs in a row have the same empty range.
-    fn line_span_text(
-        &mut self,
-        font: &Font,
-        glyphs: &[PlacedGlyph],
-        order: &[usize],
-        text: &str,
-        ranges: &[Range<usize>],
-    ) -> (String, Vec<Range<usize>>, Vec<usize>) {
-        let mut out = String::new();
-        let mut out_ranges = vec![0..0; glyphs.len()];
-        let mut cuts = Vec::new();
-        let (mut prev, mut prev_out) = (None, None);
-        for (n, &i) in order.iter().enumerate() {
-            let (Some(g), Some(r)) = (glyphs.get(i), ranges.get(i)) else { continue };
-            let own = if prev == Some(r) { "" } else { text.get(r.clone()).unwrap_or_default() };
-            let mapped = self.to_unicode.entry((font.clone(), g.gid)).or_insert_with(|| own.to_string());
-            let a = out.len();
-            out.push_str(mapped);
-            let range = a..out.len();
-            if prev_out.as_ref() == Some(&range) {
-                cuts.push(n);
-            }
-            if let Some(slot) = out_ranges.get_mut(i) {
-                *slot = range.clone();
-            }
-            prev = Some(r);
-            prev_out = Some(range);
-        }
-        (out, out_ranges, cuts)
     }
 
     /// Fallback for faces krilla can't embed: glyph outlines as paths.
@@ -569,31 +460,23 @@ impl Exporter<'_> {
         let Some(font) = self.font(&face) else { return };
         let shaped = designcraft_fonts::shape(&face, text, &[], |c| c);
         let upem = face.upem as f32;
-        let ranges: Vec<(u32, Range<usize>)> = shaped
+        let glyphs: Vec<KrillaGlyph> = shaped
             .iter()
             .enumerate()
             .map(|(i, g)| {
                 let end = shaped.iter().skip(i + 1).map(|n| n.cluster).find(|c| *c != g.cluster).unwrap_or(text.len());
                 let end = if end > g.cluster { end } else { text.len() };
-                (g.gid, g.cluster..end)
-            })
-            .collect();
-        let glyphs: Vec<KrillaGlyph> = shaped
-            .iter()
-            .zip(&ranges)
-            .map(|(g, (_, r))| {
                 KrillaGlyph::new(
                     GlyphId::new(g.gid),
                     g.x_advance as f32 / upem,
                     g.x_offset as f32 / upem,
                     g.y_offset as f32 / upem,
                     0.0,
-                    r.clone(),
+                    g.cluster..end,
                     None,
                 )
             })
             .collect();
-        self.note_unicode(&font, ranges, text);
         s.set_stroke(None);
         s.set_fill(Some(solid_fill(color, 1.0)));
         s.draw_glyphs(Point::from_xy(at.0 as f32, at.1 as f32), &glyphs, font, text, size as f32, false);
