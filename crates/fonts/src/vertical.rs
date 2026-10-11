@@ -54,9 +54,10 @@ impl<'a> VMetrics<'a> {
 }
 
 /// The ideographic em box (top, bottom) in font units, y up, one em tall: `BASE` `idtp`/`ideo`;
-/// else topped by the OS/2 typo ascender when the typo ascender and descender span exactly one em;
-/// else centred on half the cap height (OS/2 `sCapHeight`, else the `H` glyph's top); else 0.88 em
-/// above the baseline. The flag is false for that last fallback.
+/// else, for a CJK font (its [`crate::FontGroup`] isn't Western), topped by the OS/2 typo ascender
+/// when the typo ascender and descender span exactly one em; else centred on half the cap height
+/// (OS/2 `sCapHeight`, else the `H` glyph's top); else 0.88 em above the baseline. The flag is
+/// false for that last fallback.
 pub(crate) fn em_box(face: &FontFace) -> ((f64, f64), bool) {
     let upem = face.upem;
     let fallback = ((upem * 0.88, upem * -0.12), false);
@@ -64,7 +65,9 @@ pub(crate) fn em_box(face: &FontFace) -> ((f64, f64), bool) {
     if let Some(b) = base_em_box(&font, upem) {
         return (b, true);
     }
-    let typo_top = font.os2().ok().and_then(|t| {
+    // Latin fonts with a one-em typo box (DejaVu) still centre on the cap height.
+    let cjk = face.menu_group().0 != crate::FontGroup::Western;
+    let typo_top = font.os2().ok().filter(|_| cjk).and_then(|t| {
         let (asc, desc) = (f64::from(t.s_typo_ascender()), f64::from(t.s_typo_descender()));
         (asc - desc == upem && asc > 0.0 && asc <= upem).then_some(asc)
     });

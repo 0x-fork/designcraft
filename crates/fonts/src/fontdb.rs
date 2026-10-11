@@ -264,9 +264,9 @@ impl FontFace {
         crate::vertical::VMetrics::new(self).origin(GlyphId::new(gid))
     }
     /// The ideographic em box (top, bottom) in font units, y up, one em tall (Japanese fonts:
-    /// typically 880, -120): `BASE` `idtp`/`ideo`; else from the OS/2 typo ascender when the typo
-    /// ascender and descender span one em; else centred on half the cap height (OS/2, else the
-    /// `H` glyph's top); else 0.88 em above the baseline.
+    /// typically 880, -120): `BASE` `idtp`/`ideo`; else, for a CJK font, from the OS/2 typo
+    /// ascender when the typo ascender and descender span one em; else centred on half the cap
+    /// height (OS/2, else the `H` glyph's top); else 0.88 em above the baseline.
     pub fn em_box(&self) -> (f64, f64) {
         self.em.get_or_init(|| crate::vertical::em_box(self)).0
     }

@@ -6,7 +6,7 @@
 use skrifa::raw::TableProvider;
 
 use super::*;
-use crate::testing::{font_mapping, font_with, with_table_len, with_table_u16, with_vmtx, with_vorg};
+use crate::testing::{font_mapping, font_with, with_code_pages, with_table_len, with_table_u16, with_vmtx, with_vorg};
 use crate::{ShapeContext, feature, shape_vertical, shape_with_context};
 
 /// Text in Japanese.
@@ -116,11 +116,23 @@ fn fonts_without_vmtx_use_the_em_box() {
     let face = face_of(with_table_len(font_with("No Base", &['一']).unwrap(), b"BASE", 0).unwrap());
     assert_eq!(face.em_box(), (830.0, -170.0));
     assert_eq!(face.declared_em_box(), Some((830.0, -170.0)));
-    // Typo ascender and descender one em apart: the typo ascender is the top.
-    let typo = with_table_u16(font_with("Typo Em", &['一']).unwrap(), b"OS/2", 68, 860).unwrap();
-    let typo = with_table_u16(typo, b"OS/2", 70, u16::from_be_bytes((-140i16).to_be_bytes())).unwrap();
-    let face = face_of(with_table_len(typo, b"BASE", 0).unwrap());
+    // Typo ascender and descender one em apart: a CJK font (JIS code page) tops at the typo
+    // ascender; a Latin one (Source Sans 3's own code pages) still centres on the cap height.
+    let typo = |family: &str, code_pages: Option<u32>| {
+        let font = with_table_u16(font_with(family, &['一']).unwrap(), b"OS/2", 68, 860).unwrap();
+        let font = with_table_u16(font, b"OS/2", 70, u16::from_be_bytes((-140i16).to_be_bytes())).unwrap();
+        let font = match code_pages {
+            Some(r1) => with_code_pages(font, r1, 0).unwrap(),
+            None => font,
+        };
+        face_of(with_table_len(font, b"BASE", 0).unwrap())
+    };
+    let face = typo("Typo Em CJK", Some(1 << 17));
+    assert_ne!(face.menu_group().0, crate::FontGroup::Western);
     assert_eq!(face.em_box(), (860.0, -140.0));
+    let face = typo("Typo Em Latin", None);
+    assert_eq!(face.menu_group().0, crate::FontGroup::Western);
+    assert_eq!(face.em_box(), (830.0, -170.0));
     // Without OS/2: centred on half the H glyph's height (656).
     let no_os2 = |font: Vec<u8>| face_of(with_table_len(with_table_len(font, b"BASE", 0).unwrap(), b"OS/2", 0).unwrap());
     let face = no_os2(font_mapping("No OS2", &[('一', 'X'), ('H', 'H')]).unwrap());
