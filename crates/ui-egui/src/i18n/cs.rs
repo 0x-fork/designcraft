@@ -1725,6 +1725,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Working CMYK", "Pracovní CMYK"),
     ("Yellow", "Žlutá"),
     // Labels the code passes to `tr` that no other catalog has yet.
+    ("Activate Panel", "Aktivovat panel"),
+    ("Change Panel Layout", "Změnit rozvržení panelů"),
     ("Close Panel", "Zavřít panel"),
     ("Data Fields", "Datová pole"),
     ("Data Merge Options", "Možnosti sloučení dat"),
@@ -1735,6 +1737,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("H:", "V:"),
     ("Insert Field", "Vložit pole"),
     ("List Composite Fonts", "Vypsat složená písma"),
+    ("Move Panel", "Přesunout panel"),
     ("Object & Layout", "Objekt a rozvržení"),
     ("Pin Bar Position", "Připnout polohu lišty"),
     ("Preview Record", "Náhled záznamu"),
