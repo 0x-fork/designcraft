@@ -1306,6 +1306,43 @@ impl ScopedFonts<'_> {
         None
     }
 
+    /// `family`'s kind (format, class, PANOSE) and when its file was added, read from its Regular
+    /// face (else its first), for the font menus' filters, which look at every family. A face
+    /// already loaded is asked; an installed family that isn't loaded is read from its file, which
+    /// is then let go rather than kept loaded. None for an unknown family or an unreadable file.
+    pub fn family_kind(&self, family: &str) -> Option<(crate::kind::FaceKind, Option<std::time::SystemTime>)> {
+        let styles = self.styles(family);
+        let style = styles.iter().find(|s| *s == "Regular").or(styles.first())?.clone();
+        if self.own().iter().chain(self.db.read_faces().iter()).any(|f| f.family.eq_ignore_ascii_case(family)) {
+            let f = self.find(family, &style)?;
+            return Some((f.kind(), f.added()));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = {
+                let cat = self.db.read_catalog();
+                let of_family = |c: &&CatalogEntry| c.family.eq_ignore_ascii_case(family);
+                let entry = cat.iter().filter(of_family).find(|c| norm(&c.style) == norm(&style)).or_else(|| cat.iter().find(of_family));
+                entry.map(|c| c.path.clone())?
+            };
+            if std::fs::metadata(&path).ok()?.len() > MAX_DOCUMENT_FONT_BYTES {
+                return None;
+            }
+            let data = Arc::new(std::fs::read(&path).ok()?);
+            let found = enumerate_faces(&data);
+            let pick = found
+                .iter()
+                .find(|(_, f, st, _)| f.eq_ignore_ascii_case(family) && norm(st) == norm(&style))
+                .or_else(|| found.iter().find(|(_, f, _, _)| f.eq_ignore_ascii_case(family)))?
+                .clone();
+            let (index, fam, st, coords) = pick;
+            let face = make_face(FontBytes::Owned(data.clone()), FontSource::Installed(path), index, fam, st, coords)?;
+            Some((face.kind(), face.added()))
+        }
+        #[cfg(target_arch = "wasm32")]
+        None
+    }
+
     /// Is `family` available (the document's, loaded, or installed on the system), as named or
     /// without a format suffix (see [`ScopedFonts::face`])?
     pub fn has_family(&self, family: &str) -> bool {
