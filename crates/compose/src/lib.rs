@@ -336,7 +336,7 @@ pub struct Exclusion {
     pub mode: WrapMode,
     /// Where text may go beside the object. Spine sides are resolved to `LeftSide`/`RightSide`.
     pub side: WrapSide,
-    /// Contour wrap: the outline the text follows (None wraps around `rect`).
+    /// Contour wrap, or a custom boundary: the outline the text follows (None wraps around `rect`).
     pub contour: Option<Contour>,
 }
 
@@ -450,6 +450,12 @@ fn wrap_exclusion(
         WrapSide::AwayFromSpine => WrapSide::RightSide,
         s => s,
     };
+    // A custom boundary already includes the offsets.
+    if let Some(custom) = wrap.path.as_ref().and_then(|p| Contour::of(&p.to_bezpath(), inv * xf, 0.0)) {
+        let rect = custom.bounds();
+        let contour = matches!(wrap.mode, WrapMode::BoundingBox | WrapMode::Contour).then_some(custom);
+        return Exclusion { rect, mode: wrap.mode, side, contour };
+    }
     let contour = if wrap.mode == WrapMode::Contour { outline() } else { None }.and_then(|path| Contour::of(&path, inv * xf, o[0]));
     let rect = contour.as_ref().map_or_else(|| inv.transform_rect_bbox(r), Contour::bounds);
     Exclusion { rect, mode: wrap.mode, side, contour }
@@ -2695,8 +2701,7 @@ fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool) 
         let overlaps_band = r.y0 < y1 && r.y1 > y0;
         let blocked = match ex.mode {
             WrapMode::JumpToNextColumn if y1 > r.y0 && r.x0 < col.x1 && r.x1 > col.x0 => return vec![],
-            WrapMode::BoundingBox if overlaps_band => Some((r.x0, r.x1)),
-            WrapMode::Contour if overlaps_band => match &ex.contour {
+            WrapMode::BoundingBox | WrapMode::Contour if overlaps_band => match &ex.contour {
                 Some(c) => c.band_extent(y0, y1),
                 None => Some((r.x0, r.x1)),
             },

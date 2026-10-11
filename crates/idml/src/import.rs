@@ -2502,7 +2502,14 @@ impl<'r> Importer<'r> {
         }
         // Text wrap.
         if let Some(w) = self.with_style(e, "TextWrapPreference") {
-            it.wrap = text_wrap(&w);
+            let mut tw = text_wrap(&w);
+            if let Some(pg) = w.prop_el("PathGeometry") {
+                match wrap_path_of(pg) {
+                    Ok(p) => tw.path = Some(p),
+                    Err(why) => log::warn!("IDML: custom text wrap boundary of {} dropped: {why}", e.get("Self").unwrap_or("an item")),
+                }
+            }
+            it.wrap = tw;
         }
         // Type on a path.
         if tag != "TextFrame"
@@ -3184,6 +3191,46 @@ fn path_of(pg: &El) -> PathData {
 /// The page a placed PDF shows (0-based), from its `PDFAttribute` (`PageNumber` is 1-based).
 fn pdf_page_in(g: &El) -> u32 {
     g.find("PDFAttribute").and_then(|a| a.get("PageNumber")).and_then(|v| v.trim().parse::<u32>().ok()).map_or(0, |n| n.saturating_sub(1))
+}
+
+/// Anchors a custom text wrap boundary may have.
+const MAX_WRAP_PATH_ANCHORS: usize = 4096;
+
+/// A custom text wrap boundary (`TextWrapPreference/Properties/PathGeometry`), in the item's inner
+/// space like its own path. Hostile input is an error: too many anchors, a malformed or non-finite
+/// point, or no points at all.
+fn wrap_path_of(pg: &El) -> std::result::Result<PathData, &'static str> {
+    let finite = |s: Option<&str>| -> std::result::Result<Option<Point>, &'static str> {
+        let Some(s) = s else { return Ok(None) };
+        let v = nums(s);
+        match (v.first(), v.get(1)) {
+            (Some(&x), Some(&y)) if v.len() == 2 && x.is_finite() && y.is_finite() => Ok(Some(Point::new(x, y))),
+            _ => Err("malformed or non-finite point"),
+        }
+    };
+    let mut subs = Vec::new();
+    let mut n = 0usize;
+    for g in pg.find_all("GeometryPathType") {
+        let closed = g.get("PathOpen") != Some("true");
+        let mut anchors = Vec::new();
+        for p in g.find("PathPointArray").into_iter().flat_map(|arr| arr.find_all("PathPointType")) {
+            n = n.saturating_add(1);
+            if n > MAX_WRAP_PATH_ANCHORS {
+                return Err("too many points");
+            }
+            let a = finite(p.get("Anchor"))?.ok_or("point without an anchor")?;
+            let hin = finite(p.get("LeftDirection"))?.unwrap_or(a);
+            let hout = finite(p.get("RightDirection"))?.unwrap_or(a);
+            anchors.push(Anchor::with_handles(a, hin, hout));
+        }
+        if !anchors.is_empty() {
+            subs.push(SubPath::new(anchors, closed));
+        }
+    }
+    if subs.is_empty() {
+        return Err("no points");
+    }
+    Ok(PathData::new(subs))
 }
 
 /// IDML link URI → file system path (`file:/a%20b` → `/a b`, `file:///C:/x` → `C:/x`).

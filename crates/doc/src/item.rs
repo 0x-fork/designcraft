@@ -483,7 +483,7 @@ pub enum ContourType {
 }
 
 /// Text Wrap panel settings.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TextWrap {
     pub mode: WrapMode,
@@ -492,6 +492,11 @@ pub struct TextWrap {
     pub invert: bool,
     pub side: WrapSide,
     pub contour: ContourType,
+    /// A custom wrap boundary in the item's inner space, offsets already included. Bounding-box
+    /// and contour wraps follow it instead of the frame; other modes use its bounds. Resizing the
+    /// item transforms it with the path; other path edits keep it as it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathData>,
 }
 
 impl TextWrap {
