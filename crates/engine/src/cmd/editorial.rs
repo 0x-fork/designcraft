@@ -16,7 +16,7 @@ pub fn specs() -> Vec<CommandSpec> {
             if ts.cell.is_some() {
                 return Err(bad("note.new", "notes go in story text"));
             }
-            let text = str_param(p, "text").unwrap_or("").to_string();
+            let text = super::text_param(p, "text");
             let author = str_param(p, "author").unwrap_or("").to_string();
             let at = ts.anchor.max(ts.focus);
             s.edit(|d, sel| {

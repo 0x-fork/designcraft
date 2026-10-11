@@ -36,7 +36,7 @@ fn align_param(p: &Value) -> Result<Option<PathAlign>> {
 
 fn on_path(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("type.onPath", "missing id"))?;
-    let text = super::str_param(p, "text").unwrap_or("").to_string();
+    let text = super::text_param(p, "text");
     let mut pt = PathType {
         start: p.get("start").and_then(Value::as_f64).unwrap_or(0.0).max(0.0),
         flip: p.get("flip").and_then(Value::as_bool).unwrap_or(false),
