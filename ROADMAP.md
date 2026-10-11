@@ -129,6 +129,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-11** · Moving a sheared and rotated text frame no longer leaves trails of text behind: canvas repaints cover the frame's whole text box, not just its outline. No readiness percentage change.
 - **2026-10-11** · Live corners: the yellow widget on a selected rectangle frame shows corner
   diamonds; dragging one rounds the corners, Alt-click steps the corner shape (#186).
 - **2026-10-11** · Optical kerning (#181): pairs are spaced from their outlines (ink gap per band,
