@@ -765,8 +765,11 @@ mod tests {
         h.ctx.read_response(egui::Id::new(("object_control", id))).unwrap().rect
     }
 
+    /// The rect of the node with this label, preferring the one in the Control bar's row: the
+    /// Properties panel has buttons with the same names.
     fn rect(h: &egui_kittest::Harness<'static, test_window::Window>, label: &str) -> egui::Rect {
-        h.get_by_label(label).rect()
+        let bar = test_window::panel_rect(h, "control_bar");
+        h.query_all_by_label(label).map(|n| n.rect()).find(|r| bar.y_range().contains(r.center().y)).unwrap_or_else(|| h.get_by_label(label).rect())
     }
 
     /// The application bar's search field (German interface).
