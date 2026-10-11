@@ -1044,6 +1044,8 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             let list = app.session.prefs.autocorrect_list.iter().map(|(a, b)| format!("{a} → {b}")).collect::<Vec<_>>().join("\n");
             f["autocorrectText"] = json!(list);
             f["section"] = json!("general");
+            // The language previews as it changes; Cancel goes back to this one.
+            f["openedLanguage"] = json!(app.ui.language);
             app.ui.dialog = Some(crate::dialogs::Dialog::new("preferences", f));
             Ok(Value::Null)
         }

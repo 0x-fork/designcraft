@@ -1754,11 +1754,22 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         Some(true) => {
             let _ = confirm(app);
         }
-        Some(false) => {
-            app.ui.dialog = None;
-            app.cancel_pdf_import();
-        }
+        Some(false) => cancel(app),
         None => {}
+    }
+}
+
+/// Close the open dialog without applying it. Preferences also puts back the interface language
+/// it opened with, since choosing one previews it at once.
+pub fn cancel(app: &mut DesignApp) {
+    let d = app.ui.dialog.take();
+    app.cancel_pdf_import();
+    if let Some(d) = d
+        && d.id == "preferences"
+        && let Some(lang) = d.fields.get("openedLanguage").and_then(Value::as_str)
+        && lang != app.ui.language
+    {
+        let _ = app.run("app.language", json!({"lang": lang}));
     }
 }
 
@@ -3899,6 +3910,20 @@ mod tests {
         let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
         assert!(labels.iter().any(|(text, _, _)| text == "日本語"));
         assert!(labels.iter().any(|(text, _, _)| text == crate::i18n::tr("ja", "Interface Language")));
+
+        // Cancel puts back the language the dialog opened with; OK keeps the choice.
+        let cancel_button = visible_label(&labels, screen, crate::i18n::tr("ja", "Cancel")).center();
+        click_dialog(&mut app, &ctx, screen, cancel_button);
+        assert!(app.ui.dialog.is_none());
+        assert_eq!(app.ui.language, "");
+        app.run("app.preferences", json!({})).unwrap();
+        app.run("app.language", json!({"lang": "it"})).unwrap();
+        confirm(&mut app).unwrap();
+        assert_eq!(app.ui.language, "it");
+        app.run("app.preferences", json!({})).unwrap();
+        app.run("app.language", json!({"lang": "uk"})).unwrap();
+        cancel(&mut app);
+        assert_eq!(app.ui.language, "it");
     }
 
     #[test]
