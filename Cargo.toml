@@ -11,7 +11,7 @@ rust-version = "1.95"
 repository = "https://github.com/storytold/designcraft"
 
 [workspace.dependencies]
-craft-print = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "32bcac12db98113d18d8f56bc47fb6ddabe4d54f" }
+craft-print = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "d991bf6792f8ade99c51358bf3c1d902c8cd96b5" }
 # internal
 designcraft-geom = { path = "crates/geom" }
 designcraft-color = { path = "crates/color" }
