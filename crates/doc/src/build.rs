@@ -559,7 +559,7 @@ impl Document {
     /// happens on the parent page.
     pub fn inherited_guides(&self, abs: usize) -> Vec<Guide> {
         let (Some(page), Some((pi, qi))) = (self.page(abs), self.parent_page_for(abs)) else { return Vec::new() };
-        let Some(parent) = self.parents[pi].pages.get(qi) else { return Vec::new() };
+        let Some(parent) = self.parents.get(pi).and_then(|ps| ps.pages.get(qi)) else { return Vec::new() };
         let dx = page.x - parent.x;
         parent
             .guides

@@ -297,7 +297,11 @@ fn document_sections(app: &mut DesignApp, ui: &mut Ui) {
         }
         if let Some(m) = set {
             let params = match parent_target {
-                Some((pi, qi)) => json!({"margins": m, "parent": pi, "pages": [qi]}),
+                // Both pages of a facing parent spread, so the margins show wherever the parent is used.
+                Some((pi, _)) => {
+                    let n = app.session.active().and_then(|st| st.doc.parents.get(pi)).map_or(1, |sp| sp.pages.len());
+                    json!({"margins": m, "parent": pi, "pages": (0..n).collect::<Vec<_>>()})
+                }
                 None => json!({"margins": m}),
             };
             let _ = app.run("layout.marginsAndColumns", params);

@@ -229,9 +229,12 @@ pub fn specs() -> Vec<CommandSpec> {
                         let idxs: Vec<usize> = pages.clone().unwrap_or_else(|| (0..ps.pages.len()).collect());
                         let old: Vec<(usize, Margins, designcraft_doc::Columns)> =
                             idxs.iter().filter_map(|&qi| ps.pages.get(qi).map(|pg| (qi, pg.margins, pg.columns.clone()))).collect();
-                        for &qi in &idxs {
-                            if let Some(pg) = std::sync::Arc::make_mut(&mut d.parents[pi]).pages.get_mut(qi) {
-                                set_margins_columns(pg, &p);
+                        if let Some(ps) = d.parents.get_mut(pi) {
+                            let ps = std::sync::Arc::make_mut(ps);
+                            for &qi in &idxs {
+                                if let Some(pg) = ps.pages.get_mut(qi) {
+                                    set_margins_columns(pg, &p);
+                                }
                             }
                         }
                         for abs in 0..d.page_count() {
@@ -241,7 +244,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             }
                             let Some((_, om, oc)) = old.iter().find(|o| o.0 == qi) else { continue };
                             let Some((si, pj)) = d.page_loc(abs) else { continue };
-                            let pg = &mut std::sync::Arc::make_mut(&mut d.spreads[si]).pages[pj];
+                            let Some(pg) = d.spreads.get_mut(si).and_then(|sp| std::sync::Arc::make_mut(sp).pages.get_mut(pj)) else { continue };
                             if pg.margins == *om && pg.columns == *oc {
                                 set_margins_columns(pg, &p);
                             }
@@ -250,7 +253,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         let all: Vec<usize> = pages.clone().unwrap_or_else(|| (0..d.page_count()).collect());
                         for abs in all {
                             let Some((si, pi)) = d.page_loc(abs) else { continue };
-                            let pg = &mut std::sync::Arc::make_mut(&mut d.spreads[si]).pages[pi];
+                            let Some(pg) = d.spreads.get_mut(si).and_then(|sp| std::sync::Arc::make_mut(sp).pages.get_mut(pi)) else { continue };
                             set_margins_columns(pg, &p);
                         }
                     }

@@ -1,6 +1,7 @@
 //! Modal dialogs. Each dialog keeps its fields in a JSON map so the control channel can set them
 //! (`ui.dialog.set {field, value}`) and confirm them (`ui.dialog.confirm`) like a user would.
 
+use designcraft_doc::SpreadRef;
 use designcraft_geom::{Unit, format_measure, units::parse_measure};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -603,16 +604,37 @@ fn doc_unit(app: &DesignApp) -> Unit {
 pub fn open_create_guides(app: &mut DesignApp) {
     let unit = doc_unit(app);
     let Some((spread, page)) = crate::canvas::current_spread_page(app) else { return };
+    let editing_parents = matches!(spread, SpreadRef::Parent(_));
     let gutter = json!(format_measure(12.0, unit));
-    app.ui.dialog = Some(Dialog::new(
+    let mut d = Dialog::new(
         "createGuides",
         json!({"rows": 0, "columns": 0, "rowGutter": gutter, "columnGutter": gutter, "fitTo": "margins", "removeExisting": false,
-            "spread": serde_json::to_value(spread).unwrap_or(json!(0)), "page": page}),
-    ));
+            "spread": serde_json::to_value(spread).unwrap_or(json!(0)), "page": page,
+            // A parent spread is edited as a whole (both pages of a facing spread), so the guides show on every page that uses it.
+            "target": if editing_parents { "spread" } else { "page" },
+            "where": target_description(app, spread, page)}),
+    );
+    d.unit = unit;
+    app.ui.dialog = Some(d);
+}
+
+/// "Page 4" / "Pages 4–5" / "Parent A-Parent": what a dialog's target choice refers to.
+fn target_description(app: &DesignApp, spread: SpreadRef, page: usize) -> String {
+    let Some(st) = app.session.active() else { return String::new() };
+    match spread {
+        SpreadRef::Doc(si) => {
+            let first = st.doc.first_page_of_spread(si);
+            format!("page {}", app.session.page_label(first + page))
+        }
+        SpreadRef::Parent(pi) => {
+            let name = st.doc.parents.get(pi).and_then(|p| p.parent.as_ref()).map(|i| i.label()).unwrap_or_default();
+            format!("parent {name}")
+        }
+    }
 }
 
 /// Layout › Margins and Columns…: the margins and columns of the page in view (or of the parent
-/// page while parents are edited), shown and typed in the document's ruler unit.
+/// spread while parents are edited), shown and typed in the document's ruler unit.
 pub fn open_margins_and_columns(app: &mut DesignApp) {
     let unit = doc_unit(app);
     let parent = crate::canvas::current_parent_page(app);
@@ -624,17 +646,53 @@ pub fn open_margins_and_columns(app: &mut DesignApp) {
     };
     let Some(pg) = page else { return };
     let fm = |v: f64| json!(format_measure(v, unit));
+    // The pages of the spread in view: both pages of a facing spread.
+    let spread_pages: Vec<usize> = match parent {
+        Some((pi, _)) => (0..st.doc.parents.get(pi).map_or(0, |s| s.pages.len())).collect(),
+        None => st.doc.page_loc(cur).map_or_else(Vec::new, |(si, _)| {
+            let first = st.doc.first_page_of_spread(si);
+            (first..first + st.doc.spreads.get(si).map_or(0, |s| s.pages.len())).collect()
+        }),
+    };
+    let where_ = match parent {
+        Some((pi, qi)) => target_description(app, SpreadRef::Parent(pi), qi),
+        None => format!("page {}", app.session.page_label(cur)),
+    };
     let mut f = json!({
         "columns": pg.columns.count, "gutter": fm(pg.columns.gutter),
         "marginTop": fm(pg.margins.top), "marginBottom": fm(pg.margins.bottom),
         "marginInside": fm(pg.margins.inside), "marginOutside": fm(pg.margins.outside),
-        "adjustLayout": false, "allPages": false, "page": cur,
+        "adjustLayout": false, "page": cur, "spreadPages": spread_pages,
+        "target": if parent.is_some() { "spread" } else { "page" }, "where": where_,
     });
     if let Some((pi, qi)) = parent {
         f["parent"] = json!(pi);
         f["parentPage"] = json!(qi);
     }
-    app.ui.dialog = Some(Dialog::new("marginsAndColumns", f));
+    let mut d = Dialog::new("marginsAndColumns", f);
+    d.unit = unit;
+    app.ui.dialog = Some(d);
+}
+
+/// "Apply to:" choice of the Create Guides and Margins and Columns dialogs, with the page it
+/// refers to spelled out so a wrong target is visible before the dialog is confirmed.
+fn target_row(app: &DesignApp, ui: &mut egui::Ui, d: &mut Dialog, all_pages: bool) {
+    let lang = app.ui.language.clone();
+    let tr = |s: &'static str| crate::i18n::tr(&lang, s);
+    let parent = d.fields.contains_key("parent") || matches!(d.fields.get("spread"), Some(v) if v["kind"] == "parent");
+    let spread_label = if parent { tr("Both pages of the parent spread") } else { tr("Both pages of the spread") };
+    let mut opts = vec![("page", tr("This page")), ("spread", spread_label)];
+    if all_pages {
+        opts.push(("all", tr("All pages")));
+    }
+    ui.horizontal(|ui| {
+        ui.label(crate::rtl::widget(ui, tr("Apply to:")));
+        combo(ui, d, "target", &opts);
+    });
+    let w = d.s("where");
+    if !w.is_empty() {
+        ui.label(egui::RichText::new(format!("{} {w}", tr("This page is"))).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+    }
 }
 
 pub fn open_document_setup(app: &mut DesignApp) {
@@ -1164,7 +1222,6 @@ fn check(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
 
 pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.dialog.clone() else { return };
-    d.unit = doc_unit(app);
     let mut result: Option<bool> = None;
     let alert_title = d.s("title");
     let title = match d.id.as_str() {
@@ -1756,7 +1813,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                 });
                 ui.add_space(4.0);
                 check(ui, &mut d, "removeExisting", crate::i18n::tr(&app.ui.language, "Remove Existing Ruler Guides"));
-                ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Applies to the page in view.")));
+                target_row(app, ui, &mut d, false);
                 if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
                     ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
                 }
@@ -1781,11 +1838,8 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                     }
                 });
                 ui.add_space(4.0);
-                if d.fields.contains_key("parent") {
-                    ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Applies to the parent page in view.")));
-                } else {
-                    check(ui, &mut d, "allPages", crate::i18n::tr(&app.ui.language, "Apply to all pages"));
-                }
+                let all_pages = !d.fields.contains_key("parent");
+                target_row(app, ui, &mut d, all_pages);
                 check(ui, &mut d, "adjustLayout", crate::i18n::tr(&app.ui.language, "Adjust Layout"));
                 if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
                     ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
@@ -1849,8 +1903,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
 
 /// Apply the open dialog.
 pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
-    let Some(mut d) = app.ui.dialog.take() else { return Err("no dialog open".into()) };
-    d.unit = doc_unit(app);
+    let Some(d) = app.ui.dialog.take() else { return Err("no dialog open".into()) };
     if d.id != "pdfImport" || !d.b("async") {
         app.cancel_pdf_import();
     }
@@ -1864,13 +1917,14 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 app.ui.dialog = Some(d);
                 return Err("invalid gutter".into());
             };
-            app.run(
-                "layout.createGuides",
-                json!({"rows": d.n("rows").unwrap_or(0.0).max(0.0) as u64, "columns": d.n("columns").unwrap_or(0.0).max(0.0) as u64,
-                    "rowGutter": row_gutter, "columnGutter": column_gutter, "fitTo": d.s("fitTo"),
-                    "removeExisting": d.b("removeExisting"), "spread": d.fields.get("spread").cloned().unwrap_or(json!(0)),
-                    "page": d.fields.get("page").cloned().unwrap_or(json!(0))}),
-            )
+            let mut p = json!({"rows": d.n("rows").unwrap_or(0.0).max(0.0) as u64, "columns": d.n("columns").unwrap_or(0.0).max(0.0) as u64,
+                "rowGutter": row_gutter, "columnGutter": column_gutter, "fitTo": d.s("fitTo"),
+                "removeExisting": d.b("removeExisting"), "spread": d.fields.get("spread").cloned().unwrap_or(json!(0))});
+            // Without `page` the command covers every page of the spread.
+            if d.s("target") != "spread" {
+                p["page"] = d.fields.get("page").cloned().unwrap_or(json!(0));
+            }
+            app.run("layout.createGuides", p)
         }
         "marginsAndColumns" => {
             // A value that does not parse is an error shown in the dialog, never a silent 0.
@@ -1890,11 +1944,16 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             }
             let gutter = v.remove("gutter").unwrap_or(json!(12.0));
             let mut p = json!({"margins": v, "columns": d.n("columns").unwrap_or(1.0).max(1.0) as u64, "gutter": gutter, "adjustLayout": d.b("adjustLayout")});
+            let spread_pages: Vec<u64> = d.fields.get("spreadPages").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
             if let Some(pi) = d.fields.get("parent").and_then(Value::as_u64) {
                 p["parent"] = json!(pi);
-                p["pages"] = json!([d.fields.get("parentPage").and_then(Value::as_u64).unwrap_or(0)]);
-            } else if !d.b("allPages") {
-                p["pages"] = json!([d.fields.get("page").and_then(Value::as_u64).unwrap_or(0)]);
+                p["pages"] = if d.s("target") == "page" { json!([d.fields.get("parentPage").and_then(Value::as_u64).unwrap_or(0)]) } else { json!(spread_pages) };
+            } else {
+                match d.s("target").as_str() {
+                    "all" => {}
+                    "spread" if !spread_pages.is_empty() => p["pages"] = json!(spread_pages),
+                    _ => p["pages"] = json!([d.fields.get("page").and_then(Value::as_u64).unwrap_or(0)]),
+                }
             }
             app.run("layout.marginsAndColumns", p)
         }
@@ -4712,5 +4771,75 @@ mod tests {
         }
         assert_eq!(crate::menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+K"));
         assert_eq!(d.s("recording"), "", "recording ends with the recorded shortcut");
+    }
+    #[test]
+    fn margins_dialog_reads_bare_numbers_in_the_ruler_unit() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("document.preferences", json!({"horizontalUnits": "millimeters"})).unwrap();
+        crate::menus::activate(&mut app, "layout.marginsAndColumns", &Value::Null);
+        for k in ["marginTop", "marginBottom", "marginInside", "marginOutside"] {
+            ctl(&mut app, "ui.dialog.set", json!({"field": k, "value": "15"}));
+        }
+        assert_eq!(ctl(&mut app, "ui.dialog.confirm", json!({}))["ok"], true);
+        let top = app.session.active().unwrap().doc.page(0).unwrap().margins.top;
+        assert!((top - 15.0 * 72.0 / 25.4).abs() < 0.01, "top margin was {top} pt");
+    }
+    fn facing_app(pages: u64) -> DesignApp {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": pages, "facingPages": true})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0)));
+        app
+    }
+
+    fn guide_counts(app: &DesignApp) -> Vec<usize> {
+        let doc = &app.session.active().unwrap().doc;
+        (0..doc.page_count()).map(|abs| doc.page(abs).unwrap().guides.len()).collect()
+    }
+
+    #[test]
+    fn create_guides_dialog_targets_the_page_in_view() {
+        let mut app = facing_app(6);
+        crate::canvas::go_to_page(&mut app, 4);
+        crate::menus::activate(&mut app, "layout.createGuides", &Value::Null);
+        ctl(&mut app, "ui.dialog.set", json!({"field": "columns", "value": "3"}));
+        assert_eq!(ctl(&mut app, "ui.dialog.confirm", json!({}))["ok"], true);
+        assert_eq!(guide_counts(&app), vec![0, 0, 0, 0, 4, 0]);
+        // "Both pages of the spread" covers the facing pair.
+        crate::canvas::go_to_page(&mut app, 1);
+        crate::menus::activate(&mut app, "layout.createGuides", &Value::Null);
+        ctl(&mut app, "ui.dialog.set", json!({"field": "columns", "value": "2"}));
+        ctl(&mut app, "ui.dialog.set", json!({"field": "target", "value": "spread"}));
+        assert_eq!(ctl(&mut app, "ui.dialog.confirm", json!({}))["ok"], true);
+        assert_eq!(guide_counts(&app), vec![0, 2, 2, 0, 4, 0]);
+    }
+
+    #[test]
+    fn parent_dialogs_cover_both_pages_of_the_parent_spread_by_default() {
+        let mut app = facing_app(4);
+        app.run("layout.parents.edit", json!({"on": true})).unwrap();
+        crate::menus::activate(&mut app, "layout.marginsAndColumns", &Value::Null);
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("target"), "spread");
+        for k in ["marginTop", "marginBottom", "marginInside", "marginOutside"] {
+            ctl(&mut app, "ui.dialog.set", json!({"field": k, "value": "20 pt"}));
+        }
+        assert_eq!(ctl(&mut app, "ui.dialog.confirm", json!({}))["ok"], true);
+        crate::menus::activate(&mut app, "layout.createGuides", &Value::Null);
+        ctl(&mut app, "ui.dialog.set", json!({"field": "columns", "value": "2"}));
+        assert_eq!(ctl(&mut app, "ui.dialog.confirm", json!({}))["ok"], true);
+        let doc = &app.session.active().unwrap().doc;
+        for pg in &doc.parents[0].pages {
+            assert_eq!((pg.margins.top, pg.margins.outside, pg.guides.len()), (20.0, 20.0, 2));
+        }
+        // Every document page shows the parent's guides.
+        assert!((0..doc.page_count()).all(|abs| doc.inherited_guides(abs).len() == 2));
+    }
+
+    #[test]
+    fn other_dialogs_keep_reading_bare_numbers_as_picas() {
+        let mut app = facing_app(2);
+        app.run("document.preferences", json!({"horizontalUnits": "millimeters"})).unwrap();
+        app.ui.dialog = Some(Dialog::new("newDocument", json!({"width": "15"})));
+        assert_eq!(app.ui.dialog.as_ref().unwrap().m("width"), Some(180.0));
     }
 }
