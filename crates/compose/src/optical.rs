@@ -155,13 +155,22 @@ fn reference_gap(db: &ScopedFonts<'_>, face: &FontFace) -> Option<f64> {
 
 /// Whether `c` takes part in optical kerning: letters of the Latin, Greek and Cyrillic scripts,
 /// digits and Western punctuation. Spaces, marks, joined and ideographic scripts keep their
-/// font spacing.
+/// font spacing, as do dashes (two bars end to end have no ink gap to measure, and `——` must
+/// stay one continuous rule) and the fullwidth forms, which sit on the CJK em grid.
 pub fn kernable(c: char) -> bool {
     use unicode_script::{Script, UnicodeScript};
+    if is_dash(c) || ('\u{FF00}'..='\u{FFEF}').contains(&c) {
+        return false;
+    }
     if c.is_ascii_digit() || c.is_ascii_punctuation() || ('\u{2010}'..='\u{2027}').contains(&c) {
         return true;
     }
     c.is_alphabetic() && matches!(c.script(), Script::Latin | Script::Greek | Script::Cyrillic)
+}
+
+/// Dash punctuation (Unicode `Pd`) in the ranges optical kerning would otherwise touch.
+fn is_dash(c: char) -> bool {
+    matches!(c, '-' | '\u{2010}'..='\u{2015}' | '\u{2E3A}' | '\u{2E3B}' | '\u{FE58}' | '\u{FF0D}')
 }
 
 /// The adjustment for a pair, in font units: how far the first glyph's advance moves.
@@ -254,5 +263,20 @@ mod tests {
     fn kernable_characters() {
         assert!(kernable('A') && kernable('é') && kernable('Ж') && kernable('Ω') && kernable('7') && kernable('.') && kernable('“'));
         assert!(!kernable(' ') && !kernable('\t') && !kernable('漢') && !kernable('ب') && !kernable('\u{301}'));
+    }
+
+    #[test]
+    fn dashes_and_fullwidth_forms_keep_their_font_spacing() {
+        // `--` and `——` have no ink gap to measure and would otherwise open up; `——` is one
+        // continuous dash in Chinese text.
+        for c in ['-', '\u{2010}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2E3A}', '\u{FF0D}'] {
+            assert!(!kernable(c), "{c:?} is a dash");
+        }
+        // Fullwidth Latin letters, digits and punctuation sit on the CJK em grid.
+        for c in ['\u{FF21}', '\u{FF41}', '\u{FF5A}', '\u{FF11}', '\u{FF0C}'] {
+            assert!(!kernable(c), "{c:?} is a fullwidth form");
+        }
+        // Hyphenated and dashed words still kern on their letters.
+        assert!(kernable('A') && kernable('.') && kernable('\u{2019}'));
     }
 }

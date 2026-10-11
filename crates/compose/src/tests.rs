@@ -626,6 +626,21 @@ fn optical_kerning_is_bounded_and_skips_spaces() {
 }
 
 #[test]
+fn optical_kerning_leaves_dash_pairs_alone() {
+    use designcraft_doc::Kerning;
+    // Two bars end to end have a near-zero ink gap; pulling them towards the stem gap would
+    // break `--` and the double em dash `——` that Chinese sets as one continuous rule.
+    for text in ["--", "\u{2014}\u{2014}", "a--b", "\u{2013}\u{2013}"] {
+        let (none_w, none) = set_with_kerning(text, Kerning::None);
+        let (optical_w, optical) = set_with_kerning(text, Kerning::Optical);
+        assert!((none_w - optical_w).abs() < 1e-9, "{text:?}: optical {optical_w:.3} vs none {none_w:.3}");
+        for ((c, a), (_, b)) in none.iter().zip(&optical) {
+            assert!((a - b).abs() < 1e-9, "{text:?} {c:?}: {a:.3} vs {b:.3}");
+        }
+    }
+}
+
+#[test]
 fn hyphen_limit_is_a_hard_constraint() {
     let text = CORPUS.join(" ");
     for limit in [1u32, 2] {
