@@ -107,7 +107,9 @@ fn apply_subpath(sp: &SubPath, opts: &CornerOptions, out: &mut BezPath) {
     // Segment `i` runs from anchor `i` to anchor `i + 1`; the corner at anchor `i` joins segments
     // `i - 1` and `i`, and takes at most half of each.
     let segs: Vec<CubicBez> = (0..n).map(|i| sp.segment(i)).collect();
-    let lens: Vec<f64> = segs.iter().map(|c| c.arclen(ARC_ACCURACY)).collect();
+    let lines: Vec<bool> = (0..n).map(|i| sp.segment_is_line(i)).collect();
+    // Straight sides are measured (and trimmed below) exactly; curves by arc length.
+    let lens: Vec<f64> = segs.iter().zip(&lines).map(|(c, line)| if *line { (c.p3 - c.p0).hypot() } else { c.arclen(ARC_ACCURACY) }).collect();
     let size: Vec<f64> = (0..n)
         .map(|i| {
             let c = opts.corners[i % 4];
@@ -126,6 +128,12 @@ fn apply_subpath(sp: &SubPath, opts: &CornerOptions, out: &mut BezPath) {
     let trimmed: Vec<CubicBez> = (0..n)
         .map(|i| {
             let (s0, s1) = (size[i], size[(i + 1) % n]);
+            if lines[i] {
+                let c = &segs[i];
+                let u = if lens[i] > 1e-12 { (c.p3 - c.p0) / lens[i] } else { Vec2::ZERO };
+                let (a, b) = (c.p0 + u * s0, c.p3 - u * s1);
+                return CubicBez::new(a, a, b, b);
+            }
             let t0 = if s0 > 0.0 { segs[i].inv_arclen(s0, ARC_ACCURACY) } else { 0.0 };
             let t1 = if s1 > 0.0 { segs[i].inv_arclen(lens[i] - s1, ARC_ACCURACY) } else { 1.0 };
             segs[i].subsegment(t0..t1.max(t0))
@@ -134,7 +142,7 @@ fn apply_subpath(sp: &SubPath, opts: &CornerOptions, out: &mut BezPath) {
     out.move_to(trimmed[0].p0);
     for i in 0..n {
         let seg = &trimmed[i];
-        if sp.segment_is_line(i) {
+        if lines[i] {
             out.line_to(seg.p3);
         } else {
             out.curve_to(seg.p1, seg.p2, seg.p3);
@@ -243,6 +251,25 @@ mod tests {
         // All three corners are rounded off: the line-line one and both where the arc meets a line.
         for corner in [Point::new(0.0, 0.0), Point::new(100.0, 100.0), Point::new(0.0, 100.0)] {
             assert!(nearest(&bp, corner) > 3.0, "{corner:?} is still sharp");
+        }
+    }
+
+    #[test]
+    fn straight_sides_are_trimmed_exactly() {
+        let r = rectangle(Rect::new(0.0, 0.0, 100.0, 60.0));
+        let bp = apply(&r, &CornerOptions::uniform(CornerShape::Bevel, 10.0));
+        // Every point a bevelled rectangle goes through sits exactly 10 pt from a corner.
+        let pts: Vec<Point> = bp
+            .elements()
+            .iter()
+            .filter_map(|e| match e {
+                kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) => Some(*p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pts.len(), 9, "{pts:?}");
+        for p in pts {
+            assert!([0.0, 10.0, 90.0, 100.0].contains(&p.x) && [0.0, 10.0, 50.0, 60.0].contains(&p.y), "{p:?}");
         }
     }
 
