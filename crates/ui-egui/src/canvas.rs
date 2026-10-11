@@ -2838,7 +2838,8 @@ mod tests {
         // An empty frame's menu: Content, but no Fitting (nothing to fit) and no text frame entries.
         assert!(menu_row(&h, "Content").is_some());
         assert!(menu_row(&h, "Fitting").is_none() && menu_row(&h, "Text Frame Options…").is_none());
-        assert!(enabled(&h, "Copy") && !enabled(&h, "Paste"), "nothing copied yet: Paste is greyed");
+        // Paste is available with nothing copied here: the system clipboard may hold another app's text.
+        assert!(enabled(&h, "Copy") && enabled(&h, "Paste"));
         menu_row(&h, "Arrange").unwrap().click();
         h.run_steps(3);
         menu_row(&h, "Bring to Front").unwrap().click();
