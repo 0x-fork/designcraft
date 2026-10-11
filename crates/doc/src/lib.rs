@@ -526,7 +526,7 @@ impl Asset {
     }
 
     /// A Bounding Box crop ([`PdfCrop::ContentVisible`], [`PdfCrop::ContentAll`]) whose box isn't
-    /// stored yet: finding it needs the page rendered.
+    /// stored yet: finding it needs the page's drawing interpreted.
     pub fn content_box_pending(&self) -> bool {
         self.pdf_box.is_none() && matches!(self.pdf_crop, PdfCrop::ContentVisible | PdfCrop::ContentAll) && self.mime == "application/pdf"
     }
