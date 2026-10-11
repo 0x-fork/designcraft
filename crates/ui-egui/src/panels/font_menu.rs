@@ -52,12 +52,11 @@ struct MenuState {
     frame: Option<u64>,
 }
 
-/// What the menu knows about a family (read once, then kept for the session).
+/// What the menu knows about a family it shows (read once, then kept for the session).
 #[derive(Clone)]
 struct FamilyMeta {
     styles: Vec<String>,
     kind: FaceKind,
-    added: bool,
 }
 
 fn regular(styles: &[String]) -> String {
@@ -70,11 +69,78 @@ fn meta(ui: &Ui, fonts: &designcraft_fonts::ScopedFonts<'static>, scope: u32, fa
         return m;
     }
     let styles = fonts.styles(family);
-    let face = fonts.face(family, &regular(&styles));
-    let added = face.added().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < ADDED_WITHIN);
-    let m = FamilyMeta { styles, kind: face.kind(), added };
+    let kind = fonts.face(family, &regular(&styles)).kind();
+    let m = FamilyMeta { styles, kind };
     ui.data_mut(|d| d.insert_temp(key, m.clone()));
     m
+}
+
+/// Every family's kind and whether it was added recently: the class and Recently Added filters and
+/// Show Similar Fonts need them for all families at once, and reading them opens each font file,
+/// so they are read on a background thread, once per document font scope.
+#[derive(Default)]
+struct Kinds {
+    scope: Option<u32>,
+    of: std::collections::HashMap<String, (FaceKind, bool)>,
+    done: bool,
+}
+
+type SharedKinds = std::sync::Arc<std::sync::Mutex<Kinds>>;
+
+fn lock(kinds: &SharedKinds) -> std::sync::MutexGuard<'_, Kinds> {
+    kinds.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// A family's kind, and whether its file was added within [`ADDED_WITHIN`].
+fn family_kind(fonts: &designcraft_fonts::ScopedFonts<'static>, family: &str) -> (FaceKind, bool) {
+    let face = fonts.face(family, &regular(&fonts.styles(family)));
+    (face.kind(), face.added().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < ADDED_WITHIN))
+}
+
+/// The families' kinds, starting to read them the first time they're needed for `scope`.
+fn kinds(ctx: &egui::Context, fonts: &designcraft_fonts::ScopedFonts<'static>, scope: u32) -> SharedKinds {
+    let shared: SharedKinds = ctx.data_mut(|d| d.get_temp_mut_or_default::<SharedKinds>(egui::Id::new("font_kinds")).clone());
+    let start = {
+        let mut k = lock(&shared);
+        let start = k.scope != Some(scope);
+        if start {
+            *k = Kinds { scope: Some(scope), ..Default::default() };
+        }
+        start
+    };
+    if start {
+        let (job_ctx, job_kinds, job_fonts) = (ctx.clone(), shared.clone(), fonts.clone());
+        let job = move || read_kinds(&job_ctx, &job_kinds, &job_fonts, scope);
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::thread::Builder::new().name("font-kinds".into()).spawn(job).is_err() {
+            // No thread to spare: read them here.
+            read_kinds(ctx, &shared, fonts, scope);
+        }
+        // The web has no threads, and only its few bundled fonts.
+        #[cfg(target_arch = "wasm32")]
+        job();
+    }
+    shared
+}
+
+fn read_kinds(ctx: &egui::Context, shared: &SharedKinds, fonts: &designcraft_fonts::ScopedFonts<'static>, scope: u32) {
+    for chunk in fonts.families().chunks(64) {
+        let read: Vec<(String, (FaceKind, bool))> = chunk.iter().map(|f| (f.clone(), family_kind(fonts, f))).collect();
+        let mut k = lock(shared);
+        // Another document's fonts were asked for since.
+        if k.scope != Some(scope) {
+            return;
+        }
+        k.of.extend(read);
+        drop(k);
+        ctx.request_repaint();
+    }
+    let mut k = lock(shared);
+    if k.scope == Some(scope) {
+        k.done = true;
+    }
+    drop(k);
+    ctx.request_repaint();
 }
 
 /// One row of the list.
@@ -112,8 +178,8 @@ fn paint_star(p: &egui::Painter, c: egui::Pos2, r: f32, filled: bool, color: Col
 }
 
 /// The format badge after a family's sample: TT, O (PostScript outlines), a variable font's
-/// slider, or a colour font's four dots.
-fn paint_format(p: &egui::Painter, r: Rect, format: FontFormat, color: Color32) {
+/// slider, or a colour font's four dots (in `color` and `accent`).
+fn paint_format(p: &egui::Painter, r: Rect, format: FontFormat, color: Color32, accent: Color32) {
     let c = r.center();
     match format {
         FontFormat::TrueType => {
@@ -127,11 +193,7 @@ fn paint_format(p: &egui::Painter, r: Rect, format: FontFormat, color: Color32) 
             p.circle_filled(c + vec2(2.0, 0.0), 2.6, color);
         }
         FontFormat::Color => {
-            for (i, dot) in
-                [Color32::from_rgb(230, 80, 70), Color32::from_rgb(250, 190, 60), Color32::from_rgb(80, 180, 110), Color32::from_rgb(70, 140, 230)]
-                    .into_iter()
-                    .enumerate()
-            {
+            for (i, dot) in [accent, color, color, accent].into_iter().enumerate() {
                 let (dx, dy) = ((i % 2) as f32 * 5.0 - 2.5, (i / 2) as f32 * 5.0 - 2.5);
                 p.circle_filled(c + vec2(dx, dy), 2.1, dot);
             }
@@ -217,6 +279,11 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
     ui.set_width(width.max(560.0));
     let mut pick: Option<FontPick> = None;
     let mut favs_changed = false;
+    // The keys the menu uses are its own: a dialog under it never sees Return or Escape.
+    let (down, up, enter, escape) = ui.input_mut(|i| {
+        let mut key = |k| i.consume_key(egui::Modifiers::NONE, k);
+        (key(egui::Key::ArrowDown), key(egui::Key::ArrowUp), key(egui::Key::Enter), key(egui::Key::Escape))
+    });
 
     // Search.
     let search = ui
@@ -315,30 +382,31 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
     // The rows: Recently Used (only for the plain list), then the families that pass the filters.
     let q = st.query.to_lowercase();
     let filtered = st.class.is_some() || st.only_recent || st.similar.is_some();
-    let mut families: Vec<&FamilyInfo> = menu
-        .iter()
-        .filter(|f| f.matches(&q) && (!st.only_favs || favs.contains(&f.family)))
-        .filter(|f| {
-            !filtered || {
-                let m = meta(ui, &fonts, scope, &f.family);
-                st.class.is_none_or(|c| m.kind.class == c) && (!st.only_recent || m.added)
-            }
-        })
-        .collect();
-    if let Some(like) = &st.similar {
-        let base = meta(ui, &fonts, scope, like).kind;
-        let mut near: Vec<(u32, &FamilyInfo)> = families
-            .iter()
-            .filter_map(|f| {
-                let k = meta(ui, &fonts, scope, &f.family).kind;
-                if f.family == *like {
-                    return Some((0, *f));
-                }
-                (k.class == base.class).then(|| (designcraft_fonts::panose_distance(&base.panose, &k.panose).unwrap_or(u32::MAX / 2) + 1, *f))
-            })
-            .collect();
-        near.sort_by_key(|(d, _)| *d);
-        families = near.into_iter().take(SIMILAR).map(|(_, f)| f).collect();
+    let mut families: Vec<&FamilyInfo> = menu.iter().filter(|f| f.matches(&q) && (!st.only_favs || favs.contains(&f.family))).collect();
+    // While the kinds are read, the families read so far.
+    let mut loading = false;
+    if filtered {
+        let shared = kinds(ui.ctx(), &fonts, scope);
+        let k = lock(&shared);
+        loading = !k.done;
+        // A family the read didn't list (just activated) is read here, once the read is done.
+        let kind = |f: &str| k.of.get(f).copied().or_else(|| k.done.then(|| family_kind(&fonts, f)));
+        families.retain(|f| kind(&f.family).is_some_and(|(kind, added)| st.class.is_none_or(|c| kind.class == c) && (!st.only_recent || added)));
+        if let Some(like) = &st.similar {
+            let base = meta(ui, &fonts, scope, like).kind;
+            let mut near: Vec<(u32, &FamilyInfo)> = families
+                .iter()
+                .filter_map(|f| {
+                    if f.family == *like {
+                        return Some((0, *f));
+                    }
+                    let (k, _) = kind(&f.family)?;
+                    (k.class == base.class).then(|| (designcraft_fonts::panose_distance(&base.panose, &k.panose).unwrap_or(u32::MAX / 2) + 1, *f))
+                })
+                .collect();
+            near.sort_by_key(|(d, _)| *d);
+            families = near.into_iter().take(SIMILAR).map(|(_, f)| f).collect();
+        }
     }
     let mut rows: Vec<Row> = Vec::new();
     if q.is_empty() && !filtered && !st.only_favs {
@@ -376,7 +444,6 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
     if search.changed() {
         st.highlight = if q.is_empty() { None } else { Some(0) };
     }
-    let (down, up, enter) = ui.input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
     let last = pickable.len().checked_sub(1);
     st.highlight = match (st.highlight, last) {
         (_, None) => None,
@@ -408,7 +475,9 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
         })
         .sum();
     egui::ScrollArea::vertical().max_height(420.0).min_scrolled_height(list_h.clamp(24.0, 420.0)).auto_shrink([false, true]).show(ui, |ui| {
-        if rows.is_empty() {
+        if loading {
+            crate::rtl::label(ui, egui::RichText::new(tr("Loading fonts…")).color(t.text_dim));
+        } else if rows.is_empty() {
             crate::rtl::label(ui, egui::RichText::new(tr("No fonts match")).color(t.text_dim));
         }
         for (i, row) in rows.iter().enumerate() {
@@ -507,7 +576,7 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
             }
             if style.is_none() {
                 let badge = Rect::from_center_size(pos2(r.max.x - 16.0, cy), vec2(20.0, 16.0));
-                paint_format(&p, badge, m.kind.format, t.text_dim);
+                paint_format(&p, badge, m.kind.format, t.text_dim, t.accent);
                 ui.interact(badge, ui.id().with(("format", f, recent)), Sense::hover()).on_hover_text(tr(format_name(m.kind.format)));
             }
             if resp.clicked() && !handled {
@@ -543,6 +612,8 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
         recent.insert(0, p.family.clone());
         recent.truncate(RECENT);
         let _ = app.run("prefs.set", json!({ "recentFonts": recent }));
+        ui.close();
+    } else if escape {
         ui.close();
     }
     pick
