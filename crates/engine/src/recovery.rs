@@ -67,15 +67,15 @@ pub fn run_dir(root: &Path) -> Result<PathBuf> {
         // Only a folder this run makes is its own. One that is there is another app's, or was
         // left by a run that ended under this process id.
         #[cfg(unix)]
-        let new = {
+        let made = {
             use std::os::unix::fs::DirBuilderExt;
-            let mut new = std::fs::DirBuilder::new();
-            new.mode(0o700);
-            new
+
+            let mut builder = std::fs::DirBuilder::new();
+            builder.mode(0o700).create(&dir)
         };
         #[cfg(not(unix))]
-        let new = std::fs::DirBuilder::new();
-        match new.create(&dir) {
+        let made = std::fs::create_dir(&dir);
+        match made {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(EngineError::Other(format!("{}: {e}", dir.display()))),
