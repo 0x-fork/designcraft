@@ -1512,4 +1512,16 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Rule Below", "Filetto sotto"),
     ("Tint:", "Tinta:"),
     ("Presentation", "Presentazione"),
+    // Document Setup
+    ("Page Size:", "Dimensioni pagina:"),
+    ("Adjust page elements to document changes", "Adatta gli elementi della pagina alle modifiche del documento"),
+    ("Apply the changes; objects follow the new page size and margins", "Applica le modifiche; gli oggetti seguono le nuove dimensioni e i margini"),
+    ("Top:", "Alto:"),
+    ("Bottom:", "Basso:"),
+    ("Inside:", "Interno:"),
+    ("Outside:", "Esterno:"),
+    ("Left:", "Sinistra:"),
+    ("Right:", "Destra:"),
+    ("Bleed:", "Pagina al vivo:"),
+    ("Slug:", "Indicazioni:"),
 ];
