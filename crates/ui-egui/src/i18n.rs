@@ -2063,7 +2063,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ],
     ),
     ("No text selected", ["No text selected", "No text selected", "No text selected", "No text selected", "未选择文本"]),
-    ("Search", ["Search", "Search", "Search", "Search", "搜索"]),
+    ("Search", ["Suchen", "Rechercher", "Buscar", "Search", "搜索"]),
     ("Essentials", ["Essentials", "Essentials", "Essentials", "Essentials", "基本功能"]),
     ("Advanced", ["Advanced", "Advanced", "Advanced", "Advanced", "高级"]),
     ("Digital Publishing", ["Digital Publishing", "Digital Publishing", "Digital Publishing", "Digital Publishing", "数字出版"]),
@@ -2202,7 +2202,11 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Run", ["Run", "Run", "Run", "Run", "运行"]),
     ("Scale X Percentage", ["Scale X Percentage", "Scale X Percentage", "Scale X Percentage", "Scale X Percentage", "水平缩放百分比"]),
     ("Scale Y Percentage", ["Scale Y Percentage", "Scale Y Percentage", "Scale Y Percentage", "Scale Y Percentage", "垂直缩放百分比"]),
-    ("Search commands", ["Search commands", "Search commands", "Search commands", "Search commands", "搜索命令"]),
+    ("Search commands", ["Befehle suchen", "Rechercher des commandes", "Buscar comandos", "Search commands", "搜索命令"]),
+    (
+        "No matching commands",
+        ["Keine passenden Befehle", "Aucune commande correspondante", "Ningún comando coincide", "一致するコマンドはありません", "没有匹配的命令"],
+    ),
     ("Search fonts", ["Search fonts", "Search fonts", "Search fonts", "Search fonts", "搜索字体"]),
     (
         "Search styles and commands…",
