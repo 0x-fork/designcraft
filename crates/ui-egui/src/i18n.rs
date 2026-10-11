@@ -3104,7 +3104,7 @@ mod tests {
         assert_eq!(tr_context("cs", "Columns", "table"), tr("cs", "Columns"));
         assert_eq!(style_name("cs", "[Basic Paragraph]"), "[Základní odstavec]");
         assert_eq!(style_name("cs", "My layout style"), "My layout style");
-        assert_eq!(workspace_name("cs", "Essentials"), "Základy");
+        assert_eq!(workspace_name("cs", "Essentials"), "Základní");
         assert_eq!(workspace_name("cs", "My workspace"), "My workspace");
     }
 
