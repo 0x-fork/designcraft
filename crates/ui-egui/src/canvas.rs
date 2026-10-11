@@ -348,7 +348,8 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         } else {
             app.session.cursor(xf.to_canvas(p), ui.input(|i| mods(i, false)), app.view_info())
         };
-        ui.ctx().set_cursor_icon(cursor_icon(c));
+        let icon = crate::cursors::show(ui.ctx(), &mut app.cursors, c, p);
+        ui.ctx().set_cursor_icon(icon);
         draw_cursor_badge(&painter, p, c, &t);
     }
 }
@@ -379,32 +380,6 @@ fn draw_cursor_badge(painter: &egui::Painter, p: Pos2, c: Cursor, t: &Tokens) {
                 painter.line_segment([pos2(c0.x + 2.0, c0.y - 6.0), pos2(c0.x - 2.0, c0.y + 6.0)], ink);
             }
         }
-    }
-}
-
-fn cursor_icon(c: Cursor) -> egui::CursorIcon {
-    use egui::CursorIcon as C;
-    match c {
-        Cursor::Arrow | Cursor::ArrowHollow => C::Default,
-        Cursor::Move => C::Move,
-        Cursor::Crosshair => C::Crosshair,
-        Cursor::ResizeH => C::ResizeHorizontal,
-        Cursor::ResizeV => C::ResizeVertical,
-        Cursor::ResizeNwSe => C::ResizeNwSe,
-        Cursor::ResizeNeSw => C::ResizeNeSw,
-        Cursor::Rotate => C::Alias,
-        Cursor::Pen | Cursor::PenContinue => C::Crosshair,
-        Cursor::PathBracket => C::ResizeColumn,
-        Cursor::Text => C::Text,
-        Cursor::Hand => C::Grab,
-        Cursor::HandGrab => C::Grabbing,
-        Cursor::ZoomIn => C::ZoomIn,
-        Cursor::ZoomOut => C::ZoomOut,
-        Cursor::Eyedropper => C::Crosshair,
-        Cursor::LoadedText | Cursor::LoadedGraphic => C::Copy,
-        Cursor::ThreadLink => C::Alias,
-        Cursor::Unthread => C::NoDrop,
-        Cursor::NotAllowed => C::NotAllowed,
     }
 }
 
@@ -2086,6 +2061,33 @@ mod tests {
             h.run_steps(30);
         }
         assert!(selected(&h).is_empty(), "three clicks half a second apart leave a caret: {:?}", selected(&h));
+    }
+
+    #[test]
+    fn tools_show_their_own_cursors_over_the_page() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let mut h = harness(app);
+        let p = h.state().canvas_rect.unwrap().center();
+        let mut shown = |tool: &str| {
+            h.state_mut().run("tool.select", json!({"tool": tool})).unwrap();
+            h.hover_at(p);
+            h.run_steps(2);
+            let out = &h.output().platform_output;
+            (out.cursor_icon, out.cursor_image.clone())
+        };
+        let (pen, direct, text) = (shown("pen"), shown("directSelection"), shown("type"));
+        let ppp = h.ctx.pixels_per_point();
+        let images = &mut h.state_mut().cursors;
+        match crate::cursors::MODE {
+            crate::cursors::Mode::Os => {
+                assert_eq!(pen.1, images.get(Cursor::Pen, ppp), "Pen");
+                assert_eq!(direct.1, images.get(Cursor::ArrowHollow, ppp), "Direct Selection");
+                assert_eq!(text, (egui::CursorIcon::Text, None), "the I-beam stays a system cursor");
+            }
+            crate::cursors::Mode::Painted => assert_eq!((pen.0, direct.0), (egui::CursorIcon::None, egui::CursorIcon::None)),
+            crate::cursors::Mode::System => assert_eq!(pen, (egui::CursorIcon::Crosshair, None)),
+        }
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod canvas;
 pub mod chrome;
 pub mod control;
 pub mod credits;
+pub mod cursors;
 pub mod dialogs;
 pub mod dock;
 pub mod i18n;
@@ -542,6 +543,8 @@ pub struct DesignApp {
     pub(crate) quit_without_asking: bool,
     /// No document is discarded until every unsaved document has an up-to-date approval.
     quitting: Option<QuitState>,
+    /// The tool cursor bitmaps handed to the OS.
+    pub cursors: cursors::Images,
 }
 
 struct QuitState {
@@ -594,6 +597,7 @@ impl DesignApp {
             quit_requested: false,
             quit_without_asking: false,
             quitting: None,
+            cursors: cursors::Images::default(),
         }
     }
 
