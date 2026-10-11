@@ -235,18 +235,19 @@ pub fn font_combo(
     // A field and a plain popup rather than egui's combo box: its own scroll area would keep the
     // menu at the size it last had (a family opening, a filter clearing, wouldn't show).
     let field = ui.push_id(id_salt, |ui| crate::widgets::dropdown(ui, &shown, width)).inner;
+    font_popup(app, &field, &menu, current)
+}
+
+/// [`font_menu_body`] in a popup under `field` (a font field the caller draws), which screen
+/// readers hear as a combo box with the current family as its value. Returns the font picked.
+pub fn font_popup(app: &mut DesignApp, field: &egui::Response, menu: &[designcraft_fonts::FamilyInfo], current: &str) -> Option<FontPick> {
+    let shown = if current.is_empty() { "—".to_string() } else { font_label(app, menu, current) };
     field.widget_info(|| {
         let mut info = egui::WidgetInfo::new(egui::WidgetType::ComboBox);
         info.enabled = true;
         info.current_text_value = Some(shown.clone());
         info
     });
-    font_popup(app, &field, &menu, current)
-}
-
-/// [`font_menu_body`] in a popup under `field` (a font field the caller draws). Returns the font
-/// picked.
-pub fn font_popup(app: &mut DesignApp, field: &egui::Response, menu: &[designcraft_fonts::FamilyInfo], current: &str) -> Option<FontPick> {
     egui::Popup::menu(field)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| font_menu_body(app, ui, menu, current, field.rect.width()))
@@ -385,9 +386,17 @@ mod font_menu_ui_tests {
         h.state_mut().app.run("story.get", json!({"story": story})).unwrap()["text"].as_str().unwrap().to_string()
     }
 
-    /// The Control bar's font field, showing `family`.
+    /// The font fields showing `family`, top to bottom.
+    fn fields(h: &Harness<'static, Window>, family: &str) -> Vec<egui::Rect> {
+        let mut r: Vec<egui::Rect> =
+            h.query_all_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some(family)).map(|n| n.rect()).collect();
+        r.sort_by(|a, b| a.min.y.total_cmp(&b.min.y).then(a.min.x.total_cmp(&b.min.x)));
+        r
+    }
+
+    /// The Control bar's font field (the topmost), showing `family`.
     fn field(h: &Harness<'static, Window>, family: &str) -> egui::Rect {
-        fields(h, family)[0]
+        *fields(h, family).first().unwrap_or_else(|| panic!("a font field shows {family}"))
     }
 
     /// The text in the focused search field.
@@ -397,6 +406,18 @@ mod font_menu_ui_tests {
 
     fn family(h: &mut Harness<'static, Window>) -> String {
         h.state_mut().app.run("type.selectionAttrs", json!({})).unwrap()["chars"]["fontFamily"].as_str().unwrap().to_string()
+    }
+
+    /// Run the menu until the filters' font kinds are read (it says Loading fonts… meanwhile).
+    fn settle(h: &mut Harness<'static, Window>) {
+        for _ in 0..3000 {
+            if h.query_by_label("Loading fonts…").is_none() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            h.run_steps(1);
+        }
+        panic!("the font kinds were never read");
     }
 
     /// Open the Control bar's font menu (showing `family`) and search for `query`.
@@ -459,6 +480,7 @@ mod font_menu_ui_tests {
             let at = h.get_by_label("Monospaced").rect().center();
             click_at(&mut h, at);
         }
+        settle(&mut h);
         assert!(h.query_by_label("JetBrains Mono").is_some(), "a monospaced family is listed");
         assert!(h.query_by_label(designcraft_fonts::DEFAULT_FAMILY).is_none(), "a serif isn't");
         // Back to all classes, then fonts like the serif: it leads, other serifs follow, no sans.
@@ -482,6 +504,50 @@ mod font_menu_ui_tests {
         assert!(h.query_by_label(&format!("Similar to {}", designcraft_fonts::DEFAULT_FAMILY)).is_some());
         assert!(h.query_by_label("Source Sans 3").is_none() && h.query_by_label("JetBrains Mono").is_none(), "other classes aren't similar");
         assert!(h.query_by_label(designcraft_fonts::DEFAULT_FAMILY).is_some());
+    }
+
+    #[test]
+    fn every_font_field_reports_as_a_combo_box_showing_the_family() {
+        let (h, _) = typing();
+        let shown = fields(&h, designcraft_fonts::DEFAULT_FAMILY);
+        // The Control bar's, and the hand-drawn ones (Properties, the Contextual Task Bar).
+        assert!(shown.len() >= 2, "{shown:?}");
+    }
+
+    #[test]
+    fn return_and_escape_in_a_dialogs_font_menu_stay_in_the_menu() {
+        let paragraph = json!({"name": designcraft_doc::BASIC_PARAGRAPH, "section": "chars"});
+        for (what, id, fields, shown) in [
+            ("Paragraph Style Options", "paragraphStyleOptions", paragraph, designcraft_fonts::DEFAULT_FAMILY),
+            ("Find/Replace Font", "findFont", json!({}), "—"),
+        ] {
+            let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            let mut h = test_window::open(app, vec2(1440.0, 900.0));
+            h.state_mut().app.ui.dialog = Some(crate::dialogs::Dialog::new(id, fields));
+            h.run_steps(4);
+            let dialog = |h: &Harness<'static, Window>| h.state().app.ui.dialog.as_ref().map(|d| d.id.clone());
+            let combo = |h: &Harness<'static, Window>, family: &str| {
+                h.get_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some(family)).rect().center()
+            };
+            let at = combo(&h, shown);
+            click_at(&mut h, at);
+            assert!(h.ctx.text_edit_focused(), "{what}: the menu opens with its search focused");
+            h.event(egui::Event::Text("source sans".into()));
+            h.run_steps(4);
+            h.key_press(egui::Key::ArrowDown);
+            h.run_steps(2);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(4);
+            assert_eq!(dialog(&h).as_deref(), Some(id), "{what}: Return picked in the menu and left the dialog open");
+            assert!(!h.ctx.text_edit_focused(), "{what}: the menu closed");
+            let at = combo(&h, "Source Sans 3");
+            click_at(&mut h, at);
+            assert!(h.ctx.text_edit_focused(), "{what}: the menu opened again");
+            h.key_press(egui::Key::Escape);
+            h.run_steps(4);
+            assert!(!h.ctx.text_edit_focused(), "{what}: Escape closed the menu");
+            assert_eq!(dialog(&h).as_deref(), Some(id), "{what}: Escape in the menu left the dialog open");
+        }
     }
 
     #[test]
@@ -530,14 +596,6 @@ mod font_menu_ui_tests {
         assert!(!h.ctx.text_edit_focused(), "the menu closed");
         assert_eq!(story_text(&mut h, story), before);
         assert!(h.state().app.session.active().unwrap().selection.text.is_some(), "the text is still selected");
-    }
-
-    /// The font fields showing `family`, left to right and top to bottom.
-    fn fields(h: &Harness<'static, Window>, family: &str) -> Vec<egui::Rect> {
-        let mut r: Vec<egui::Rect> =
-            h.query_all_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some(family)).map(|n| n.rect()).collect();
-        r.sort_by(|a, b| a.min.x.total_cmp(&b.min.x).then(a.min.y.total_cmp(&b.min.y)));
-        r
     }
 
     /// Opens the font menu of the field at `at`, clicks its search field, types, checks the menu

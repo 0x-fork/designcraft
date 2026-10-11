@@ -1510,6 +1510,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Sample", "Esempio"),
     ("Similar to {family}", "Simili a {family}"),
     ("No fonts match", "Nessun font corrisponde"),
+    ("Loading fonts…", "Caricamento dei font…"),
     ("Show Similar Fonts", "Mostra font simili"),
     ("Show Styles", "Mostra stili"),
     ("Hide Styles", "Nascondi stili"),
