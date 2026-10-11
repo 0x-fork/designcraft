@@ -2811,6 +2811,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Paragraph Rules", ["Absatzlinien", "Filets de paragraphe", "Filetes de párrafo", "段落境界線", "段落线"]),
     ("Rule Below", ["Linie unterhalb", "Filet après", "Filete después", "後境界線", "下方横线"]),
     ("Tint:", ["Farbton:", "Teinte:", "Matiz:", "濃淡:", "色调："]),
+    ("Apply To:", ["Anwenden auf:", "Appliquer à :", "Aplicar a:", "適用先:", "应用于："]),
+    ("Frame", ["Rahmen", "Bloc", "Marco", "フレーム", "框架"]),
     ("Column", ["Spalte", "Colonne", "Columna", "段", "栏"]),
 ];
 
