@@ -292,7 +292,7 @@ pub struct Exclusion {
     pub mode: WrapMode,
     /// Where text may go beside the object. Spine sides are resolved to `LeftSide`/`RightSide`.
     pub side: WrapSide,
-    /// Contour wrap: the outline the text follows (None wraps around `rect`).
+    /// Contour wrap, or a custom boundary: the outline the text follows (None wraps around `rect`).
     pub contour: Option<Contour>,
 }
 
@@ -387,6 +387,12 @@ pub fn exclusion(other: &designcraft_doc::Item, xf: designcraft_geom::Affine, in
         WrapSide::AwayFromSpine => WrapSide::RightSide,
         s => s,
     };
+    // A custom boundary already includes the offsets.
+    if let Some(custom) = other.wrap.path.as_ref().and_then(|p| Contour::of(&p.to_bezpath(), inv * xf, 0.0)) {
+        let rect = custom.bounds();
+        let contour = matches!(other.wrap.mode, WrapMode::BoundingBox | WrapMode::Contour).then_some(custom);
+        return Exclusion { rect, mode: other.wrap.mode, side, contour };
+    }
     let contour = (other.wrap.mode == WrapMode::Contour && other.shape != designcraft_doc::Shape::Group)
         .then(|| contour_path(other))
         .and_then(|path| Contour::of(&path, inv * xf, other.wrap.offsets[0]));
@@ -2242,8 +2248,7 @@ fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool) 
         let blocked = match ex.mode {
             WrapMode::JumpToNextColumn if y1 > r.y0 && r.x0 < col.x1 && r.x1 > col.x0 => return vec![],
             WrapMode::JumpObject if overlaps_band && r.x0 < col.x1 && r.x1 > col.x0 => return vec![],
-            WrapMode::BoundingBox if overlaps_band => Some((r.x0, r.x1)),
-            WrapMode::Contour if overlaps_band => match &ex.contour {
+            WrapMode::BoundingBox | WrapMode::Contour if overlaps_band => match &ex.contour {
                 Some(c) => c.band_extent(y0, y1),
                 None => Some((r.x0, r.x1)),
             },

@@ -512,7 +512,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Wrap",
             ["Window"],
             Some("Cmd+Alt+W"),
-            "{mode?: none|boundingBox|contour|jumpObject|jumpToNextColumn (boundingBox when absent, unless side or contour is given: then unchanged), offset?: number|[t,l,b,r], invert?: bool, side?: bothSides|leftSide|rightSide|towardsSpine|awayFromSpine|largestArea, contour?: boundingBox|graphicFrame|sameAsClipping, ids?}",
+            "{mode?: none|boundingBox|contour|jumpObject|jumpToNextColumn (boundingBox when absent, unless side or contour is given: then unchanged), offset?: number|[t,l,b,r], invert?: bool, side?: bothSides|leftSide|rightSide|towardsSpine|awayFromSpine|largestArea, contour?: boundingBox|graphicFrame|sameAsClipping, ids?}; offset or contour drops an imported custom wrap boundary",
             has_selection,
             text_wrap
         ),
@@ -1003,6 +1003,9 @@ fn union_bounds(d: &Document, ids: &[ItemId]) -> Rect {
 /// Transform an item's geometry in its own space: the path and the gradient vector with it.
 pub(crate) fn bake(it: &mut Item, inner: Affine) {
     it.path.transform(inner);
+    if let Some(w) = &mut it.wrap.path {
+        w.transform(inner);
+    }
     if let Some([x0, y0, x1, y1]) = it.fill.gradient_vector {
         let (a, b) = (inner * Point::new(x0, y0), inner * Point::new(x1, y1));
         it.fill.gradient_vector = Some([a.x, a.y, b.x, b.y]);
@@ -1372,6 +1375,11 @@ fn text_wrap(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if let Some(c) = contour {
                 i.wrap.contour = c;
+            }
+            // A custom boundary has the offsets built in and replaces the contour, so setting
+            // either one rebuilds the wrap from the frame.
+            if off.is_some() || contour.is_some() {
+                i.wrap.path = None;
             }
         },
         false,
