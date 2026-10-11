@@ -136,6 +136,7 @@ fn load_zip(bytes: &[u8]) -> Result<Document, FormatError> {
     }
     upgrade(&mut doc, version);
     doc.merge_duplicate_assets();
+    doc.mark_differing_margins_local();
     doc.check().map_err(|e| FormatError::NotOurs(e.to_string()))?;
     Ok(doc)
 }
@@ -202,6 +203,7 @@ fn load_legacy_json(bytes: &[u8]) -> Result<Document, FormatError> {
     }
     upgrade(&mut doc, 1);
     doc.merge_duplicate_assets();
+    doc.mark_differing_margins_local();
     doc.check().map_err(|e| FormatError::NotOurs(e.to_string()))?;
     Ok(doc)
 }
