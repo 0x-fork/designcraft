@@ -256,7 +256,7 @@ impl Tokens {
 /// Install the UI fonts for the interface language `lang` (it orders the CJK fallbacks).
 /// Returns false while the installed fonts are still being cataloged: the built-in faces are
 /// installed without waiting, and the caller installs again once they are (see
-/// [`system_fonts_ready`]) to add the installed CJK faces.
+/// [`system_fonts_ready`]) to add the installed faces for the scripts they lack.
 pub fn install_fonts(ctx: &egui::Context, lang: &str) -> bool {
     let craft = designcraft_fonts::CRAFT_FONTS;
     let mut defs = font_definitions(craft, lang);
@@ -275,7 +275,7 @@ pub fn system_fonts_ready() -> bool {
 
 /// An installed font the UI falls back to for a script the built-in faces lack.
 pub(crate) struct SystemFont {
-    /// "Jpan", "Hans", "Hant" or "Kore".
+    /// The ISO 15924 code of the script it is for ("Jpan", "Kore", "Taml"…).
     script: &'static str,
     family: String,
     /// The face as egui takes it, on the UI face's baseline. Shared: installing the fonts again
@@ -290,11 +290,14 @@ impl SystemFont {
     }
 }
 
-/// Installed UI faces (sans serif) per script, the first one found of each list: macOS, then
-/// Windows, then Linux families.
-const SYSTEM_UI_FONTS: &[(&str, &[&str])] = &[
+/// Installed UI faces (sans serif) per script, with a character every face of the script has:
+/// the first listed family that is installed and covers the character, macOS families first,
+/// then Windows, then Linux. One family can serve several scripts (Nirmala UI covers the Indic
+/// scripts); it is added once.
+const SYSTEM_UI_FONTS: &[(&str, char, &[&str])] = &[
     (
         "Jpan",
+        'あ',
         &[
             "Hiragino Sans",
             "Hiragino Kaku Gothic ProN",
@@ -309,16 +312,36 @@ const SYSTEM_UI_FONTS: &[(&str, &[&str])] = &[
             "Droid Sans Fallback",
         ],
     ),
-    ("Hans", &["PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei"]),
+    ("Hans", '中', &["PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei"]),
     // Traditional Chinese and Korean: font menus list those families under their native names.
-    ("Hant", &["PingFang TC", "Microsoft JhengHei", "Noto Sans CJK TC", "Source Han Sans TC"]),
-    ("Kore", &["Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans K", "NanumGothic", "UnDotum"]),
+    ("Hant", '中', &["PingFang TC", "Microsoft JhengHei", "Noto Sans CJK TC", "Source Han Sans TC"]),
+    ("Kore", '한', &["Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans K", "NanumGothic", "UnDotum"]),
+    // Scripts the built-in faces lack, after the CJK ones (text in the Story Editor, font names).
+    ("Taml", 'த', &["Tamil Sangam MN", "Tamil MN", "Nirmala UI", "Latha", "Noto Sans Tamil", "Noto Sans Tamil UI", "Lohit Tamil"]),
+    ("Deva", 'क', &["Kohinoor Devanagari", "Devanagari Sangam MN", "Nirmala UI", "Mangal", "Noto Sans Devanagari", "Lohit Devanagari"]),
+    ("Beng", 'ক', &["Kohinoor Bangla", "Bangla Sangam MN", "Nirmala UI", "Vrinda", "Noto Sans Bengali", "Lohit Bengali"]),
+    ("Gujr", 'ક', &["Kohinoor Gujarati", "Gujarati Sangam MN", "Nirmala UI", "Shruti", "Noto Sans Gujarati", "Lohit Gujarati"]),
+    ("Guru", 'ਕ', &["Gurmukhi Sangam MN", "Gurmukhi MN", "Nirmala UI", "Raavi", "Noto Sans Gurmukhi", "Lohit Gurmukhi"]),
+    ("Knda", 'ಕ', &["Kannada Sangam MN", "Nirmala UI", "Tunga", "Noto Sans Kannada", "Lohit Kannada"]),
+    ("Mlym", 'ക', &["Malayalam Sangam MN", "Nirmala UI", "Kartika", "Noto Sans Malayalam", "Lohit Malayalam"]),
+    ("Telu", 'క', &["Kohinoor Telugu", "Telugu Sangam MN", "Nirmala UI", "Gautami", "Noto Sans Telugu", "Lohit Telugu"]),
+    ("Orya", 'କ', &["Oriya Sangam MN", "Nirmala UI", "Kalinga", "Noto Sans Oriya", "Lohit Odia"]),
+    ("Sinh", 'ක', &["Sinhala Sangam MN", "Nirmala UI", "Iskoola Pota", "Noto Sans Sinhala", "LKLUG"]),
+    ("Thai", 'ก', &["Thonburi", "Leelawadee UI", "Tahoma", "Noto Sans Thai", "Loma"]),
+    ("Khmr", 'ក', &["Khmer Sangam MN", "Leelawadee UI", "Khmer UI", "Noto Sans Khmer", "Khmer OS"]),
+    ("Laoo", 'ກ', &["Lao Sangam MN", "Leelawadee UI", "Lao UI", "Noto Sans Lao", "Phetsarath OT"]),
+    ("Mymr", 'က', &["Myanmar Sangam MN", "Myanmar Text", "Noto Sans Myanmar", "Padauk"]),
+    ("Hebr", 'א', &["Arial Hebrew", "Segoe UI", "Noto Sans Hebrew", "DejaVu Sans"]),
+    ("Armn", 'Ա', &["Mshtakan", "Segoe UI", "Sylfaen", "Noto Sans Armenian", "DejaVu Sans"]),
+    ("Geor", 'ა', &["Segoe UI", "Sylfaen", "Noto Sans Georgian", "DejaVu Sans"]),
+    ("Ethi", 'አ', &["Kefa", "Ebrima", "Nyala", "Noto Sans Ethiopic", "Abyssinica SIL"]),
 ];
 
-/// The installed faces for the CJK scripts `craft` (the built-in craft-fonts) doesn't cover, so
-/// the interface shows Japanese and Chinese without the craft-fonts build input, and Korean and
-/// Traditional Chinese (font names in the font menus) in any build. egui can't
-/// find system fonts itself; the document font scan (not on the web) does.
+/// The installed faces for the scripts `craft` (the built-in craft-fonts) doesn't cover, so the
+/// interface shows Japanese and Chinese without the craft-fonts build input, and Korean,
+/// Traditional Chinese (font names in the font menus), Indic, Southeast Asian and other scripts
+/// in any build. egui can't find system fonts itself; the document font scan (not on the web)
+/// does.
 fn system_ui_fonts(craft: &[designcraft_fonts::CraftFont]) -> Option<&'static [SystemFont]> {
     static FACES: std::sync::OnceLock<Vec<SystemFont>> = std::sync::OnceLock::new();
     let db = designcraft_fonts::FontDb::global();
@@ -329,19 +352,30 @@ fn system_ui_fonts(craft: &[designcraft_fonts::CraftFont]) -> Option<&'static [S
         db.scan_in_background();
         return None;
     }
-    Some(FACES.get_or_init(|| {
-        SYSTEM_UI_FONTS
-            .iter()
-            .filter(|(script, _)| !craft.iter().any(|f| f.scripts.contains(script)))
-            .filter_map(|(script, families)| {
-                let family = families.iter().find(|f| db.has_family(f))?;
-                let face = db.face(family, "Regular");
-                // `face` falls back to another family when this one can't be read: keep only the real one.
-                (face.family.eq_ignore_ascii_case(family) && !face.data().is_empty())
-                    .then(|| SystemFont::new(script, (*family).to_string(), face.data().to_vec(), face.index()))
-            })
-            .collect()
-    }))
+    Some(FACES.get_or_init(|| installed_ui_fonts(db, craft)))
+}
+
+/// The faces of [`SYSTEM_UI_FONTS`] that `db` has, for the scripts `craft` doesn't cover.
+fn installed_ui_fonts(db: &designcraft_fonts::FontDb, craft: &[designcraft_fonts::CraftFont]) -> Vec<SystemFont> {
+    let mut faces: Vec<SystemFont> = Vec::new();
+    for (script, sample, families) in SYSTEM_UI_FONTS {
+        if craft.iter().any(|f| f.scripts.contains(script)) {
+            continue;
+        }
+        let found = families.iter().find_map(|family| {
+            if !db.has_family(family) {
+                return None;
+            }
+            let face = db.face(family, "Regular");
+            // `face` falls back to another family when this one can't be read: keep only the real one.
+            (face.family.eq_ignore_ascii_case(family) && !face.data().is_empty() && face.covers(*sample)).then_some((family, face))
+        });
+        let Some((family, face)) = found else { continue };
+        if !faces.iter().any(|f| f.family.eq_ignore_ascii_case(family)) {
+            faces.push(SystemFont::new(script, (*family).to_string(), face.data().to_vec(), face.index()));
+        }
+    }
+    faces
 }
 
 /// The UI face every family starts with (Source Sans 3; the semibold shares its line metrics).
@@ -376,7 +410,8 @@ fn cjk_script(lang: &str) -> &'static str {
 
 /// Add installed faces `system` to every family in the interface language's order: the faces of
 /// its script (`cjk_script`) go before the built-in CJK faces, so Han characters take that
-/// language's forms (Traditional Chinese, Korean); the others go at the end.
+/// language's forms (Traditional Chinese, Korean); the other CJK faces go at the end, then the
+/// other scripts' faces.
 pub(crate) fn add_system_fallbacks(fonts: &mut FontDefinitions, system: &[SystemFont], lang: &str) {
     let name = |f: &SystemFont| format!("system-{}", f.family);
     for f in system {
@@ -384,10 +419,12 @@ pub(crate) fn add_system_fallbacks(fonts: &mut FontDefinitions, system: &[System
     }
     let first = cjk_script(lang);
     let preferred: Vec<String> = system.iter().filter(|f| f.script == first).map(name).collect();
-    let rest: Vec<String> = ["Jpan", "Hans", "Hant", "Kore"]
+    const CJK: [&str; 4] = ["Jpan", "Hans", "Hant", "Kore"];
+    let rest: Vec<String> = CJK
         .iter()
         .filter(|s| **s != first)
         .flat_map(|s| system.iter().filter(move |f| f.script == *s))
+        .chain(system.iter().filter(|f| !CJK.contains(&f.script)))
         .map(name)
         .collect();
     for (family, stack) in fonts.families.iter_mut() {
@@ -640,6 +677,50 @@ mod japanese_font_tests {
                 assert!(std::sync::Arc::ptr_eq(&defs.font_data[&name], &f.data), "{lang}: {name}");
             }
         }
+    }
+
+    /// Tamil, Devanagari and Thai text get glyphs from installed faces, found by family and
+    /// checked for coverage, after the CJK faces. Synthetic fonts in a folder of their own stand
+    /// in for the machine's.
+    #[test]
+    fn installed_faces_give_other_scripts_glyphs_after_the_cjk_faces() {
+        let dir = std::env::temp_dir().join(format!("dc-ui-script-fonts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fonts = [
+            ("Noto Sans CJK JP", &['あ', '日'][..]),
+            // Listed first for Tamil but without Tamil glyphs: passed over.
+            ("Tamil Sangam MN", &['a'][..]),
+            // One face for two scripts is added once.
+            ("Nirmala UI", &['த', 'க', 'क'][..]),
+            ("Noto Sans Thai", &['ก'][..]),
+        ];
+        for (i, (family, chars)) in fonts.iter().enumerate() {
+            std::fs::write(dir.join(format!("font{i}.ttf")), designcraft_fonts::testing::font_with(family, chars).unwrap()).unwrap();
+        }
+        let db = designcraft_fonts::FontDb::with_font_dirs(vec![dir.clone()]);
+        let system = super::installed_ui_fonts(&db, &[]);
+        let _ = std::fs::remove_dir_all(&dir);
+        let picked: Vec<(&str, &str)> = system.iter().map(|f| (f.script, f.family.as_str())).collect();
+        assert_eq!(picked, [("Jpan", "Noto Sans CJK JP"), ("Taml", "Nirmala UI"), ("Thai", "Noto Sans Thai")]);
+
+        let mut defs = super::font_definitions(&[], "ja");
+        defs.families.entry(egui::FontFamily::Proportional).or_default().push("craft-Stand-in".into());
+        super::add_system_fallbacks(&mut defs, &system, "ja");
+        let stack = &defs.families[&egui::FontFamily::Proportional];
+        let at = |n: &str| stack.iter().position(|x| x == n).unwrap();
+        assert!(at("system-Noto Sans CJK JP") < at("craft-Stand-in"), "{stack:?}");
+        assert!(at("craft-Stand-in") < at("system-Nirmala UI") && at("system-Nirmala UI") < at("system-Noto Sans Thai"), "{stack:?}");
+        defs.families.entry(egui::FontFamily::Proportional).or_default().retain(|n| n != "craft-Stand-in");
+        let ctx = egui::Context::default();
+        ctx.set_fonts(defs);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        ctx.fonts_mut(|fonts| {
+            let font = egui::FontId::new(13.0, egui::FontFamily::Proportional);
+            for ch in ['த', 'क', 'ก'] {
+                assert!(fonts.has_glyph(&font, ch), "missing {ch}");
+            }
+        });
     }
 
     #[test]
