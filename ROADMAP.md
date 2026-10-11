@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~0% and ~15–25 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Live corners (#186); Optical kerning from outlines (#181); macOS lists fonts that font services and managers activate) · **Target:** Adobe InDesign 2026
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); macOS lists fonts that font services and managers activate) · **Target:** Adobe InDesign 2026
 
 DesignCraft aims at full Adobe InDesign parity, and to be better: faster, open (documented JSON
 format + IDML), scriptable by agents (MCP), and available on the web.
@@ -129,6 +129,9 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-11** · Japanese captions now cover print ranges, imported style handling and table
+  row/column movement, including row-height distribution. Existing translation and RTL helpers
+  handle the display; command IDs, stored option values and user-defined style names are unchanged.
 - **2026-10-11** · Moving a sheared and rotated text frame no longer leaves trails of text behind: canvas repaints cover the frame's whole text box, not just its outline. No readiness percentage change.
 - **2026-10-11** · Live corners: the yellow widget on a selected rectangle frame shows corner
   diamonds; dragging one rounds the corners, Alt-click steps the corner shape (#186).
@@ -178,6 +181,7 @@ Newest first.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Localized Japanese print, import and table controls; readiness estimates unchanged |
 | 2026-10-10 | minor | Full number 42% → 47% (method aligned with the standard: plain weighted sum, no new evidence); readiness table with hours per audience |
 | 2026-10-10 | minor | Headline adds mainstream practitioner (~42%) and essentials user (~54%); method in docs/target-app-parity.md |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the new core-workflow gate: manual text threading is missing; alpha gate table added to docs/roadmap.md |
