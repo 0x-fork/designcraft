@@ -268,6 +268,10 @@ fn run(args: &[String]) -> Result<(), String> {
             "--scale" => scale = val()?.parse().map_err(|_| "bad --scale")?,
             "--pdf-options" => {
                 pdf_opts = serde_json::from_str(&val()?).map_err(|e| format!("--pdf-options: {e}"))?;
+                // The export adds its path to them.
+                if !pdf_opts.is_object() {
+                    return Err("--pdf-options: expected a JSON object".into());
+                }
             }
             "--export" => {
                 let out = val()?;

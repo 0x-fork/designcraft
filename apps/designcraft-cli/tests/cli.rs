@@ -185,6 +185,19 @@ fn closed_stdout_ends_quietly() {
     assert!(out.status.success() && !err.contains("panicked"), "{:?}: {err}", out.status);
 }
 
+/// `--pdf-options` that was JSON but no object (`[1]`) panicked when the PDF's path was added to it.
+#[test]
+fn run_pdf_options_that_are_no_object_are_an_error() {
+    let pdf = std::env::temp_dir().join(format!("dc-cli-options-{}.pdf", std::process::id()));
+    for options in ["[1]", "\"all\"", "1", "null"] {
+        let out = cli().args(["run", "--sample", "--pdf-options", options, "--export", pdf.to_str().unwrap()]).output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{options}: {err}");
+        assert!(err.contains("--pdf-options") && !err.contains("panicked"), "{options}: {err}");
+    }
+    assert!(!pdf.exists());
+}
+
 /// `--scale`, `--page` and `--pdf-options` apply to the exports after them; one with no export
 /// after it was silently ignored.
 #[test]
