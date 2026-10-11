@@ -607,25 +607,22 @@ pub fn open_document_setup(app: &mut DesignApp) {
         let first = values[0].as_f64();
         f[format!("{k}Linked")] = json!(values.iter().all(|v| v.as_f64() == first));
     }
+    // The margins as shown: OK applies them to every page only when they were edited.
+    f["marginsShown"] = json!(SETUP_EDGES.map(|e| f[format!("margin{e}")].clone()));
     app.ui.dialog = Some(Dialog::new("documentSetup", f));
 }
 
 /// The edges of Document Setup's margins, bleed and slug (field suffixes).
 const SETUP_EDGES: [&str; 4] = ["Top", "Bottom", "Inside", "Outside"];
 
-/// Document Setup's units (the document's horizontal units).
+/// The units Document Setup shows its measures in (the document's horizontal units).
 fn setup_units(d: &Dialog) -> Unit {
     d.fields.get("units").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or(Unit::Picas)
 }
 
-/// A Document Setup measure in points: text is read in the document's units.
+/// A Document Setup measure in points, read as every dialog reads its measures.
 fn setup_measure(d: &Dialog, key: &str) -> Option<f64> {
-    match d.fields.get(key)? {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => parse_measure(s, setup_units(d)).ok(),
-        _ => None,
-    }
-    .filter(|v| v.is_finite())
+    d.m(key).filter(|v| v.is_finite())
 }
 
 /// A measure field with up/down arrows (a point, or a millimetre in metric units, a step); true
@@ -917,20 +914,23 @@ fn setup_link_follow(d: &mut Dialog, group: &str, changed: Option<String>) {
     }
 }
 
-/// Document Setup's OK: `layout.documentSetup` with what was typed (measures in the document's
-/// units); a value that can't be read is refused before anything changes.
+/// Document Setup's OK: `layout.documentSetup` with what was typed; a value that can't be read is
+/// refused before anything changes. The margins (the first page's, shown) go to every page only
+/// when they were edited, so pages keep their own margins otherwise.
 fn confirm_document_setup(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     let measure = |key: &str| setup_measure(d, key).ok_or_else(|| format!("{key}: not a measure"));
     let edges = |group: &str| -> Result<Vec<f64>, String> { SETUP_EDGES.iter().map(|e| measure(&format!("{group}{e}"))).collect() };
     let count = |key: &str| d.n(key).filter(|n| n.is_finite() && *n >= 1.0).map(|n| n as u64).ok_or_else(|| format!("{key}: a whole number from 1"));
     let margins = edges("margin")?;
-    app.run(
-        "layout.documentSetup",
-        json!({"intent": d.s("intent"), "pages": count("pages")?, "startPage": count("startPage")?, "facingPages": d.b("facingPages"),
-            "binding": d.s("binding"), "width": measure("width")?, "height": measure("height")?,
-            "margins": {"top": margins[0], "bottom": margins[1], "inside": margins[2], "outside": margins[3]},
-            "bleed": edges("bleed")?, "slug": edges("slug")?, "adjustLayout": d.b("adjustLayout")}),
-    )
+    let shown = d.fields.get("marginsShown").and_then(Value::as_array);
+    let edited = SETUP_EDGES.iter().enumerate().any(|(i, e)| shown.and_then(|s| s.get(i)) != d.fields.get(&format!("margin{e}")));
+    let mut p = json!({"intent": d.s("intent"), "pages": count("pages")?, "startPage": count("startPage")?, "facingPages": d.b("facingPages"),
+        "binding": d.s("binding"), "width": measure("width")?, "height": measure("height")?,
+        "bleed": edges("bleed")?, "slug": edges("slug")?, "adjustLayout": d.b("adjustLayout")});
+    if edited {
+        p["margins"] = json!({"top": margins[0], "bottom": margins[1], "inside": margins[2], "outside": margins[3]});
+    }
+    app.run("layout.documentSetup", p)
 }
 
 /// Preferences: a section list and the section's options. Application options always; units and
@@ -4072,11 +4072,10 @@ mod tests {
         let d = app.ui.dialog.as_ref().unwrap();
         assert_eq!(d.id, "documentSetup");
         assert_eq!((d.s("marginTop"), d.b("marginLinked")), ("12.7 mm".to_string(), true), "the document's margins, in its units");
-        // Plain numbers are millimetres here.
         setup_fields(
             &mut app,
-            json!({"marginTop": "20", "marginBottom": "20", "marginInside": "20", "marginOutside": "20", "bleedTop": "3",
-            "bleedBottom": "3", "bleedInside": "3", "bleedOutside": "3", "width": "210", "height": "297"}),
+            json!({"marginTop": "20 mm", "marginBottom": "20 mm", "marginInside": "20 mm", "marginOutside": "20 mm", "bleedTop": "3 mm",
+            "bleedBottom": "3 mm", "bleedInside": "3 mm", "bleedOutside": "3 mm", "width": "210 mm", "height": "297 mm"}),
         );
         confirm(&mut app).unwrap();
         assert!(app.ui.dialog.is_none());
@@ -4087,6 +4086,25 @@ mod tests {
         app.run("edit.undo", json!({})).unwrap();
         let doc = &app.session.active().unwrap().doc;
         assert!((doc.settings.page_width - 612.0).abs() < 1e-6 && doc.settings.bleed[0] == 0.0, "one undo step");
+    }
+
+    #[test]
+    fn document_setup_keeps_each_pages_margins_unless_they_are_edited() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 3, "margins": 36})).unwrap();
+        app.run("layout.marginsAndColumns", json!({"pages": [1], "margins": 90})).unwrap();
+        let margins =
+            |app: &DesignApp| app.session.active().unwrap().doc.spreads.iter().flat_map(|s| &s.pages).map(|p| p.margins.top).collect::<Vec<_>>();
+        // Only the page count changes: every page keeps its own margins.
+        crate::menus::activate(&mut app, "layout.documentSetup", &Value::Null);
+        setup_fields(&mut app, json!({"pages": "4"}));
+        confirm(&mut app).unwrap();
+        assert_eq!(margins(&app), [36.0, 90.0, 36.0, 36.0]);
+        // Edited margins go to every page.
+        crate::menus::activate(&mut app, "layout.documentSetup", &Value::Null);
+        setup_fields(&mut app, json!({"marginTop": "1p0"}));
+        confirm(&mut app).unwrap();
+        assert_eq!(margins(&app), [12.0; 4]);
     }
 
     #[test]
@@ -4116,10 +4134,10 @@ mod tests {
         click_dialog(&mut app, &ctx, screen, top.center());
         let select_all =
             egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND };
-        dialog_frame(&mut app, &ctx, screen, vec![select_all, egui::Event::Text("72".into())]);
+        dialog_frame(&mut app, &ctx, screen, vec![select_all, egui::Event::Text("72 pt".into())]);
         dialog_frame(&mut app, &ctx, screen, vec![]);
         let d = app.ui.dialog.as_ref().unwrap();
-        assert!(["Top", "Bottom", "Inside", "Outside"].iter().all(|e| d.s(&format!("margin{e}")) == "72"), "linked: {:?}", d.fields);
+        assert!(["Top", "Bottom", "Inside", "Outside"].iter().all(|e| d.s(&format!("margin{e}")) == "72 pt"), "linked: {:?}", d.fields);
         // Adjust Layout applies at once, and the frame follows the margins.
         let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
         click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "Adjust Layout").center());
