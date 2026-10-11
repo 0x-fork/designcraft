@@ -311,7 +311,7 @@ impl Document {
             let st = self.story_mut(fs).ok_or(DocError::NoStory(fs))?;
             let at = st.frames.iter().position(|f| *f == from).map_or(st.frames.len(), |p| p + 1);
             st.frames.insert(at, to);
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
             let it = self.item_mut(to).ok_or(DocError::NoItem(to))?;
             it.content = Content::Text(TextFrame { story: fs, options: TextFrameOptions::default() });
             return Ok(());
@@ -332,7 +332,7 @@ impl Document {
             for (k, f) in after.iter().enumerate() {
                 st.frames.insert(at + k, *f);
             }
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
         }
         for f in &after {
             if let Some(t) = self.item_mut(*f).and_then(Item::text_frame_mut) {
@@ -369,7 +369,7 @@ impl Document {
         }
         let st = self.story_mut(ts).ok_or(DocError::NoStory(ts))?;
         st.frames.insert(0, from);
-        st.rev += 1;
+        st.rev = st.rev.wrapping_add(1);
         let it = self.item_mut(from).ok_or(DocError::NoItem(from))?;
         match it.text_frame_mut() {
             Some(t) => t.story = ts,
@@ -438,7 +438,7 @@ impl Document {
             let st = self.story_mut(sid).ok_or(DocError::NoStory(sid))?;
             let p = st.frames.iter().position(|f| *f == frame).ok_or(DocError::NoItem(frame))?;
             let tail = st.frames.split_off(p + 1);
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
             (tail, st.vertical, st.direction)
         };
         if tail.is_empty() {
@@ -468,7 +468,7 @@ impl Document {
                 return Err(DocError::Invalid(format!("frame {frame} is not threaded to another frame")));
             }
             st.frames.retain(|f| *f != frame);
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
             (st.vertical, st.direction)
         };
         let nid = StoryId(self.alloc());
@@ -572,7 +572,7 @@ impl Document {
         st.index_refs.clear();
         st.objects.clear();
         st.fix_marks();
-        st.rev += 1;
+        st.rev = st.rev.wrapping_add(1);
         Ok(())
     }
 }

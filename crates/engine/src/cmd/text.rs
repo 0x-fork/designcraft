@@ -801,7 +801,7 @@ pub(crate) fn set_story_direction(d: &mut designcraft_doc::Document, stories: &[
             && st.vertical != vertical
         {
             st.vertical = vertical;
-            st.rev += 1;
+            st.rev = st.rev.wrapping_add(1);
         }
     }
 }
@@ -1329,7 +1329,7 @@ pub(crate) fn apply_char_attrs(d: &mut designcraft_doc::Document, targets: &[Tar
                 && let Some(run) = st.chars.first_mut()
             {
                 run.format.over.merge(a);
-                st.rev += 1;
+                st.rev = st.rev.wrapping_add(1);
             }
             continue;
         }
