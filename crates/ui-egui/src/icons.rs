@@ -536,6 +536,38 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
                 _ => {}
             }
         }
+        // Pathfinder: a back square (top left) and a front one (bottom right), the result filled.
+        "pf-add" | "pf-subtract" | "pf-intersect" | "pf-exclude" | "pf-minus-back" => {
+            let (back, front) = ((3.0, 3.0, 13.0, 13.0), (7.0, 7.0, 17.0, 17.0));
+            match name {
+                "pf-add" => {
+                    pen.frect(back.0, back.1, back.2, back.3);
+                    pen.frect(front.0, front.1, front.2, front.3);
+                }
+                "pf-subtract" => {
+                    pen.frect(3.0, 3.0, 13.0, 7.0);
+                    pen.frect(3.0, 7.0, 7.0, 13.0);
+                    pen.rect(front.0, front.1, front.2, front.3);
+                }
+                "pf-intersect" => {
+                    pen.rect(back.0, back.1, back.2, back.3);
+                    pen.rect(front.0, front.1, front.2, front.3);
+                    pen.frect(7.0, 7.0, 13.0, 13.0);
+                }
+                "pf-exclude" => {
+                    pen.frect(3.0, 3.0, 13.0, 7.0);
+                    pen.frect(3.0, 7.0, 7.0, 13.0);
+                    pen.frect(13.0, 7.0, 17.0, 17.0);
+                    pen.frect(7.0, 13.0, 13.0, 17.0);
+                    pen.rect(7.0, 7.0, 13.0, 13.0);
+                }
+                _ => {
+                    pen.rect(back.0, back.1, back.2, back.3);
+                    pen.frect(13.0, 7.0, 17.0, 17.0);
+                    pen.frect(7.0, 13.0, 13.0, 17.0);
+                }
+            }
+        }
         // ---- Properties panel glyphs (original drawings)
         "clock" => {
             pen.circle(10.0, 10.0, 7.5);
