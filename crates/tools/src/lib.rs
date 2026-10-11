@@ -358,6 +358,14 @@ pub enum Cursor {
     ResizeNeSw,
     Rotate,
     Pen,
+    /// The pen over a segment of a selected path: a click adds an anchor there.
+    PenAdd,
+    /// The pen over an anchor of a selected path: a click deletes it.
+    PenDelete,
+    /// The pen over the first anchor of the path it is drawing: a click closes it.
+    PenClose,
+    /// Convert Direction Point.
+    PenConvert,
     Text,
     Hand,
     HandGrab,

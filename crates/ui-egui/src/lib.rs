@@ -11,6 +11,7 @@ pub mod canvas;
 pub mod chrome;
 pub mod control;
 pub mod credits;
+pub mod cursors;
 pub mod dialogs;
 pub mod dock;
 pub mod i18n;
@@ -551,6 +552,8 @@ pub struct DesignApp {
     /// The canvas asked for the system IME in the last frame (the web build's text input has the
     /// keyboard then).
     pub(crate) canvas_ime: bool,
+    /// The tool cursor bitmaps handed to the OS.
+    pub cursors: cursors::Images,
 }
 
 impl DesignApp {
@@ -596,6 +599,7 @@ impl DesignApp {
             ime_marked: None,
             ime_discard: false,
             canvas_ime: false,
+            cursors: cursors::Images::default(),
         }
     }
 
