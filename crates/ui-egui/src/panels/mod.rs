@@ -438,9 +438,11 @@ mod font_menu_ui_tests {
             click_at(&mut h, at);
         }
         assert_eq!(h.state().app.session.prefs.recent_fonts, ["Source Sans 3"]);
-        // Reopened without a search: Source Sans 3 is listed at the top, and again in its place.
+        // Reopened without a search: Source Sans 3 is listed at the top, and again in its place (on
+        // screen too when few fonts are installed).
         open_menu(&mut h, "Source Sans 3", "");
-        let recent = h.get_by_label("Source Sans 3").rect();
+        let recent =
+            h.query_all_by_label("Source Sans 3").map(|n| n.rect()).min_by(|a, b| a.min.y.total_cmp(&b.min.y)).expect("Source Sans 3 is listed");
         let search = h.get_by(|n| n.role() == egui::accesskit::Role::TextInput && n.is_focused()).rect();
         assert!(recent.min.y > search.max.y && recent.min.y - search.max.y < 80.0, "the first row, under the filters: {recent:?} vs {search:?}");
     }
