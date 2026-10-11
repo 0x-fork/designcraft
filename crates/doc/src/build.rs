@@ -628,6 +628,22 @@ impl Document {
             }
         }
     }
+
+    /// Let document pages whose margins and columns match their parent page's follow it again,
+    /// after an edit that set every page and parent page alike (Document Setup's margins).
+    pub fn unmark_matching_local_margins(&mut self) {
+        for si in 0..self.spreads.len() {
+            for pi in 0..self.spreads[si].pages.len() {
+                let Some(page) = self.spreads[si].pages.get(pi) else { continue };
+                if !page.local_margins || !self.parent_page(page).is_some_and(|q| q.same_margins(page)) {
+                    continue;
+                }
+                if let Some(page) = Arc::make_mut(&mut self.spreads[si]).pages.get_mut(pi) {
+                    page.local_margins = false;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

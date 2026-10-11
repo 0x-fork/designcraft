@@ -369,6 +369,10 @@ pub fn specs() -> Vec<CommandSpec> {
                                 pg.margins = m;
                             }
                         }
+                        // Pages that now match their parent page follow its later changes; local
+                        // columns stay local.
+                        d.unmark_matching_local_margins();
+                        d.sync_parent_margins();
                     }
                     d.repaginate();
                     if let Some(b) = before {
@@ -1319,6 +1323,22 @@ mod parent_margin_tests {
 
     fn margins(d: &Document) -> Vec<(Margins, u32, bool)> {
         (0..d.page_count()).filter_map(|i| d.page(i)).map(|p| (p.margins, p.columns.count, p.local_margins)).collect()
+    }
+
+    #[test]
+    fn document_setup_margins_let_pages_follow_their_parent_page_again() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 3})).unwrap();
+        s.execute("layout.marginsAndColumns", &json!({"pages": [1], "margins": 100})).unwrap();
+        s.execute("layout.marginsAndColumns", &json!({"pages": [2], "margins": 100, "columns": 3})).unwrap();
+        s.execute("layout.documentSetup", &json!({"margins": 20})).unwrap();
+        let m = margins(&s.doc().unwrap().doc);
+        let twenty = Margins::uniform(20.0);
+        assert_eq!(m, vec![(twenty, 1, false), (twenty, 1, false), (twenty, 3, true)], "own columns stay local");
+        s.execute("layout.marginsAndColumns", &json!({"parent": "A", "margins": 50})).unwrap();
+        let m = margins(&s.doc().unwrap().doc);
+        assert_eq!(m[1], (Margins::uniform(50.0), 1, false), "page 2 follows the parent page again");
+        assert_eq!(m[2], (twenty, 3, true));
     }
 
     #[test]
