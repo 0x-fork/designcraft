@@ -118,7 +118,7 @@ fn contour_wrap_on_a_placed_graphic_follows_its_shown_part_on_one_side() {
     use designcraft_doc::{ContourType, WrapSide};
     let pref = r#"<TextWrapPreference Inverse="false" ApplyToMasterPageOnly="false" TextWrapSide="RightSide" TextWrapMode="Contour"><Properties><TextWrapOffset Top="4" Left="4" Bottom="4" Right="4"/></Properties><ContourOption ContourType="BoundingBox" IncludeInsideEdges="false"/></TextWrapPreference>"#;
     let mut d = wrap_doc(&wrap_pref("None", 0.0), pref);
-    let w = d.spreads[0].items[1].graphic().unwrap().wrap;
+    let w = d.spreads[0].items[1].graphic().unwrap().wrap.clone();
     assert_eq!((w.side, w.contour), (WrapSide::RightSide, ContourType::BoundingBox));
     let back = import_idml(&export_idml(&d)).unwrap();
     assert_eq!(back.spreads[0].items.iter().find_map(|i| i.graphic()).unwrap().wrap, w);

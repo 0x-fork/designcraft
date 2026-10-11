@@ -1676,7 +1676,7 @@ fn text_wrap(s: &mut Session, p: &Value) -> Result<Value> {
             // A custom boundary has the offsets built in and replaces the contour, so setting
             // either one rebuilds the wrap from the frame.
             if off.is_some() || contour.is_some() {
-                i.wrap.path = None;
+                w.path = None;
             }
         },
         false,
