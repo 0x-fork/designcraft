@@ -64,6 +64,15 @@ impl Cache {
         let Some(story) = doc.stories.get(&sid) else { return Arc::new(ComposedStory { story: sid, ..Default::default() }) };
         let (mut sig, keep_items) = signature(doc, story);
         let key = (sid, page);
+        // The key holds the page's index, which a renumbering doesn't change: its name (section
+        // start number, style, prefix) is part of the signature.
+        let page_name = page.map(|p| doc.page_name(p));
+        if let Some(name) = &page_name {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            name.hash(&mut h);
+            sig.push(h.finish() as usize);
+        }
         let with_vars = crate::vars::has_vars(story);
         let running = with_vars && crate::vars::has_running(doc, story);
         if with_vars {
@@ -130,7 +139,6 @@ impl Cache {
             }
         }
         // Parent-page items are composed per page: markers show its name, variables need its index.
-        let page_name = page.map(|p| doc.page_name(p));
         let page = page.filter(|_| with_vars);
         let running = running.then(|| self.running_index(doc));
         let out = Arc::new(crate::compose_story(

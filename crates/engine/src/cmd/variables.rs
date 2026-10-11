@@ -129,6 +129,30 @@ fn define(s: &mut Session, p: &Value) -> Result<Value> {
 mod tests {
     use super::*;
 
+    /// A parent-page page-number marker follows Numbering & Section Options: changing a section's
+    /// start number renames its pages without changing their index or the number of sections, and
+    /// the marker composed for a page shows the new name.
+    #[test]
+    fn parent_page_number_follows_section_renumbering() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 3, "facingPages": false})).unwrap();
+        let marker = designcraft_doc::story::PAGE_NUMBER.to_string();
+        let r = s
+            .execute("frame.create", &json!({"spread": {"kind": "parent", "index": 0}, "rect": [72, 30, 500, 60], "content": "text", "text": marker}))
+            .unwrap();
+        let sid = s.doc().unwrap().doc.item(designcraft_doc::ItemId(r["id"].as_u64().unwrap())).unwrap().text_frame().unwrap().story;
+        assert_eq!(s.doc().unwrap().doc.story(sid).unwrap().text, marker);
+        let shown = |s: &Session, page: usize| -> usize {
+            let d = s.doc().unwrap().doc.clone();
+            let cs = s.cache.get(&d, sid, Some(page));
+            cs.frames.iter().flat_map(|f| f.lines.iter()).map(|l| l.glyphs.iter().filter(|g| g.visible && g.adv > 0.0).count()).sum()
+        };
+        assert_eq!(shown(&s, 2), 1, "page 3");
+        s.execute("layout.section", &json!({"page": 1, "startNumber": 100})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.page_name(2), "102");
+        assert_eq!(shown(&s, 2), 3, "page 102 after renumbering");
+    }
+
     /// Two sections that both number from 1 repeat page names ("1, 2, 1, 2"). A parent-page running
     /// header is composed for the page it is shown on, not the first page with that name.
     #[test]
