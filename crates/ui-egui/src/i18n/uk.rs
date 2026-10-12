@@ -415,6 +415,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Apply Attributes (Eyedropper)", "Застосувати атрибути (піпетка)"),
     ("Apply Cell Style", "Застосувати стиль клітинки"),
     ("Apply Color", "Застосувати колір"),
+    ("Sample Color (Eyedropper)", "Узяти колір (піпетка)"),
     ("Apply Condition", "Застосувати умову"),
     ("Apply Parent to Pages…", "Застосувати шаблон до сторінок…"),
     ("ArtCraft App Page…", "Сторінка програми ArtCraft…"),

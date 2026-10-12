@@ -739,6 +739,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     ("Apply Cell Style", ["Apply Cell Style", "Apply Cell Style", "Apply Cell Style", "Apply Cell Style", "应用单元格样式"]),
     ("Apply Color", ["Apply Color", "Apply Color", "Apply Color", "Apply Color", "应用颜色"]),
+    (
+        "Sample Color (Eyedropper)",
+        ["Farbe aufnehmen (Pipette)", "Prélever la couleur (Pipette)", "Tomar color (Cuentagotas)", "カラーを抽出 (スポイト)", "取样颜色 (吸管)"],
+    ),
     ("Apply Condition", ["Apply Condition", "Apply Condition", "Apply Condition", "Apply Condition", "应用条件"]),
     (
         "Apply Parent to Pages…",

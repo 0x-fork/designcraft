@@ -412,6 +412,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Apply Attributes (Eyedropper)", "Applica attributi (Contagocce)"),
     ("Apply Cell Style", "Applica stile di cella"),
     ("Apply Color", "Applica colore"),
+    ("Sample Color (Eyedropper)", "Campiona colore (Contagocce)"),
     ("Apply Condition", "Applica condizione"),
     ("Apply Parent to Pages…", "Applica pagina mastro alle pagine…"),
     ("ArtCraft App Page…", "Pagina dell'app ArtCraft…"),

@@ -1045,6 +1045,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Formatting affects container (J)", "Formatação afeta o contêiner (J)"),
     ("Formatting affects text (J)", "Formatação afeta o texto (J)"),
     ("Apply Color", "Aplicar cor"),
+    ("Sample Color (Eyedropper)", "Amostrar cor (Conta-gotas)"),
     ("Apply None", "Aplicar nenhum"),
     ("Height Only", "Somente altura"),
     ("Width Only", "Somente largura"),

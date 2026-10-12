@@ -414,6 +414,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Apply Attributes (Eyedropper)", "属性を適用 (スポイト)"),
     ("Apply Cell Style", "セルスタイルを適用"),
     ("Apply Color", "カラーを適用"),
+    ("Sample Color (Eyedropper)", "カラーを抽出 (スポイト)"),
     ("Apply Condition", "条件を適用"),
     ("Apply Parent to Pages…", "ページに親ページを適用…"),
     ("ArtCraft App Page…", "ArtCraft アプリページ…"),
