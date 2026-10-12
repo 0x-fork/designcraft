@@ -40,6 +40,8 @@ fn value(c: &El, shared: &[String]) -> String {
     match c.attr("t") {
         Some("s") => v().trim().parse::<usize>().ok().and_then(|i| shared.get(i).cloned()).unwrap_or_default(),
         Some("inlineStr") => c.child("is").map(El::text).unwrap_or_default(),
+        // A cached formula string is text even when it looks like a number.
+        Some("str") => v(),
         Some("b") => {
             if v().trim() == "1" {
                 "TRUE".into()
@@ -52,7 +54,7 @@ fn value(c: &El, shared: &[String]) -> String {
             // Whole numbers without the trailing ".0" Excel never shows.
             match raw.trim().parse::<f64>() {
                 Ok(f) if f.fract() == 0.0 && f.abs() < 1e15 => format!("{}", f as i64),
-                Ok(f) => format!("{}", (f * 1e10).round() / 1e10),
+                Ok(f) => f.to_string(),
                 Err(_) => raw,
             }
         }
@@ -333,5 +335,36 @@ mod tests {
         assert_eq!(rows[3][0], "");
         assert_eq!(rows[3][1], "1");
         assert!(records(&book, Some("Missing")).is_err());
+    }
+
+    fn one_value(cell: &str) -> Vec<u8> {
+        workbook_with(&format!(
+            r#"<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Value</t></is></c></row><row r="2">{cell}</row></sheetData></worksheet>"#
+        ))
+    }
+
+    #[test]
+    fn numeric_values_keep_their_precision_in_tables_and_records() {
+        for text in ["1e-12", "-0.0000000000123", "1.23456789012345", "1e300", "12.0"] {
+            let book = one_value(&format!(r#"<c r="A2"><v>{text}</v></c>"#));
+            let placed = crate::import("values.xlsx", &book).unwrap();
+            let table = placed.story.tables.values().next().unwrap();
+            let rows = crate::xlsx_records(&book, None).unwrap();
+            for got in [&table.cell(1, 0).unwrap().text.text, &rows[1][0]] {
+                assert_eq!(got.parse::<f64>().unwrap(), text.parse::<f64>().unwrap(), "cell {text} became {got}");
+            }
+        }
+    }
+
+    #[test]
+    fn cached_string_values_are_not_reformatted_as_numbers() {
+        for text in ["00123", "1e3", "12.0", " 42 "] {
+            let book = one_value(&format!(r#"<c r="A2" t="str"><f>"{text}"</f><v>{text}</v></c>"#));
+            let placed = crate::import("values.xlsx", &book).unwrap();
+            let table = placed.story.tables.values().next().unwrap();
+            let rows = crate::xlsx_records(&book, None).unwrap();
+            assert_eq!(table.cell(1, 0).unwrap().text.text, text);
+            assert_eq!(rows[1][0], text);
+        }
     }
 }
