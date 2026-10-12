@@ -180,8 +180,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply Color",
             [],
             None,
-            "{color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255), target?: fill|stroke, ids?} — an unnamed colour (not in the Swatches panel until Add to Swatches) on the selection",
-            super::has_selection,
+            "{color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255), target?: fill|stroke, text?: bool, ids?} — an unnamed colour on the selected text or objects; `text` also targets the text of selected frames",
+            has_text_or_selection,
             apply_color
         ),
         cmd!(
@@ -964,6 +964,44 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
 fn apply_color(s: &mut Session, p: &Value) -> Result<Value> {
     let color = p.get("color").and_then(parse_color).ok_or_else(|| bad("object.color", "missing or bad color"))?;
     let stroke = str_param(p, "target") == Some("stroke");
+    let named = p.get("ids").is_some() || p.get("id").is_some();
+    let text = !named
+        && (p.get("text").and_then(Value::as_bool).unwrap_or(false) || s.doc()?.selection.text.is_some() || s.doc()?.selection.cells.is_some());
+    if text {
+        let targets = super::text::format_targets(s);
+        // A caret in existing text has no editable range. Refuse it before creating a swatch
+        // or history; an empty story has a format run that the next insertion inherits.
+        if !targets
+            .iter()
+            .any(|t| !t.range.is_empty() || s.active().is_some_and(|d| d.doc.text_story(t.story, t.cell).is_some_and(|st| st.is_empty())))
+        {
+            return Err(bad("object.color", "select the text to colour"));
+        }
+        return s.edit(|d, _| {
+            let name = color_swatch(d, color);
+            for t in &targets {
+                let Some(story) = d.text_story_mut(t.story, t.cell) else { continue };
+                let set = |f: &mut designcraft_doc::CharFormat| {
+                    if stroke {
+                        (f.over.stroke, f.over.stroke_tint) = (Some(name.clone()), Some(1.0));
+                    } else {
+                        (f.over.fill, f.over.fill_tint) = (Some(name.clone()), Some(1.0));
+                    }
+                };
+                if t.range.is_empty() {
+                    if story.is_empty()
+                        && let Some(run) = story.chars.first_mut()
+                    {
+                        set(&mut run.format);
+                        story.rev = story.rev.wrapping_add(1);
+                    }
+                } else {
+                    story.format_chars(t.range.clone(), set);
+                }
+            }
+            Ok(json!({"swatch": name}))
+        });
+    }
     let ids = super::targets(s, p)?;
     s.edit(|d, _| {
         let name = color_swatch(d, color);
@@ -1019,40 +1057,15 @@ fn sample_color(s: &mut Session, p: &Value) -> Result<Value> {
     const ID: &str = "color.sample";
     let at = super::point_param(p, "at").ok_or_else(|| bad(ID, "missing at"))?;
     let sr = super::spread_param(p, "spread");
-    let stroke = str_param(p, "target") == Some("stroke");
-    let named = p.get("ids").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) || p.get("id").is_some();
     let st = s.doc()?;
     let (from, color) = image_color_at(&st.doc, sr, at).ok_or_else(|| bad(ID, "no placed image under the point"))?;
     let hex = color.to_hex();
-    if named || (st.selection.text.is_none() && st.selection.cells.is_none()) {
-        let ids = super::targets(s, p)?;
-        return s.edit(|d, _| {
-            let name = color_swatch(d, color);
-            color_items(d, &ids, &name, stroke);
-            Ok(json!({"color": hex, "swatch": name, "from": from.0}))
-        });
-    }
-    // A caret colours nothing (as with a swatch click): say so instead of an empty undo step.
-    let targets: Vec<_> = super::text::format_targets(s).into_iter().filter(|t| !t.range.is_empty()).collect();
-    if targets.is_empty() {
-        return Err(bad(ID, "select the text to colour"));
-    }
-    s.edit(|d, _| {
-        let name = color_swatch(d, color);
-        for t in &targets {
-            let Some(story) = d.text_story_mut(t.story, t.cell) else { continue };
-            story.format_chars(t.range.clone(), |f| {
-                if stroke {
-                    f.over.stroke = Some(name.clone());
-                    f.over.stroke_tint = Some(1.0);
-                } else {
-                    f.over.fill = Some(name.clone());
-                    f.over.fill_tint = Some(1.0);
-                }
-            });
-        }
-        Ok(json!({"color": hex, "swatch": name, "from": from.0}))
-    })
+    let mut params = p.clone();
+    params["color"] = json!(hex);
+    let mut result = apply_color(s, &params)?;
+    result["color"] = json!(hex);
+    result["from"] = json!(from.0);
+    Ok(result)
 }
 
 /// The colour of the placed raster image at `at` on spread `sr`: the frontmost visible image whose
@@ -1098,7 +1111,8 @@ fn sample_item(
             if !(w > 0.0 && h > 0.0 && gp.x >= 0.0 && gp.y >= 0.0 && gp.x < w && gp.y < h) {
                 return None;
             }
-            let img = designcraft_images::decode_rgba(&d.assets.get(&g.asset)?.data)?;
+            let asset = d.assets.get(&g.asset).filter(|a| a.is_raster())?;
+            let img = designcraft_images::decode_rgba(&asset.data)?;
             let (pw, ph) = img.dimensions();
             let px = ((gp.x / w * f64::from(pw)) as u32).min(pw.checked_sub(1)?);
             let py = ((gp.y / h * f64::from(ph)) as u32).min(ph.checked_sub(1)?);
@@ -1690,5 +1704,31 @@ mod sample_color_tests {
         // Just past the image's right edge.
         assert!(s.execute("color.sample", &json!({"at": [216.5, 100]})).is_err());
         assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+    }
+
+    #[test]
+    fn sampling_and_explicit_colour_use_the_same_text_application_path() {
+        for command in ["color.sample", "object.color"] {
+            let (mut s, _) = session_with_image();
+            let f = s.execute("frame.create", &json!({"rect": [300, 300, 500, 360], "content": "text"})).unwrap();
+            let story = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+            s.execute("text.select", &json!({"story": story.0, "anchor": 0})).unwrap();
+            let undo = s.doc().unwrap().history.undo.len();
+            let r = s.execute(command, &json!({"at": [100, 100], "color": "#ff0000"})).unwrap();
+            assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1, "{command}");
+            s.execute("text.insert", &json!({"text": "Hi"})).unwrap();
+            let text = s.doc().unwrap().doc.story(story).unwrap();
+            assert_eq!(text.format_after(0).over.fill.as_deref(), r["swatch"].as_str(), "empty-story typing: {command}");
+            // Explicit ids override text targeting, including with a text selection active.
+            let fid = ItemId(f["id"].as_u64().unwrap());
+            s.execute("text.select", &json!({"story": story.0, "anchor": 0, "focus": 2})).unwrap();
+            let r = s.execute(command, &json!({"at": [180, 100], "color": "#0000ff", "id": fid.0})).unwrap();
+            assert_eq!(s.doc().unwrap().doc.item(fid).unwrap().fill.swatch, r["swatch"].as_str().unwrap());
+            let text = s.doc().unwrap().doc.story(story).unwrap();
+            assert_ne!(text.format_after(0).over.fill.as_deref(), r["swatch"].as_str(), "text unchanged: {command}");
+            let r = s.execute(command, &json!({"at": [180, 100], "color": "#0000ff", "target": "stroke"})).unwrap();
+            let text = s.doc().unwrap().doc.story(story).unwrap();
+            assert_eq!(text.format_after(0).over.stroke.as_deref(), r["swatch"].as_str(), "selected text stroke: {command}");
+        }
     }
 }

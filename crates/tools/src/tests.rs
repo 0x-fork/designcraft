@@ -720,6 +720,18 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
         fit_align: 4,
         crop: [0.0; 4],
     });
+    d.assets.insert(
+        designcraft_doc::AssetId(1),
+        std::sync::Arc::new(designcraft_doc::Asset {
+            id: designcraft_doc::AssetId(1),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            link: None,
+            data: std::sync::Arc::new(vec![]),
+            pixels: Some((100, 100)),
+            page: 0,
+        }),
+    );
     d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
     // An unfilled text frame over part of the photo lets it show through.
     d.add_text_frame(SpreadRef::Doc(0), Rect::new(150.0, 150.0, 250.0, 250.0), lid, "x", ParaFormat::default()).unwrap();
@@ -745,4 +757,15 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
     let cx = ctx(&d2, &s, &c, &l);
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 320.0 + off.x, 120.0 + off.y));
     assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": swatch.0}))]);
+    // Vector graphics and missing assets must retain the ordinary attribute-matching path.
+    for mime in ["application/pdf", "application/postscript", "image/svg+xml", "application/octet-stream"] {
+        std::sync::Arc::make_mut(d2.assets.get_mut(&designcraft_doc::AssetId(1)).unwrap()).mime = mime.into();
+        let cx = ctx(&d2, &s, &c, &l);
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+        assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": photo.0}))], "{mime}");
+    }
+    d2.assets.clear();
+    let cx = ctx(&d2, &s, &c, &l);
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+    assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": photo.0}))]);
 }

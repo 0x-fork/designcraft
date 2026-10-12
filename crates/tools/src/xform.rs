@@ -248,24 +248,30 @@ fn positive_pad(v: f64) -> f64 {
     if v.is_finite() && v > 0.0 { v } else { 0.0 }
 }
 
-/// The spread and spread point under `p` when a placed graphic shows there: the frontmost visible
-/// filled or graphic item at the point (locked included) is a graphic frame.
+/// The spread and spread point under `p` when a placed raster shows there. Other graphic formats
+/// still block an image behind them, but use attribute matching instead of pixel sampling.
 fn image_under(cx: &ToolContext, p: Point) -> Option<(SpreadRef, Point)> {
     use designcraft_doc::{Content, Item};
-    fn shows(it: &Item, outer: designcraft_geom::Affine, at: Point, depth: usize) -> Option<bool> {
+    fn shows(d: &designcraft_doc::Document, it: &Item, outer: designcraft_geom::Affine, at: Point, depth: usize) -> Option<bool> {
         if it.hidden || depth > 64 {
             return None;
         }
         let xf = outer * it.xf;
         if let Content::Group { items } = &it.content {
-            return items.iter().rev().find_map(|c| shows(c, xf, at, depth + 1));
+            return items.iter().rev().find_map(|c| shows(d, c, xf, at, depth + 1));
         }
         let graphic = matches!(it.content, Content::Graphic(_));
         // Unfilled frames (a text frame over the photo) let the image show through.
         if !graphic && it.fill.is_none() {
             return None;
         }
-        designcraft_doc::edit_hit(it, outer.inverse() * at, 0.0).then_some(graphic)
+        if !designcraft_doc::edit_hit(it, outer.inverse() * at, 0.0) {
+            return None;
+        }
+        Some(match &it.content {
+            Content::Graphic(g) => d.assets.get(&g.asset).is_some_and(|a| a.is_raster()),
+            _ => false,
+        })
     }
     let (sr, at) = cx.layout.spread_at(p)?;
     let sp = cx.doc.spread(sr)?;
@@ -275,7 +281,7 @@ fn image_under(cx: &ToolContext, p: Point) -> Option<(SpreadRef, Point)> {
         .into_iter()
         .rev()
         .filter(|it| cx.doc.layer(it.layer).is_none_or(|l| l.visible))
-        .find_map(|it| shows(it, designcraft_geom::Affine::IDENTITY, at, 0))?;
+        .find_map(|it| shows(cx.doc, it, designcraft_geom::Affine::IDENTITY, at, 0))?;
     image.then_some((sr, at))
 }
 
