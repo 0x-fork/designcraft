@@ -8,6 +8,7 @@ use designcraft_geom::{Rect, shapes};
 use super::*;
 
 mod assets;
+mod clipping;
 mod decorations;
 mod object_styles;
 mod rtl_binding;

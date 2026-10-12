@@ -26,6 +26,7 @@ fn math_item(d: &mut designcraft_doc::Document, latex: &str, size: f64, lid: des
         fit_align: 4,
         crop: [0.0; 4],
         wrap: Default::default(),
+        clip: None,
     });
     it.alt_text = latex.to_string();
     it.name = "Math".into();

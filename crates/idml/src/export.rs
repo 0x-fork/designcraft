@@ -1959,6 +1959,9 @@ impl<'a> Ex<'a> {
         if !g.wrap.is_default() {
             el.push(text_wrap_pref(&g.wrap));
         }
+        if let Some(c) = &g.clip {
+            el.push(clipping_settings(c));
+        }
         let uri = match &asset.link {
             Some(l) => path_to_uri(l),
             None => format!("file:{}", asset.name),
@@ -2767,6 +2770,25 @@ fn text_frame_pref(o: &TextFrameOptions, rule_color: &str) -> El {
         .attr("ColumnRuleBottomInset", num(o.column_rule_bottom_inset))
         .attr("ColumnRuleInsetChainOverride", bool_s(o.column_rule_top_inset == o.column_rule_bottom_inset));
     with_props(el, vec![inset])
+}
+
+/// `<ClippingPathSettings>` with the outline (graphic space is the image's inner space, whose
+/// `GraphicBounds` start at 0,0).
+fn clipping_settings(c: &designcraft_doc::ClippingPath) -> El {
+    let mut geometry = path_geometry(&c.path);
+    geometry.name = "ClippingPathGeometry".into();
+    let el = El::new("ClippingPathSettings")
+        .attr("ClippingType", names::clipping_kind_out(c.kind))
+        .attr("InvertPath", bool_s(c.invert))
+        .attr("IncludeInsideEdges", bool_s(c.include_inside_edges))
+        .attr("RestrictToFrame", bool_s(c.restrict_to_frame))
+        .attr("UseHighResolutionImage", bool_s(c.use_high_resolution))
+        .attr("Threshold", num(c.threshold))
+        .attr("Tolerance", num(c.tolerance))
+        .attr("InsetFrame", num(c.inset))
+        .attr("AppliedPathName", if c.source_name.is_empty() { "$ID/" } else { c.source_name.as_str() })
+        .attr("Index", c.source_index.to_string());
+    with_props(el, vec![geometry])
 }
 
 fn path_geometry(path: &PathData) -> El {

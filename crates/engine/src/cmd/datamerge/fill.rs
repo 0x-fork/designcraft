@@ -389,6 +389,7 @@ fn place_image(
         fit_align: 0,
         crop: [0.0; 4],
         wrap: Default::default(),
+        clip: None,
     };
     if let Some(xf) = g.fitted(inner, mode) {
         g.xf = xf;
