@@ -15,18 +15,26 @@ use crate::{Asset, AssetId, Content, Document, Item};
 const MAX_DEPTH: usize = 64;
 
 impl Asset {
-    /// Whether `other` holds the same file: the same type, page, PDF crop box and bytes. Assets
-    /// without bytes (a link that couldn't be read) are the same only when they link to the same
-    /// path.
+    /// Whether `other` holds the same file: the same type, page, PDF crop box, link and bytes.
+    /// Files at different paths stay apart even with identical bytes, since each can be updated
+    /// or relinked on its own. Assets without bytes (a link that couldn't be read) are the same
+    /// only when they link to the same path.
     pub fn same_file(&self, other: &Asset) -> bool {
         if self.mime != other.mime || self.page != other.page || self.pdf_crop != other.pdf_crop {
             return false;
         }
+        if self.link != other.link {
+            return false;
+        }
         match (self.data.is_empty(), other.data.is_empty()) {
-            (false, false) => Arc::ptr_eq(&self.data, &other.data) || (self.data.len() == other.data.len() && *self.data == *other.data),
-            (true, true) => self.link.is_some() && self.link == other.link,
+            (false, false) => self.same_bytes(other),
+            (true, true) => self.link.is_some(),
             _ => false,
         }
+    }
+
+    fn same_bytes(&self, other: &Asset) -> bool {
+        Arc::ptr_eq(&self.data, &other.data) || (self.data.len() == other.data.len() && *self.data == *other.data)
     }
 }
 
@@ -36,16 +44,15 @@ pub fn find_same_asset(assets: &BTreeMap<AssetId, Arc<Asset>>, asset: &Asset) ->
 }
 
 /// Add `asset` to `assets` unless they already hold the same file; returns the id placements
-/// should reference. A reused asset without a link takes the new asset's link.
-pub fn insert_asset(assets: &mut BTreeMap<AssetId, Arc<Asset>>, asset: Asset) -> AssetId {
+/// should reference. A new asset with the bytes of an existing one shares its buffer.
+pub fn insert_asset(assets: &mut BTreeMap<AssetId, Arc<Asset>>, mut asset: Asset) -> AssetId {
     if let Some(id) = find_same_asset(assets, &asset) {
-        if let Some(a) = assets.get_mut(&id)
-            && a.link.is_none()
-            && asset.link.is_some()
-        {
-            Arc::make_mut(a).link = asset.link;
-        }
         return id;
+    }
+    if !asset.data.is_empty()
+        && let Some(a) = assets.values().find(|a| a.same_bytes(&asset))
+    {
+        asset.data = Arc::clone(&a.data);
     }
     let id = asset.id;
     assets.insert(id, Arc::new(asset));
@@ -241,26 +248,13 @@ impl Document {
         }
         let mut reps: HashMap<(usize, &str, u32), Vec<&Arc<Asset>>> = HashMap::new();
         let mut map = HashMap::new();
-        let mut links = Vec::new();
         for a in self.assets.values() {
             let bucket = reps.entry((a.data.len(), a.mime.as_str(), a.page)).or_default();
             match bucket.iter().find(|r| r.same_file(a)) {
                 Some(r) => {
                     map.insert(a.id, r.id);
-                    if r.link.is_none()
-                        && let Some(l) = &a.link
-                    {
-                        links.push((r.id, l.clone()));
-                    }
                 }
                 None => bucket.push(a),
-            }
-        }
-        for (id, link) in links {
-            if let Some(a) = self.assets.get_mut(&id)
-                && a.link.is_none()
-            {
-                Arc::make_mut(a).link = Some(link);
             }
         }
         self.remap_assets(&map);
@@ -304,7 +298,7 @@ mod tests {
     fn identical_files_share_one_asset() {
         let mut d = Document::new(&Default::default());
         let a = d.add_asset(asset(1, b"same"));
-        let b = d.add_asset(Asset { link: Some("/x/p.png".into()), ..asset(2, b"same") });
+        let b = d.add_asset(asset(2, b"same"));
         let c = d.add_asset(asset(3, b"diff"));
         let p = d.add_asset(Asset { page: 1, ..asset(4, b"same") });
         // One PDF page shown with two crop boxes: two assets (the box is the asset's).
@@ -318,7 +312,6 @@ mod tests {
         assert_ne!(a, c);
         assert_ne!(a, p);
         assert_eq!(d.assets.len(), 3);
-        assert_eq!(d.assets[&a].link.as_deref(), Some("/x/p.png"));
         // Unreadable links match by path only.
         let m1 = d.add_asset(Asset { link: Some("/m/1.png".into()), ..asset(5, b"") });
         let m2 = d.add_asset(Asset { link: Some("/m/2.png".into()), ..asset(6, b"") });
@@ -326,6 +319,21 @@ mod tests {
         let m4 = d.add_asset(asset(8, b""));
         assert_ne!(m1, m2);
         assert_ne!(m3, m4);
+    }
+
+    #[test]
+    fn files_at_different_paths_stay_separate_assets() {
+        let mut d = Document::new(&Default::default());
+        let linked = |id, path: &str| Asset { link: Some(path.into()), ..asset(id, b"same") };
+        let embedded = d.add_asset(asset(1, b"same"));
+        let a = d.add_asset(linked(2, "/p/a.png"));
+        let b = d.add_asset(linked(3, "/q/b.png"));
+        assert_eq!(d.add_asset(linked(4, "/p/a.png")), a, "the same path placed again");
+        assert_eq!(d.assets.len(), 3);
+        assert!(embedded != a && a != b && embedded != b);
+        assert_eq!(d.assets[&embedded].link, None);
+        assert_eq!(d.assets[&b].link.as_deref(), Some("/q/b.png"));
+        assert!(Arc::ptr_eq(&d.assets[&a].data, &d.assets[&b].data), "identical bytes share one buffer");
     }
 
     #[test]

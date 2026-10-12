@@ -495,6 +495,27 @@ mod tests {
     }
 
     #[test]
+    fn files_with_identical_bytes_at_different_paths_keep_their_paths() {
+        let mut d = Document::new(&NewDocument::default());
+        let ids: Vec<AssetId> = (0..3).map(|_| png_asset(&mut d, &[3; 32])).collect();
+        for (id, link) in ids.iter().zip(["/p/a.png", "/q/b.png"]) {
+            if let Some(a) = d.assets.get_mut(id) {
+                Arc::make_mut(a).link = Some(link.into());
+            }
+        }
+        let items: Vec<_> = ids.iter().enumerate().map(|(k, id)| place(&mut d, *id, k as f64)).collect();
+        for bytes in [save(&d).unwrap(), save_uncompacted(&d)] {
+            let back = load(&bytes).unwrap();
+            assert_eq!(back.assets.len(), 3);
+            let links: Vec<Option<&str>> = items
+                .iter()
+                .map(|i| back.item(*i).and_then(|i| i.graphic()).and_then(|g| back.assets.get(&g.asset)).unwrap().link.as_deref())
+                .collect();
+            assert_eq!(links, [Some("/p/a.png"), Some("/q/b.png"), None]);
+        }
+    }
+
+    #[test]
     fn older_files_with_one_asset_per_placement_open_with_one() {
         let mut d = Document::new(&NewDocument::default());
         let ids: Vec<AssetId> = (0..3).map(|_| png_asset(&mut d, &[5; 32])).collect();

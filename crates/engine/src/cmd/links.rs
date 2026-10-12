@@ -355,6 +355,38 @@ mod shared_asset_tests {
     }
 
     #[test]
+    fn files_with_identical_bytes_at_different_paths_keep_their_own_links() {
+        let dir = std::env::temp_dir().join(format!("dc-same-bytes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.png"), dir.join("b.png"));
+        std::fs::write(&a, png(10, 10)).unwrap();
+        std::fs::write(&b, png(10, 10)).unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        for (path, x) in [(&a, 72), (&b, 200)] {
+            s.execute("edit.deselectAll", &json!({})).unwrap();
+            s.execute("file.place", &json!({"path": path.to_string_lossy(), "x": x, "y": 72})).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().doc.assets.len(), 2);
+        let rows = |s: &mut Session| -> Vec<(String, Value)> {
+            let l = s.execute("links.list", &json!({})).unwrap();
+            l.as_array().unwrap().iter().map(|r| (r["path"].as_str().unwrap().to_string(), r["pixels"].clone())).collect()
+        };
+        let paths = |r: &[(String, Value)]| r.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
+        let before = rows(&mut s);
+        assert_eq!(paths(&before), [a.to_string_lossy(), b.to_string_lossy()]);
+
+        // b.png changes on disk: updating it leaves a.png's placement alone.
+        std::fs::write(&b, png(20, 10)).unwrap();
+        assert_eq!(s.execute("links.update", &json!({})).unwrap()["updated"], 1);
+        let after = rows(&mut s);
+        assert_eq!(paths(&after), paths(&before));
+        assert_eq!((after[0].1.clone(), after[1].1.clone()), (json!([10, 10]), json!([20, 10])));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn pasted_graphics_reuse_the_identical_asset_of_the_target() {
         use designcraft_doc::build::NewDocument;
         use designcraft_doc::{Asset, Graphic, Item, ItemId, Shape, SpreadRef};
