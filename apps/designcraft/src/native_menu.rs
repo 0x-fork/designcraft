@@ -60,7 +60,6 @@ impl NativeMenu {
                 AppMenuItem::Hide => app_menu.append(&PredefinedMenuItem::hide(None)),
                 AppMenuItem::HideOthers => app_menu.append(&PredefinedMenuItem::hide_others(None)),
                 AppMenuItem::ShowAll => app_menu.append(&PredefinedMenuItem::show_all(None)),
-                AppMenuItem::Quit => app_menu.append(&PredefinedMenuItem::quit(None)),
             };
         }
         let _ = menu.append(&app_menu);

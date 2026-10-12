@@ -47,7 +47,8 @@ so only enable it while you use it. Transport: `apps/designcraft/src/control_ser
 | `ui.resize`, `ui.focus` | | Window control |
 | `ui.screenshot` | `{path?}` | PNG of the whole window |
 | `ui.render` | `{path?, page?, scale?, bleed?}` | Render a page headlessly (PNG; base64 if no path) |
-| `app.open` / `app.save` / `app.export` / `app.quit` | | Files |
+| `app.open` / `app.save` / `app.export` | | Files |
+| `app.quit` | | Quit without asking about unsaved changes (the `app.quit` command, like ⌘Q, asks) |
 
 Data merge runs through `engine.execute` like any command: `data.source.select`, `data.fields`, `data.placeholder.add` /
 `.remove`, `data.options`, `data.preview` / `data.preview.stop`, `data.merge`. `data.merge` creates and activates a new

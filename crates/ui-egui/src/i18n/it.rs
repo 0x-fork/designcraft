@@ -398,6 +398,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Spreads of up to 10 pages", "Doppie pagine con al massimo 10 pagine"),
     ("for", "per"),
     ("About DesignCraft", "Informazioni su DesignCraft"),
+    ("Quit DesignCraft", "Esci da DesignCraft"),
     ("Accept All Changes", "Accetta tutte le modifiche"),
     ("Activate Document", "Attiva documento"),
     ("Add Anchor Point", "Aggiungi punto di ancoraggio"),

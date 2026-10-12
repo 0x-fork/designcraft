@@ -399,6 +399,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Spreads of up to 10 pages", "Розвороти до 10 сторінок"),
     ("for", "для"),
     ("About DesignCraft", "Про DesignCraft"),
+    ("Quit DesignCraft", "Завершити DesignCraft"),
     ("Accept All Changes", "Прийняти всі зміни"),
     ("Activate Document", "Активувати документ"),
     ("Add Anchor Point", "Додати опорну точку"),

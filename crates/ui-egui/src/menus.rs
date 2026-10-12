@@ -21,6 +21,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.placeDialog", "Place…", Some("Cmd+D"), "{}"),
     ("app.saveDialog", "Save As…", Some("Cmd+Shift+S"), "{}"),
     ("app.save", "Save", Some("Cmd+S"), "{}"),
+    ("app.quit", "Quit DesignCraft", Some("Cmd+Q"), "{} — close the window; each document with unsaved changes asks first"),
     ("app.saveCopyDialog", "Save a Copy…", Some("Cmd+Alt+S"), "{} — choose where to write a copy (the document stays as it is)"),
     ("app.loadSwatches", "Load Swatches…", None, "{} — pick a swatch exchange (.ase) file"),
     ("app.packageDialog", "Package…", Some("Cmd+Alt+Shift+P"), "{} — choose the package folder to create (file.package)"),
@@ -840,6 +841,10 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
                 return Some(app.run("file.saveAs", json!({"path": path})));
             }
+            Ok(Value::Null)
+        }
+        "app.quit" => {
+            app.request_quit();
             Ok(Value::Null)
         }
         "app.saveCopyDialog" => {
@@ -1936,7 +1941,6 @@ pub enum AppMenuItem {
     Hide,
     HideOthers,
     ShowAll,
-    Quit,
 }
 
 /// The macOS application menu. Settings… is `app.preferences`, which `native_menu_tree` leaves out of Edit.
@@ -1952,7 +1956,8 @@ pub const MAC_APP_MENU: &[AppMenuItem] = &[
     AppMenuItem::HideOthers,
     AppMenuItem::ShowAll,
     AppMenuItem::Sep,
-    AppMenuItem::Quit,
+    // Not the predefined Quit: it terminates the app at once, past the unsaved-changes prompt.
+    AppMenuItem::Cmd { id: "dc-quit", label: "Quit DesignCraft", command: "app.quit" },
 ];
 
 /// The menu tree for the macOS menu bar: `menu_tree` without the commands `MAC_APP_MENU` holds,
