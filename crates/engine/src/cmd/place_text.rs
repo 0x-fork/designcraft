@@ -314,7 +314,7 @@ mod tests {
                     "word ".repeat(200)
                 ),
             );
-            assert_eq!(autoflow(&mut d, sid, 50).unwrap(), added, "{brk:?}");
+            assert_eq!(autoflow(&mut d, sid, 50, "file.place").unwrap(), added, "{brk:?}");
             assert_eq!(d.page_count(), added + 1, "{brk:?}");
             assert_eq!(designcraft_compose::compose_story(&d, sid, &Default::default()).overset_at, None, "{brk:?}");
         }
