@@ -738,6 +738,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     ("Apply Cell Style", ["Apply Cell Style", "Apply Cell Style", "Apply Cell Style", "Apply Cell Style", "应用单元格样式"]),
     ("Apply Color", ["Apply Color", "Apply Color", "Apply Color", "Apply Color", "应用颜色"]),
+    ("Isolate Blending", ["Füllmethode isolieren", "Isoler le mode de fusion", "Aislar fusión", "描画モードを分離", "分离混合"]),
+    ("Knockout Group", ["Aussparungsgruppe", "Groupe de masquage", "Grupo de exclusión", "グループの抜き", "挖空组"]),
+    ("Object:", ["Objekt:", "Objet :", "Objeto:", "オブジェクト:", "对象:"]),
+    ("Group:", ["Gruppe:", "Groupe :", "Grupo:", "グループ:", "编组:"]),
     ("Apply Condition", ["Apply Condition", "Apply Condition", "Apply Condition", "Apply Condition", "应用条件"]),
     (
         "Apply Parent to Pages…",
