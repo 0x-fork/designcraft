@@ -85,6 +85,10 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.zoom", "Zoom To", None, "{zoom: 1.0 = 100%}"),
     ("view.screenMode", "Screen Mode", None, "{mode: normal|preview|bleed|slug|presentation}"),
     ("view.togglePreview", "Toggle Normal/Preview", Some("W"), "{}"),
+    ("color.defaultFillStroke", "Default Fill and Stroke", Some("D"), "{} — the selection gets no fill and a black stroke"),
+    ("color.swapFillStroke", "Swap Fill and Stroke", Some("Shift+X"), "{} — the selection's fill and stroke colours (and tints) trade places"),
+    ("color.toggleFillStroke", "Toggle Fill and Stroke", Some("X"), "{} → {strokeFront} — which of fill and stroke the proxy has in front"),
+    ("color.applyNone", "Apply None", Some("/"), "{} — [None] for the fill or stroke in front of the proxy"),
     ("view.frameEdges", "Show/Hide Frame Edges", Some("Cmd+H"), "{}"),
     ("view.rulers", "Show/Hide Rulers", Some("Cmd+R"), "{}"),
     ("view.guides", "Show/Hide Guides", Some("Cmd+;"), "{}"),
@@ -1109,6 +1113,10 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             app.ui.screen_mode = if app.ui.screen_mode == ScreenMode::Normal { ScreenMode::Preview } else { ScreenMode::Normal };
             Ok(Value::Null)
         }
+        "color.defaultFillStroke" => crate::toolbar::default_fill_stroke(app),
+        "color.swapFillStroke" => crate::toolbar::swap_fill_stroke(app),
+        "color.toggleFillStroke" => crate::toolbar::toggle_fill_stroke(app),
+        "color.applyNone" => crate::toolbar::apply_none(app),
         "view.frameEdges" => flag(&mut app.ui.frame_edges),
         "view.overprintPreview" => {
             app.canvas.shown = None;
@@ -2097,6 +2105,7 @@ fn parse_shortcut(sc: &str) -> Option<(egui::Modifiers, egui::Key)> {
             "," => key = Some(egui::Key::Comma),
             "." => key = Some(egui::Key::Period),
             "\\" => key = Some(egui::Key::Backslash),
+            "/" => key = Some(egui::Key::Slash),
             "Delete" => key = Some(egui::Key::Delete),
             k => key = egui::Key::from_name(k),
         }

@@ -646,6 +646,15 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Fill (X)", ["Fill (X)", "Fill (X)", "Fill (X)", "Fill (X)", "填色 (X)"]),
     ("Stroke (X)", ["Stroke (X)", "Stroke (X)", "Stroke (X)", "Stroke (X)", "描边 (X)"]),
     ("Apply None (/)", ["Apply None (/)", "Apply None (/)", "Apply None (/)", "Apply None (/)", "应用无 (/)"]),
+    (
+        "Default Fill and Stroke",
+        ["Default Fill and Stroke", "Default Fill and Stroke", "Default Fill and Stroke", "Default Fill and Stroke", "默认填色和描边"],
+    ),
+    ("Swap Fill and Stroke", ["Swap Fill and Stroke", "Swap Fill and Stroke", "Swap Fill and Stroke", "Swap Fill and Stroke", "交换填色和描边"]),
+    (
+        "Toggle Fill and Stroke",
+        ["Toggle Fill and Stroke", "Toggle Fill and Stroke", "Toggle Fill and Stroke", "Toggle Fill and Stroke", "切换填色和描边"],
+    ),
     ("Reverse the gradient", ["Reverse the gradient", "Reverse the gradient", "Reverse the gradient", "Reverse the gradient", "反转渐变"]),
     ("Style source", ["Style source", "Style source", "Style source", "Style source", "样式源"]),
     ("Open", ["Open", "Open", "Open", "Open", "打开"]),
