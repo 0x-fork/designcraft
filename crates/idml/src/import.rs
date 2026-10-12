@@ -1732,7 +1732,9 @@ impl<'r> Importer<'r> {
                     "ParagraphStyleRange" => {
                         let style = c.get("AppliedParagraphStyle").map(|r| self.para_style_ref(r)).unwrap_or_else(|| pf.style.clone());
                         let para = self.para_attrs(c);
-                        let chars = self.char_attrs(c);
+                        let mut chars = self.char_attrs(c);
+                        // A paragraph range inside a tracked change is part of that change.
+                        chars.change = chars.change.or(cf.over.change);
                         let npf = ParaFormat { style, para, chars: CharAttrs::default(), table: None };
                         if b.fresh
                             && let Some(last) = b.paras.last_mut()
