@@ -1385,3 +1385,71 @@ fn type_tool_drags_a_table_column_border() {
         assert!(matches!(&a[..], [Action::Exec(cmd, _)] if cmd == "text.placeCaret"), "{a:?}");
     }
 }
+
+#[test]
+fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let photo = ItemId(d.alloc());
+    let mut it = Item::new(photo, lid, Shape::Rectangle, shapes::rectangle(Rect::new(100.0, 100.0, 200.0, 200.0)));
+    it.content = designcraft_doc::Content::Graphic(designcraft_doc::Graphic {
+        asset: designcraft_doc::AssetId(1),
+        size: (100.0, 100.0),
+        xf: designcraft_geom::Affine::translate((0.0, 0.0)),
+        clip: None,
+        auto_fit: Default::default(),
+        fit_align: 4,
+        crop: [0.0; 4],
+        wrap: Default::default(),
+    });
+    d.assets.insert(
+        designcraft_doc::AssetId(1),
+        std::sync::Arc::new(designcraft_doc::Asset {
+            id: designcraft_doc::AssetId(1),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            link: None,
+            data: std::sync::Arc::new(vec![]),
+            pixels: Some((100, 100)),
+            page: 0,
+            pdf_crop: Default::default(),
+            pdf_box: None,
+        }),
+    );
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    // An unfilled text frame over part of the photo lets it show through.
+    d.add_text_frame(SpreadRef::Doc(0), Rect::new(150.0, 150.0, 250.0, 250.0), lid, "x", ParaFormat::default()).unwrap();
+    let swatch = add_rect(&mut d, Rect::new(300.0, 100.0, 350.0, 150.0));
+    d.item_mut(swatch).unwrap().fill.swatch = "[Black]".into();
+    let target = add_rect(&mut d, Rect::new(400.0, 100.0, 450.0, 150.0));
+    // The photo's layer is locked: sampling it still works.
+    d.layers.iter_mut().for_each(|l| l.locked = true);
+    let s = Selection { items: vec![target], ..Default::default() };
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let cx = ctx(&d, &s, &c, &l);
+    let mut t = create("eyedropper");
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+    let sample = |x: f64, y: f64| Action::Exec("color.sample".into(), serde_json::json!({"at": [x, y], "spread": {"kind": "doc", "index": 0}}));
+    assert_eq!(a, vec![sample(120.0, 130.0)]);
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 180.0 + off.x, 180.0 + off.y));
+    assert_eq!(a, vec![sample(180.0, 180.0)], "through the text frame");
+    // A filled object is matched as before (here on a locked layer: not reachable, so nothing).
+    assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 320.0 + off.x, 120.0 + off.y)).is_empty());
+    let mut d2 = d.clone();
+    d2.layers.iter_mut().for_each(|l| l.locked = false);
+    let cx = ctx(&d2, &s, &c, &l);
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 320.0 + off.x, 120.0 + off.y));
+    assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": swatch.0}))]);
+    // Vector graphics and missing assets must retain the ordinary attribute-matching path.
+    for mime in ["application/pdf", "application/postscript", "image/svg+xml", "application/octet-stream"] {
+        std::sync::Arc::make_mut(d2.assets.get_mut(&designcraft_doc::AssetId(1)).unwrap()).mime = mime.into();
+        let cx = ctx(&d2, &s, &c, &l);
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+        assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": photo.0}))], "{mime}");
+    }
+    d2.assets.clear();
+    let cx = ctx(&d2, &s, &c, &l);
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+    assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": photo.0}))]);
+}

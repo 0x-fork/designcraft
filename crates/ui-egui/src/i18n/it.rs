@@ -428,6 +428,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Knockout Group", "Gruppo di foratura"),
     ("Object:", "Oggetto:"),
     ("Group:", "Gruppo:"),
+    ("Sample Color (Eyedropper)", "Campiona colore (Contagocce)"),
     ("Apply Condition", "Applica condizione"),
     ("Apply Parent to Pages…", "Applica pagina mastro alle pagine…"),
     ("ArtCraft App Page…", "Pagina dell'app ArtCraft…"),

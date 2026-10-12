@@ -1112,6 +1112,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Knockout Group", ["Aussparungsgruppe", "Groupe de masquage", "Grupo de exclusión", "グループの抜き", "挖空组"]),
     ("Object:", ["Objekt:", "Objet :", "Objeto:", "オブジェクト:", "对象:"]),
     ("Group:", ["Gruppe:", "Groupe :", "Grupo:", "グループ:", "编组:"]),
+    (
+        "Sample Color (Eyedropper)",
+        ["Farbe aufnehmen (Pipette)", "Prélever la couleur (Pipette)", "Tomar color (Cuentagotas)", "カラーを抽出 (スポイト)", "取样颜色 (吸管)"],
+    ),
     ("Apply Condition", ["Apply Condition", "Apply Condition", "Apply Condition", "Apply Condition", "应用条件"]),
     (
         "Apply Parent to Pages…",

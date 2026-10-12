@@ -1071,6 +1071,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Knockout Group", "Grupo de vazamento"),
     ("Object:", "Objeto:"),
     ("Group:", "Grupo:"),
+    ("Sample Color (Eyedropper)", "Amostrar cor (Conta-gotas)"),
     ("Apply None", "Aplicar nenhum"),
     ("Height Only", "Somente altura"),
     ("Width Only", "Somente largura"),

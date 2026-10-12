@@ -1074,6 +1074,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Knockout Group", "مجموعة مفرغة"),
     ("Object:", "الكائن:"),
     ("Group:", "المجموعة:"),
+    ("Sample Color (Eyedropper)", "أخذ عينة من اللون (القطارة)"),
     ("Apply None", "إزالة اللون"),
     ("Height Only", "الارتفاع فقط"),
     ("Width Only", "العرض فقط"),

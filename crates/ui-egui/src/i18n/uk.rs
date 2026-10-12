@@ -429,6 +429,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Knockout Group", "Група вибивання"),
     ("Object:", "Об’єкт:"),
     ("Group:", "Група:"),
+    ("Sample Color (Eyedropper)", "Узяти колір (піпетка)"),
     ("Apply Condition", "Застосувати умову"),
     ("Apply Parent to Pages…", "Застосувати шаблон до сторінок…"),
     ("ArtCraft App Page…", "Сторінка програми ArtCraft…"),
