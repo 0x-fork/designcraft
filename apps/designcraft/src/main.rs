@@ -42,6 +42,10 @@ struct App {
     movable: Option<bool>,
     /// Frames begun so far.
     frames: u32,
+    /// The device whose uncaptured errors are logged once the window is past its start-up frames
+    /// (`gpu_limits::log_uncaptured_errors`). Until then wgpu's default handler panics, so a
+    /// failing adapter still makes `gpu` start again on the next one.
+    log_errors_after_startup: Option<eframe::wgpu::Device>,
 }
 
 impl eframe::App for App {
@@ -56,6 +60,11 @@ impl eframe::App for App {
             self.startup.presented();
         }
         self.frames = self.frames.saturating_add(1);
+        if u64::from(self.frames) >= gpu::STARTUP_FRAMES
+            && let Some(device) = self.log_errors_after_startup.take()
+        {
+            gpu_limits::log_uncaptured_errors(&device);
+        }
         #[cfg(target_os = "macos")]
         {
             if self.menu.is_none() && std::env::var_os("DESIGNCRAFT_NO_NATIVE_MENU").is_none() {
@@ -442,8 +451,9 @@ fn main() -> std::process::ExitCode {
             options,
             Box::new(move |cc| {
                 let mut restarted = None;
+                let mut device = None;
                 if let Some(rs) = &cc.wgpu_render_state {
-                    gpu_limits::log_uncaptured_errors(&rs.device);
+                    device = Some(rs.device.clone());
                     // What a bug report needs to know about the graphics driver.
                     let info = rs.adapter.get_info();
                     log::info!(
@@ -509,6 +519,7 @@ fn main() -> std::process::ExitCode {
                     #[cfg(target_os = "macos")]
                     movable: None,
                     frames: 0,
+                    log_errors_after_startup: device,
                 }))
             }),
         )
