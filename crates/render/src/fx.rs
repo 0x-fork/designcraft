@@ -64,9 +64,10 @@ fn shadow(sigma: f64, color: peniko::Color) -> Filter {
     })
 }
 
-/// Keep what was drawn in the current layer as much as `it`'s gradient feather says, over `area`
-/// (item space; past the gradient's ends its end opacities carry on).
-pub(crate) fn gradient_feather_mask(ctx: &mut RenderContext, f: &Frame, it: &Item, xf: Affine, area: Rect) {
+/// Keep what was drawn in the current layer as much as `it`'s gradient feather says. Cover the
+/// whole viewport: strokes, text and child effects can extend arbitrarily past the geometry,
+/// and past the gradient's ends its end opacities carry on.
+pub(crate) fn gradient_feather_mask(ctx: &mut RenderContext, f: &Frame, it: &Item, xf: Affine) {
     let gf = &it.effects.gradient_feather;
     let (p0, p1) = gf.points(it.feather_bounds());
     let stop = |o: f32, a: f32| peniko::ColorStop::from((o, peniko::Color::from_rgba8(0, 0, 0, (a.clamp(0.0, 1.0) * 255.0).round() as u8)));
@@ -78,9 +79,9 @@ pub(crate) fn gradient_feather_mask(ctx: &mut RenderContext, f: &Frame, it: &Ite
     };
     ctx.set_transform(Affine::IDENTITY);
     ctx.push_layer(None, Some(BlendMode::new(Mix::Normal, Compose::DestIn)), None, None, None);
-    ctx.set_transform(f.view * xf);
     ctx.set_paint(grad);
-    ctx.fill_rect(&area);
+    ctx.set_paint_transform(f.view * xf);
+    ctx.fill_rect(&Rect::new(0.0, 0.0, f64::from(ctx.width()), f64::from(ctx.height())));
     ctx.reset_paint_transform();
     ctx.pop_layer();
 }
@@ -191,8 +192,7 @@ impl Renderer {
             }
         }
         if gf.on {
-            let area = if xf.determinant().abs() > 1e-12 { xf.inverse().transform_rect_bbox(reach) } else { it.inner_bounds() };
-            gradient_feather_mask(ctx, f, it, xf, area.inflate(4.0, 4.0));
+            gradient_feather_mask(ctx, f, it, xf);
         }
         if gf.on || directional {
             ctx.pop_layer();

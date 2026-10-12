@@ -502,10 +502,7 @@ impl Renderer {
                 }
             }
             if feather {
-                // Generous: text and strokes reach past their frames.
-                let b = it.feather_bounds();
-                let pad = 36.0 + 0.25 * b.width().max(b.height());
-                fx::gradient_feather_mask(ctx, f, it, xf, b.inflate(pad, pad));
+                fx::gradient_feather_mask(ctx, f, it, xf);
                 ctx.pop_layer();
             }
             if layered {
