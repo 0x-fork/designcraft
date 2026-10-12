@@ -2977,7 +2977,7 @@ fn wrap_slot(
             // A contour's or a shaped frame's width changes within the band: 1 pt at a time.
             let next = if f.outline.is_some() || in_band().any(|e| e.contour.is_some()) { edge.min(b + 1.0) } else { edge };
             // No progress (coordinates so large that a point no longer moves the line) or none left.
-            if !(next > b) || !next.is_finite() {
+            if next <= b || !next.is_finite() {
                 return None;
             }
             next
