@@ -358,10 +358,10 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
                 asset: aid,
                 size: (nw, nh),
                 xf: Affine::translate((r.x0 + (r.width() - gw) / 2.0, r.y0 + (r.height() - gh) / 2.0)) * Affine::scale(k),
+                clip: None,
                 auto_fit: Default::default(),
                 fit_align: 4,
                 crop: [0.0; 4],
-                clip: None,
             });
             fid
         } else {
@@ -377,10 +377,10 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
                 asset: aid,
                 size: (nw, nh),
                 xf: Affine::translate((x - bx * k, y - by * k)) * Affine::scale(k),
+                clip: None,
                 auto_fit: Default::default(),
                 fit_align: 4,
                 crop: [0.0; 4],
-                clip: None,
             });
             d.insert_item(spread, it, None)?;
             id
@@ -471,10 +471,10 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     asset: aid,
                     size: (nw, nh),
                     xf: Affine::translate((r.x0 + (r.width() - nw * k) / 2.0, r.y0 + (r.height() - nh * k) / 2.0)) * Affine::scale(k),
+                    clip: None,
                     auto_fit: Default::default(),
                     fit_align: 4,
                     crop: [0.0; 4],
-                    clip: None,
                 });
                 fid
             }
@@ -494,10 +494,10 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     asset: aid,
                     size: (nw, nh),
                     xf: Affine::translate((frame_r.x0, frame_r.y0)) * Affine::scale(k),
+                    clip: None,
                     auto_fit: Default::default(),
                     fit_align: 4,
                     crop: [0.0; 4],
-                    clip: None,
                 });
                 d.insert_item(sr, it, None)?;
                 id

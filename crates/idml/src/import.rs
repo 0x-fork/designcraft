@@ -2276,10 +2276,10 @@ impl<'r> Importer<'r> {
                 asset,
                 size,
                 xf: gxf * Affine::translate((l, t)),
+                clip: clip.clone(),
                 auto_fit: Default::default(),
                 fit_align: 4,
                 crop: [0.0; 4],
-                clip: clip.clone(),
             })
         };
         let mut data = g.prop_el("Contents").map(|c| base64_decode(&c.text_content())).unwrap_or_default();

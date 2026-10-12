@@ -1469,10 +1469,10 @@ mod tests {
             asset: aid,
             size: (100.0, 100.0),
             xf: Affine::translate((100.0, 100.0)),
+            clip: None,
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [0.0; 4],
-            clip: None,
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         let cache = Cache::new();

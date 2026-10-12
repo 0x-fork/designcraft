@@ -243,10 +243,10 @@ pub fn synthetic(spec: &Spec) -> Result<Document, String> {
                 asset,
                 size: (nw, nh),
                 xf: Affine::translate((r.x0 + (r.width() - nw * s) / 2.0, r.y0 + (r.height() - nh * s) / 2.0)) * Affine::scale(s),
+                clip: None,
                 auto_fit: designcraft_doc::Fitting::FillProportionally,
                 fit_align: 4,
                 crop: [0.0; 4],
-                clip: None,
             });
             if k == 0 && pi == 0 {
                 it.effects.drop_shadow.on = true;

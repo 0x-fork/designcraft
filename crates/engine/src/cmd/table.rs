@@ -1423,10 +1423,10 @@ fn place_graphic(s: &mut Session, p: &Value) -> Result<Value> {
             asset: aid,
             size: (nw, nh),
             xf,
+            clip: None,
             auto_fit: if fill { designcraft_doc::Fitting::FillProportionally } else { designcraft_doc::Fitting::FitProportionally },
             fit_align: 4,
             crop: [0.0; 4],
-            clip: None,
         });
         clamp_selection(d, sel);
         Ok(json!({"asset": aid.0, "row": r, "col": c}))

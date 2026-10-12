@@ -30,10 +30,10 @@ fn math_item(d: &mut designcraft_doc::Document, latex: &str, size: f64, lid: des
         asset: aid,
         size: (w, h),
         xf: Affine::translate(at),
+        clip: None,
         auto_fit: Default::default(),
         fit_align: 4,
         crop: [0.0; 4],
-        clip: None,
     });
     it.alt_text = latex.to_string();
     it.name = "Math".into();

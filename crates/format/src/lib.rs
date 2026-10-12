@@ -248,10 +248,10 @@ mod tests {
             asset,
             size: (1.0, 1.0),
             xf: Affine::translate((crop, crop)),
+            clip: None,
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [crop; 4],
-            clip: None,
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         id

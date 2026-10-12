@@ -847,10 +847,10 @@ mod tests {
             asset: aid,
             size: (1.0, 1.0),
             xf: Affine::IDENTITY,
+            clip: None,
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [0.0; 4],
-            clip: None,
         });
         d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
 

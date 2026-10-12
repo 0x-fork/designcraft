@@ -233,10 +233,10 @@ fn place(d: &mut Document, data: Vec<u8>, px: (u32, u32)) {
         asset,
         size: (px.0 as f64, px.1 as f64),
         xf: designcraft_geom::Affine::translate((72.0, 72.0)) * designcraft_geom::Affine::scale(50.0),
+        clip: None,
         auto_fit: designcraft_doc::Fitting::FillProportionally,
         fit_align: 4,
         crop: [0.0; 4],
-        clip: None,
     });
     d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
 }

@@ -447,6 +447,9 @@ pub struct Graphic {
     pub size: (f64, f64),
     /// Graphic space (0,0)-(w,h) → frame inner space.
     pub xf: Affine,
+    /// Clipping path: only the part of the graphic inside it shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<Arc<ClippingPath>>,
     #[serde(default)]
     pub auto_fit: Fitting,
     /// Frame Fitting Options › Align From: the reference point (0–8, row-major; 4 = centre).
@@ -455,9 +458,6 @@ pub struct Graphic {
     /// Frame Fitting Options › Crop Amount: top, left, bottom, right (negative adds space).
     #[serde(default)]
     pub crop: [f64; 4],
-    /// Clipping path: only the part of the graphic inside it shows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clip: Option<Arc<ClippingPath>>,
 }
 
 fn center_ref() -> u8 {
@@ -1305,10 +1305,10 @@ mod tests {
             asset: AssetId(3),
             size: (40.0, 30.0),
             xf: Affine::translate((5.0, 5.0)),
+            clip: None,
             auto_fit: Fitting::None,
             fit_align: 4,
             crop: [0.0; 4],
-            clip: None,
         };
         let v = serde_json::to_value(&g).unwrap();
         assert!(v.get("clip").is_none(), "{v}");
