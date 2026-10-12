@@ -757,7 +757,7 @@ impl Exporter<'_> {
         }
         // Gradient feather: a luminosity mask (white = opaque) over the object.
         let xf = parent * it.xf;
-        let (p0, p1) = gf.points(it.inner_bounds());
+        let (p0, p1) = gf.points(it.feather_bounds());
         let gray = |a: f32| -> krilla::color::Color { luma::Color::new((a.clamp(0.0, 1.0) * 255.0).round() as u8).into() };
         let stops = vec![
             Stop { offset: NormalizedF32::ZERO, color: gray(gf.start), opacity: NormalizedF32::ONE },
@@ -791,7 +791,15 @@ impl Exporter<'_> {
             }
             .into()
         };
-        let area = it.inner_bounds().inflate(it.stroke.extent() + 4.0, it.stroke.extent() + 4.0);
+        // A group's mask covers its objects (it has no path of its own), with room for text and
+        // strokes past their frames.
+        let area = if it.is_group() {
+            let b = it.feather_bounds();
+            let pad = 36.0 + 0.25 * b.width().max(b.height());
+            b.inflate(pad, pad)
+        } else {
+            it.inner_bounds().inflate(it.stroke.extent() + 4.0, it.stroke.extent() + 4.0)
+        };
         let mut sb = s.stream_builder();
         let mut ms = sb.surface();
         ms.push_transform(&tf(xf));

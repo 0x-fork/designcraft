@@ -476,6 +476,12 @@ impl Renderer {
                 ctx.set_transform(Affine::IDENTITY);
                 ctx.push_layer(None, Some(blend_mode(it.blend)), Some(it.opacity), None, None);
             }
+            // Gradient feather: the group's objects drawn together, then faded as one.
+            let feather = it.effects.gradient_feather.on && f.opts.quality != DisplayQuality::Fast;
+            if feather {
+                ctx.set_transform(Affine::IDENTITY);
+                ctx.push_layer(None, None, None, None, None);
+            }
             if it.knockout {
                 // Knockout: each object first clears its area of those behind it, so it composites
                 // with the group's backdrop rather than with its siblings.
@@ -494,6 +500,13 @@ impl Renderer {
                 for c in it.shown_children() {
                     self.draw_item(ctx, f, c, xf, page);
                 }
+            }
+            if feather {
+                // Generous: text and strokes reach past their frames.
+                let b = it.feather_bounds();
+                let pad = 36.0 + 0.25 * b.width().max(b.height());
+                fx::gradient_feather_mask(ctx, f, it, xf, b.inflate(pad, pad));
+                ctx.pop_layer();
             }
             if layered {
                 ctx.pop_layer();

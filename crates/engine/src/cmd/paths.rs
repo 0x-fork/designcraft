@@ -436,6 +436,39 @@ mod tests {
     }
 
     #[test]
+    fn a_groups_gradient_feather_fades_it_on_screen_and_in_pdf() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        let mut ids = vec![];
+        for rect in [[100, 100, 200, 200], [200, 100, 300, 200]] {
+            let id = s.execute("frame.create", &json!({"rect": rect})).unwrap()["id"].as_u64().unwrap();
+            s.execute("object.fill", &json!({"ids": [id], "swatch": "[Black]"})).unwrap();
+            ids.push(id);
+        }
+        let g = s.execute("object.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap();
+        // The Gradient Feather tool's drag, then by angle (a group has no path of its own: the
+        // gradient spans its objects).
+        for p in [json!({"ids": [g], "from": [100, 150], "to": [300, 150]}), json!({"ids": [g], "angle": 0})] {
+            s.execute("object.gradientFeather", &p).unwrap();
+            let d = s.doc().unwrap().doc.clone();
+            let mut rr = designcraft_render::Renderer::new();
+            rr.threads = 0;
+            let img = rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap();
+            let (l, m, r) = (img.pixel(105, 150)[0], img.pixel(200, 150)[0], img.pixel(295, 150)[0]);
+            assert!(l < 60 && m > l + 40 && r > 220, "{p}: fades left to right on screen: {l} {m} {r}");
+            let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+            let pm = designcraft_render::render_pdf_page(&pdf, 0, 400).unwrap();
+            // Over white paper.
+            let at = |x: usize, y: usize| {
+                let c = pm.data()[y * pm.width() as usize + x];
+                c.r as u32 + 255 - c.a as u32
+            };
+            let (l, m, r) = (at(105, 150), at(200, 150), at(295, 150));
+            assert!(l < 60 && m > l + 40 && r > 220, "{p}: fades left to right in PDF: {l} {m} {r}");
+        }
+    }
+
+    #[test]
     fn create_outlines_turns_text_into_paths() {
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
