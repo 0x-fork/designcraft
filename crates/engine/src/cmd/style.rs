@@ -1081,7 +1081,9 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
 fn apply_color(s: &mut Session, p: &Value) -> Result<Value> {
     let color = p.get("color").and_then(parse_color).ok_or_else(|| bad("object.color", "missing or bad color"))?;
     let stroke = str_param(p, "target") == Some("stroke");
-    let text = (p.get("text").and_then(Value::as_bool).unwrap_or(false) || s.doc()?.selection.text.is_some()) && p.get("ids").is_none() && p.get("id").is_none();
+    let text = (p.get("text").and_then(Value::as_bool).unwrap_or(false) || s.doc()?.selection.text.is_some())
+        && p.get("ids").is_none()
+        && p.get("id").is_none();
     let (ids, texts) = if text { (vec![], super::text::format_targets_pub(s)) } else { (super::targets(s, p)?, vec![]) };
     // A caret: the colour is for the next typing (once the swatch exists).
     let caret = matches!(texts.as_slice(), [t] if t.range.is_empty());
