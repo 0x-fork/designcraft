@@ -52,7 +52,7 @@ fn draw_order(doc: &Document, sr: SpreadRef, opts: &RenderOptions) -> Vec<(ItemI
             }
         }
         for it in sp.items.iter().filter(|it| it.layer == layer.id) {
-            let shown = !it.hidden && !opts.hidden.contains(&it.id) && !(opts.printing_only && it.nonprinting);
+            let shown = !(it.hidden || opts.hidden.contains(&it.id) || opts.printing_only && it.nonprinting);
             out.push((it.id, shown && separable(it.blend)));
         }
     }
@@ -244,11 +244,7 @@ impl Renderer {
                 }
                 let (cs, ca) = straight(c);
                 let (ks, _) = straight(kk);
-                let source = if ca > 0.0 {
-                    [1.0 - cs[0], 1.0 - cs[1], 1.0 - cs[2], 1.0 - ks[0]]
-                } else {
-                    crate::cmyk_in(&to_cmyk, straight(s).0)
-                };
+                let source = if ca > 0.0 { [1.0 - cs[0], 1.0 - cs[1], 1.0 - cs[2], 1.0 - ks[0]] } else { crate::cmyk_in(&to_cmyk, straight(s).0) };
                 let backdrop = crate::cmyk_in(&to_cmyk, brgb);
                 let mixed = blend_inks(mode, backdrop, source);
                 // PDF compositing: the blend counts where the backdrop is.
