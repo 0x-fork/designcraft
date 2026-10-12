@@ -27,7 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let path = str_param(p, "path").ok_or_else(|| bad("file.saveACopy", "missing `path`"))?.to_string();
             let bytes = to_bytes(&s.doc()?.doc);
             #[cfg(not(target_arch = "wasm32"))]
-            std::fs::write(&path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            crate::atomic::write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }),
         cmd!(noundo "file.revert", "Revert", ["File"], None, "{} — back to the last saved version (not undoable)", can_revert, file_revert),
@@ -247,7 +247,7 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let bytes = to_bytes(&st.doc);
     #[cfg(not(target_arch = "wasm32"))]
-    std::fs::write(&path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    crate::atomic::write_file(&path, &bytes)?;
     st.path = Some(path.clone());
     st.saved_revision = st.revision;
     st.saved_doc = st.doc.clone();
@@ -518,7 +518,7 @@ fn snippet_export(s: &mut Session, p: &Value) -> Result<Value> {
     match str_param(p, "path") {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
-            std::fs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            crate::atomic::write_file(path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len(), "items": d.spreads.first().map(|s| s.items.len()).unwrap_or(0)}))
         }
         None => Ok(json!({"base64": base64_encode(&bytes), "bytes": bytes.len()})),
@@ -732,6 +732,37 @@ mod layout_place_tests {
         assert!((bb.x0 - 100.0).abs() < 1e-6 && (bb.y0 - 100.0).abs() < 1e-6, "page top-left at 0,0: {bb:?}");
         assert!(d.stories.values().any(|st| st.text == "From page one"), "stories come along");
         assert!(b.execute("file.place", &json!({"base64": b64, "name": "src.idml", "layoutPage": 2})).is_err(), "page 2 is empty");
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// Saving over an existing document replaces it whole and leaves nothing beside it.
+    #[test]
+    fn save_replaces_the_existing_file_without_leftovers() {
+        let dir = std::env::temp_dir().join(format!("dc-save-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("doc.designcraft");
+        std::fs::write(&path, vec![b'x'; 1 << 20]).unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("frame.create", &json!({"rect": [36, 36, 300, 200], "content": "text", "text": "Saved whole", "caret": false})).unwrap();
+        s.execute("file.save", &json!({"path": path.to_string_lossy()})).unwrap();
+        s.execute("file.saveACopy", &json!({"path": path.to_string_lossy()})).unwrap();
+        let saved = super::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(saved.stories.values().any(|st| st.text == "Saved whole"));
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["doc.designcraft"], "no temporary file is left");
+        // A folder that doesn't exist: an error naming the path.
+        let missing = dir.join("missing").join("doc.designcraft");
+        let e = s.execute("file.save", &json!({"path": missing.to_string_lossy()})).unwrap_err();
+        assert!(e.to_string().contains("missing"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
