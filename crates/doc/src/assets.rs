@@ -289,6 +289,7 @@ mod tests {
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [crop; 4],
+            clip: None,
         });
         it
     }
