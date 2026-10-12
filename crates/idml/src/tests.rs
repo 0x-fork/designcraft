@@ -1417,4 +1417,6 @@ fn same_para_style_spacing_imports_and_round_trips() {
     let back = import_idml(&export_idml(&d)).unwrap();
     let b = back.stories.values().find(|s| s.text.contains("Gap")).unwrap();
     assert_eq!(b.paras[0].para.same_para_style_spacing, Some(Some(0.0)));
+    // The explicit Ignore survives the round trip too.
+    assert_eq!(b.paras[1].para.same_para_style_spacing, Some(None));
 }
