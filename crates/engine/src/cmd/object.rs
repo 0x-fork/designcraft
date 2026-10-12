@@ -1233,15 +1233,32 @@ fn values_json(m: Affine) -> Value {
     json!({"scaleX": r(v.scale_x * 100.0), "scaleY": r(v.scale_y * 100.0), "rotation": r(v.rotation), "shear": r(v.shear)})
 }
 
+/// Whether `transform.set` / `transform.info` act on the placed graphic in each frame: `content`
+/// when given, else whether the selection is content (Direct Selection) when no `ids` or `id` name
+/// the targets.
+fn content_mode(s: &Session, p: &Value) -> Result<bool> {
+    if let Some(c) = p.get("content").and_then(Value::as_bool) {
+        return Ok(c);
+    }
+    let explicit = p.get("ids").is_some() || p.get("id").is_some();
+    Ok(!explicit && s.doc()?.selection.content)
+}
+
 fn transform_info(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let totals = s.prefs.transformations_are_totals;
+    let content = content_mode(s, p)?;
     let d = &s.doc()?.doc;
     let id = *ids.first().ok_or_else(|| bad("transform.info", "nothing selected"))?;
     let (_, m) = measured_xf(d, id, totals).ok_or_else(|| bad("transform.info", "no such object"))?;
     let mut out = values_json(m);
     if let Some(g) = d.item(id).and_then(Item::graphic) {
-        out["content"] = values_json(if totals { m * g.xf } else { g.xf });
+        let c = values_json(if totals { m * g.xf } else { g.xf });
+        // With the graphic selected, its values are the ones the Transform fields show and set.
+        if content {
+            out = c.clone();
+        }
+        out["content"] = c;
     }
     Ok(out)
 }
@@ -1295,8 +1312,7 @@ fn transform_values(s: &mut Session, p: &Value, ids: &[ItemId], rf: usize) -> Re
 fn transform_set(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     // Direct Selection of a placed graphic (or `content`): the graphic moves inside its frame.
-    let content = p.get("content").and_then(Value::as_bool).unwrap_or(p.get("ids").is_none() && s.doc()?.selection.content);
-    if content {
+    if content_mode(s, p)? {
         return transform_content(s, p, &ids);
     }
     if ["rotation", "shear", "scaleX", "scaleY"].iter().any(|k| p.get(*k).is_some()) {
@@ -1380,6 +1396,10 @@ fn transform_content(s: &mut Session, p: &Value, ids: &[ItemId]) -> Result<Value
         let d = &s.doc()?.doc;
         if !ids.iter().any(|i| d.item(*i).is_some_and(|it| it.graphic().is_some())) {
             return Err(bad("transform.set", "no placed graphic to transform"));
+        }
+        // Only locked frames: nothing to change, and no undo step.
+        if !ids.iter().any(|i| d.item(*i).is_some_and(|it| it.graphic().is_some() && !it.locked)) {
+            return Ok(json!({ "changed": 0 }));
         }
     }
     s.edit(|d, _| {
@@ -3449,6 +3469,34 @@ mod content_transform_tests {
         s.execute("edit.undo", &json!({})).unwrap();
         let undone = s.execute("transform.info", &json!({"ids": [f]})).unwrap();
         assert!((undone["content"]["rotation"].as_f64().unwrap() + 45.0).abs() < 1e-6, "{undone}");
+    }
+
+    #[test]
+    fn with_the_graphic_selected_transform_info_reports_the_graphic() {
+        let (mut s, f) = rotated_frame_with_image();
+        s.execute("transform.set", &json!({"rotation": 0})).unwrap();
+        // What the Control bar and Properties read: the graphic's 0, not the frame's -45, so a
+        // spinner step from it gives 1, not -44.
+        let info = s.execute("transform.info", &json!({})).unwrap();
+        assert!(info["rotation"].as_f64().unwrap().abs() < 1e-6, "{info}");
+        let rot = info["rotation"].as_f64().unwrap() + 1.0;
+        s.execute("transform.set", &json!({"rotation": rot})).unwrap();
+        let after = s.execute("transform.info", &json!({"ids": [f]})).unwrap();
+        assert!((after["content"]["rotation"].as_f64().unwrap() - 1.0).abs() < 1e-6, "{after}");
+        assert!((after["rotation"].as_f64().unwrap() + 45.0).abs() < 1e-6, "the frame stays: {after}");
+        // `id` names the target explicitly, like `ids`: the frame.
+        let by_id = s.execute("transform.info", &json!({"id": f})).unwrap();
+        assert!((by_id["rotation"].as_f64().unwrap() + 45.0).abs() < 1e-6, "{by_id}");
+    }
+
+    #[test]
+    fn a_locked_frame_records_no_undo_step() {
+        let (mut s, f) = rotated_frame_with_image();
+        s.execute("object.lock", &json!({"ids": [f]})).unwrap();
+        s.execute("selection.set", &json!({"ids": [f], "content": true})).unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        assert_eq!(s.execute("transform.set", &json!({"rotation": 0})).unwrap()["changed"], 0);
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo, "no empty undo step");
     }
 
     #[test]
