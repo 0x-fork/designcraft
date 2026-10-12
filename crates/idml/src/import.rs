@@ -2022,11 +2022,12 @@ impl<'r> Importer<'r> {
     }
 
     /// The format of the text in a `CharacterStyleRange`: its style, and its local attributes over
-    /// the enclosing paragraph range's.
-    fn range_format(&mut self, c: &El, pchars: &CharAttrs) -> CharFormat {
+    /// the enclosing paragraph range's, inside a tracked change if `outer` (the enclosing format) is.
+    fn range_format(&mut self, c: &El, pchars: &CharAttrs, outer: &CharFormat) -> CharFormat {
         let style = c.get("AppliedCharacterStyle").map(|r| self.char_style_ref(r)).unwrap_or_else(|| st::NO_CHAR_STYLE.into());
         let mut over = pchars.clone();
         over.merge(&self.char_attrs(c));
+        over.change = over.change.or(outer.over.change);
         CharFormat { style, over }
     }
 
@@ -2050,7 +2051,7 @@ impl<'r> Importer<'r> {
                         self.walk_story(c, b, &npf, &chars, &pcf, None);
                     }
                     "CharacterStyleRange" => {
-                        let ncf = self.range_format(c, pchars);
+                        let ncf = self.range_format(c, pchars, cf);
                         let bt = c.get("ParagraphBreakType").filter(|t| *t != "Anywhere");
                         b.last = ncf.clone();
                         self.walk_story(c, b, pf, pchars, &ncf, bt);
@@ -2116,7 +2117,7 @@ impl<'r> Importer<'r> {
                         b.xrefs.push((c.get("Self").unwrap_or("").to_string(), c.get("AppliedFormat").unwrap_or("").to_string()));
                         // A source at paragraph level wraps a range; inside a range it holds the
                         // text directly and takes that range's format.
-                        let f = c.find("CharacterStyleRange").map_or_else(|| cf.clone(), |r| self.range_format(r, pchars));
+                        let f = c.find("CharacterStyleRange").map_or_else(|| cf.clone(), |r| self.range_format(r, pchars, cf));
                         b.push(&designcraft_doc::XREF_MARK.to_string(), &f);
                     }
                     "Footnote" => {
@@ -2194,6 +2195,17 @@ impl<'r> Importer<'r> {
                     "TextVariableInstance" => {
                         let t = self.text_variable_instance(c);
                         b.push(&t, cf);
+                    }
+                    "Change" => {
+                        // Tracked changes: deleted text stays in the story, marked, and takes no
+                        // room in the layout.
+                        let mut ncf = cf.clone();
+                        match c.get("ChangeType") {
+                            Some("DeletedText") => ncf.over.change = Some(designcraft_doc::ChangeMark::Deleted),
+                            Some("InsertedText" | "MovedText") => ncf.over.change = Some(designcraft_doc::ChangeMark::Inserted),
+                            _ => {}
+                        }
+                        self.walk_story(c, b, pf, pchars, &ncf, brk);
                     }
                     "Properties" | "Note" | "StoryPreference" | "InCopyExportOption" => {}
                     _ => self.walk_story(c, b, pf, pchars, cf, brk),

@@ -3173,3 +3173,55 @@ fn applied_font_keeps_spaces_and_font_style_nothing_inherits() {
     check(&d);
     check(&import_idml(&export_idml(&d)).unwrap());
 }
+
+fn tracked_story(body: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="16.0">
+  <Story Self="s1">{body}</Story>
+</idPkg:Story>"#
+    )
+}
+
+const CSR: &str = r#"<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">"#;
+
+#[test]
+fn tracked_deleted_text_takes_no_room_and_round_trips() {
+    let psr = r#"<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">"#;
+    let kwn = r#"<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle" KeepWithNext="2">"#;
+    let tracked = tracked_story(&format!(
+        r#"{psr}{CSR}<Content>The first paragraph keeps a </Content><Change Self="c1" ChangeType="DeletedText"><Content>deleted </Content></Change><Content>word.</Content><Br/></CharacterStyleRange></ParagraphStyleRange>
+{kwn}{CSR}<Change Self="c2" ChangeType="DeletedText"><Br/></Change></CharacterStyleRange></ParagraphStyleRange>
+{psr}{CSR}<Change Self="c3" ChangeType="InsertedText"><Content>New </Content></Change><Content>second paragraph.</Content></CharacterStyleRange></ParagraphStyleRange>"#
+    ));
+    let plain = tracked_story(&format!(
+        r#"{psr}{CSR}<Content>The first paragraph keeps a word.</Content><Br/></CharacterStyleRange></ParagraphStyleRange>
+{psr}{CSR}<Content>New second paragraph.</Content></CharacterStyleRange></ParagraphStyleRange>"#
+    ));
+    let lines = |d: &Document| {
+        let sid = *d.stories.keys().next().unwrap();
+        let cs = designcraft_compose::compose_story(d, sid, &Default::default());
+        cs.frames.iter().flat_map(|f| f.lines.iter().map(|l| (l.baseline, l.x0, l.end_x))).collect::<Vec<_>>()
+    };
+    let d = import_idml_with(&fixture_with_story(&tracked), &|_| None).unwrap();
+    let story = d.stories.values().next().unwrap();
+    assert_eq!(story.text, "The first paragraph keeps a deleted word.\n\nNew second paragraph.");
+    let marks = |s: &designcraft_doc::Story| s.runs().map(|(r, f)| (s.text[r].to_string(), f.over.change)).collect::<Vec<_>>();
+    use designcraft_doc::ChangeMark::{Deleted, Inserted};
+    let want = vec![
+        ("The first paragraph keeps a ".to_string(), None),
+        ("deleted ".to_string(), Some(Deleted)),
+        ("word.\n".to_string(), None),
+        ("\n".to_string(), Some(Deleted)),
+        ("New ".to_string(), Some(Inserted)),
+        ("second paragraph.".to_string(), None),
+    ];
+    assert_eq!(marks(story), want);
+    let reference = import_idml_with(&fixture_with_story(&plain), &|_| None).unwrap();
+    let expected = lines(&reference);
+    assert!(expected.len() >= 2);
+    assert_eq!(lines(&d), expected);
+    // Export writes the changes back as `Change` elements.
+    let back = import_idml(&export_idml(&d)).unwrap();
+    assert_eq!(marks(back.stories.values().next().unwrap()), want);
+}
