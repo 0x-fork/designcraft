@@ -464,6 +464,60 @@ fn same_as_clipping_wrap_follows_the_clipping_path() {
     assert!(bottom < 160.0, "the bottom lines stop near the triangle's base: {bottom}");
 }
 
+/// LOREM beside an ellipse wrapped on both sides along its contour that leaves a sliver (about
+/// 20 pt at its middle) between it and the frame's right edge.
+fn sliver_wrap(para: ParaAttrs) -> (Document, StoryId, String) {
+    let text = [LOREM; 4].join(" ");
+    let (mut d, sid, _) = doc_with(&text, Rect::new(0.0, 0.0, 300.0, 800.0), para);
+    let lid = d.default_layer();
+    let id = ItemId(d.alloc());
+    let mut it =
+        designcraft_doc::Item::new(id, lid, designcraft_doc::Shape::Oval, designcraft_geom::shapes::ellipse(Rect::new(150.0, 100.0, 276.0, 220.0)));
+    it.wrap.mode = WrapMode::Contour;
+    it.wrap.side = WrapSide::BothSides;
+    it.wrap.offsets = [4.0; 4];
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    (d, sid, text)
+}
+
+#[test]
+fn words_stay_whole_beside_a_wrap_sliver() {
+    for align in [Align::Left, Align::LeftJustified] {
+        for hyphenate in [true, false] {
+            let (d, sid, text) = sliver_wrap(ParaAttrs { align: Some(align), hyphenate: Some(hyphenate), ..Default::default() });
+            let ex = &frame_specs(&d, sid)[0].exclusions[0];
+            let cs = compose_story(&d, sid, &ComposeOptions::default());
+            let lines = all_lines(&cs);
+            let word = |i: usize| text.as_bytes().get(i).is_some_and(u8::is_ascii_alphanumeric);
+            let mut empty_slivers = 0;
+            for (i, l) in lines.iter().enumerate() {
+                let line = &text[l.range.clone()];
+                // A line ends inside a word only at a hyphenation point.
+                assert!(l.hyphenated || !(word(l.range.end - 1) && word(l.range.end)), "{align:?} {hyphenate}: split word in {line:?}");
+                // Every word fits its segment whole.
+                for g in l.glyphs.iter().filter(|g| g.visible) {
+                    assert!(g.x + g.adv <= l.x1 + 0.5, "{align:?} {hyphenate}: {line:?} overflows its {}..{} segment", l.x0, l.x1);
+                }
+                // A left segment beside the object whose sliver stays empty: the next word doesn't fit it.
+                let Some((_, b)) = ex.contour.as_ref().unwrap().band_extent(l.baseline - l.ascent, l.baseline + l.descent) else { continue };
+                let next = lines.get(i + 1);
+                if l.x1 > b || 300.0 - b < 18.0 || next.is_some_and(|n| n.baseline == l.baseline) {
+                    continue;
+                }
+                let Some(next) = next else { continue };
+                let first = text[next.range.clone()].split(' ').next().unwrap_or_default();
+                let w: f64 = next.glyphs.iter().filter(|g| g.byte < next.range.start + first.len()).map(|g| g.adv).sum();
+                assert!(w > 300.0 - b, "{align:?} {hyphenate}: {first:?} ({w}) fits the {} pt sliver beside {line:?}", 300.0 - b);
+                empty_slivers += 1;
+            }
+            if !hyphenate {
+                assert!(empty_slivers > 0, "{align:?}: no sliver stays empty");
+            }
+            assert!(!cs.is_overset());
+        }
+    }
+}
+
 #[test]
 fn one_sided_wrap_leaves_the_other_side_empty() {
     for (side, right) in [(WrapSide::RightSide, true), (WrapSide::LeftSide, false), (WrapSide::LargestArea, false)] {

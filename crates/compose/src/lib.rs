@@ -1296,14 +1296,27 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 let (reference, model) = cjk_line_reference(line_glyphs);
                 let advance = if cur.last_baseline.is_some() { cur.aki_below.unwrap_or(lead) } else { lead };
                 let (mut x0, mut x1) = (col.x0, col.x1);
-                let continues = !carry.is_empty();
-                let mut baseline;
+                // A wrap segment that can't hold the line's first word whole stays empty and the
+                // text goes on in the next segment or line (a word wider than the column is split
+                // wherever it lands).
+                let ind = pp.left_indent + pp.right_indent + if line_no == 0 { pp.first_line_indent } else { 0.0 };
+                let need = if f.exclusions.is_empty() {
+                    0.0
+                } else {
+                    let w = breaker::first_word_width(glyphs.get(s..).unwrap_or_default(), hyph_after.get(s..).unwrap_or_default(), &spacing);
+                    if w > col.width() - ind { 0.0 } else { w }
+                };
+                let holds = |&(a, b): &(f64, f64)| b - a - ind + 0.01 >= need;
+                // The line takes the next segment of a line already placed, the one the breaker
+                // set it for.
+                let mut continues = false;
+                let mut baseline = carry_baseline;
                 let mut grid_end = None;
-                if continues {
-                    // The next segment of a line already placed.
-                    baseline = carry_baseline;
+                if let Some(i) = carry.iter().position(holds) {
+                    continues = i == 0;
                     grid_end = carry_grid;
-                    (x0, x1) = carry.remove(0);
+                    (x0, x1) = carry.get(i).copied().unwrap_or((x0, x1));
+                    carry.drain(..=i);
                 } else {
                     carry.clear();
                     baseline = cur.next_baseline(f, col, advance, asc, tops, &pp);
@@ -1368,7 +1381,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                         let line_start = glyphs.get(s).map_or(prange.start, |g| g.byte);
                         let mut tries = 0;
                         loop {
-                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, desc, jump, base_size, rtl, line_start) else {
+                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, desc, jump, base_size, rtl, line_start, &holds) else {
                                 // No room in this column.
                                 baseline = baseline.max(col.y1) + 1.0;
                                 carry.clear();
@@ -2690,8 +2703,9 @@ struct Jump {
 const JUMP_EPS: f64 = 1e-6;
 
 /// The first baseline at or below `baseline` where a line with ascent `asc` and descent `desc` has
-/// free segments in `col`, and those segments (see [`free_slots`], never empty); None if there are
-/// none above the column bottom. `line_start` is the story byte the line starts at (see
+/// free segments in `col` one of which `holds` the line (its first word fits), and the segments
+/// from that one on (see [`free_slots`], never empty); None if there are none above the column
+/// bottom. `line_start` is the story byte the line starts at (see
 /// [`Exclusion::wraps_line`]).
 ///
 /// A line under a Jump Object wrap moves below it as `jump` says. Around a rectangular wrap the
@@ -2709,6 +2723,7 @@ fn wrap_slot(
     size: f64,
     rtl: bool,
     line_start: usize,
+    holds: &dyn Fn(&(f64, f64)) -> bool,
 ) -> Option<(f64, Vec<(f64, f64)>)> {
     let top = jump.top.max(0.0);
     let mut b = baseline;
@@ -2729,7 +2744,8 @@ fn wrap_slot(
                 jumped + top
             }
         } else {
-            let segs = free_slots(f, col, b - asc, b + desc, size, rtl, line_start);
+            // Segments before the first that `holds` the line's first word stay empty.
+            let segs: Vec<(f64, f64)> = free_slots(f, col, b - asc, b + desc, size, rtl, line_start).into_iter().skip_while(|seg| !holds(seg)).collect();
             if !segs.is_empty() {
                 return Some((b, segs));
             }
@@ -2832,7 +2848,7 @@ fn estimate_slots(
     // rest is broken again once that line is set.
     let line_start = glyphs.first().map_or(0, |g| g.byte);
     while v.len() < n + carry.len() {
-        let slots = match wrap_slot(f, col, b, size * 0.8, size * 0.25, jump, size, rtl, line_start) {
+        let slots = match wrap_slot(f, col, b, size * 0.8, size * 0.25, jump, size, rtl, line_start, &|_| true) {
             Some((nb, s)) => {
                 b = nb;
                 s
