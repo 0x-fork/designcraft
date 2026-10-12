@@ -1441,6 +1441,10 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
     let cx = ctx(&d2, &s, &c, &l);
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 320.0 + off.x, 120.0 + off.y));
     assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": swatch.0}))]);
+    // An image the pointer can reach names its frame, whose attributes apply where no pixel shows.
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+    let sampled = serde_json::json!({"at": [120.0, 130.0], "spread": {"kind": "doc", "index": 0}, "matchFrom": photo.0});
+    assert_eq!(a, vec![Action::Exec("color.sample".into(), sampled)]);
     // Vector graphics and missing assets must retain the ordinary attribute-matching path.
     for mime in ["application/pdf", "application/postscript", "image/svg+xml", "application/octet-stream"] {
         std::sync::Arc::make_mut(d2.assets.get_mut(&designcraft_doc::AssetId(1)).unwrap()).mime = mime.into();

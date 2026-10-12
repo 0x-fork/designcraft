@@ -257,8 +257,10 @@ fn image_under(cx: &ToolContext, p: Point) -> Option<(SpreadRef, Point)> {
             return None;
         }
         let xf = outer * it.xf;
-        if let Content::Group { items } = &it.content {
-            return items.iter().rev().find_map(|c| shows(d, c, xf, at, depth + 1));
+        if let Content::Group { .. } = &it.content {
+            // Only the active state of a multi-state object shows.
+            let shown: Vec<_> = it.shown_children().collect();
+            return shown.into_iter().rev().find_map(|c| shows(d, c, xf, at, depth + 1));
         }
         let graphic = matches!(it.content, Content::Graphic(_));
         // Unfilled frames (a text frame over the photo) let the image show through.
@@ -297,11 +299,17 @@ impl Tool for EyedropperTool {
             return vec![];
         }
         let selected = !cx.selection.items.is_empty() || cx.selection.text.is_some() || cx.selection.cells.is_some();
+        let hit = cx.hit(ev.pos).map(|(_, id)| id);
         // A placed image under the pointer is sampled (its layer may be locked: sampling changes nothing).
         if selected && let Some((sr, at)) = image_under(cx, ev.pos) {
-            return vec![Action::Exec("color.sample".into(), json!({"at": [at.x, at.y], "spread": sr}))];
+            // Where the image shows no opaque pixel, the engine matches the clicked object instead.
+            let mut p = json!({"at": [at.x, at.y], "spread": sr});
+            if let Some(id) = hit {
+                p["matchFrom"] = json!(id.0);
+            }
+            return vec![Action::Exec("color.sample".into(), p)];
         }
-        let Some((_, id)) = cx.hit(ev.pos) else { return vec![] };
+        let Some(id) = hit else { return vec![] };
         if !selected {
             return vec![Action::Exec("selection.set".into(), json!({"ids": [id.0]}))];
         }

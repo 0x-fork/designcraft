@@ -190,7 +190,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Sample Color (Eyedropper)",
             [],
             None,
-            "{at: [x,y] (spread coords), spread?, target?: fill|stroke, ids?} → {color: \"#rrggbb\", swatch, from: image id} — the Eyedropper on a placed image: the image's colour at the point (an unnamed colour) fills the selected text, else the selected objects",
+            "{at: [x,y] (spread coords), spread?, target?: fill|stroke, ids?, matchFrom?: id} → {color: \"#rrggbb\", swatch, from: image id} — the Eyedropper on a placed image: the image's colour at the point (an unnamed colour) fills the selected text, else the selected objects. With no opaque image pixel there, `matchFrom` gives the object whose attributes apply instead (object.matchAttributes)",
             |s| super::has_text(s).or_else(|_| super::has_selection(s)),
             sample_color
         ),
@@ -1141,7 +1141,18 @@ fn sample_color(s: &mut Session, p: &Value) -> Result<Value> {
     let at = super::point_param(p, "at").ok_or_else(|| bad(ID, "missing at"))?;
     let sr = super::spread_param(p, "spread");
     let st = s.doc()?;
-    let (from, color) = image_color_at(&st.doc, sr, at).ok_or_else(|| bad(ID, "no placed image under the point"))?;
+    let Some((from, color)) = image_color_at(&st.doc, sr, at) else {
+        // No opaque image pixel there (an empty part of an image frame, a transparent pixel): the
+        // Eyedropper applies the clicked object's attributes instead.
+        return match p.get("matchFrom") {
+            Some(from) => {
+                let mut params = p.clone();
+                params["from"] = from.clone();
+                super::object::match_attributes(s, &params)
+            }
+            None => Err(bad(ID, "no placed image under the point")),
+        };
+    };
     let hex = color.to_hex();
     let mut params = p.clone();
     params["color"] = json!(hex);
@@ -1182,11 +1193,22 @@ fn sample_item(
     }
     let xf = outer * it.xf;
     match &it.content {
-        Content::Group { items } => items.iter().rev().find_map(|c| sample_item(d, c, xf, at, depth + 1)),
+        // Only the active state of a multi-state object shows.
+        Content::Group { .. } => {
+            let shown: Vec<_> = it.shown_children().collect();
+            shown.into_iter().rev().find_map(|c| sample_item(d, c, xf, at, depth + 1))
+        }
         Content::Graphic(g) => {
             let inner = xf.inverse() * at;
             if !designcraft_geom::hit::fill_contains(&it.path.to_bezpath(), designcraft_geom::FillRule::NonZero, inner) {
                 return None;
+            }
+            // A clipping path hides the image outside it.
+            if let Some((region, even_odd)) = g.clip_region() {
+                let rule = if even_odd { designcraft_geom::FillRule::EvenOdd } else { designcraft_geom::FillRule::NonZero };
+                if !designcraft_geom::hit::fill_contains(&region, rule, inner) {
+                    return None;
+                }
             }
             let gp = g.xf.inverse() * inner;
             let (w, h) = g.size;
@@ -2315,6 +2337,35 @@ mod sample_color_tests {
         // Just past the image's right edge.
         assert!(s.execute("color.sample", &json!({"at": [216.5, 100]})).is_err());
         assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+    }
+
+    #[test]
+    fn where_no_image_pixel_shows_the_clicked_frame_is_matched_instead() {
+        let (mut s, image) = session_with_image();
+        let rect = s.execute("frame.create", &json!({"rect": [300, 300, 400, 400]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.fill", &json!({"swatch": "[Black]", "ids": [image]})).unwrap();
+        // The frame reaches 72 pt below its image, and a clipping path shows the left (red) pixel only.
+        s.edit(|d, _| {
+            let it = d.item_mut(ItemId(image)).ok_or(crate::EngineError::NoDocument)?;
+            let b = it.inner_bounds();
+            it.path = designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(b.x0, b.y0, b.x1, b.y1 + 72.0));
+            let designcraft_doc::Content::Graphic(g) = &mut it.content else { return Err(crate::EngineError::NoDocument) };
+            let left = designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(0.0, 0.0, g.size.0 / 2.0, g.size.1));
+            g.clip = Some(std::sync::Arc::new(designcraft_doc::ClippingPath::new(designcraft_doc::ClippingKind::PhotoshopPath, left)));
+            Ok(())
+        })
+        .unwrap();
+        s.execute("selection.set", &json!({"ids": [rect]})).unwrap();
+        let r = s.execute("color.sample", &json!({"at": [100, 100], "matchFrom": image})).unwrap();
+        assert_eq!(r["color"], "#ff0000", "inside the clipping path the image is sampled");
+        // The clipped-out blue pixel and the empty frame below the image: nothing to sample, so the
+        // frame's attributes apply.
+        for at in [[180, 100], [100, 180]] {
+            assert!(s.execute("color.sample", &json!({"at": at})).is_err(), "{at:?}");
+            s.execute("object.fill", &json!({"swatch": "[Paper]", "ids": [rect]})).unwrap();
+            s.execute("color.sample", &json!({"at": at, "matchFrom": image})).unwrap();
+            assert_eq!(s.doc().unwrap().doc.item(ItemId(rect)).unwrap().fill.swatch, "[Black]", "{at:?}");
+        }
     }
 
     #[test]

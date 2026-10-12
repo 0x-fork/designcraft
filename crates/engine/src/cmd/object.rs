@@ -105,26 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             None,
             "{from: id, ids?} — copy fill, stroke, corners, opacity, effects, wrap",
             has_selection,
-            |s, p| {
-                let from = super::id_param(p, "from").ok_or_else(|| bad("object.matchAttributes", "missing from"))?;
-                let src = s.doc()?.doc.item(from).cloned().ok_or(designcraft_doc::DocError::NoItem(from))?;
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        if i.id == src.id {
-                            return;
-                        }
-                        i.fill = src.fill.clone();
-                        i.stroke = src.stroke.clone();
-                        i.corners = src.corners;
-                        i.opacity = src.opacity;
-                        i.blend = src.blend;
-                        i.effects = src.effects.clone();
-                    },
-                    false,
-                )
-            }
+            match_attributes
         ),
         cmd!("transform.flip", "Flip", ["Object", "Transform"], None, "{axis: horizontal|vertical, ids?}", has_selection, |s, p| {
             let h = str_param(p, "axis") != Some("vertical");
@@ -1874,6 +1855,28 @@ fn corner_options(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     set_flag(s, p, move |i| i.corners = opts, false)
+}
+
+/// `object.matchAttributes`: the selected objects (or `ids`) take `from`'s appearance.
+pub(super) fn match_attributes(s: &mut Session, p: &Value) -> Result<Value> {
+    let from = super::id_param(p, "from").ok_or_else(|| bad("object.matchAttributes", "missing from"))?;
+    let src = s.doc()?.doc.item(from).cloned().ok_or(designcraft_doc::DocError::NoItem(from))?;
+    set_flag(
+        s,
+        p,
+        move |i| {
+            if i.id == src.id {
+                return;
+            }
+            i.fill = src.fill.clone();
+            i.stroke = src.stroke.clone();
+            i.corners = src.corners;
+            i.opacity = src.opacity;
+            i.blend = src.blend;
+            i.effects = src.effects.clone();
+        },
+        false,
+    )
 }
 
 fn set_flag(s: &mut Session, p: &Value, f: impl Fn(&mut Item), deselect: bool) -> Result<Value> {
