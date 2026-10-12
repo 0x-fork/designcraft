@@ -797,6 +797,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-print"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=d991bf6792f8ade99c51358bf3c1d902c8cd96b5#d991bf6792f8ade99c51358bf3c1d902c8cd96b5"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
+name = "craft-ui"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=5c874d51eeb3de70e735c8ce87a59a7dedd47675#5c874d51eeb3de70e735c8ce87a59a7dedd47675"
+dependencies = [
+ "egui",
+ "serde",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -870,7 +887,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "arboard",
  "designcraft-engine",
@@ -888,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -904,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-color"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "kurbo",
  "moxcms",
@@ -916,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-compose"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-doc",
@@ -934,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-doc"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-geom",
@@ -946,9 +963,10 @@ dependencies = [
 
 [[package]]
 name = "designcraft-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "caseless",
+ "craft-print",
  "designcraft-color",
  "designcraft-compose",
  "designcraft-doc",
@@ -979,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-epub"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-doc",
@@ -988,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-fonts"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo",
@@ -1000,7 +1018,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-format"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-doc",
  "serde",
@@ -1011,7 +1029,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-geom"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "flo_curves",
  "kurbo",
@@ -1024,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-idml"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1037,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-images"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-fonts",
@@ -1048,7 +1066,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-mcp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-engine",
  "designcraft-geom",
@@ -1061,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-pdf"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1083,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-render"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1101,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-textimport"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-doc",
  "quick-xml 0.38.4",
@@ -1110,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-tools"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1122,8 +1140,9 @@ dependencies = [
 
 [[package]]
 name = "designcraft-ui-egui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
+ "craft-ui",
  "designcraft-color",
  "designcraft-compose",
  "designcraft-doc",
@@ -1143,11 +1162,12 @@ dependencies = [
  "unicode-bidi",
  "unicode-bidi-mirroring",
  "unicode-segmentation",
+ "zip",
 ]
 
 [[package]]
 name = "designcraft-web"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "designcraft-engine",
  "designcraft-format",
@@ -1464,7 +1484,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2638,7 +2658,7 @@ dependencies = [
  "once_cell",
  "png",
  "thiserror 2.0.21",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2721,7 +2741,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3830,7 +3850,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4245,7 +4265,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4480,7 +4500,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5217,7 +5237,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5667,7 +5687,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde_json",
 ]
