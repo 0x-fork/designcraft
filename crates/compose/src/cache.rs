@@ -67,10 +67,18 @@ impl Cache {
         // The key holds the page's index, which a renumbering doesn't change: its name (section
         // start number, style, prefix) is part of the signature.
         let page_name = page.map(|p| doc.page_name(p));
+        let section_marker = page.map(|p| crate::section_marker(doc, p));
         if let Some(name) = &page_name {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            name.hash(&mut h);
+            (name, &section_marker).hash(&mut h);
+            sig.push(h.finish() as usize);
+        }
+        if story.text.contains(designcraft_doc::story::SECTION_MARKER) {
+            // Frames on document pages show their section's marker text.
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            doc.sections.iter().for_each(|s| (s.start, &s.marker).hash(&mut h));
             sig.push(h.finish() as usize);
         }
         let with_vars = crate::vars::has_vars(story);
@@ -146,7 +154,7 @@ impl Cache {
         let out = Arc::new(crate::compose_story(
             doc,
             sid,
-            &ComposeOptions { page_name, page, running, label: None, xrefs: with_xrefs.then(|| self.xref_index(doc)) },
+            &ComposeOptions { page_name, section_marker, page, running, label: None, xrefs: with_xrefs.then(|| self.xref_index(doc)) },
         ));
         let mut g = self.map.lock().unwrap_or_else(|e| e.into_inner());
         let stamp = g.1;
