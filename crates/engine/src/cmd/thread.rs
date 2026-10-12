@@ -281,6 +281,24 @@ mod tests {
     }
 
     #[test]
+    fn autoflow_from_a_parent_frame_is_an_error() {
+        let mut s = session();
+        let parent = json!({"kind": "parent", "index": 0});
+        let r = s.execute(
+            "frame.create",
+            &json!({"rect": [72, 72, 300, 200], "content": "text", "text": LONG.repeat(300), "caret": false, "spread": parent}),
+        );
+        let a = r.unwrap()["id"].as_u64().unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        let doc = s.doc().unwrap().doc.clone();
+        let e = s.execute("text.thread", &json!({"from": a, "rect": [72, 300, 300, 700], "spread": parent, "autoflow": true})).unwrap_err();
+        assert!(e.to_string().contains("document page"), "{e}");
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+        assert_eq!(*s.doc().unwrap().doc, *doc);
+        assert_eq!(s.doc().unwrap().doc.page_count(), 2);
+    }
+
+    #[test]
     fn unthread_after_and_before() {
         let mut s = session();
         let text = LONG.repeat(12);

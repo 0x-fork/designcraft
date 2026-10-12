@@ -124,7 +124,12 @@ fn fit(d: &Document, sid: StoryId) -> (Option<usize>, usize, usize) {
 }
 
 /// Thread new frames on new pages (margin rectangles) until the story fits. Returns pages added.
+/// A story on a parent spread doesn't autoflow: its frames thread only on that parent.
 pub(crate) fn autoflow(d: &mut Document, sid: StoryId, max_pages: usize) -> Result<usize> {
+    let last = d.story(sid).and_then(|s| s.frames.last().copied()).ok_or_else(|| bad("file.place", "the story has no frame"))?;
+    if !matches!(d.find(last).map(|l| l.spread), Some(SpreadRef::Doc(_))) {
+        return Err(bad("file.place", "autoflow works only from a frame on a document page"));
+    }
     let mut added = 0;
     loop {
         let (overset, held, full) = fit(d, sid);
