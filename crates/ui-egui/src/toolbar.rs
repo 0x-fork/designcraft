@@ -410,17 +410,12 @@ fn tool_button(ui: &mut egui::Ui, icon: &str, active: bool, tip: &str) -> egui::
 
 /// Default Fill and Stroke (D): no fill, a black stroke.
 pub(crate) fn default_fill_stroke(app: &mut DesignApp) -> Result<Value, String> {
-    app.run("object.fill", json!({"swatch": "[None]", "tint": 1.0}))?;
-    app.run("object.stroke", json!({"swatch": "[Black]", "tint": 1.0}))
+    app.run("object.defaultFillStroke", json!({}))
 }
 
-/// Swap Fill and Stroke (Shift+X): the selection's fill and stroke colours trade places, tints
-/// included.
+/// Swap Fill and Stroke (Shift+X): each selected object's fill and stroke trade places.
 pub(crate) fn swap_fill_stroke(app: &mut DesignApp) -> Result<Value, String> {
-    let Some(info) = crate::panels::sel_info(app) else { return Err("nothing selected".into()) };
-    let (fill_tint, stroke_tint) = (crate::panels::sel_tint(app, false), crate::panels::sel_tint(app, true));
-    app.run("object.fill", json!({"swatch": info.stroke, "tint": stroke_tint}))?;
-    app.run("object.stroke", json!({"swatch": info.fill, "tint": fill_tint}))
+    app.run("object.swapFillStroke", json!({}))
 }
 
 /// Fill/Stroke toggle (X): brings the other of fill and stroke to the front of the proxy.
