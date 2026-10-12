@@ -518,10 +518,10 @@ fn transform_angles(app: &mut DesignApp, ui: &mut Ui, rp: u8) {
         ui.add_space(36.0);
         ui.spacing_mut().item_spacing.x = 10.0;
         for (icon, tip, cmd, params) in [
-            ("rotate-cw", "Rotate 90° Clockwise", "transform.rotate", json!({"angle": -90})),
-            ("rotate-ccw", "Rotate 90° Counterclockwise", "transform.rotate", json!({"angle": 90})),
-            ("flip-h", "Flip Horizontal", "transform.flip", json!({"axis": "horizontal"})),
-            ("flip-v", "Flip Vertical", "transform.flip", json!({"axis": "vertical"})),
+            ("rotate-clockwise", "Rotate 90° Clockwise", "transform.rotate", json!({"angle": -90})),
+            ("tool-rotate", "Rotate 90° Counterclockwise", "transform.rotate", json!({"angle": 90})),
+            ("flip-horizontal", "Flip Horizontal", "transform.flip", json!({"axis": "horizontal"})),
+            ("flip-vertical", "Flip Vertical", "transform.flip", json!({"axis": "vertical"})),
         ] {
             let label = crate::i18n::tr(&lang, tip);
             let resp = icon_toggle(ui, icon, false, label);
