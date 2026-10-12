@@ -231,10 +231,7 @@ pub fn color_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 stroke = k;
             }
             if resp.double_clicked() {
-                let rgb = doc.resolve_color(n, 1.0).map(|c| c.to_rgb()).unwrap_or([0.0; 3]);
-                let hex =
-                    format!("#{:02x}{:02x}{:02x}", (rgb[0] * 255.0).round() as u8, (rgb[1] * 255.0).round() as u8, (rgb[2] * 255.0).round() as u8);
-                app.ui.dialog = Some(crate::dialogs::Dialog::new("colorPicker", json!({"target": if k { "stroke" } else { "fill" }, "hex": hex})));
+                app.ui.dialog = Some(crate::dialogs::Dialog::new("colorPicker", picker_fields(doc.resolve_color(n, 1.0), k)));
             }
         }
         ui.label(egui::RichText::new(&name).size(11.0).color(t.text_dim));
@@ -321,8 +318,27 @@ pub fn color_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The Color Picker's fields for `color` (`None`: black): its values in its own model, so OK
+/// keeps a CMYK colour CMYK.
+fn picker_fields(color: Option<designcraft_color::Color>, stroke: bool) -> serde_json::Value {
+    let color = color.unwrap_or(designcraft_color::Color::BLACK);
+    let mut f = json!({"target": if stroke { "stroke" } else { "fill" }, "hex": color.to_hex()});
+    match color {
+        designcraft_color::Color::Cmyk { c, m, y, k } => {
+            f["model"] = json!("cmyk");
+            f["cmyk"] = json!([c, m, y, k].map(|v| f64::from(v) * 100.0));
+        }
+        designcraft_color::Color::Rgb { r, g, b } => {
+            f["model"] = json!("rgb");
+            f["rgb"] = json!([r, g, b].map(|v| f64::from(v) * 255.0));
+        }
+        designcraft_color::Color::Gray { .. } => f["model"] = json!("rgb"),
+    }
+    f
+}
+
 /// One slider with a gradient track of the channel and a value field. True when it was changed
-/// (on release / edit).
+/// (on release, or when a typed value is committed by Enter or leaving the field).
 fn channel(ui: &mut egui::Ui, label: &str, v: &mut f32, scale: f32, suffix: &str, ramp: impl Fn(f32) -> egui::Color32) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
