@@ -48,8 +48,24 @@ fn default_reader(path: &str) -> Option<Vec<u8>> {
 
 /// Import with a custom reader for linked files (`path` → bytes).
 pub fn import_idml_with(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Document> {
+    import_idml_report(bytes, read_link).map(|r| r.document)
+}
+
+/// An imported IDML document and what the import could not bring in.
+#[derive(Debug)]
+pub struct Imported {
+    pub document: Document,
+    /// One line per problem that did not stop the import (a part listed in `designmap.xml` but
+    /// absent from the package, …).
+    pub warnings: Vec<String>,
+}
+
+/// Import with a custom reader for linked files, reporting the problems that did not stop it.
+pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Imported> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
     let mut files: HashMap<String, Vec<u8>> = HashMap::new();
+    // Normalised part name → entry name, first entry wins (zip order, so the choice is stable).
+    let mut lenient: HashMap<String, String> = HashMap::new();
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
         if f.is_dir() {
@@ -59,35 +75,81 @@ pub fn import_idml_with(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u8>
         // The size is what the archive claims: don't reserve more than a sane part up front.
         let mut buf = Vec::with_capacity((f.size() as usize).min(1 << 24));
         f.read_to_end(&mut buf).map_err(|e| IdmlError::Part { part: name.clone(), msg: e.to_string() })?;
+        lenient.entry(normalize_part_name(&name)).or_insert_with(|| name.clone());
         files.insert(name, buf);
     }
-    if let Some(m) = files.get("mimetype")
+    let part = |name: &str| files.get(name).or_else(|| lenient.get(&normalize_part_name(name)).and_then(|n| files.get(n)));
+    if let Some(m) = part("mimetype")
         && String::from_utf8_lossy(m).trim() != MIMETYPE
     {
         return Err(IdmlError::NotIdml(format!("unexpected mimetype `{}`", String::from_utf8_lossy(m).trim())));
     }
-    let dm = files.get("designmap.xml").ok_or_else(|| IdmlError::NotIdml("missing designmap.xml".into()))?;
+    let dm = part("designmap.xml").ok_or_else(|| IdmlError::NotIdml("missing designmap.xml".into()))?;
     let root = parse(dm).map_err(|msg| IdmlError::Part { part: "designmap.xml".into(), msg })?;
     if root.local() != "Document" {
         return Err(IdmlError::NotIdml(format!("designmap root is <{}>", root.name)));
     }
     // Flatten includes: every `idPkg:*` child is replaced by the children of its part's root.
     let mut top: Vec<El> = Vec::new();
+    let mut warnings = Vec::new();
     for c in root.elements() {
         if c.name.starts_with("idPkg:") {
             let Some(src) = c.get("src") else { continue };
-            let Some(data) = files.get(src) else { continue };
-            let part = parse(data).map_err(|msg| IdmlError::Part { part: src.into(), msg })?;
-            top.extend(part.elements().cloned());
+            let Some(data) = part(src) else {
+                warnings.push(format!("{src}: listed in designmap.xml but missing from the package; its contents were not imported"));
+                continue;
+            };
+            let el = parse(data).map_err(|msg| IdmlError::Part { part: src.into(), msg })?;
+            top.extend(el.elements().cloned());
         } else {
             top.push(c.clone());
         }
     }
     let mut im = Importer::new(read_link);
     im.run(&root, &top)?;
-    let d = im.finish(&root)?;
-    d.check().map_err(|e| IdmlError::Invalid(e.to_string()))?;
-    Ok(d)
+    let document = im.finish(&root).map_err(|e| match e {
+        // Without its spread parts there is nothing to open: say which parts were missing.
+        IdmlError::Invalid(msg) if !warnings.is_empty() => IdmlError::Invalid(format!("{msg} ({})", warnings.join("; "))),
+        e => e,
+    })?;
+    document.check().map_err(|e| IdmlError::Invalid(e.to_string()))?;
+    Ok(Imported { document, warnings })
+}
+
+/// A package part name in the form the lookup compares: InDesign and other IDML writers differ
+/// in percent-encoding, case, path separators and a leading `./` or `/`.
+fn normalize_part_name(name: &str) -> String {
+    let decoded = percent_decode(&name.replace('\\', "/"));
+    let mut rest = decoded.as_str();
+    loop {
+        if let Some(r) = rest.strip_prefix("./") {
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix('/') {
+            rest = r;
+        } else {
+            break;
+        }
+    }
+    rest.to_lowercase()
+}
+
+/// Decode `%XX` escapes; anything else (including a malformed escape) is kept as written.
+pub(crate) fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        if c == b'%'
+            && let (Some(h), Some(l)) = (b.get(i + 1).and_then(|h| (*h as char).to_digit(16)), b.get(i + 2).and_then(|l| (*l as char).to_digit(16)))
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 struct ItemCtx {
@@ -132,6 +194,8 @@ struct Importer<'r> {
     page_index: HashMap<String, usize>,
     item_ids: HashMap<String, ItemId>,
     assets: BTreeMap<AssetId, Arc<Asset>>,
+    /// Assets read from a link path, so later placements of that path reuse them unread.
+    linked_assets: HashMap<String, AssetId>,
     ctx: ItemCtx,
     sections: Vec<Section>,
     footnote_options: designcraft_doc::FootnoteOptions,
@@ -220,6 +284,7 @@ impl<'r> Importer<'r> {
             page_index: HashMap::new(),
             item_ids: HashMap::new(),
             assets: BTreeMap::new(),
+            linked_assets: HashMap::new(),
             ctx: ItemCtx { threads: Vec::new() },
             sections: Vec::new(),
             footnote_options: Default::default(),
@@ -1255,6 +1320,9 @@ impl<'r> Importer<'r> {
                     }
                 })
                 .collect();
+            // IDML has no drop cap style attribute: the drop cap's character style is the list's
+            // leading "through 1 Dropcap" nested style.
+            a.drop_cap_style = v.first().filter(|ns| ns.is_drop_cap()).map(|ns| ns.style.clone());
             a.nested_styles = Some(v);
         }
         if let Some(l) = e.prop_el("AllNestedLineStyles") {
@@ -1283,7 +1351,6 @@ impl<'r> Importer<'r> {
         a.space_after = e.num("SpaceAfter");
         a.drop_cap_lines = u("DropCapLines");
         a.drop_cap_chars = u("DropCapCharacters");
-        a.drop_cap_style = e.prop("DropCapStyle").map(|r| self.char_style_ref(r.trim()));
         // DropcapDetail bits: 1 = Align Left Edge, 2 = Scale for Descenders.
         if let Some(v) = e.num("DropcapDetail").filter(|v| v.is_finite() && *v >= 0.0) {
             let bits = v as u32;
@@ -2233,12 +2300,29 @@ impl<'r> Importer<'r> {
         let size = ((r - l).abs(), (b - t).abs());
         let link = g.find("Link");
         let uri = link.and_then(|k| k.get("LinkResourceURI")).map(uri_to_path);
+        let graphic = |asset| {
+            Content::Graphic(designcraft_doc::Graphic {
+                asset,
+                size,
+                xf: gxf * Affine::translate((l, t)),
+                auto_fit: Default::default(),
+                fit_align: 4,
+                crop: [0.0; 4],
+            })
+        };
         let mut data = g.prop_el("Contents").map(|c| base64_decode(&c.text_content())).unwrap_or_default();
+        let mut read_from = None;
         if data.is_empty()
             && let Some(p) = &uri
-            && let Some(d) = (self.read_link)(p)
         {
-            data = d;
+            // Every placement of a linked file shares one asset; read the file once.
+            if let Some(id) = self.linked_assets.get(p) {
+                return graphic(*id);
+            }
+            if let Some(d) = (self.read_link)(p) {
+                data = d;
+                read_from = Some(p.clone());
+            }
         }
         let (mime, px) = sniff_image(&data);
         let mime = mime.map(str::to_string).unwrap_or_else(|| match link.and_then(|k| k.get("LinkResourceFormat")).unwrap_or("") {
@@ -2254,17 +2338,14 @@ impl<'r> Importer<'r> {
         });
         let name =
             uri.as_deref().and_then(|p| p.rsplit(['/', '\\']).next()).filter(|n| !n.is_empty()).map(str::to_string).unwrap_or_else(|| "image".into());
-        let id = AssetId(self.alloc());
+        let fresh = AssetId(self.alloc());
         let link_path = uri.filter(|p| p.contains('/') || p.contains('\\'));
-        self.assets.insert(id, Arc::new(Asset { page: 0, id, name, mime, link: link_path, data: Arc::new(data), pixels }));
-        Content::Graphic(designcraft_doc::Graphic {
-            asset: id,
-            size,
-            xf: gxf * Affine::translate((l, t)),
-            auto_fit: Default::default(),
-            fit_align: 4,
-            crop: [0.0; 4],
-        })
+        let id =
+            designcraft_doc::insert_asset(&mut self.assets, Asset { page: 0, id: fresh, name, mime, link: link_path, data: Arc::new(data), pixels });
+        if let Some(p) = read_from {
+            self.linked_assets.insert(p, id);
+        }
+        graphic(id)
     }
 
     fn link_threads(&mut self) {
@@ -2328,12 +2409,35 @@ impl<'r> Importer<'r> {
         self.spreads.iter().chain(self.parents.iter()).find_map(|s| find(&s.items, id))
     }
 
+    /// A nested style list replaces the one a style or paragraph inherits, and with it the drop
+    /// cap style (the list's leading "through 1 Dropcap" entry, read into the drop cap style). A
+    /// list of its own without that entry clears an inherited drop cap style.
+    fn clear_inherited_drop_cap_styles(&mut self) {
+        let clears = |a: &designcraft_doc::ParaAttrs| a.drop_cap_style.is_none() && a.nested_styles.is_some();
+        let cleared: Vec<String> = self
+            .styles
+            .paragraph
+            .iter()
+            .filter(|s| clears(&s.para) && inherits_drop_cap_style(&self.styles, s.based_on.as_deref()))
+            .map(|s| s.name.clone())
+            .collect();
+        for name in cleared {
+            if let Some(s) = self.styles.para_mut(&name) {
+                s.para.drop_cap_style = Some(st::NO_CHAR_STYLE.into());
+            }
+        }
+        for story in self.stories.values_mut() {
+            clear_story_drop_cap_styles(&self.styles, story, 0);
+        }
+    }
+
     fn finish(mut self, root: &El) -> Result<Document> {
         let title = root.get("Name").map(|n| n.trim_end_matches(".indd").to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| "Untitled".into());
         if self.spreads.is_empty() {
             return Err(IdmlError::Invalid("document has no spreads".into()));
         }
         self.settings.lists = std::mem::take(&mut self.lists);
+        self.clear_inherited_drop_cap_styles();
         // Make sure built-in paragraph styles exist and are first.
         let d = Document {
             title,
@@ -2525,6 +2629,47 @@ fn text_frame_options(prefs: &[&El]) -> TextFrameOptions {
     o
 }
 
+/// Deepest table-in-cell or note nesting the drop cap pass walks into.
+const MAX_STORY_NESTING: usize = 32;
+
+/// [`Importer::clear_inherited_drop_cap_styles`] for one story's paragraphs and those of the table
+/// cells, footnotes and endnotes in it.
+fn clear_story_drop_cap_styles(styles: &Styles, story: &mut Story, depth: usize) {
+    for p in &mut story.paras {
+        if p.para.drop_cap_style.is_none() && p.para.nested_styles.is_some() && inherits_drop_cap_style(styles, Some(&p.style)) {
+            p.para.drop_cap_style = Some(st::NO_CHAR_STYLE.into());
+        }
+    }
+    if depth >= MAX_STORY_NESTING {
+        return;
+    }
+    for table in story.tables.values_mut() {
+        for cell in &mut Arc::make_mut(table).cells {
+            clear_story_drop_cap_styles(styles, &mut cell.text, depth + 1);
+        }
+    }
+    for note in story.notes.iter_mut().chain(story.endnotes.iter_mut()) {
+        clear_story_drop_cap_styles(styles, &mut Arc::make_mut(note).text, depth + 1);
+    }
+}
+
+/// Does paragraph style `name` (and its based-on chain) set a drop cap character style? A style
+/// with a nested style list of its own and no drop cap style has none.
+fn inherits_drop_cap_style<'a>(styles: &'a Styles, mut name: Option<&'a str>) -> bool {
+    let mut seen = HashSet::new();
+    while let Some(n) = name {
+        let Some(s) = styles.para(n).filter(|_| seen.insert(n)) else { break };
+        if let Some(c) = s.para.drop_cap_style.as_deref() {
+            return !c.is_empty() && c != st::NO_CHAR_STYLE;
+        }
+        if s.para.nested_styles.is_some() {
+            return false;
+        }
+        name = s.based_on.as_deref();
+    }
+    false
+}
+
 /// Attribute lookup over several elements: the first that has it.
 struct Prefs<'a>(&'a [&'a El]);
 
@@ -2587,21 +2732,9 @@ fn path_of(pg: &El) -> PathData {
 pub(crate) fn uri_to_path(uri: &str) -> String {
     let rest = uri.strip_prefix("file://").or_else(|| uri.strip_prefix("file:")).unwrap_or(uri);
     // `file:///C:/…` → `/C:/…` → `C:/…`
-    let rest = if rest.len() > 3 && rest.starts_with('/') && rest.as_bytes()[2] == b':' { &rest[1..] } else { rest };
-    let mut out = Vec::with_capacity(rest.len());
-    let b = rest.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%'
-            && i + 2 < b.len()
-            && let Ok(v) = u8::from_str_radix(&rest[i + 1..i + 3], 16)
-        {
-            out.push(v);
-            i += 3;
-            continue;
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).to_string()
+    let rest = match rest.as_bytes() {
+        [b'/', _, b':', _, ..] => rest.get(1..).unwrap_or(rest),
+        _ => rest,
+    };
+    percent_decode(rest)
 }

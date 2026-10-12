@@ -139,6 +139,17 @@ pub fn current_slot(app: &DesignApp, layout: &CanvasLayout) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
+/// The spread nearest the view centre and the centre in that spread's coordinates.
+pub fn view_centre(app: &DesignApp) -> Option<(SpreadRef, Point)> {
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let slot = layout.slots.get(current_slot(app, &layout)?)?;
+    let v = app.view()?;
+    let r = app.canvas_rect?;
+    let c = Point::new(v.origin.x + r.width() as f64 / 2.0 / v.zoom, v.origin.y + r.height() as f64 / 2.0 / v.zoom);
+    Some((slot.spread, slot.to_spread(c)))
+}
+
 /// Absolute page index under the view centre.
 pub fn current_page(app: &DesignApp) -> Option<usize> {
     let st = app.session.active()?;
@@ -1486,7 +1497,7 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
         resp.request_focus();
     }
     // Keyboard for the active tool.
-    if (ui.ctx().text_edit_focused() && !resp.has_focus()) || !keyboard_pane(app) {
+    if !keyboard_pane(app) || (ui.ctx().text_edit_focused() && !resp.has_focus()) {
         return;
     }
     // Keys of a frame that began composing are the IME's too (a Backspace that empties the marked
@@ -1517,13 +1528,14 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
             }
             // Without a native menu bar the copy and paste keys arrive only as these events.
             egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) if !app.native_menu => {
-                let id = match e {
-                    egui::Event::Copy => "edit.copy",
-                    egui::Event::Cut => "edit.cut",
-                    _ => "edit.paste",
+                let (id, params) = match e {
+                    egui::Event::Copy => ("edit.copy", serde_json::Value::Null),
+                    egui::Event::Cut => ("edit.cut", serde_json::Value::Null),
+                    egui::Event::Paste(t) => ("edit.paste", json!({"text": t})),
+                    _ => continue,
                 };
                 if crate::menus::enabled(app, id) {
-                    crate::menus::activate(app, id, &serde_json::Value::Null);
+                    crate::menus::activate(app, id, &params);
                 }
             }
             egui::Event::Key { key, pressed: true, modifiers, .. } => {
@@ -1556,10 +1568,10 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     let _ = DVec2::ZERO;
 }
 
-/// Does the current pane take the keyboard? Both panes of a split window see the same events, so
-/// typing, tool keys, the clipboard and the input method serve only the pane last clicked.
+/// Does the current pane take the keyboard? Both panes (split, or the second window) see the same
+/// events, so typing, tool keys, the clipboard and the input method serve only the focused pane.
 fn keyboard_pane(app: &DesignApp) -> bool {
-    !app.split || app.pane == app.focus_pane
+    app.pane == app.focus_pane
 }
 
 /// One input method event for the text caret: marked text previews in the story, a commit types.
