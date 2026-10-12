@@ -2734,7 +2734,12 @@ fn wrap_slot(
                 return Some((b, segs));
             }
             let (y0, y1) = (b - asc, b + desc);
-            let in_band = || f.exclusions.iter().filter(|e| e.mode != WrapMode::JumpObject && e.wraps_line(line_start)).filter(|e| e.rect.y0 < y1 && e.rect.y1 > y0);
+            let in_band = || {
+                f.exclusions
+                    .iter()
+                    .filter(|e| e.mode != WrapMode::JumpObject && e.wraps_line(line_start))
+                    .filter(|e| e.rect.y0 < y1 && e.rect.y1 > y0)
+            };
             let edge = in_band().fold(f64::INFINITY, |m, e| m.min(e.rect.y1)) + asc;
             if in_band().any(|e| e.contour.is_some()) { edge.min(b + 1.0) } else { edge }
         };

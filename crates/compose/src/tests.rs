@@ -362,7 +362,13 @@ fn jump_object_keeps_grid_aligned_lines_on_the_grid() {
 fn hostile_wrap_geometry_terminates() {
     let (d, sid) = wrap_doc(ParaAttrs { grid_align: Some(GridAlign::AllLines), ..Default::default() }, &[]);
     let mut specs = frame_specs(&d, sid);
-    let ex = |x0: f64, y0: f64, x1: f64, y1: f64, mode| Exclusion { rect: Rect::new(x0, y0, x1, y1), mode, side: WrapSide::BothSides, contour: None, after: None };
+    let ex = |x0: f64, y0: f64, x1: f64, y1: f64, mode| Exclusion {
+        rect: Rect::new(x0, y0, x1, y1),
+        mode,
+        side: WrapSide::BothSides,
+        contour: None,
+        after: None,
+    };
     let f = &mut specs[0];
     f.exclusions.push(ex(f64::NAN, f64::NAN, f64::NAN, f64::NAN, WrapMode::JumpObject));
     f.exclusions.push(ex(-1e308, 300.0, 1e308, f64::INFINITY, WrapMode::JumpObject));
@@ -6166,8 +6172,12 @@ fn anchored_object_wraps_with_its_contour_and_side() {
     let (_, b) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(320.0, 0.0, 620.0, 400.0), lid, &long, ParaFormat::default()).unwrap();
     let left = all_lines(&compose_story(&d, b, &ComposeOptions::default()))[0].x0;
     let area = d.item(fa).unwrap().text_area();
-    let mut it =
-        designcraft_doc::Item::new(ItemId(d.alloc()), lid, designcraft_doc::Shape::Oval, designcraft_geom::shapes::ellipse(Rect::new(0.0, 0.0, 100.0, 100.0)));
+    let mut it = designcraft_doc::Item::new(
+        ItemId(d.alloc()),
+        lid,
+        designcraft_doc::Shape::Oval,
+        designcraft_geom::shapes::ellipse(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    );
     it.wrap.mode = WrapMode::Contour;
     it.wrap.side = WrapSide::BothSides;
     let position = designcraft_doc::AnchorPosition::Custom {
