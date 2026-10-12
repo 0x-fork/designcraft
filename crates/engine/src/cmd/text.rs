@@ -30,7 +30,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Select Text Unit",
             [],
             None,
-            "{frame, point, unit: word|line|paragraph|story} — what a double, triple, quadruple or quintuple click selects: the word (or run of spaces) under the point, its line, paragraph or the whole story",
+            "{frame, point, unit: word|line|paragraph|story} — what a double, triple, quadruple or quintuple click selects: the word (or run of spaces) under the point, its line, its paragraph with the paragraph return, or the whole story",
             has_doc,
             |s, p| select_at(s, p, str_param(p, "unit").unwrap_or("word"))
         ),
@@ -336,7 +336,8 @@ fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
             let cs = s.cache.get(&st.doc, sid, None);
             line_at(&text_composition(cs, cell), b).unwrap_or((b, b))
         }
-        "paragraph" => story.para_ranges().get(story.para_at(b)).map_or((b, b), |r| (r.start, r.end)),
+        // The paragraph with its return (the last paragraph has none).
+        "paragraph" => story.para_ranges().get(story.para_at(b)).map_or((b, b), |r| (r.start, (r.end + 1).min(text.len()))),
         "story" => (0, text.len()),
         other => return Err(bad(ID, format!("unknown unit `{other}` (word, line, paragraph or story)"))),
     };
@@ -1534,7 +1535,7 @@ mod multi_click_tests {
         assert_eq!(select("word", 5), (5, 7), "the run of spaces after it");
         assert_eq!(select("word", 18), (18, 19), "punctuation alone");
         assert_eq!(select("line", 9), (0, 19));
-        assert_eq!(select("paragraph", 9), (0, 19));
+        assert_eq!(select("paragraph", 9), (0, 20), "with its return");
         assert_eq!(select("paragraph", 22), (20, text.len()));
         assert_eq!(select("story", 9), (0, text.len()));
         // A second click inside the selected word selects again rather than starting a text drag.
