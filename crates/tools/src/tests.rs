@@ -876,3 +876,18 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
     assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": photo.0}))]);
 }
+
+#[test]
+fn double_clicking_a_handle_fits_the_frame_to_its_content_along_that_side() {
+    let mut d = Document::new(&NewDocument::default());
+    let id = add_rect(&mut d, Rect::new(100.0, 100.0, 300.0, 200.0));
+    let s = Selection { items: vec![id], ..Default::default() };
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let cx = ctx(&d, &s, &c, &l);
+    let mut t = create("selection");
+    for ((x, y), axis) in [((300.0, 200.0), "both"), ((200.0, 200.0), "height"), ((300.0, 150.0), "width")] {
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::DoubleClick, x + off.x, y + off.y));
+        assert_eq!(a, vec![Action::Exec("object.fit".into(), serde_json::json!({"mode": "fitFrameToContent", "axis": axis}))], "{axis}");
+    }
+}

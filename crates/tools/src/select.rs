@@ -2,7 +2,8 @@
 //!
 //! Click selects the frontmost item (Shift toggles), drag moves (Alt duplicates, Shift constrains),
 //! the 8 bounding-box handles resize (Shift keeps proportions, Alt from centre, Cmd scales content),
-//! empty-canvas drags make a marquee, double-clicking a text frame switches to the Type tool.
+//! empty-canvas drags make a marquee, double-clicking a text frame switches to the Type tool and
+//! double-clicking a handle fits the frame to its content (corner: both sides, edge: that one).
 
 use designcraft_doc::{ItemId, SpreadRef};
 use designcraft_geom::{Affine, Point, Rect, Vec2};
@@ -773,6 +774,18 @@ impl Tool for SelectionTool {
                 }
             }
             PointerKind::DoubleClick => {
+                // A selection handle: Fit Frame to Content, along that handle's side (InDesign).
+                if !self.direct
+                    && let Some(h) = handle_at(cx, p)
+                {
+                    let axis = match h {
+                        1 | 5 => "height",
+                        3 | 7 => "width",
+                        _ => "both",
+                    };
+                    self.drag = Drag::None;
+                    return vec![Action::Exec("object.fit".into(), json!({"mode": "fitFrameToContent", "axis": axis}))];
+                }
                 if let Some((_, id)) = cx.hit(p)
                     && cx.doc.item(id).is_some_and(|i| i.is_text_frame())
                 {
