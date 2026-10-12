@@ -604,6 +604,14 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                 }
                 wrap_obstacles(other, Affine::IDENTITY, inv, item.id, &left, 0, &mut exclusions);
             }
+            // Only objects that reach the frame's text area wrap its text: one elsewhere on the
+            // spread would otherwise cost a narrow column its room (the 1.5 em minimum segment of
+            // `free_slots` applies once an object cuts the column).
+            let a = item.text_area();
+            exclusions.retain(|e| {
+                let r = e.rect;
+                r.is_finite() && r.x0 < a.x1 && r.x1 > a.x0 && r.y0 < a.y1 && r.y1 > a.y0
+            });
         }
         let (page_name, page, left_page) = match (spread_ref, spread) {
             (Some(designcraft_doc::SpreadRef::Doc(si)), Some(sp)) => {
@@ -2821,12 +2829,14 @@ fn wrap_slot(
 
 /// Free segments of `col` in the band `y0..y1`, in the order text fills them (left to right, or
 /// right to left for right-to-left paragraphs); empty if the band is blocked. A line beside an
-/// object that lets text through on both sides has a segment on each side. Segments narrower than
-/// 1.5 em of `size` are skipped (the model has no minimum segment width). `line_start` is the story
-/// byte the line starts at (see [`Exclusion::wraps_line`]).
+/// object that lets text through on both sides has a segment on each side. When an object cuts
+/// the column, segments narrower than 1.5 em of `size` are skipped (slivers beside it); a column
+/// no object reaches is free however narrow (a one-character frame such as an article's closing
+/// tombstone). `line_start` is the story byte the line starts at (see [`Exclusion::wraps_line`]).
 #[allow(clippy::too_many_arguments)]
 fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool, line_start: usize) -> Vec<(f64, f64)> {
     let mut free = vec![(col.x0, col.x1)];
+    let mut cut = false;
     for ex in f.exclusions.iter().filter(|e| e.wraps_line(line_start)) {
         let r = ex.rect;
         let overlaps_band = r.y0 < y1 && r.y1 > y0;
@@ -2839,6 +2849,7 @@ fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool, 
             _ => None,
         };
         let Some((a, b)) = blocked.filter(|&(a, b)| a < col.x1 && b > col.x0) else { continue };
+        cut = true;
         // One-sided wraps also block the column on the other side of the object.
         let text_left = match ex.side {
             WrapSide::LeftSide => Some(true),
@@ -2866,7 +2877,9 @@ fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool, 
         }
         free = next;
     }
-    free.retain(|(a, b)| b - a >= size * 1.5);
+    if cut {
+        free.retain(|(a, b)| b - a >= size * 1.5);
+    }
     if rtl {
         free.reverse();
     }

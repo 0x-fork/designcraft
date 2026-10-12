@@ -146,6 +146,75 @@ fn wrap_pushes_text_aside() {
     assert!(below.x0 < 1.0);
 }
 
+/// A small frame holding one character (a tombstone at the end of an article: a 7.6 pt symbol in
+/// a 10.5 pt box), in a paragraph whose style is 14 pt, with a text-wrap object on the spread at
+/// `wrap`.
+fn tombstone(frame: Rect, wrap: Rect) -> (Document, StoryId) {
+    let (mut d, sid, _) = doc_with("X", frame, ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    st.paras[0].chars = designcraft_doc::CharAttrs { size: Some(14.0), ..Default::default() };
+    st.format_chars(0..1, |f| f.over.size = Some(7.6));
+    let lid = d.default_layer();
+    let mut it = designcraft_doc::Item::new(ItemId(d.alloc()), lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(wrap));
+    it.wrap.mode = WrapMode::BoundingBox;
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    (d, sid)
+}
+
+/// A text-wrap object elsewhere on the spread doesn't affect a frame it doesn't overlap: the small
+/// frame's one character is set (it was overset: every frame took every wrap object on the
+/// spread, and then no gap narrower than 1.5 em of the paragraph's size was used).
+#[test]
+fn small_single_character_frame_sets_beside_unrelated_text_wrap() {
+    let (d, sid) = tombstone(Rect::new(300.0, 300.0, 310.5, 310.5), Rect::new(0.0, 0.0, 120.0, 60.0));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    assert!(!cs.is_overset(), "the tombstone is set");
+    assert_eq!(cs.line_count(), 1);
+}
+
+/// A narrow frame that a text-wrap object overlaps further down sets the lines the object doesn't
+/// reach: the minimum gap width only applies to gaps a wrap object cuts.
+#[test]
+fn narrow_frame_sets_lines_no_wrap_object_reaches() {
+    let (d, sid) = tombstone(Rect::new(300.0, 300.0, 310.5, 340.0), Rect::new(290.0, 330.0, 330.0, 360.0));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    assert!(!cs.is_overset(), "the first line is above the wrap object");
+    assert_eq!(cs.line_count(), 1);
+    let (top, baseline) = (cs.frames[0].columns[0].y0, cs.frames[0].lines[0].baseline);
+    assert!(baseline - top < 20.0, "on the first line: {baseline} (text area from {top})");
+}
+
+/// A wrap object that cuts a narrow frame leaves the sliver beside it (under 1.5 em) empty: no
+/// line is set beside the object, and the text continues below it.
+#[test]
+fn a_wrap_object_cutting_a_narrow_frame_leaves_its_sliver_empty() {
+    let text = ["of"; 400].join(" ");
+    let (mut d, sid, _) = doc_with(&text, Rect::new(0.0, 0.0, 60.0, 400.0), ParaAttrs::default());
+    d.story_mut(sid).unwrap().format_chars(0..text.len(), |f| f.over.size = Some(6.0));
+    // An 8 pt sliver at 6 pt: narrower than 1.5 em (9 pt), wide enough for a word.
+    add_wrap_objects(&mut d, &[(Rect::new(0.0, 50.0, 52.0, 120.0), [0.0; 4], WrapMode::BoundingBox)]);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = &cs.frames[0].lines;
+    assert!(lines.iter().all(|l| l.baseline + l.descent <= 50.0 + 1e-6 || l.baseline - l.ascent >= 120.0 - 1e-6), "a line beside the object");
+    assert!(lines.iter().any(|l| l.baseline - l.ascent >= 120.0 - 1e-6), "no text below the object");
+}
+
+/// A wrap object beside the second column of a two-column frame leaves the first column, narrower
+/// than 1.5 em, set in full.
+#[test]
+fn a_wrap_object_beside_column_two_leaves_a_narrow_column_one_set() {
+    let (mut d, sid, fid) = doc_with(&["X"; 12].join(" "), Rect::new(0.0, 0.0, 46.0, 100.0), ParaAttrs::default());
+    let o = &mut d.item_mut(fid).unwrap().text_frame_mut().unwrap().options;
+    o.columns = 2;
+    o.gutter = 12.0;
+    // 17 pt columns at 14 pt: narrower than 1.5 em (21 pt).
+    d.story_mut(sid).unwrap().format_chars(0..23, |f| f.over.size = Some(14.0));
+    add_wrap_objects(&mut d, &[(Rect::new(35.0, 0.0, 60.0, 100.0), [0.0; 4], WrapMode::BoundingBox)]);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let first = all_lines(&cs).iter().filter(|l| l.column == 0).count();
+    assert!(first >= 4, "{first} lines in column 1");
+}
+
 /// Insert rectangles with wrap, given as (bounds, [top, left, bottom, right] offsets, mode).
 fn add_wrap_objects(d: &mut Document, objects: &[(Rect, [f64; 4], WrapMode)]) {
     let lid = d.default_layer();
