@@ -963,18 +963,33 @@ impl FontDb {
     /// [`MAX_DOCUMENT_FONT_FILES`] (in name order), files over [`MAX_DOCUMENT_FONT_BYTES`] or past
     /// [`MAX_DOCUMENT_FONTS_TOTAL`] in all, and files that aren't fonts are skipped with a note. A
     /// missing folder loads nothing (scope 0).
+    ///
+    /// The folder is named by a document, so this crate does not trust it: `allow` (`Ok`, or why a
+    /// path may not be read) is asked about
+    /// the folder and about every font file in it before either is opened, and a path it refuses
+    /// is skipped with its message (the engine passes its automation-root check; a host with no
+    /// roots passes `&|_| Ok(())`).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_document_fonts(&self, folder: &std::path::Path) -> DocumentFonts {
+    pub fn load_document_fonts(&self, folder: &std::path::Path, allow: &dyn Fn(&std::path::Path) -> Result<(), String>) -> DocumentFonts {
         let mut out = DocumentFonts::default();
+        if let Err(why) = allow(folder) {
+            out.skipped.push(why);
+            return out;
+        }
         let Ok(entries) = std::fs::read_dir(folder) else { return out };
-        let mut files: Vec<std::path::PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase());
-                matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) && p.is_file()
-            })
-            .collect();
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        for path in entries.flatten().map(|e| e.path()) {
+            let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase());
+            if !matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) {
+                continue;
+            }
+            // Each file is vetted before it is touched at all, a link out of the folder included.
+            match allow(&path) {
+                Ok(()) if path.is_file() => files.push(path),
+                Ok(()) => {}
+                Err(why) => out.skipped.push(why),
+            }
+        }
         files.sort();
         let mut total = 0u64;
         let mut own: Vec<Arc<FontFace>> = Vec::new();

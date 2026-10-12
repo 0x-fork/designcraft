@@ -1889,7 +1889,7 @@ fn each_document_shapes_words_in_its_own_fonts() {
         let folder = root.join(name);
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("word.ttf"), font_with_glyph(FAMILY, &['a', 'b', ' '], glyph).unwrap()).unwrap();
-        scopes.push((designcraft_fonts::FontDb::global().load_document_fonts(&folder).scope, glyph));
+        scopes.push((designcraft_fonts::FontDb::global().load_document_fonts(&folder, &|_| Ok(())).scope, glyph));
     }
     let text = "ab ab ab ab";
     let mut faces = Vec::new();
@@ -1919,7 +1919,7 @@ fn composite_fonts_draw_from_the_documents_fonts() {
     let folder = std::env::temp_dir().join(format!("dc-compose-composite-docfont-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("digits.ttf"), font_with_glyph(FAMILY, &['1'], 'X').unwrap()).unwrap();
-    let scope = FontDb::global().load_document_fonts(&folder).scope;
+    let scope = FontDb::global().load_document_fonts(&folder, &|_| Ok(())).scope;
     let (mut d, sid, _) = doc_with("A1B", Rect::new(0.0, 0.0, 300.0, 100.0), ParaAttrs::default());
     d.font_scope = scope;
     std::sync::Arc::make_mut(&mut d.styles).composite_fonts.push(CompositeFont {

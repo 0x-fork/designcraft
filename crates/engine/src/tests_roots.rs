@@ -129,11 +129,15 @@ fn a_data_source_path_stored_in_a_document_is_read_through_the_roots() {
 fn a_book_writes_its_chapters_only_inside_the_write_root() {
     let (base, roots) = folders("book");
     let chapter = base.join("in/a.designcraft");
-    let mut s = Session::new();
-    s.execute("file.new", &json!({})).unwrap();
-    s.execute("file.save", &json!({"path": p(&chapter)})).unwrap();
     let second = base.join("in/b.designcraft");
-    s.execute("file.saveAs", &json!({"path": p(&second)})).unwrap();
+    {
+        // Made by another session: a book only rewrites chapters that are not open.
+        let mut maker = Session::new();
+        maker.execute("file.new", &json!({})).unwrap();
+        maker.execute("file.save", &json!({"path": p(&chapter)})).unwrap();
+        maker.execute("file.saveAs", &json!({"path": p(&second)})).unwrap();
+    }
+    let mut s = Session::new();
     let before = (std::fs::read(&chapter).unwrap(), std::fs::read(&second).unwrap());
     confine(Some(&roots), || {
         s.execute("book.new", &json!({"path": p(&base.join("out/b.dcbook"))})).unwrap();
@@ -208,5 +212,22 @@ fn fonts_beside_a_document_outside_the_read_root_are_not_loaded() {
     assert!(warnings.iter().any(|w| w.contains("outside the read root")), "{warnings:?}");
     let (_, _, warnings) = cmd::load_document_fonts(&mut d, &p(&base.join("outside/doc.designcraft")));
     assert!(warnings.iter().any(|w| w.contains("x.ttf")), "without roots the folder is read and the bad font reported: {warnings:?}");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_font_file_that_links_out_of_the_read_root_is_skipped() {
+    let (base, roots) = folders("fontlink");
+    std::fs::create_dir_all(base.join("in/Document Fonts")).unwrap();
+    std::fs::write(base.join("outside/secret.ttf"), b"not a font").unwrap();
+    std::os::unix::fs::symlink(base.join("outside/secret.ttf"), base.join("in/Document Fonts/link.ttf")).unwrap();
+    let mut d = designcraft_doc::Document::new(&designcraft_doc::build::NewDocument::default());
+    let doc = p(&base.join("in/doc.designcraft"));
+    let (_, _, warnings) = confine(Some(&roots), || cmd::load_document_fonts(&mut d, &doc));
+    assert!(warnings.iter().any(|w| w.contains("outside the read root")), "{warnings:?}");
+    assert!(!warnings.iter().any(|w| w.contains("not a font")), "the file was opened: {warnings:?}");
+    let (_, _, warnings) = cmd::load_document_fonts(&mut d, &doc);
+    assert!(warnings.iter().any(|w| w.contains("link.ttf")), "without roots the link is followed: {warnings:?}");
     let _ = std::fs::remove_dir_all(base);
 }

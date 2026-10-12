@@ -90,7 +90,7 @@ impl ChapterBatch {
     }
 
     fn commit(self) -> Result<()> {
-        self.commit_with(write_staged_chapter)
+        self.commit_with(|path, staged| crate::io::replace_with(path, staged))
     }
 
     fn commit_with(self, mut write: impl FnMut(&std::path::Path, &std::path::Path) -> std::io::Result<()>) -> Result<()> {
@@ -110,12 +110,6 @@ impl ChapterBatch {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn write_staged_chapter(path: &std::path::Path, staged: &std::path::Path) -> std::io::Result<()> {
-    let mut input = std::fs::File::open(staged)?;
-    crate::atomic::write_atomic_with(path, |file| std::io::copy(&mut input, file).map(|_| ()))
-}
-
 /// Batch commands only write closed native chapters. IDML is an imported source, and an open
 /// chapter's model (including unsaved edits) cannot be reconciled by a disk-only book update.
 #[cfg(not(target_arch = "wasm32"))]
@@ -125,16 +119,16 @@ fn writable_chapter(s: &Session, path: &str, command: &'static str) -> Result<()
     if Path::new(path).extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("idml")) {
         return Err(bad(command, format!("cannot change imported IDML chapter {path}; convert it to a native DesignCraft document first")));
     }
-    let target = std::fs::canonicalize(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    if s.docs.iter().any(|doc| doc.path.as_ref().is_some_and(|open| std::fs::canonicalize(open).is_ok_and(|open| open == target))) {
+    let target = crate::io::canonicalize(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    if s.docs.iter().any(|doc| doc.path.as_ref().is_some_and(|open| crate::io::canonicalize(open).is_ok_and(|open| open == target))) {
         return Err(bad(command, format!("chapter {path} is open; close it before updating the book")));
     }
-    if !std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_file()) {
+    if !crate::io::is_file(&target) {
         return Err(bad(command, format!("chapter {path} is not a regular file")));
     }
     // Check both the file and its resolved parent without truncating it. Replacement needs a
     // writable directory even when an in-place write would be permitted.
-    std::fs::OpenOptions::new().write(true).open(&target).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    crate::io::writable(&target).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let parent = target.parent().ok_or_else(|| bad(command, format!("chapter {path} has no parent folder")))?;
     tempfile::Builder::new().prefix(".designcraft-book-check-").tempfile_in(parent).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     Ok(())

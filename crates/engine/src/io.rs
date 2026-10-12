@@ -37,7 +37,39 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, String> {
 pub fn write_file(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), String> {
     let path = path.as_ref();
     crate::file_access::check_write(path)?;
-    std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+    // Replaced atomically where there is a real file system (see `atomic`).
+    #[cfg(not(target_arch = "wasm32"))]
+    let written = crate::atomic::write_atomic(path, bytes);
+    #[cfg(target_arch = "wasm32")]
+    let written = std::fs::write(path, bytes);
+    written.map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Atomically replace the file at `path` with the contents of `staged`, a private temporary file
+/// the engine made itself (so it is not checked), inside the automation write root when there is
+/// one.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn replace_with(path: impl AsRef<Path>, staged: impl AsRef<Path>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    crate::file_access::check_write(path).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
+    let mut input = std::fs::File::open(staged)?;
+    crate::atomic::write_atomic_with(path, |file| std::io::copy(&mut input, file).map(|_| ()))
+}
+
+/// Could the file at `path` be opened for writing (without truncating it)? Inside the automation
+/// write root when there is one.
+pub fn writable(path: impl AsRef<Path>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    crate::file_access::check_write(path).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
+    std::fs::OpenOptions::new().write(true).open(path).map(drop)
+}
+
+/// The canonical form of `path` (links resolved), inside the automation read root when there is
+/// one.
+pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<std::path::PathBuf> {
+    let path = path.as_ref();
+    crate::file_access::check_read(path).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
+    std::fs::canonicalize(path)
 }
 
 /// What the file system says about `path` (links followed), inside the automation read root when

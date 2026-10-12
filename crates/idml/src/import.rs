@@ -29,21 +29,11 @@ fn uniform_cell_stroke(edges: &[designcraft_doc::CellStrokeAttrs; 4]) -> Option<
     Some(designcraft_doc::CellStroke { weight: first.weight?, color: first.color.clone()?, tint: first.tint?, kind: first.kind.clone()? })
 }
 
-/// Import an IDML package. Linked images are read from disk when available (not on wasm).
+/// Import an IDML package without reading its linked images from disk: this crate never touches
+/// the file system, so a caller that wants the links brings its own reader
+/// ([`import_idml_with`]). The engine passes one that checks the automation roots.
 pub fn import_idml(bytes: &[u8]) -> Result<Document> {
-    import_idml_with(bytes, &default_reader)
-}
-
-fn default_reader(path: &str) -> Option<Vec<u8>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::fs::read(path).ok()
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = path;
-        None
-    }
+    import_idml_with(bytes, &|_| None)
 }
 
 /// Import with a custom reader for linked files (`path` → bytes).
@@ -68,7 +58,9 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
     let mut lenient: HashMap<String, String> = HashMap::new();
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
-        if f.is_dir() {
+        // A folder entry of the archive (the zip crate's own `is_dir`; spelled out so no file-system
+        // probe appears in this crate).
+        if f.name().ends_with('/') {
             continue;
         }
         let name = f.name().to_string();

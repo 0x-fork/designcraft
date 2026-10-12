@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!(noundo "file.recovery.save", "Save Recovery Data", [], None, "{dir?} — write every unsaved document to the recovery folder (the app does this on a timer)", always, |s, p| {
             let dir = recovery_dir(s, p, FolderAccess::Write)?;
-            Ok(json!({"saved": crate::recovery::save(s, &dir)?}))
+            Ok(json!({"saved": crate::recovery::save_tracked(s, &dir)?}))
         }),
         cmd!(noundo "file.recovery.open", "Recover Documents", [], None, "{dir?} — reopen documents left in the recovery folder (unsaved)", always, |s, p| {
             // Reopening removes the entries it read.
@@ -191,11 +191,9 @@ pub(crate) fn load_document_fonts(d: &mut Document, path: &str) -> (Option<Arc<c
         use designcraft_fonts::DOCUMENT_FONTS_FOLDER;
         let Some(folder) = std::path::Path::new(path).parent().map(document_fonts_folder) else { return (None, 0, Vec::new()) };
         // A document's folder is the agent's to name (a recovery entry or a book lists paths too):
-        // fonts outside the automation read root stay unloaded.
-        if let Err(e) = crate::file_access::check_read(&folder) {
-            return (None, 0, vec![format!("{DOCUMENT_FONTS_FOLDER}: {e}")]);
-        }
-        let r = designcraft_fonts::FontDb::global().load_document_fonts(&folder);
+        // the fonts crate asks the automation roots about the folder and each font file, so fonts
+        // outside the read root stay unloaded.
+        let r = designcraft_fonts::FontDb::global().load_document_fonts(&folder, &|p| crate::file_access::check_read(p));
         d.font_scope = r.scope;
         let scope = (r.scope != 0).then(|| Arc::new(crate::FontScope(r.scope)));
         (scope, r.faces, r.skipped.into_iter().map(|s| format!("{DOCUMENT_FONTS_FOLDER}: {s}")).collect())
