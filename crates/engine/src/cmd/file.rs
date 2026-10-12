@@ -47,7 +47,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.saveACopy", "Save a Copy…", ["File"], None, "{path} — writes the document without changing which file it is or its unsaved state; a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, |s, p| {
             let path = str_param(p, "path").ok_or_else(|| bad("file.saveACopy", "missing `path`"))?;
             let path = with_document_extension(path);
-            let bytes = to_bytes(&s.doc()?.doc);
+            let mut copy = (*s.doc()?.doc).clone();
+            super::datamerge::refresh_relative_paths(&mut copy, std::path::Path::new(&path));
+            let bytes = to_bytes(&copy);
             #[cfg(not(target_arch = "wasm32"))]
             crate::atomic::write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -347,17 +349,18 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
         .map(with_document_extension)
         .or_else(|| st.path.clone())
         .ok_or_else(|| bad("file.save", "missing `path` (document has never been saved)"))?;
-    {
-        let mut d = (*st.doc).clone();
-        super::datamerge::refresh_relative_paths(&mut d, std::path::Path::new(&path));
-        if d.data_merge != st.doc.data_merge {
-            st.doc = Arc::new(d);
-            st.bump_revision();
-        }
-    }
-    let bytes = to_bytes(&st.doc);
+    // Prepare paths for the destination without changing the live document until persistence succeeds.
+    let mut saved = (*st.doc).clone();
+    super::datamerge::refresh_relative_paths(&mut saved, std::path::Path::new(&path));
+    let paths_changed = saved.data_merge != st.doc.data_merge;
+    let saved = if paths_changed { Arc::new(saved) } else { st.doc.clone() };
+    let bytes = to_bytes(&saved);
     #[cfg(not(target_arch = "wasm32"))]
     crate::atomic::write_file(&path, &bytes)?;
+    if paths_changed {
+        st.doc = saved;
+        st.bump_revision();
+    }
     st.path = Some(path.clone());
     st.saved_revision = st.revision;
     st.saved_doc = st.doc.clone();
