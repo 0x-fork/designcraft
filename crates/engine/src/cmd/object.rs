@@ -568,7 +568,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fitting",
             ["Object", "Fitting"],
             None,
-            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, ids?}",
+            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, axis?: both|height|width (text frames: which sides Fit Frame to Content moves; default both), ids?}",
             has_selection,
             fit
         ),
@@ -1763,7 +1763,28 @@ fn fitting_options(s: &mut Session, p: &Value) -> Result<Value> {
 fn fit(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let mode = str_param(p, "mode").unwrap_or("fitProportionally").to_string();
+    let (height, width) = match str_param(p, "axis").unwrap_or("both") {
+        "height" => (true, false),
+        "width" => (false, true),
+        "both" => (true, true),
+        other => return Err(bad("object.fit", format!("unknown axis `{other}`"))),
+    };
+    // Text frames: Fit Frame to Content fits the frame to its composed text.
+    let mut text_fits = Vec::new();
+    if mode == "fitFrameToContent" {
+        let d = s.doc()?.doc.clone();
+        for id in &ids {
+            if let Some(r) = fitted_text_frame(&d, &s.cache, *id, height, width) {
+                text_fits.push((*id, r));
+            }
+        }
+    }
     s.edit(|d, _| {
+        for (id, r) in &text_fits {
+            if let Some(it) = d.item_mut(*id) {
+                it.path = shapes::rectangle(*r);
+            }
+        }
         for id in &ids {
             let Some(it) = d.item_mut(*id) else { continue };
             let r = it.inner_bounds();
@@ -1783,6 +1804,47 @@ fn fit(s: &mut Session, p: &Value) -> Result<Value> {
         }
         ok()
     })
+}
+
+/// The inner rectangle that fits text frame `id` to its text (Fit Frame to Content): the bottom at
+/// the last line's descent (`height`), the right side at the longest line's end (`width`, one
+/// column only), plus the insets; the top-left stays. Overset text grows the frame first. None for
+/// frames that aren't horizontal text frames, have no text, or are threaded on to another frame.
+fn fitted_text_frame(d: &Document, cache: &designcraft_compose::Cache, id: ItemId, height: bool, width: bool) -> Option<Rect> {
+    let it = d.item(id)?;
+    let tf = it.text_frame()?;
+    if d.frame_vertical(it) || tf.options.path.is_some() {
+        return None;
+    }
+    let story = d.story(tf.story)?;
+    // The last frame of its thread only: an earlier frame's text runs on.
+    if story.frames.last() != Some(&id) {
+        return None;
+    }
+    let r = it.inner_bounds();
+    let inset = tf.options.inset;
+    // Room for everything: a tall frame, composed on a copy.
+    let mut tall = d.clone();
+    if height {
+        tall.item_mut(id)?.path = shapes::rectangle(Rect::new(r.x0, r.y0, r.x1, r.y0 + r.height().max(1.0) + 20_000.0));
+    }
+    let cs = cache.get(&tall, tf.story, None);
+    let ft = cs.frame(id)?;
+    let last = ft.lines.iter().map(|l| l.baseline + l.descent).fold(f64::NEG_INFINITY, f64::max);
+    if !last.is_finite() {
+        return None;
+    }
+    let mut out = r;
+    if height {
+        out.y1 = (last + inset[2]).max(r.y0 + 1.0);
+    }
+    if width && tf.options.columns <= 1 {
+        let right = ft.lines.iter().map(|l| l.end_x).fold(f64::NEG_INFINITY, f64::max);
+        if right.is_finite() {
+            out.x1 = (right + inset[3]).max(r.x0 + 1.0);
+        }
+    }
+    Some(out)
 }
 
 pub(crate) trait RemoveKeep {
@@ -2811,5 +2873,54 @@ mod swatch_name_tests {
             s.execute("object.fill", &json!({"swatch": sw, "ids": [id]})).unwrap();
             s.execute("object.stroke", &json!({"swatch": sw, "ids": [id]})).unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod fit_text_frame_tests {
+    use super::*;
+
+    fn frame(s: &mut Session, rect: [f64; 4], text: &str) -> ItemId {
+        let id = ItemId(s.execute("frame.create", &json!({"rect": rect, "content": "text", "text": text})).unwrap()["id"].as_u64().unwrap());
+        s.execute("selection.set", &json!({"ids": [id.0]})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"size": 30}})).unwrap();
+        id
+    }
+
+    fn bounds(s: &Session, id: ItemId) -> Rect {
+        s.doc().unwrap().doc.item(id).unwrap().bounds()
+    }
+
+    #[test]
+    fn fit_frame_to_content_fits_a_text_frame_to_its_text() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = frame(&mut s, [100.0, 100.0, 500.0, 300.0], "INDESIGN");
+        // The height only (a top or bottom handle): the width stays.
+        s.execute("object.fit", &json!({"mode": "fitFrameToContent", "axis": "height", "ids": [id.0]})).unwrap();
+        let h = bounds(&s, id);
+        assert!(h.x1 == 500.0 && h.y0 == 100.0 && h.height() > 30.0 && h.height() < 45.0, "{h:?}");
+        // Both (a corner handle, or the menu): around the line.
+        s.execute("object.fit", &json!({"mode": "fitFrameToContent", "ids": [id.0]})).unwrap();
+        let b = bounds(&s, id);
+        assert!(b.x0 == 100.0 && b.width() > 100.0 && b.width() < 250.0, "{b:?}");
+        let d = s.doc().unwrap().doc.clone();
+        let sid = d.item(id).unwrap().text_frame().unwrap().story;
+        assert!(!s.cache.get(&d, sid, None).is_overset(), "still fits");
+    }
+
+    #[test]
+    fn fit_frame_to_content_grows_a_frame_with_overset_text() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = frame(&mut s, [100.0, 100.0, 300.0, 140.0], "one two three four five six seven eight nine ten eleven twelve");
+        let d = s.doc().unwrap().doc.clone();
+        let sid = d.item(id).unwrap().text_frame().unwrap().story;
+        assert!(s.cache.get(&d, sid, None).is_overset());
+        s.execute("object.fit", &json!({"mode": "fitFrameToContent", "axis": "height", "ids": [id.0]})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        assert!(!s.cache.get(&d, sid, None).is_overset(), "{:?}", bounds(&s, id));
+        assert!(bounds(&s, id).height() > 100.0);
+        assert!(s.execute("object.fit", &json!({"mode": "fitFrameToContent", "axis": "diagonal", "ids": [id.0]})).is_err());
     }
 }

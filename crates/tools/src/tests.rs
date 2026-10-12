@@ -705,3 +705,18 @@ fn pen_click_snaps_to_a_guide() {
     let x = p["anchors"][0]["p"][0].as_f64().unwrap();
     assert!((x - 100.0).abs() < 1e-6, "anchor x {x}");
 }
+
+#[test]
+fn double_clicking_a_handle_fits_the_frame_to_its_content_along_that_side() {
+    let mut d = Document::new(&NewDocument::default());
+    let id = add_rect(&mut d, Rect::new(100.0, 100.0, 300.0, 200.0));
+    let s = Selection { items: vec![id], ..Default::default() };
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let cx = ctx(&d, &s, &c, &l);
+    let mut t = create("selection");
+    for ((x, y), axis) in [((300.0, 200.0), "both"), ((200.0, 200.0), "height"), ((300.0, 150.0), "width")] {
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::DoubleClick, x + off.x, y + off.y));
+        assert_eq!(a, vec![Action::Exec("object.fit".into(), serde_json::json!({"mode": "fitFrameToContent", "axis": axis}))], "{axis}");
+    }
+}
