@@ -1,6 +1,6 @@
 # Where DesignCraft falls short of InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML; Tabs panel listed as present (#343)) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every known shortfall against InDesign 2026, one entry each, ranked by how much it stops an
 InDesign professional from doing real work. This is the work list: agents pick from the top.
@@ -125,8 +125,9 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 - **Estimate:** 25–45 h. **Doc:** [hardware-parity.md](hardware-parity.md)
 
 ### 11. Paragraph and character style editing reliability (F)
-- **Missing:** saving edits and deleting a paragraph style reported failing (#169); Tabs panel
-  for setting tab stops (#326).
+- **Missing:** saving edits and deleting a paragraph style reported failing (#169).
+- **Have:** the Tabs panel (Type › Tabs: a ruler over the text column, alignment, leader and
+  Align On) and a Tabs section in Paragraph Style Options (#343).
 - **Estimate:** 10–20 h. **Doc:** [ui-parity.md](ui-parity.md)
 
 ### 12. Tables in depth (F)

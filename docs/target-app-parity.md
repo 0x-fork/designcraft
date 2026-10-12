@@ -1,6 +1,6 @@
 # DesignCraft parity with Adobe InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; image clipping paths from IDML; anchored objects wrap text) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343)) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
 
 The authoritative assessment of how close DesignCraft is to Adobe InDesign. [ROADMAP.md](../ROADMAP.md)
 summarizes it; [gaps.md](gaps.md) lists every known shortfall one at a time; the feature-by-feature
@@ -109,7 +109,7 @@ twice.
 |---|---|---|---|
 | Document setup: pages, margins, columns, parents, sections | 10% | 65% | features area table |
 | Text frames: type, select, edit, thread, autoflow | 15% | 45% | threading by hand, autoflow; Primary Text Frame adds pages users can't delete (#165) |
-| Typography: composer, H&J, OpenType, tabs, lists, keeps | 15% | 65% | typography-parity.md: 18 ✓ / 16 ~; Tabs panel missing; InDesign-identical breaks counted under exchange |
+| Typography: composer, H&J, OpenType, tabs, lists, keeps | 15% | 65% | typography-parity.md: 18 ✓ / 16 ~; InDesign-identical breaks counted under exchange |
 | Paragraph, character and object styles | 10% | 65% | dialogs, based-on, nested/GREP, Quick Apply |
 | Frames, shapes, transform, arrange, align | 10% | 70% | full tool set; copy/paste problems counted under interaction |
 | Colour, swatches, stroke | 8% | 60% | hex entry, CMS depth |
