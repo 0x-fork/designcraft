@@ -510,6 +510,12 @@ pub struct DesignApp {
     last_time: f64,
     /// When recovery data was last written (seconds, egui time).
     pub last_recovery: f64,
+    /// Quit was chosen: close the window on the next frame, as its close button does.
+    quit_requested: bool,
+    /// Close the window without asking about unsaved changes (the control channel's `app.quit`).
+    pub(crate) quit_without_asking: bool,
+    /// Quitting waits for the user's answer about the unsaved document with this uid.
+    quitting: Option<u64>,
 }
 
 impl DesignApp {
@@ -547,6 +553,9 @@ impl DesignApp {
             native_shortcuts: Default::default(),
             last_time: 0.0,
             last_recovery: 0.0,
+            quit_requested: false,
+            quit_without_asking: false,
+            quitting: None,
         }
     }
 
@@ -802,6 +811,56 @@ impl DesignApp {
                 let _ = self.open_dropped(&p);
             }
         }
+        self.handle_quit(ctx);
+    }
+
+    /// Quit: close the window the way its close button does, so unsaved documents ask first.
+    pub fn request_quit(&mut self) {
+        self.quit_requested = true;
+    }
+
+    /// Closing the window (close button, Quit) with unsaved documents: keep it open and ask about
+    /// each of them in turn with the dialog File › Close uses. Save and Don't Save go on to the
+    /// next one and the window closes after the last; Cancel, or a cancelled Save As, stops.
+    fn handle_quit(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.quit_requested) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.quit_without_asking || !self.session.documents().iter().any(|d| d.is_dirty()) {
+                self.quitting = None;
+                return;
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            let asking = self.quitting.is_some() && self.ui.dialog.as_ref().is_some_and(|d| d.id == "closeDocument");
+            if !asking {
+                self.ask_next_unsaved(ctx);
+            }
+            return;
+        }
+        let Some(uid) = self.quitting else { return };
+        if self.ui.dialog.is_some() {
+            return;
+        }
+        // Still open: the user cancelled, or the save didn't happen.
+        if self.session.documents().iter().any(|d| d.uid == uid) {
+            self.quitting = None;
+            return;
+        }
+        self.ask_next_unsaved(ctx);
+    }
+
+    /// Ask about the first document with unsaved changes (shown, so the user sees which one),
+    /// or close the window when none is left.
+    fn ask_next_unsaved(&mut self, ctx: &egui::Context) {
+        let Some((i, uid)) = self.session.documents().iter().enumerate().find(|(_, d)| d.is_dirty()).map(|(i, d)| (i, d.uid)) else {
+            self.quitting = None;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        };
+        let _ = self.run("file.activate", json!({"index": i}));
+        menus::close_document(self, Some(i));
+        self.quitting = Some(uid);
     }
 
     /// A file dropped on the window: documents open, anything else is placed.
@@ -1155,6 +1214,91 @@ mod tests {
         app.run("file.new", json!({})).unwrap();
         menus::activate(&mut app, "file.close", &Value::Null);
         assert!(app.session.documents().is_empty());
+        assert!(app.ui.dialog.is_none());
+    }
+
+    /// One frame of the quit handling, with the window asked to close when `close`; returns the
+    /// commands sent to the window.
+    fn quit_frame(app: &mut DesignApp, ctx: &egui::Context, close: bool) -> Vec<egui::ViewportCommand> {
+        let mut raw = egui::RawInput::default();
+        if close {
+            raw.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+        }
+        let mut out = ctx.run_ui(raw, |ui| app.handle_quit(ui.ctx()));
+        out.textures_delta.clear();
+        out.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.commands.clone()).unwrap_or_default()
+    }
+
+    fn dialog_uid(app: &DesignApp) -> Option<u64> {
+        app.ui.dialog.as_ref().filter(|d| d.id == "closeDocument").and_then(|d| d.fields.get("uid")?.as_u64())
+    }
+
+    /// Quitting closed the window at once, losing unsaved changes (#544).
+    #[test]
+    fn quitting_with_unsaved_changes_asks_and_cancel_keeps_everything() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_unsaved_document();
+        let cmds = quit_frame(&mut app, &ctx, true);
+        assert!(cmds.contains(&egui::ViewportCommand::CancelClose), "{cmds:?}");
+        assert_eq!(dialog_uid(&app), Some(app.session.documents()[0].uid));
+        // Cancel: the window and the document stay as they were.
+        app.ui.dialog = None;
+        for _ in 0..2 {
+            assert!(!quit_frame(&mut app, &ctx, false).contains(&egui::ViewportCommand::Close));
+        }
+        assert_eq!(app.session.documents().len(), 1);
+        assert!(app.session.documents()[0].is_dirty());
+        // A Save whose file picker is cancelled stops quitting too.
+        quit_frame(&mut app, &ctx, true);
+        dialogs::confirm(&mut app).unwrap();
+        assert!(!quit_frame(&mut app, &ctx, false).contains(&egui::ViewportCommand::Close));
+        assert!(app.session.documents()[0].is_dirty());
+    }
+
+    #[test]
+    fn quitting_asks_about_each_unsaved_document_then_closes() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_unsaved_document();
+        app.run("file.new", json!({})).unwrap();
+        app.run("frame.create", json!({"rect": [36, 36, 136, 136]})).unwrap();
+        app.run("file.new", json!({})).unwrap();
+        let uids: Vec<u64> = app.session.documents().iter().map(|d| d.uid).collect();
+        assert!(quit_frame(&mut app, &ctx, true).contains(&egui::ViewportCommand::CancelClose));
+        for (n, uid) in uids.iter().take(2).enumerate() {
+            assert_eq!(dialog_uid(&app), Some(*uid), "question {n}");
+            assert_eq!(app.session.active().map(|d| d.uid), Some(*uid), "the document asked about is shown");
+            app.ui.dialog.as_mut().unwrap().fields.insert("discard".into(), json!(true));
+            dialogs::confirm(&mut app).unwrap();
+            let cmds = quit_frame(&mut app, &ctx, false);
+            assert_eq!(cmds.contains(&egui::ViewportCommand::Close), n == 1, "{cmds:?}");
+        }
+        // Only the saved document is left: the close goes through.
+        assert!(quit_frame(&mut app, &ctx, true).is_empty());
+    }
+
+    #[test]
+    fn quitting_without_unsaved_changes_closes_at_once() {
+        let ctx = egui::Context::default();
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Services::default());
+        app.run("file.new", json!({})).unwrap();
+        // Quit (⌘Q) closes the window like its close button.
+        app.run("app.quit", json!({})).unwrap();
+        assert!(quit_frame(&mut app, &ctx, false).contains(&egui::ViewportCommand::Close));
+        assert!(quit_frame(&mut app, &ctx, true).is_empty());
+        assert!(app.ui.dialog.is_none());
+    }
+
+    /// Scripts must not hang on a question: the control channel's quit never asks.
+    #[test]
+    fn control_channel_quit_does_not_ask() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_unsaved_document();
+        let (req, _rx) = control::ControlRequest::new("app.quit", json!({}));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            control::handle(&mut app, ui.ctx(), &req);
+        });
+        out.textures_delta.clear();
+        assert!(quit_frame(&mut app, &ctx, true).is_empty());
         assert!(app.ui.dialog.is_none());
     }
 

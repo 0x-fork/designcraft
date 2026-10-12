@@ -353,6 +353,8 @@ pub fn handle(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest) ->
         "app.save" => wrap(app.run("file.save", json!({"path": s("path")}))),
         "app.export" => wrap(app.run("app.exportPng", p.clone())),
         "app.quit" => {
+            // Automation must not wait on a prompt: quit without asking about unsaved changes.
+            app.quit_without_asking = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             ok(Value::Null)
         }
