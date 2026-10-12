@@ -85,7 +85,8 @@ fn executable_dir() -> Option<PathBuf> {
 }
 
 pub fn recovery_dir() -> Option<PathBuf> {
-    recovery_dir_with(root_with(|key| std::env::var_os(key), executable_dir().as_deref()), designcraft_engine::recovery::default_dir).and_then(own_run)
+    recovery_dir_with(root_with(|key| std::env::var_os(key), executable_dir().as_deref()), designcraft_engine::recovery::default_dir)
+        .and_then(own_run)
 }
 
 /// This run's folder in the recovery folder `root`. A second running DesignCraft has its own, so
