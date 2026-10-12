@@ -9,6 +9,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod atomic;
+pub mod autosize;
 pub mod cmd;
 pub mod dtd;
 pub mod guard;
@@ -521,6 +522,22 @@ impl Session {
                 st.doc = Arc::new(d);
             }
         }
+        // Auto-size frames fit the text the command changed, in the same undo step.
+        if spec.undoable
+            && let Some(st) = self.active_mut()
+        {
+            let prev = before.as_ref().filter(|(uid, _)| *uid == st.uid).map(|(_, d)| d.as_ref());
+            if prev.is_none_or(|p| !std::ptr::eq(p, st.doc.as_ref())) {
+                let todo = autosize::candidates(&st.doc, prev);
+                if !todo.is_empty() {
+                    let mut d = (*st.doc).clone();
+                    if autosize::fit(&mut d, todo) {
+                        st.doc = Arc::new(d);
+                        st.bump_revision();
+                    }
+                }
+            }
+        }
         self.record_undo_step(spec, before, nested);
         if spec.journal {
             self.journal.push((id.to_string(), params.clone()));
@@ -643,6 +660,8 @@ pub(crate) use push_undo as record_undo;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_autosize;
 #[cfg(test)]
 mod tests_idml;
 #[cfg(test)]
