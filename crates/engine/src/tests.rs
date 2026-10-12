@@ -569,3 +569,52 @@ fn commands_take_non_object_params_without_panicking() {
         assert!(r.is_ok(), "{p}: {r:?}");
     }
 }
+
+#[test]
+fn alt_arrows_kern_at_the_caret_and_track_a_selection() {
+    use designcraft_doc::{Kerning, StoryId};
+    use designcraft_tools::{Mods, ToolKey};
+    let mut s = session();
+    let r = s.execute("frame.create", &json!({"rect": [36, 36, 300, 200], "content": "text", "text": "Hello world"})).unwrap();
+    let sid = r["story"].as_u64().unwrap();
+    s.set_tool("type");
+    let v = ViewInfo::at_zoom(1.0);
+    let alt = Mods { alt: true, ..Default::default() };
+    let story = |s: &Session| s.doc().unwrap().doc.story(StoryId(sid)).unwrap().clone();
+    let caret = |s: &mut Session, at: usize| s.execute("text.select", &json!({"story": sid, "anchor": at, "focus": at})).unwrap();
+    // Caret between "e" and "l": Alt+Right kerns the pair by the increment; the caret stays.
+    caret(&mut s, 2);
+    assert!(s.tool_key(ToolKey::Right, alt, v).unwrap());
+    assert_eq!(story(&s).format_after(1).over.kerning, Some(Kerning::Manual(20.0)));
+    assert_eq!(s.doc().unwrap().selection.text.unwrap().focus, 2);
+    s.tool_key(ToolKey::Right, alt, v).unwrap();
+    assert_eq!(story(&s).format_after(1).over.kerning, Some(Kerning::Manual(40.0)));
+    // One undo step per press.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(story(&s).format_after(1).over.kerning, Some(Kerning::Manual(20.0)));
+    // Alt+Cmd (Alt+Ctrl elsewhere) steps five increments.
+    caret(&mut s, 4);
+    s.tool_key(ToolKey::Left, Mods { cmd: true, ..alt }, v).unwrap();
+    assert_eq!(story(&s).format_after(3).over.kerning, Some(Kerning::Manual(-100.0)));
+    // The increment is the document's Kerning/Tracking preference.
+    s.execute("document.preferences", &json!({"kerningIncrement": 10})).unwrap();
+    caret(&mut s, 2);
+    s.tool_key(ToolKey::Right, alt, v).unwrap();
+    assert_eq!(story(&s).format_after(1).over.kerning, Some(Kerning::Manual(30.0)));
+    // A selection: tracking of the selected text.
+    s.execute("text.select", &json!({"story": sid, "anchor": 6, "focus": 11})).unwrap();
+    s.tool_key(ToolKey::Right, alt, v).unwrap();
+    let st = story(&s);
+    assert_eq!((st.format_after(6).over.tracking, st.format_after(10).over.tracking), (Some(10.0), Some(10.0)));
+    assert_eq!(st.format_after(4).over.tracking, None);
+    s.tool_key(ToolKey::Left, Mods { cmd: true, ctrl: true, ..alt }, v).unwrap();
+    assert_eq!(story(&s).format_after(8).over.tracking, Some(-40.0));
+    // Words: Cmd+Right (Ctrl+Right elsewhere); Alt+Shift+Right extends by a word.
+    caret(&mut s, 0);
+    s.tool_key(ToolKey::Right, Mods { cmd: true, ..Default::default() }, v).unwrap();
+    assert_eq!(s.doc().unwrap().selection.text.unwrap().focus, 5);
+    caret(&mut s, 0);
+    s.tool_key(ToolKey::Right, Mods { alt: true, shift: true, ..Default::default() }, v).unwrap();
+    let t = s.doc().unwrap().selection.text.unwrap();
+    assert_eq!((t.anchor, t.focus), (0, 5));
+}
