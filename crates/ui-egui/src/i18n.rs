@@ -3169,6 +3169,9 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Tint:", ["Farbton:", "Teinte:", "Matiz:", "濃淡:", "色调："]),
     ("Apply To:", ["Anwenden auf:", "Appliquer à :", "Aplicar a:", "適用先:", "应用于："]),
     ("Frame", ["Rahmen", "Bloc", "Marco", "フレーム", "框架"]),
+    ("Slug", ["Infobereich", "Ligne-bloc", "Indicaciones", "印刷可能領域", "辅助信息区"]),
+    ("Presentation", ["Präsentation", "Présentation", "Presentación", "プレゼンテーション", "演示文稿"]),
+    ("Extras", ["Extras", "Options supplémentaires", "Extras", "エクストラ", "附加"]),
     ("Column", ["Spalte", "Colonne", "Columna", "段", "栏"]),
     // File › New › Document
     ("Recent", ["Zuletzt verwendet", "Récents", "Recientes", "最近使用", "最近"]),
