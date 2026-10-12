@@ -28,6 +28,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Taglia"),
     ("Copy", "Copia"),
     ("Paste", "Incolla"),
+    ("Reverse Path", "Inverti tracciato"),
+    ("Set Anchor", "Imposta ancoraggio"),
     ("Clear", "Cancella"),
     ("Duplicate", "Duplica"),
     ("Select All", "Seleziona tutto"),

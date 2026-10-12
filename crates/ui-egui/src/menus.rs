@@ -486,6 +486,8 @@ pub const MENUS: &[(&str, &[&str])] = &[
             ">Paths",
             "cmd:object.makeCompoundPath",
             "cmd:object.releaseCompoundPath",
+            "-",
+            "cmd:path.reverse",
             "<",
             ">Pathfinder",
             "cmd:object.pathfinder|Add|{\"op\": \"add\"}",

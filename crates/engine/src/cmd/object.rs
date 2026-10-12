@@ -595,8 +595,34 @@ pub fn specs() -> Vec<CommandSpec> {
             step_and_repeat
         ),
         cmd!("path.create", "Create Path", [], None, "{spread?, anchors: [{p:[x,y], in?:[x,y], out?:[x,y]}], closed?: bool}", has_doc, path_create),
-        cmd!("path.appendAnchor", "Add Anchor", [], None, "{id, anchor: {p, in?, out?}} (spread coords)", has_doc, path_append),
-        cmd!("path.close", "Close Path", ["Object", "Paths"], None, "{id}", has_doc, path_close),
+        cmd!(
+            "path.appendAnchor",
+            "Add Anchor",
+            [],
+            None,
+            "{id, anchor: {p, in?, out?} (spread coords), subpath?: index (default the last)} — after the subpath's last anchor",
+            has_doc,
+            path_append
+        ),
+        cmd!(
+            "path.setAnchor",
+            "Set Anchor",
+            [],
+            None,
+            "{id, subpath?: index (default the last), anchor: index|\"first\"|\"last\", p?, in?, out? (spread coords)} — moves an anchor or its direction lines; with both lines given and collinear it becomes smooth",
+            has_doc,
+            path_set_anchor
+        ),
+        cmd!(
+            "path.reverse",
+            "Reverse Path",
+            ["Object", "Paths"],
+            None,
+            "{ids?, subpath?: index (only that subpath of the first target)} — the anchors run the other way (the end point becomes the start)",
+            has_selection,
+            path_reverse
+        ),
+        cmd!("path.close", "Close Path", ["Object", "Paths"], None, "{id, subpath?: index (default every subpath)}", has_doc, path_close),
         cmd!("path.moveAnchors", "Move Anchors", [], None, "{id, anchors: [[subpath, index]], dx, dy, handle?: in|out}", has_doc, path_move_anchors),
         cmd!(
             "object.align",
@@ -1935,11 +1961,20 @@ fn path_create(s: &mut Session, p: &Value) -> Result<Value> {
 fn path_append(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("path.appendAnchor", "missing id"))?;
     let a = p.get("anchor").and_then(anchor_from).ok_or_else(|| bad("path.appendAnchor", "missing anchor"))?;
+    let subpath = p.get("subpath").and_then(Value::as_u64);
     s.edit(|d, _| {
         let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         let inv = (d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default()).inverse();
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
-        let sp = it.path.subpaths.last_mut().ok_or_else(|| bad("path.appendAnchor", "empty path"))?;
+        let sp = match subpath {
+            Some(i) => {
+                usize::try_from(i).ok().and_then(|i| it.path.subpaths.get_mut(i)).ok_or_else(|| bad("path.appendAnchor", "no such subpath"))?
+            }
+            None => it.path.subpaths.last_mut().ok_or_else(|| bad("path.appendAnchor", "empty path"))?,
+        };
+        if sp.closed {
+            return Err(bad("path.appendAnchor", "the subpath is closed"));
+        }
         sp.anchors.push(a.transform(inv));
         if it.shape == Shape::GraphicLine {
             it.shape = Shape::Path;
@@ -1948,12 +1983,103 @@ fn path_append(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+fn path_set_anchor(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "path.setAnchor";
+    let id = super::id_param(p, "id").ok_or_else(|| bad(ID, "missing id"))?;
+    let pt = |k: &str| -> Option<Point> {
+        let a = p.get(k)?.as_array()?;
+        let q = Point::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?);
+        (q.x.is_finite() && q.y.is_finite()).then_some(q)
+    };
+    let (new_p, new_in, new_out) = (pt("p"), pt("in"), pt("out"));
+    if new_p.is_none() && new_in.is_none() && new_out.is_none() {
+        return Err(bad(ID, "give p, in or out"));
+    }
+    let subpath = p.get("subpath").and_then(Value::as_u64);
+    let which = p.get("anchor").cloned().unwrap_or(Value::Null);
+    s.edit(|d, _| {
+        let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
+        let inv = (d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default()).inverse();
+        let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
+        if it.locked {
+            return Err(bad(ID, "the path is locked"));
+        }
+        let sp = match subpath {
+            Some(i) => usize::try_from(i).ok().and_then(|i| it.path.subpaths.get_mut(i)),
+            None => it.path.subpaths.last_mut(),
+        }
+        .ok_or_else(|| bad(ID, "no such subpath"))?;
+        let n = sp.anchors.len();
+        let ai = match &which {
+            Value::String(w) if w == "first" => 0,
+            Value::String(w) if w == "last" => n.saturating_sub(1),
+            v => v.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(ID, "anchor: an index, \"first\" or \"last\""))?,
+        };
+        let a = sp.anchors.get_mut(ai).ok_or_else(|| bad(ID, "no such anchor"))?;
+        if let Some(q) = new_p {
+            let v = inv * q - a.p;
+            a.p += v;
+            a.h_in += v;
+            a.h_out += v;
+        }
+        if let Some(q) = new_in {
+            a.h_in = inv * q;
+        }
+        if let Some(q) = new_out {
+            a.h_out = inv * q;
+        }
+        if new_in.is_some() && new_out.is_some() {
+            let (i, o) = (a.h_in - a.p, a.h_out - a.p);
+            let collinear = (i.x * o.y - i.y * o.x).abs() <= 1e-6 * i.hypot().max(1.0) * o.hypot().max(1.0) && i.dot(o) <= 0.0;
+            a.kind = if collinear { designcraft_geom::AnchorKind::Smooth } else { designcraft_geom::AnchorKind::Corner };
+        }
+        ok()
+    })
+}
+
+fn path_reverse(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = targets(s, p)?;
+    let only = p.get("subpath").and_then(Value::as_u64).map(|i| usize::try_from(i).unwrap_or(usize::MAX));
+    if let (Some(i), Some(id)) = (only, ids.first())
+        && s.doc()?.doc.item(*id).is_none_or(|it| it.path.subpaths.get(i).is_none())
+    {
+        return Err(bad("path.reverse", "no such subpath"));
+    }
+    let ids = if only.is_some() { ids.into_iter().take(1).collect() } else { ids };
+    s.edit(|d, _| {
+        let mut reversed = 0;
+        for id in &ids {
+            let Some(it) = d.item_mut(*id) else { continue };
+            if it.locked || it.is_group() {
+                continue;
+            }
+            for (i, sp) in it.path.subpaths.iter_mut().enumerate() {
+                if only.is_some_and(|o| o != i) {
+                    continue;
+                }
+                sp.anchors.reverse();
+                for a in &mut sp.anchors {
+                    std::mem::swap(&mut a.h_in, &mut a.h_out);
+                }
+            }
+            reversed += 1;
+        }
+        Ok(json!({"reversed": reversed}))
+    })
+}
+
 fn path_close(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("path.close", "missing id"))?;
+    let only = p.get("subpath").and_then(Value::as_u64).map(|i| usize::try_from(i).unwrap_or(usize::MAX));
     s.edit(|d, _| {
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
-        for sp in &mut it.path.subpaths {
-            sp.closed = true;
+        if only.is_some_and(|i| i >= it.path.subpaths.len()) {
+            return Err(bad("path.close", "no such subpath"));
+        }
+        for (i, sp) in it.path.subpaths.iter_mut().enumerate() {
+            if only.is_none_or(|o| o == i) {
+                sp.closed = true;
+            }
         }
         if it.shape == Shape::GraphicLine {
             it.shape = Shape::Path;
@@ -2811,5 +2937,63 @@ mod swatch_name_tests {
             s.execute("object.fill", &json!({"swatch": sw, "ids": [id]})).unwrap();
             s.execute("object.stroke", &json!({"swatch": sw, "ids": [id]})).unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod path_edit_tests {
+    use designcraft_doc::ItemId;
+    use designcraft_geom::Point;
+    use serde_json::json;
+
+    fn session_with_path() -> (crate::Session, u64) {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s
+            .execute(
+                "path.create",
+                &json!({"anchors": [{"p": [100, 100]}, {"p": [200, 100], "in": [170, 80], "out": [230, 120]}, {"p": [300, 200]}]}),
+            )
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        (s, id)
+    }
+
+    fn anchors(s: &crate::Session, id: u64) -> Vec<designcraft_geom::Anchor> {
+        let d = &s.doc().unwrap().doc;
+        let it = d.item(ItemId(id)).unwrap();
+        let xf = d.parent_xf(&d.find(ItemId(id)).unwrap()) * it.xf;
+        it.path.subpaths[0].anchors.iter().map(|a| a.transform(xf)).collect()
+    }
+
+    #[test]
+    fn reverse_path_swaps_ends_and_direction_lines() {
+        let (mut s, id) = session_with_path();
+        s.execute("path.reverse", &json!({"ids": [id]})).unwrap();
+        let a = anchors(&s, id);
+        assert_eq!(a.iter().map(|a| a.p).collect::<Vec<_>>(), [Point::new(300.0, 200.0), Point::new(200.0, 100.0), Point::new(100.0, 100.0)]);
+        assert_eq!((a[1].h_in, a[1].h_out), (Point::new(230.0, 120.0), Point::new(170.0, 80.0)));
+        assert!(s.execute("path.reverse", &json!({"ids": [id], "subpath": 3})).is_err());
+    }
+
+    #[test]
+    fn anchors_go_on_the_named_open_subpath_and_set_anchor_reshapes_one() {
+        let (mut s, id) = session_with_path();
+        s.execute("path.appendAnchor", &json!({"id": id, "subpath": 0, "anchor": {"p": [400, 250]}})).unwrap();
+        assert_eq!(anchors(&s, id).last().unwrap().p, Point::new(400.0, 250.0));
+        assert!(s.execute("path.appendAnchor", &json!({"id": id, "subpath": 1, "anchor": {"p": [0, 0]}})).is_err());
+        // Direction lines on the last anchor: collinear and opposite make it smooth.
+        s.execute("path.setAnchor", &json!({"id": id, "anchor": "last", "in": [380, 230], "out": [420, 270]})).unwrap();
+        let last = *anchors(&s, id).last().unwrap();
+        assert_eq!((last.h_in, last.h_out, last.kind), (Point::new(380.0, 230.0), Point::new(420.0, 270.0), designcraft_geom::AnchorKind::Smooth));
+        s.execute("path.setAnchor", &json!({"id": id, "anchor": 0, "p": [90, 110]})).unwrap();
+        assert_eq!(anchors(&s, id)[0].p, Point::new(90.0, 110.0));
+        assert!(s.execute("path.setAnchor", &json!({"id": id, "anchor": 9, "p": [0, 0]})).is_err());
+        assert!(s.execute("path.setAnchor", &json!({"id": id, "anchor": "last"})).is_err(), "nothing to set");
+        // Closing one subpath; then it takes no more anchors.
+        s.execute("path.close", &json!({"id": id, "subpath": 0})).unwrap();
+        assert!(s.execute("path.appendAnchor", &json!({"id": id, "anchor": {"p": [0, 0]}})).is_err());
+        assert!(s.execute("path.close", &json!({"id": id, "subpath": 4})).is_err());
     }
 }
