@@ -13,6 +13,7 @@
 
 mod control_server;
 mod gpu;
+mod gpu_limits;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -258,6 +259,9 @@ fn main() -> eframe::Result {
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
+    // The adapter's largest texture side instead of eframe's 8192, so a window across several
+    // monitors keeps its surface (see `gpu_limits`).
+    gpu_limits::request_adapter_texture_size(&mut options);
     // The graphics backend, decided before the window exists: a driver that faults takes the
     // process down before any Rust code can catch it (see `gpu`).
     let gpu = gpu::Startup::begin(if no_prefs() { None } else { profile::config_dir().map(|d| d.join(gpu::FILE)) }, env!("CARGO_PKG_VERSION"));
@@ -282,6 +286,7 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let mut gpu = gpu;
             if let Some(rs) = &cc.wgpu_render_state {
+                gpu_limits::log_uncaptured_errors(&rs.device);
                 // What a bug report needs to know about the graphics driver.
                 let info = rs.adapter.get_info();
                 log::info!("graphics: {} on {:?} ({:?}; driver {} {})", info.name, info.backend, info.device_type, info.driver, info.driver_info);

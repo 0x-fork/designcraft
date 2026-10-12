@@ -1,6 +1,6 @@
 # Hardware and platform parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shared print spooler; Windows CI passes) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** trivial (Windows mixed-DPI drag and windows wider than 8192 px don't crash) · **Target:** Adobe InDesign 2026 (21.6)
 
 What InDesign does with hardware, per platform, against DesignCraft. Layout is not a
 GPU-hungry workload, so this dimension carries little weight, but a start that fails on a
@@ -16,9 +16,9 @@ graphics driver loses the user entirely. Overall numbers: [target-app-parity.md]
 | Start-up on any GPU | robust | Metal device lost on Intel Macs (#334) | AMD OpenGL crash (#167), launch failures (#273) | some reports (#192, #220) | |
 | Backend fallback | n/a | `gpu.json` skips a backend whose start never showed a frame (#297) | same | same | |
 | Animated / scrubby zoom | ✓ (GPU) | ✓ (CPU tiles, damage regions) | ✓ | ✓ | ✓ |
-| HiDPI / Retina | ✓ | ✓ | ✓ | ✓ | ✓ |
+| HiDPI / Retina | ✓ | ✓ | ✓ (drags across monitors with different scales keep the window's size: winit pinned to the rust-windowing/winit#4694 backport) | ✓ | ✓ |
 | UI scaling | ✓ | ✓ (menus and dialogs usable at larger scales, #281) | ✓ | ✓ | ✓ |
-| Multi-monitor, floating document windows | ✓ | ~ one window; New Window for the same document | ~ | ~ | ✗ |
+| Multi-monitor, floating document windows | ✓ | ~ one window; New Window for the same document; the window may span monitors up to the GPU's largest texture (16384 px on DirectX 12, Vulkan and Metal hardware), and beyond it draws wrongly instead of closing | ~ | ~ | ✗ |
 | Printing | system print with PPDs, PostScript, separations | PDF to CUPS (`craft-print`) | Windows PDF raster spooler (`craft-print`) | PDF to CUPS (`craft-print`) | browser download |
 | Colour-managed display (monitor profile) | ✓ | ✗ (working CMYK profile simulated; monitor profile not applied) | ✗ | ✗ | ✗ |
 | Touch / pen | Touch workspace (Windows), gestures | trackpad pinch/scroll | ~ | ~ | ~ |
@@ -53,6 +53,7 @@ the developers don't use daily.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | trivial | Windows: dragging across monitors with different display scales doesn't grow the window and crash (winit pinned to the rust-windowing/winit#4694 backport); a window wider or taller than 8192 px keeps its surface, and a wgpu error logs instead of closing the app |
 | 2026-10-10 | major | Created from the code, InDesign 2026's GPU Performance features and the issue tracker |
 
 Windows submission now uses shared craft-print. It selects matching or default driver paper,
