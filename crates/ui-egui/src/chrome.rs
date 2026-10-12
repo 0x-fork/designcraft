@@ -843,6 +843,20 @@ mod tests {
         assert_eq!(after, before);
     }
 
+    /// At 115% the app bar fits a wide window exactly: it must not scroll sideways by a rounding error.
+    #[test]
+    fn the_app_bar_does_not_scroll_at_115_percent() {
+        let w = 1400.0;
+        let mut h = test_window::open_scaled(app(), vec2(w, 900.0), 1.15);
+        assert_eq!(h.ctx.pixels_per_point(), 1.15);
+        let before = [rect(&h, "Help"), rect(&h, "Share")];
+        assert!(before.iter().all(|r| r.max.x <= w), "{before:?}");
+        wheel(&mut h, before[0].center(), vec2(0.0, -3000.0));
+        wheel(&mut h, before[0].center(), vec2(-3000.0, 0.0));
+        let after = [rect(&h, "Help"), rect(&h, "Share")];
+        assert_eq!(after, before, "the app bar scrolled sideways although everything fits");
+    }
+
     #[test]
     fn a_scrolled_bar_keeps_its_captions_on_one_line() {
         let mut app = app();
