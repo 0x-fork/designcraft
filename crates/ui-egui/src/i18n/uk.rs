@@ -29,6 +29,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Вирізати"),
     ("Copy", "Копіювати"),
     ("Paste", "Вставити"),
+    ("Paste Vector Art", "Вставити векторну графіку"),
     ("Clear", "Очистити"),
     ("Duplicate", "Дублювати"),
     ("Select All", "Виділити все"),

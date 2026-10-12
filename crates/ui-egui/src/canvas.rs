@@ -2958,6 +2958,49 @@ mod tests {
         assert_eq!(h.state().session.doc().unwrap().doc.item(id).unwrap().bounds(), original);
     }
 
+    const ART: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50" width="100pt" height="50pt"><path d="M0,0 C30,0 70,50 100,50" fill="none" stroke="#000" stroke-width="2"/></svg>"##;
+
+    #[test]
+    fn pasting_svg_from_another_app_places_editable_paths_in_the_middle_of_the_view() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let mut h = harness(app);
+        h.run_steps(2);
+        let undo = h.state().session.doc().unwrap().history.undo.len();
+        h.event(egui::Event::Paste(ART.into()));
+        h.run_steps(2);
+        let app = h.state();
+        let st = app.session.doc().unwrap();
+        assert_eq!(st.history.undo.len(), undo + 1, "one undo step");
+        let id = *st.selection.items.first().expect("the pasted path is selected");
+        let it = st.doc.item(id).unwrap();
+        assert_eq!(it.shape, designcraft_doc::Shape::Path);
+        assert_eq!(it.path.subpaths[0].anchors.len(), 2);
+        assert!((it.stroke.weight - 2.0).abs() < 1e-9);
+        // Centred where text from another app would go: the middle of the view.
+        let (_, centre) = view_centre(app).unwrap();
+        assert!((it.bounds().center() - centre).hypot() < 0.01, "{:?} vs {centre:?}", it.bounds());
+    }
+
+    #[test]
+    fn edit_paste_from_the_menu_pastes_svg_on_the_system_clipboard_as_paths() {
+        let services = crate::Services { clipboard_text: Some(Box::new(|| Some(ART.to_string()))), ..Default::default() };
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), services);
+        app.native_menu = true;
+        app.run("file.new", json!({})).unwrap();
+        crate::menus::activate(&mut app, "edit.paste", &Value::Null);
+        let st = app.session.doc().unwrap();
+        let id = *st.selection.items.first().expect("the pasted path is selected");
+        assert_eq!(st.doc.item(id).unwrap().shape, designcraft_doc::Shape::Path);
+        assert!(st.selection.text.is_none(), "paths, not a text frame of markup");
+        // With an insertion point, the markup is text like any other.
+        let story = app.run("frame.create", json!({"rect": [10, 10, 300, 300], "content": "text"})).unwrap()["story"].clone();
+        app.run("text.select", json!({"story": story, "anchor": 0, "focus": 0})).unwrap();
+        let items = app.session.doc().unwrap().doc.spreads[0].items.len();
+        crate::menus::activate(&mut app, "edit.paste", &Value::Null);
+        assert_eq!(app.session.doc().unwrap().doc.spreads[0].items.len(), items, "no paths added");
+    }
+
     #[test]
     fn right_clicking_a_ruler_sets_that_rulers_units() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
