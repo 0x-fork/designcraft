@@ -25,7 +25,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path}", has_doc, file_save),
         cmd!(noundo "file.saveACopy", "Save a Copy…", ["File"], None, "{path} — writes the document without changing which file it is or its unsaved state", has_doc, |s, p| {
             let path = str_param(p, "path").ok_or_else(|| bad("file.saveACopy", "missing `path`"))?.to_string();
-            let bytes = to_bytes(&s.doc()?.doc);
+            let mut copy = (*s.doc()?.doc).clone();
+            super::datamerge::refresh_relative_paths(&mut copy, std::path::Path::new(&path));
+            let bytes = to_bytes(&copy);
             #[cfg(not(target_arch = "wasm32"))]
             crate::atomic::write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -37,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!(noundo "file.recovery.save", "Save Recovery Data", [], None, "{dir?} — write every unsaved document to the recovery folder (the app does this on a timer)", always, |s, p| {
             let dir = recovery_dir(s, p)?;
-            Ok(json!({"saved": crate::recovery::save(s, &dir)?}))
+            Ok(json!({"saved": crate::recovery::save_tracked(s, &dir)?}))
         }),
         cmd!(noundo "file.recovery.open", "Recover Documents", [], None, "{dir?} — reopen documents left in the recovery folder (unsaved)", always, |s, p| {
             let dir = recovery_dir(s, p)?;
@@ -237,24 +239,26 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
         .map(str::to_string)
         .or_else(|| st.path.clone())
         .ok_or_else(|| bad("file.save", "missing `path` (document has never been saved)"))?;
-    {
-        let mut d = (*st.doc).clone();
-        super::datamerge::refresh_relative_paths(&mut d, std::path::Path::new(&path));
-        if d.data_merge != st.doc.data_merge {
-            st.doc = Arc::new(d);
-            st.revision = st.revision.saturating_add(1);
-        }
-    }
-    let bytes = to_bytes(&st.doc);
+    // Prepare paths for the destination without changing the live document until persistence succeeds.
+    let mut saved = (*st.doc).clone();
+    super::datamerge::refresh_relative_paths(&mut saved, std::path::Path::new(&path));
+    let paths_changed = saved.data_merge != st.doc.data_merge;
+    let saved = if paths_changed { Arc::new(saved) } else { st.doc.clone() };
+    let bytes = to_bytes(&saved);
     #[cfg(not(target_arch = "wasm32"))]
     crate::atomic::write_file(&path, &bytes)?;
+    if paths_changed {
+        st.doc = saved;
+        st.revision = st.revision.saturating_add(1);
+    }
     st.path = Some(path.clone());
     st.saved_revision = st.revision;
     st.saved_doc = st.doc.clone();
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(dir) = &s.recovery_dir {
-        let uid = s.doc()?.uid;
-        crate::recovery::discard(dir, uid);
+    {
+        let recovery_dir = s.recovery_dir.clone();
+        let index = s.active_index().ok_or(EngineError::NoDocument)?;
+        crate::recovery::discard_document(s, index, recovery_dir.as_deref());
     }
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
@@ -643,15 +647,14 @@ fn file_revert(s: &mut Session, _: &Value) -> Result<Value> {
         // As opened again: the fonts beside it now (unchanged files are shared, not read again).
         let (fonts, _, _) = load_document_fonts(&mut d, &path);
         let uid = s.doc()?.uid;
-        let st = s.doc_mut()?;
+        let recovery_dir = s.recovery_dir.clone();
+        let index = s.active_index().ok_or(EngineError::NoDocument)?;
         let mut fresh = DocState::new(d, Some(path.clone()));
         fresh.fonts = fonts;
         fresh.uid = uid;
-        fresh.revision = st.revision + 1;
-        *st = fresh;
-        if let Some(dir) = &s.recovery_dir {
-            crate::recovery::discard(dir, uid);
-        }
+        fresh.revision = s.doc()?.revision + 1;
+        crate::recovery::discard_document(s, index, recovery_dir.as_deref());
+        *s.doc_mut()? = fresh;
         Ok(json!({"path": path}))
     }
     #[cfg(target_arch = "wasm32")]
