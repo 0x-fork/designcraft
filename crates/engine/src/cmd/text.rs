@@ -1168,6 +1168,10 @@ fn link_style(s: &mut Session, p: &Value, bold: bool) -> Result<Value> {
                 });
             }
         }
+        // No undo step for nothing.
+        if changed == 0 {
+            return Err(bad(id, "nothing to change"));
+        }
         ok()
     });
     r?;
@@ -1586,6 +1590,11 @@ mod style_link_tests {
         s.execute("type.bold", &json!({})).unwrap();
         assert_eq!(style_at(&mut s, 0), "Italic");
         assert_eq!(style_at(&mut s, 7), "Regular");
+        // Nothing to change: an error and no undo step.
+        s.execute("text.select", &json!({"story": sid, "anchor": 6, "focus": 11})).unwrap();
+        let steps = s.doc().unwrap().history.undo.len();
+        assert!(s.execute("type.bold", &json!({"on": false})).is_err());
+        assert_eq!(s.doc().unwrap().history.undo.len(), steps);
         // At a caret the style is for what is typed next.
         let end = "plain words here".len();
         s.execute("text.select", &json!({"story": sid, "anchor": end, "focus": end})).unwrap();
