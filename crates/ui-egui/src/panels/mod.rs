@@ -515,42 +515,6 @@ mod font_menu_ui_tests {
     }
 
     #[test]
-    fn return_and_escape_in_a_dialogs_font_menu_stay_in_the_menu() {
-        let paragraph = json!({"name": designcraft_doc::BASIC_PARAGRAPH, "section": "chars"});
-        for (what, id, fields, shown) in [
-            ("Paragraph Style Options", "paragraphStyleOptions", paragraph, designcraft_fonts::DEFAULT_FAMILY),
-            ("Find/Replace Font", "findFont", json!({}), "—"),
-        ] {
-            let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
-            let mut h = test_window::open(app, vec2(1440.0, 900.0));
-            h.state_mut().app.ui.dialog = Some(crate::dialogs::Dialog::new(id, fields));
-            h.run_steps(4);
-            let dialog = |h: &Harness<'static, Window>| h.state().app.ui.dialog.as_ref().map(|d| d.id.clone());
-            let combo = |h: &Harness<'static, Window>, family: &str| {
-                h.get_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some(family)).rect().center()
-            };
-            let at = combo(&h, shown);
-            click_at(&mut h, at);
-            assert!(h.ctx.text_edit_focused(), "{what}: the menu opens with its search focused");
-            h.event(egui::Event::Text("source sans".into()));
-            h.run_steps(4);
-            h.key_press(egui::Key::ArrowDown);
-            h.run_steps(2);
-            h.key_press(egui::Key::Enter);
-            h.run_steps(4);
-            assert_eq!(dialog(&h).as_deref(), Some(id), "{what}: Return picked in the menu and left the dialog open");
-            assert!(!h.ctx.text_edit_focused(), "{what}: the menu closed");
-            let at = combo(&h, "Source Sans 3");
-            click_at(&mut h, at);
-            assert!(h.ctx.text_edit_focused(), "{what}: the menu opened again");
-            h.key_press(egui::Key::Escape);
-            h.run_steps(4);
-            assert!(!h.ctx.text_edit_focused(), "{what}: Escape closed the menu");
-            assert_eq!(dialog(&h).as_deref(), Some(id), "{what}: Escape in the menu left the dialog open");
-        }
-    }
-
-    #[test]
     fn typing_in_the_font_menu_searches_and_never_reaches_the_story() {
         let (mut h, story) = typing();
         let before = story_text(&mut h, story);

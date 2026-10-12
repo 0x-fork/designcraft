@@ -226,14 +226,49 @@ fn preview(
     let ppp = ui.ctx().pixels_per_point();
     let px = (size * ppp).round() as u32;
     let key = egui::Id::new(("font_preview", family, style, scope, text, px, color.to_array()));
-    if let Some(t) = ui.data(|d| d.get_temp::<egui::TextureHandle>(key)) {
+    let cache_id = egui::Id::new("font_previews");
+    if let Some(t) = ui.data_mut(|d| d.get_temp_mut_or_default::<Previews>(cache_id).get(key)) {
         return t;
     }
     let img = designcraft_render::glyphs::text_line(fonts, family, style, text, px, color.to_array());
     let ci = egui::ColorImage::from_rgba_premultiplied([img.width as usize, img.height as usize], &img.pixels);
     let t = ui.ctx().load_texture(format!("font_preview_{family}_{style}"), ci, egui::TextureOptions::LINEAR);
-    ui.data_mut(|d| d.insert_temp(key, t.clone()));
+    ui.data_mut(|d| d.get_temp_mut_or_default::<Previews>(cache_id).insert(key, t.clone()));
     t
+}
+
+/// Font menu previews kept for reuse, at most [`Previews::CAP`]: each sample text, size and colour
+/// renders new ones, so the oldest are let go (their textures freed) as new ones come in.
+#[derive(Clone, Default)]
+struct Previews {
+    map: std::collections::HashMap<egui::Id, egui::TextureHandle>,
+    order: std::collections::VecDeque<egui::Id>,
+}
+
+impl Previews {
+    /// About two screens of rows in each of two sample sizes.
+    const CAP: usize = 256;
+
+    fn get(&mut self, key: egui::Id) -> Option<egui::TextureHandle> {
+        let t = self.map.get(&key).cloned()?;
+        // Most recently used last.
+        if let Some(i) = self.order.iter().position(|k| *k == key) {
+            self.order.remove(i);
+        }
+        self.order.push_back(key);
+        Some(t)
+    }
+
+    fn insert(&mut self, key: egui::Id, t: egui::TextureHandle) {
+        if self.map.insert(key, t).is_none() {
+            self.order.push_back(key);
+        }
+        while self.order.len() > Self::CAP {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+    }
 }
 
 /// A small toggle in the filter row (an icon), with its tooltip.
@@ -389,10 +424,18 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
     let mut loading = false;
     if filtered {
         let shared = kinds(ui.ctx(), &fonts, scope);
-        let k = lock(&shared);
+        let mut k = lock(&shared);
         loading = !k.done;
-        // A family the read didn't list (just activated) is read here, once the read is done.
-        let kind = |f: &str| k.of.get(f).copied().or_else(|| k.done.then(|| family_kind(&fonts, f)));
+        // A family the read didn't list (installed or activated since) is read here once, after the
+        // read is done, and kept.
+        if k.done {
+            let missing: Vec<String> = families.iter().filter(|f| !k.of.contains_key(&f.family)).map(|f| f.family.clone()).collect();
+            for f in missing {
+                let v = family_kind(&fonts, &f);
+                k.of.insert(f, v);
+            }
+        }
+        let kind = |f: &str| k.of.get(f).copied();
         families.retain(|f| kind(&f.family).is_some_and(|(kind, added)| st.class.is_none_or(|c| kind.class == c) && (!st.only_recent || added)));
         if let Some(like) = &st.similar {
             let base = meta(ui, &fonts, scope, like).kind;
@@ -619,4 +662,25 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut Ui, menu: &[FamilyInfo], cur
         ui.close();
     }
     pick
+}
+
+#[cfg(test)]
+mod preview_cache_tests {
+    use super::Previews;
+
+    #[test]
+    fn the_preview_cache_keeps_at_most_its_cap_and_drops_the_oldest() {
+        let ctx = egui::Context::default();
+        let tex = |i: usize| ctx.load_texture(format!("t{i}"), egui::ColorImage::new([1, 1], vec![egui::Color32::WHITE]), Default::default());
+        let mut c = Previews::default();
+        let key = |i: usize| egui::Id::new(("p", i));
+        for i in 0..Previews::CAP + 40 {
+            c.insert(key(i), tex(i));
+            // The first one stays in use, so it is kept.
+            assert!(c.get(key(0)).is_some(), "{i}");
+        }
+        assert_eq!((c.map.len(), c.order.len()), (Previews::CAP, Previews::CAP));
+        assert!(c.get(key(1)).is_none(), "the oldest unused one was let go");
+        assert!(c.get(key(Previews::CAP + 39)).is_some());
+    }
 }
