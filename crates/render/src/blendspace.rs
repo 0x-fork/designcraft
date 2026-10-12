@@ -1,116 +1,234 @@
-//! A CMYK transparency blend space on screen (Edit › Transparency Blend Space).
+//! CMYK transparency using two passes of the ordinary scene renderer.
 //!
-//! InDesign blends a print document's transparency in CMYK: a blend mode works on each ink. So
-//! Color Dodge with 100% K text turns what's under it to paper white where it has colour (black's
-//! cyan, magenta and yellow are 0, their complements 1), while in RGB dodging with black changes
-//! nothing. vello blends in RGB, so a spread whose top-level objects use separable blend modes is
-//! composited here instead:
-//! - the objects below each blended object are rendered on their own (without paper: blend modes
-//!   don't blend with the paper);
-//! - the blended object is rendered alone with its own inks (the plate renders, so [Black] stays
-//!   0/0/0/100), and blended with the backdrop pixel by pixel in the working CMYK (the backdrop
-//!   separated through the colour settings);
-//! - the objects above are laid on top, and the result on the paper.
+//! Separable PDF blend functions operate on the complements of the four inks. Render C/M/Y
+//! complements into RGB and K into a second raster, keeping the existing transparency groups,
+//! masks, parent-page placement and effects. Convert the final inks to sRGB once, then put the
+//! transparent result over paper. Work is independent of the number of blended objects.
 //!
-//! PDF export needs none of this: the page group's CMYK blend space does it in the viewer.
+//! Nonseparable modes need a four-channel implementation: a spread containing one keeps the
+//! existing RGB/proof approximation instead of applying RGB Hue/Color formulas to CMY channels.
 
+use crate::{Frame, Placed, RenderOptions, Rendered, Renderer};
 use designcraft_color::BlendMode as DcBlend;
-use designcraft_compose::Cache;
-use designcraft_doc::{Document, ItemId, SpreadRef};
+use designcraft_doc::{Document, Item, SpreadRef};
 use designcraft_geom::{Affine, Rect};
+use vello_cpu::{RenderContext, peniko};
 
-use crate::{Placed, RenderOptions, Renderer};
-
-/// Blend modes that blend channel by channel (Hue, Saturation, Color and Luminosity don't).
-pub(crate) fn separable(b: DcBlend) -> bool {
-    !matches!(b, DcBlend::Normal | DcBlend::Hue | DcBlend::Saturation | DcBlend::Color | DcBlend::Luminosity)
+/// At most one viewport, capped at 64 MiB. The snapshot shares the document's large Arcs;
+/// comparisons use their identity without scanning text or image bytes. Keeping it prevents address reuse.
+/// All document fields, colour settings and options participate, including parent pages,
+/// stories, assets, layer visibility and font scope. `clear_caches` releases it too.
+pub(crate) struct CachedView {
+    doc: Document,
+    settings: designcraft_color::cms::ColorSettings,
+    opts: RenderOptions,
+    spreads: Vec<Placed>,
+    view: Affine,
+    image: Rendered,
+    stats: crate::FrameStats,
+    threads: u16,
+}
+impl CachedView {
+    pub(crate) const MAX_BYTES: usize = 64 << 20;
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn matches(
+        &self,
+        doc: &Document,
+        spreads: &[Placed],
+        width: u32,
+        height: u32,
+        view: Affine,
+        opts: &RenderOptions,
+        threads: u16,
+    ) -> bool {
+        self.image.width == width.clamp(1, crate::MAX_SIDE)
+            && self.image.height == height.clamp(1, crate::MAX_SIDE)
+            && self.view == view
+            && self.opts == *opts
+            && self.spreads == spreads
+            && self.threads == threads
+            && self.settings == designcraft_color::cms::active_settings()
+            && same_document(&self.doc, doc)
+    }
+    pub(crate) fn image(&self) -> Rendered {
+        self.image.clone()
+    }
+    pub(crate) fn stats(&self) -> crate::FrameStats {
+        self.stats
+    }
+    pub(crate) fn new(
+        doc: &Document,
+        spreads: &[Placed],
+        view: Affine,
+        opts: &RenderOptions,
+        image: &Rendered,
+        stats: crate::FrameStats,
+        threads: u16,
+    ) -> Self {
+        Self {
+            doc: doc.clone(),
+            settings: designcraft_color::cms::active_settings(),
+            opts: opts.clone(),
+            spreads: spreads.to_vec(),
+            view,
+            image: image.clone(),
+            stats,
+            threads,
+        }
+    }
+}
+/// Compare every field, but keep large immutable data on an identity-only path. Exhaustive
+/// destructuring makes a new document field require an explicit cache invalidation decision.
+fn same_document(old: &Document, new: &Document) -> bool {
+    let Document {
+        spreads,
+        parents,
+        stories,
+        styles,
+        assets,
+        title,
+        settings,
+        layers,
+        swatches,
+        color_groups,
+        xml,
+        articles,
+        stroke_styles,
+        inks,
+        endnote_options,
+        endnote_story,
+        conditions,
+        sections,
+        hyperlinks,
+        data_merge,
+        bookmarks,
+        user_words,
+        hyphenation_exceptions,
+        toc,
+        text_variables,
+        footnote_options,
+        xref_formats,
+        index,
+        created,
+        modified,
+        next_id,
+        font_scope,
+    } = new;
+    let same_spreads = |a: &[std::sync::Arc<designcraft_doc::Spread>], b: &[std::sync::Arc<designcraft_doc::Spread>]| {
+        a.len() == b.len() && a.iter().zip(b).all(|(a, b)| std::sync::Arc::ptr_eq(a, b))
+    };
+    same_spreads(&old.spreads, spreads)
+        && same_spreads(&old.parents, parents)
+        && std::sync::Arc::ptr_eq(&old.styles, styles)
+        && old.stories.len() == stories.len()
+        && old.stories.iter().zip(stories).all(|((a, x), (b, y))| a == b && std::sync::Arc::ptr_eq(x, y))
+        && old.assets.len() == assets.len()
+        && old.assets.iter().zip(assets).all(|((a, x), (b, y))| a == b && std::sync::Arc::ptr_eq(x, y))
+        && old.title == *title
+        && old.settings == *settings
+        && old.layers == *layers
+        && old.swatches == *swatches
+        && old.color_groups == *color_groups
+        && old.xml == *xml
+        && old.articles == *articles
+        && old.stroke_styles == *stroke_styles
+        && old.inks == *inks
+        && old.endnote_options == *endnote_options
+        && old.endnote_story == *endnote_story
+        && old.conditions == *conditions
+        && old.sections == *sections
+        && old.hyperlinks == *hyperlinks
+        && old.data_merge == *data_merge
+        && old.bookmarks == *bookmarks
+        && old.user_words == *user_words
+        && old.hyphenation_exceptions == *hyphenation_exceptions
+        && old.toc == *toc
+        && old.text_variables == *text_variables
+        && old.footnote_options == *footnote_options
+        && old.xref_formats == *xref_formats
+        && old.index == *index
+        && old.created == *created
+        && old.modified == *modified
+        && old.next_id == *next_id
+        && old.font_scope == *font_scope
 }
 
-/// Top-level objects of spread `sr` in drawing order (layers back to front, a document spread's
-/// parent items first in each layer, as `Renderer::draw_spread` draws them), each with whether
-/// it blends in CMYK here (a spread object with a separable blend mode).
-fn draw_order(doc: &Document, sr: SpreadRef, opts: &RenderOptions) -> Vec<(ItemId, bool)> {
-    let mut out: Vec<(ItemId, bool)> = Vec::new();
-    let Some(sp) = doc.spread(sr) else { return out };
-    for layer in doc.layers.iter().rev() {
-        if !layer.visible || opts.printing_only && !layer.printable {
-            continue;
+fn supported(mode: DcBlend) -> bool {
+    !matches!(mode, DcBlend::Hue | DcBlend::Saturation | DcBlend::Color | DcBlend::Luminosity)
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pipeline {
+    Rgb,
+    Cmyk,
+    Proof,
+}
+
+/// Whether a visible spread needs, and can use, the ink-channel pipeline.
+pub(crate) fn uses_cmyk(doc: &Document, sr: SpreadRef, opts: &RenderOptions) -> bool {
+    pipeline(doc, sr, opts) == Pipeline::Cmyk
+}
+/// The legacy approximation is retained only for unsupported nonseparable blends.
+pub(crate) fn uses_rgb_proof(doc: &Document, sr: SpreadRef, opts: &RenderOptions) -> bool {
+    pipeline(doc, sr, opts) == Pipeline::Proof
+}
+
+fn pipeline(doc: &Document, sr: SpreadRef, opts: &RenderOptions) -> Pipeline {
+    if !opts.blend_space_view || opts.plate.is_some() || doc.settings.blend_space != designcraft_doc::BlendSpace::Cmyk {
+        return Pipeline::Rgb;
+    }
+    let Some(sp) = doc.spread(sr) else { return Pipeline::Rgb };
+    let mut transparent = false;
+    let mut inspect = |item: &Item| {
+        if !doc.layer(item.layer).is_some_and(|l| l.visible && (!opts.printing_only || l.printable)) {
+            return true;
         }
-        if let SpreadRef::Doc(si) = sr {
-            let first = doc.first_page_of_spread(si);
-            for (pi, page) in sp.pages.iter().enumerate() {
-                if !page.show_parent_items {
+        inspect_item(doc, item, opts, 0, &mut transparent)
+    };
+    for item in &sp.items {
+        if !inspect(item) {
+            return Pipeline::Proof;
+        }
+    }
+    if let SpreadRef::Doc(si) = sr {
+        let first = doc.first_page_of_spread(si);
+        for (pi, page) in sp.pages.iter().enumerate() {
+            if !page.show_parent_items {
+                continue;
+            }
+            let Some((ppi, ppage)) = doc.parent_page_for(first.saturating_add(pi)) else { continue };
+            let Some(parent) = doc.parents.get(ppi) else { continue };
+            for item in &parent.items {
+                if page.overridden.contains(&item.id) || parent.pages.len() > 1 && parent.page_at_x(item.bounds().center().x) != Some(ppage) {
                     continue;
                 }
-                let Some((ppi, _)) = doc.parent_page_for(first + pi) else { continue };
-                let Some(parent) = doc.parents.get(ppi) else { continue };
-                for it in parent.items.iter().filter(|it| it.layer == layer.id && !page.overridden.contains(&it.id)) {
-                    if !out.iter().any(|(id, _)| *id == it.id) {
-                        out.push((it.id, false));
-                    }
+                if !inspect(item) {
+                    return Pipeline::Proof;
                 }
             }
         }
-        for it in sp.items.iter().filter(|it| it.layer == layer.id) {
-            let shown = !(it.hidden || opts.hidden.contains(&it.id) || opts.printing_only && it.nonprinting);
-            out.push((it.id, shown && separable(it.blend)));
-        }
     }
-    out
+    if transparent { Pipeline::Cmyk } else { Pipeline::Rgb }
 }
 
-/// Separable blend function `b` on additive values (backdrop `cb`, source `cs`), as in PDF.
-fn blend(b: DcBlend, cb: f32, cs: f32) -> f32 {
-    let multiply = |a: f32, c: f32| a * c;
-    let screen = |a: f32, c: f32| a + c - a * c;
-    let hard = |cb: f32, cs: f32| if cs <= 0.5 { multiply(cb, 2.0 * cs) } else { screen(cb, 2.0 * cs - 1.0) };
-    match b {
-        DcBlend::Multiply => multiply(cb, cs),
-        DcBlend::Screen => screen(cb, cs),
-        DcBlend::Overlay => hard(cs, cb),
-        DcBlend::HardLight => hard(cb, cs),
-        DcBlend::SoftLight => {
-            if cs <= 0.5 {
-                cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb)
-            } else {
-                let d = if cb <= 0.25 { ((16.0 * cb - 12.0) * cb + 4.0) * cb } else { cb.sqrt() };
-                cb + (2.0 * cs - 1.0) * (d - cb)
-            }
-        }
-        DcBlend::ColorDodge => {
-            if cb <= 0.0 {
-                0.0
-            } else if cs >= 1.0 {
-                1.0
-            } else {
-                (cb / (1.0 - cs)).min(1.0)
-            }
-        }
-        DcBlend::ColorBurn => {
-            if cb >= 1.0 {
-                1.0
-            } else if cs <= 0.0 {
-                0.0
-            } else {
-                1.0 - ((1.0 - cb) / cs).min(1.0)
-            }
-        }
-        DcBlend::Darken => cb.min(cs),
-        DcBlend::Lighten => cb.max(cs),
-        DcBlend::Difference => (cb - cs).abs(),
-        DcBlend::Exclusion => cb + cs - 2.0 * cb * cs,
-        _ => cs,
+/// Bounded traversal with no item-count-sized temporary allocation, including anchored items.
+fn inspect_item(doc: &Document, it: &Item, opts: &RenderOptions, depth: usize, transparent: &mut bool) -> bool {
+    if it.hidden || opts.hidden.contains(&it.id) || opts.printing_only && it.nonprinting {
+        return true;
     }
-}
-
-/// Blend CMYK inks `source` (blend mode `mode`) over `backdrop`: a subtractive space blends the
-/// complements (PDF), so the formulas see light, not ink.
-pub(crate) fn blend_inks(mode: DcBlend, backdrop: [f32; 4], source: [f32; 4]) -> [f32; 4] {
-    let mut out = [0.0; 4];
-    for i in 0..4 {
-        out[i] = 1.0 - blend(mode, 1.0 - backdrop[i], 1.0 - source[i]).clamp(0.0, 1.0);
+    if depth >= 64 || !supported(it.blend) {
+        return false;
     }
-    out
+    *transparent |= it.opacity < 1.0 || it.blend != DcBlend::Normal || it.effects.any() || it.knockout;
+    if let Some(text) = it.text_frame()
+        && let Some(story) = doc.story(text.story)
+    {
+        for object in &story.objects {
+            if !inspect_item(doc, &object.item, opts, depth + 1, transparent) {
+                return false;
+            }
+        }
+    }
+    it.shown_children().all(|child| inspect_item(doc, child, opts, depth + 1, transparent))
 }
 
 const RGB_N: usize = 9;
@@ -161,155 +279,242 @@ fn srgb_in(table: &[[f32; 3]], cmyk: [f32; 4]) -> [f32; 3] {
     out
 }
 
-/// Premultiplied RGBA8 → straight 0..1 colour and alpha.
-fn straight(px: &[u8]) -> ([f32; 3], f32) {
-    let a = px.get(3).copied().unwrap_or(0) as f32 / 255.0;
-    if a <= 0.0 {
-        return ([0.0; 3], 0.0);
-    }
-    let c = |i: usize| (px.get(i).copied().unwrap_or(0) as f32 / 255.0 / a).min(1.0);
-    ([c(0), c(1), c(2)], a)
-}
-
 impl Renderer {
-    /// Composite spread `pl` again in the working CMYK where its top-level objects use separable
-    /// blend modes, over the pages' pixels of `pixels` (`w`×`h`, premultiplied, rendered with
-    /// `view`). Returns whether it did.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn cmyk_blend_spread(
-        &mut self,
-        doc: &Document,
-        cache: &Cache,
-        pl: &Placed,
-        w: u32,
-        h: u32,
-        view: Affine,
-        opts: &RenderOptions,
-        pixels: &mut [u8],
-    ) -> bool {
-        let order = draw_order(doc, pl.spread, opts);
-        if !order.iter().any(|(_, b)| *b) {
-            return false;
-        }
-        let Some(sp) = doc.spread(pl.spread) else { return false };
-        // The pages' device pixels (the pasteboard keeps the RGB result).
-        let area = (view * pl.xf).transform_rect_bbox(sp.bounds()).intersect(Rect::new(0.0, 0.0, w as f64, h as f64));
-        let (x0, y0) = (area.x0.floor().max(0.0) as u32, area.y0.floor().max(0.0) as u32);
-        let (x1, y1) = (area.x1.ceil().min(w as f64) as u32, area.y1.ceil().min(h as f64) as u32);
-        if x1 <= x0 || y1 <= y0 {
-            return false;
-        }
-        let (rw, rh) = (x1 - x0, y1 - y0);
-        let rview = Affine::translate((-(x0 as f64), -(y0 as f64))) * view;
-        let ids: Vec<ItemId> = order.iter().map(|(id, _)| *id).collect();
+    /// Two channel passes across the viewport, including bleed and pasteboard. Paper has
+    /// already been painted in `ctx`; it must never be a blend backdrop.
+    pub(crate) fn draw_cmyk_spread(&mut self, ctx: &mut RenderContext, f: &Frame, sr: SpreadRef) {
+        let (w, h) = (ctx.width(), ctx.height());
         let stats = self.stats;
-        // The spread's objects in `show` only (on paper or not), in a region-sized image.
-        let sub = |me: &mut Renderer, d: &Document, show: &[ItemId], paper: bool, plate: Option<u8>| {
-            let mut o = opts.clone();
-            o.hidden.extend(ids.iter().filter(|i| !show.contains(i)));
-            o.paper = paper;
-            o.page_shadow = paper && opts.page_shadow;
-            o.background = if paper { opts.background } else { None };
-            o.blend_space_view = false;
-            o.plate = plate;
-            me.render(d, cache, std::slice::from_ref(pl), rw, rh, rview, &o).pixels
+        let mut pass = |plate| {
+            let opts =
+                RenderOptions { paper: false, background: None, page_shadow: false, blend_space_view: false, plate: Some(plate), ..f.opts.clone() };
+            crate::PLATE.with(|p| p.set(opts.plate));
+            // Render filter layers directly in both ink passes, keeping their coverage on
+            // the same single-threaded path even when the outer viewport uses render workers.
+            let mut off = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+            self.draw_spread(&mut off, &Frame { opts: &opts, mt: false, ..*f }, sr);
+            off.flush();
+            let mut pm = vello_cpu::Pixmap::new(w, h);
+            off.render(&mut pm, &mut self.resources);
+            #[cfg(test)]
+            {
+                self.cmyk_passes += 1;
+            }
+            pm
         };
-        let first = order.iter().position(|(_, b)| *b).unwrap_or(order.len());
-        let (to_cmyk, to_rgb) = (crate::cmyk_table(), srgb_table());
-        let mut acc = sub(self, doc, ids.get(..first).unwrap_or(&[]), false, None);
-        let blended: Vec<usize> = order.iter().enumerate().filter(|(_, (_, b))| *b).map(|(i, _)| i).collect();
-        for (j, &pos) in blended.iter().enumerate() {
-            let Some(&id) = ids.get(pos) else { continue };
-            let Some(mode) = doc.item(id).map(|it| it.blend) else { continue };
-            // The object alone, its blend mode left to us (opacity and effects stay).
-            let mut alone = doc.clone();
-            if let Some(it) = alone.item_mut(id) {
-                it.blend = DcBlend::Normal;
+        let mut cmy = pass(4);
+        let black = pass(3);
+        crate::PLATE.with(|p| p.set(f.opts.plate));
+        self.stats.items = (self.stats.items - stats.items) / 2 + stats.items;
+        self.stats.glyphs = (self.stats.glyphs - stats.glyphs) / 2 + stats.glyphs;
+        let table = srgb_table();
+        for (c, k) in cmy.data_mut().iter_mut().zip(black.data()) {
+            if c.a == 0 {
+                continue;
             }
-            let rgb = sub(self, &alone, &[id], false, None);
-            let cmy = sub(self, &alone, &[id], false, Some(4));
-            let k = sub(self, &alone, &[id], false, Some(3));
-            for p in (0..acc.len()).step_by(4) {
-                let (Some(s), Some(c), Some(kk)) = (rgb.get(p..p + 4), cmy.get(p..p + 4), k.get(p..p + 4)) else { continue };
-                let (_, sa) = straight(s);
-                if sa <= 0.0 {
-                    continue;
-                }
-                let Some(b) = acc.get(p..p + 4) else { continue };
-                let (brgb, ba) = straight(b);
-                if ba <= 0.0 {
-                    // Nothing below: the object as it is.
-                    acc[p..p + 4].copy_from_slice(s);
-                    continue;
-                }
-                let (cs, ca) = straight(c);
-                let (ks, _) = straight(kk);
-                let source = if ca > 0.0 { [1.0 - cs[0], 1.0 - cs[1], 1.0 - cs[2], 1.0 - ks[0]] } else { crate::cmyk_in(&to_cmyk, straight(s).0) };
-                let backdrop = crate::cmyk_in(&to_cmyk, brgb);
-                let mixed = blend_inks(mode, backdrop, source);
-                // PDF compositing: the blend counts where the backdrop is.
-                let ar = ba + sa - ba * sa;
-                let t = sa / ar;
-                let mut out = [0.0f32; 4];
-                for i in 0..4 {
-                    let m = (1.0 - ba) * source[i] + ba * mixed[i];
-                    out[i] = (1.0 - t) * backdrop[i] + t * m;
-                }
-                let rgb_out = srgb_in(&to_rgb, out);
-                let a8 = (ar * 255.0).round().clamp(0.0, 255.0);
-                for i in 0..3 {
-                    acc[p + i] = (rgb_out[i].clamp(0.0, 1.0) * a8).round() as u8;
-                }
-                acc[p + 3] = a8 as u8;
-            }
-            // The objects up to the next blended one, laid on top.
-            let next = blended.get(j + 1).copied().unwrap_or(ids.len());
-            if let Some(between) = ids.get(pos + 1..next).filter(|b| !b.is_empty()) {
-                let n = sub(self, doc, between, false, None);
-                over(&mut acc, &n);
-            }
+            let a = c.a as f32;
+            let inks = [1.0 - c.r as f32 / a, 1.0 - c.g as f32 / a, 1.0 - c.b as f32 / a, 1.0 - k.r as f32 / a];
+            let rgb = if f.opts.rich_black && inks[0..3].iter().all(|v| *v <= 1e-3) && inks[3] >= 0.999 { [0.0; 3] } else { srgb_in(&table, inks) };
+            let [r, g, b] = rgb.map(|v| (v.clamp(0.0, 1.0) * a).round() as u8);
+            (c.r, c.g, c.b) = (r, g, b);
         }
-        // On the paper (and the canvas background).
-        let mut base = sub(self, doc, &[], opts.paper, None);
-        over(&mut base, &acc);
-        for y in 0..rh {
-            let (src, dst) = (((y * rw) * 4) as usize, (((y0 + y) * w + x0) * 4) as usize);
-            let len = (rw * 4) as usize;
-            if let (Some(s), Some(d)) = (base.get(src..src + len), pixels.get_mut(dst..dst + len)) {
-                d.copy_from_slice(s);
-            }
-        }
-        self.stats = stats;
-        true
-    }
-}
-
-/// `top` over `dst` (premultiplied RGBA8, same size).
-fn over(dst: &mut [u8], top: &[u8]) {
-    for (d, s) in dst.chunks_exact_mut(4).zip(top.chunks_exact(4)) {
-        let inv = 255 - s[3] as u32;
-        for i in 0..4 {
-            d[i] = (s[i] as u32 + (d[i] as u32 * inv + 127) / 255).min(255) as u8;
-        }
+        ctx.set_transform(Affine::IDENTITY);
+        ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(std::sync::Arc::new(cmy)), sampler: peniko::ImageSampler::default() });
+        ctx.fill_rect(&Rect::new(0.0, 0.0, w as f64, h as f64));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use designcraft_compose::Cache;
+    use designcraft_doc::{Content, Fill, ItemId, Shape, build::NewDocument};
+    use std::sync::Arc;
+
+    fn document() -> Document {
+        let mut doc = Document::new(&NewDocument { width: 160.0, height: 120.0, facing_pages: false, ..Default::default() });
+        doc.swatches.push(designcraft_color::swatch::Swatch::color("Lilac", designcraft_color::Color::rgb8(171, 154, 227)));
+        doc
+    }
+    fn rectangle(doc: &mut Document, sr: SpreadRef, rect: Rect, fill: &str, blend: DcBlend) -> ItemId {
+        let id = ItemId(doc.alloc());
+        let mut item = Item::new(id, doc.default_layer(), Shape::Rectangle, designcraft_geom::shapes::rectangle(rect));
+        item.fill = Fill::swatch(fill);
+        item.blend = blend;
+        doc.insert_item(sr, item, None).unwrap();
+        id
+    }
+    fn draw(doc: &Document, renderer: &mut Renderer) -> Rendered {
+        renderer.render(
+            doc,
+            &Cache::new(),
+            &[Placed { spread: SpreadRef::Doc(0), xf: Affine::IDENTITY }],
+            200,
+            140,
+            Affine::translate((30.0, 10.0)),
+            &RenderOptions { blend_space_view: true, background: Some([180, 180, 180, 255]), ..Default::default() },
+        )
+    }
+    fn dodge(doc: &mut Document, sr: SpreadRef) -> ItemId {
+        rectangle(doc, sr, Rect::new(-25.0, 10.0, 130.0, 70.0), "Lilac", DcBlend::Normal);
+        rectangle(doc, sr, Rect::new(-20.0, 25.0, 100.0, 100.0), designcraft_color::swatch::BLACK, DcBlend::ColorDodge)
+    }
+    fn white(pixel: [u8; 4]) {
+        assert!(pixel[..3].iter().all(|v| *v > 235), "{pixel:?}");
+    }
 
     #[test]
-    fn color_dodge_with_black_whitens_coloured_inks_in_cmyk() {
-        // 100% K over a lilac (C 30 M 35): the inks go, K stays the backdrop's.
-        let r = blend_inks(DcBlend::ColorDodge, [0.3, 0.35, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(r, [0.0, 0.0, 0.0, 0.0]);
-        // Multiply adds inks.
-        let r = blend_inks(DcBlend::Multiply, [0.3, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0]);
-        assert!((r[0] - 0.3).abs() < 1e-6 && (r[1] - 0.5).abs() < 1e-6);
-        // Multiplying by paper changes nothing; screening with 100% K clears the coloured inks too.
-        let near = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
-        assert!(near(blend_inks(DcBlend::Multiply, [0.2, 0.4, 0.6, 0.1], [0.0; 4]), [0.2, 0.4, 0.6, 0.1]));
-        assert!(near(blend_inks(DcBlend::Screen, [0.2, 0.4, 0.6, 0.1], [0.0, 0.0, 0.0, 1.0]), [0.0, 0.0, 0.0, 0.1]));
-        assert!(!separable(DcBlend::Normal) && !separable(DcBlend::Luminosity) && separable(DcBlend::ColorDodge));
+    fn cmyk_nested_blends_match_top_level_blends() {
+        let mut doc = document();
+        let black = dodge(&mut doc, SpreadRef::Doc(0));
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        let reference = draw(&doc, &mut renderer);
+        let child = doc.remove_item(black).unwrap();
+        let mut group = Item::new(ItemId(doc.alloc()), doc.default_layer(), Shape::Group, Default::default());
+        group.content = Content::Group { items: vec![child] };
+        // A second group ensures the preflight and the rendering both follow nesting.
+        let mut outer = Item::new(ItemId(doc.alloc()), doc.default_layer(), Shape::Group, Default::default());
+        outer.content = Content::Group { items: vec![Arc::new(group)] };
+        doc.insert_item(SpreadRef::Doc(0), outer, None).unwrap();
+        let nested = draw(&doc, &mut renderer);
+        white(nested.pixel(70, 50));
+        assert_eq!(nested.pixels, reference.pixels);
+    }
+
+    #[test]
+    fn cmyk_parent_blends_and_overrides_follow_parent_visibility() {
+        let mut doc = document();
+        let black = dodge(&mut doc, SpreadRef::Parent(0));
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        let shown = draw(&doc, &mut renderer);
+        white(shown.pixel(70, 50));
+        Arc::make_mut(&mut doc.spreads[0]).pages[0].overridden.push(black);
+        let overridden = draw(&doc, &mut renderer);
+        assert_ne!(shown.pixel(70, 50), overridden.pixel(70, 50));
+        Arc::make_mut(&mut doc.spreads[0]).pages[0].show_parent_items = false;
+        let hidden = draw(&doc, &mut renderer);
+        assert_eq!(hidden.pixel(70, 50), [255; 4]);
+    }
+
+    #[test]
+    fn cmyk_blending_continues_across_trim_and_keeps_paper_out_of_backdrop() {
+        let mut doc = document();
+        dodge(&mut doc, SpreadRef::Doc(0));
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        let image = draw(&doc, &mut renderer);
+        // x=30 is the left trim. Identical overlap on either side must have identical inks.
+        white(image.pixel(20, 50));
+        assert_eq!(image.pixel(20, 50), image.pixel(40, 50));
+        assert!(image.pixel(70, 95)[..3].iter().all(|v| *v < 90));
+        assert_eq!(image.pixel(5, 130), [180, 180, 180, 255]);
+        // Optional synthetic preview for manual visual QA, never a checked-in fixture.
+        if let Ok(path) = std::env::var("DESIGNCRAFT_CMYK_PREVIEW") {
+            std::fs::write(path, image.to_png()).unwrap();
+        }
+    }
+
+    #[test]
+    fn cmyk_effects_blend_with_the_ink_backdrop_even_with_render_threads() {
+        let mut doc = document();
+        let item = rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(20.0, 20.0, 120.0, 100.0), "C=100 M=0 Y=0 K=0", DcBlend::Normal);
+        let satin = &mut doc.item_mut(item).unwrap().effects.satin;
+        satin.on = true;
+        satin.color = "C=0 M=100 Y=0 K=0".into();
+        satin.opacity = 1.0;
+        satin.size = 0.0;
+        satin.angle = 0.0;
+        satin.distance = 40.0;
+        let mut renderer = Renderer::new();
+        renderer.threads = 2;
+        let image = draw(&doc, &mut renderer);
+        let expected = srgb_in(&srgb_table(), [1.0, 1.0, 0.0, 0.0]).map(|v| (v * 255.0).round() as u8);
+        let actual = image.pixel(60, 60);
+        assert!(actual[..3].iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 3), "Multiply satin: {actual:?}, expected {expected:?}");
+        renderer.threads = 0;
+        assert_eq!(draw(&doc, &mut renderer).pixels, image.pixels);
+        // The effect's blend must also see the object's backdrop in the existing RGB path,
+        // including the multithreaded offscreen-filter implementation.
+        doc.settings.blend_space = designcraft_doc::BlendSpace::Rgb;
+        let rgb = draw(&doc, &mut renderer);
+        let mixed = rgb.pixel(60, 60);
+        assert!(mixed[0] < 100 && mixed[1] < 100 && mixed[2] > 100, "cyan times magenta is blue, not magenta: {mixed:?}");
+        renderer.threads = 2;
+        assert_eq!(draw(&doc, &mut renderer).pixels, rgb.pixels);
+    }
+
+    #[test]
+    fn cmyk_pass_count_is_constant_and_unchanged_views_are_cached() {
+        let mut doc = document();
+        let mut ids = Vec::new();
+        for _ in 0..10 {
+            ids.push(rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(20.0, 20.0, 100.0, 100.0), "C=100 M=0 Y=0 K=0", DcBlend::Multiply));
+        }
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        let before = draw(&doc, &mut renderer);
+        assert_eq!(renderer.cmyk_passes, 2, "ten Multiply objects still need only two ink passes");
+        assert_eq!(draw(&doc, &mut renderer).pixels, before.pixels);
+        assert_eq!(renderer.cmyk_passes, 2, "an unchanged frame performs no ink passes");
+        doc.item_mut(ids[9]).unwrap().fill = Fill::swatch(designcraft_color::swatch::BLACK);
+        let after = draw(&doc, &mut renderer);
+        assert_ne!(after.pixel(70, 50), before.pixel(70, 50));
+        assert_eq!(renderer.cmyk_passes, 4);
+        renderer.clear_caches();
+        assert!(renderer.cmyk_view.is_none());
+        assert_eq!(draw(&doc, &mut renderer).pixels, after.pixels);
+        assert_eq!(renderer.cmyk_passes, 6);
+        let (_, story) =
+            doc.add_text_frame(SpreadRef::Doc(0), Rect::new(0.0, 0.0, 160.0, 30.0), doc.default_layer(), "Hello", Default::default()).unwrap();
+        let text_before = draw(&doc, &mut renderer);
+        doc.story_mut(story).unwrap().insert(5, " world");
+        let text_after = draw(&doc, &mut renderer);
+        assert_ne!(text_before.pixels, text_after.pixels, "story edits invalidate the viewport");
+        assert_eq!(renderer.cmyk_passes, 10);
+    }
+
+    #[test]
+    fn cmyk_channels_keep_the_same_alpha_through_transparency() {
+        let mut doc = document();
+        let a = rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(20.0, 20.0, 100.0, 100.0), "C=100 M=0 Y=0 K=0", DcBlend::Normal);
+        let b = rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(40.0, 20.0, 120.0, 100.0), "C=0 M=100 Y=0 K=0", DcBlend::Multiply);
+        doc.item_mut(a).unwrap().opacity = 0.5;
+        doc.item_mut(b).unwrap().opacity = 0.5;
+        doc.item_mut(b).unwrap().effects.gradient_feather.on = true;
+        let children = vec![doc.remove_item(a).unwrap(), doc.remove_item(b).unwrap()];
+        let mut group = Item::new(ItemId(doc.alloc()), doc.default_layer(), Shape::Group, Default::default());
+        group.content = Content::Group { items: children };
+        group.opacity = 0.5;
+        group.isolate = true;
+        doc.insert_item(SpreadRef::Doc(0), group, None).unwrap();
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        let placements = [Placed { spread: SpreadRef::Doc(0), xf: Affine::IDENTITY }];
+        let options = RenderOptions { paper: false, blend_space_view: true, ..Default::default() };
+        let out = renderer.render(&doc, &Cache::new(), &placements, 160, 120, Affine::IDENTITY, &options);
+        assert!(out.pixel(30, 40)[3].abs_diff(64) <= 1, "half-opacity object inside a half-opacity group is quarter opaque");
+        let cmy = renderer.render(&doc, &Cache::new(), &placements, 160, 120, Affine::IDENTITY, &RenderOptions { plate: Some(4), ..options.clone() });
+        let k = renderer.render(&doc, &Cache::new(), &placements, 160, 120, Affine::IDENTITY, &RenderOptions { plate: Some(3), ..options });
+        for ((out, cmy), k) in out.pixels.chunks_exact(4).zip(cmy.pixels.chunks_exact(4)).zip(k.pixels.chunks_exact(4)) {
+            assert_eq!(cmy[3], k[3], "all ink passes have the same coverage");
+            assert_eq!(out[3], cmy[3], "conversion preserves coverage");
+            assert!(out[..3].iter().all(|v| *v <= out[3]), "output remains premultiplied");
+        }
+    }
+
+    #[test]
+    fn cmyk_nonseparable_modes_use_the_existing_rgb_approximation() {
+        let mut doc = document();
+        let id = dodge(&mut doc, SpreadRef::Doc(0));
+        doc.item_mut(id).unwrap().blend = DcBlend::Hue;
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        draw(&doc, &mut renderer);
+        assert_eq!(renderer.cmyk_passes, 0, "RGB Hue must not be evaluated on CMY channels");
+        doc.item_mut(id).unwrap().blend = DcBlend::ColorDodge;
+        draw(&doc, &mut renderer);
+        assert_eq!(renderer.cmyk_passes, 2);
     }
 }

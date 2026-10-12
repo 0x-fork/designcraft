@@ -113,7 +113,7 @@ impl Rendered {
 }
 
 /// What to draw.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RenderOptions {
     /// Canvas background (premultiplied RGBA8); `None` = transparent.
     pub background: Option<[u8; 4]>,
@@ -219,6 +219,9 @@ pub struct Renderer {
     glyphs: text::GlyphCache,
     /// Composed stories looked up during the current render.
     stories: HashMap<(StoryId, Option<usize>), Arc<ComposedStory>>,
+    cmyk_view: Option<blendspace::CachedView>,
+    #[cfg(test)]
+    cmyk_passes: usize,
     pub threads: u16,
     pub stats: FrameStats,
 }
@@ -264,13 +267,17 @@ impl Renderer {
             resources: Resources::new(),
             glyphs: text::GlyphCache::default(),
             stories: HashMap::new(),
+            cmyk_view: None,
+            #[cfg(test)]
+            cmyk_passes: 0,
             threads: default_threads(),
             stats: FrameStats::default(),
         }
     }
 
-    /// Drop cached glyph paths (they are rebuilt on demand).
+    /// Drop cached glyph paths and the CMYK viewport (rebuilt on demand).
     pub fn clear_caches(&mut self) {
+        self.cmyk_view = None;
         self.glyphs.clear();
         self.stories.clear();
     }
@@ -282,6 +289,38 @@ impl Renderer {
 
     /// Render the given spreads into a `width`×`height` image with `view` (canvas → pixels).
     pub fn render(
+        &mut self,
+        doc: &Document,
+        cache: &Cache,
+        spreads: &[Placed],
+        width: u32,
+        height: u32,
+        view: Affine,
+        opts: &RenderOptions,
+    ) -> Rendered {
+        let start = now();
+        RICH_BLACK.with(|r| r.set(opts.rich_black));
+        PLATE.with(|p| p.set(opts.plate));
+        if let Some(hit) = self.cmyk_view.as_ref().filter(|entry| entry.matches(doc, spreads, width, height, view, opts, self.threads)) {
+            let image = hit.image();
+            self.stats = hit.stats();
+            self.stats.micros = now().saturating_sub(start);
+            return image;
+        }
+        // Release the old snapshot before rendering an edited document or resized viewport.
+        self.cmyk_view = None;
+        let image = self.render_uncached(doc, cache, spreads, width, height, view, opts);
+        if opts.blend_space_view
+            && doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk
+            && image.pixels.len() <= blendspace::CachedView::MAX_BYTES
+        {
+            self.cmyk_view = Some(blendspace::CachedView::new(doc, spreads, view, opts, &image, self.stats, self.threads));
+        }
+        self.stats.micros = now().saturating_sub(start);
+        image
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn render_uncached(
         &mut self,
         doc: &Document,
         cache: &Cache,
@@ -332,19 +371,11 @@ impl Renderer {
         if let Some(pm) = vello_cpu::PixmapMut::new(w, h, &mut pixels) {
             ctx.render(pm, &mut self.resources);
         }
-        // A CMYK blend space blends the spreads' blend modes in CMYK (blendspace.rs).
-        if opts.blend_space_view && doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk && opts.plate.is_none() {
-            let stats = self.stats;
-            for pl in spreads {
-                self.cmyk_blend_spread(doc, cache, pl, w as u32, h as u32, view, opts, &mut pixels);
-            }
-            self.stats = stats;
-        }
         if opts.blend_space_view && doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk && opts.plate.is_none() {
             let mut img = Rendered { width: w as u32, height: h as u32, pixels };
             for pl in spreads {
                 let Some(sp) = doc.spread(pl.spread) else { continue };
-                if sp.items.iter().any(|it| it.involves_transparency() && !it.hidden) {
+                if blendspace::uses_rgb_proof(doc, pl.spread, opts) {
                     let r = (view * pl.xf).transform_rect_bbox(sp.bounds());
                     blend_space_view(&mut img, r);
                 }
@@ -403,6 +434,10 @@ impl Renderer {
                     ctx.fill_rect(&p.bounds());
                 }
             }
+        }
+        if blendspace::uses_cmyk(doc, sr, f.opts) {
+            self.draw_cmyk_spread(ctx, f, sr);
+            return;
         }
         // Layers back to front; within each layer parent items first (document spreads only).
         for layer in doc.layers.iter().rev() {
@@ -600,9 +635,9 @@ impl Renderer {
         {
             let r = it.inner_bounds();
             ctx.set_transform(f.view * xf);
-            ctx.set_paint(peniko::Color::from_rgba8(80, 140, 255, 40));
+            ctx.set_paint(screen_color([80, 140, 255], 40));
             ctx.fill_rect(&r);
-            ctx.set_paint(peniko::Color::from_rgba8(60, 110, 220, 200));
+            ctx.set_paint(screen_color([60, 110, 220], 200));
             ctx.set_stroke(kurbo::Stroke::new(0.75));
             ctx.stroke_path(&r.to_path(0.1));
             if ff.kind == designcraft_doc::FieldKind::CheckBox && !ff.value.is_empty() && ff.value != "Off" {
@@ -611,7 +646,7 @@ impl Renderer {
                 c.move_to((r.x0 + w * 0.22, r.y0 + h * 0.48));
                 c.line_to((r.x0 + w * 0.42, r.y0 + h * 0.72));
                 c.line_to((r.x0 + w * 0.78, r.y0 + h * 0.24));
-                ctx.set_paint(peniko::Color::BLACK);
+                ctx.set_paint(screen_color([0, 0, 0], 255));
                 ctx.set_stroke(kurbo::Stroke::new((w.min(h) * 0.12).max(0.8)).with_caps(kurbo::Cap::Round).with_join(kurbo::Join::Round));
                 ctx.stroke_path(&c);
             }
@@ -737,7 +772,7 @@ impl Renderer {
         if designcraft_doc::media_kind(&asset.mime).is_some() {
             // Video / sound: a dark frame with a play mark (the poster, when set, is drawn by the item).
             ctx.set_transform(f.view * xf * g.xf);
-            ctx.set_paint(peniko::Color::from_rgba8(48, 48, 52, 255));
+            ctx.set_paint(screen_color([48, 48, 52], 255));
             ctx.fill_rect(&Rect::new(0.0, 0.0, g.size.0, g.size.1));
             let (cx, cy, r) = (g.size.0 / 2.0, g.size.1 / 2.0, g.size.0.min(g.size.1) * 0.18);
             let mut tri = BezPath::new();
@@ -745,13 +780,13 @@ impl Renderer {
             tri.line_to((cx + r, cy));
             tri.line_to((cx - r * 0.6, cy + r));
             tri.close_path();
-            ctx.set_paint(peniko::Color::from_rgba8(235, 235, 235, 255));
+            ctx.set_paint(screen_color([235, 235, 235], 255));
             ctx.fill_path(&tri);
             return;
         }
         if f.opts.quality == DisplayQuality::Fast {
             ctx.set_transform(f.view * xf * g.xf);
-            ctx.set_paint(peniko::Color::from_rgba8(178, 178, 178, 255));
+            ctx.set_paint(screen_color([178, 178, 178], 255));
             ctx.fill_rect(&Rect::new(0.0, 0.0, g.size.0, g.size.1));
             return;
         }
@@ -828,11 +863,25 @@ pub(crate) fn cmyk_in(table: &[[f32; 4]], rgb: [f32; 3]) -> [f32; 4] {
 
 /// An image's ink coverage on one process plate, as grey (cached per image and plate).
 fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync::Arc<vello_cpu::Pixmap> {
-    type Cache = std::collections::HashMap<(usize, u8), std::sync::Arc<vello_cpu::Pixmap>>;
+    // Keep source allocations alive (their addresses are keys), invalidate on colour settings,
+    // and cap derived raster memory rather than merely counting differently sized images.
+    type Entry = (std::sync::Arc<vello_cpu::Pixmap>, std::sync::Arc<vello_cpu::Pixmap>);
+    type Cache = (designcraft_color::cms::ColorSettings, std::collections::HashMap<(usize, u8), Entry>, usize);
+    const BUDGET: usize = 64 << 20;
     static CACHE: std::sync::Mutex<Option<Cache>> = std::sync::Mutex::new(None);
     let key = (std::sync::Arc::as_ptr(pm) as usize, plate);
-    if let Some(v) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.get(&key).cloned()) {
-        return v;
+    let settings = designcraft_color::cms::active_settings();
+    {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((previous, map, _)) = guard.as_ref() {
+            if *previous == settings {
+                if let Some((_, derived)) = map.get(&key) {
+                    return derived.clone();
+                }
+            } else {
+                *guard = None;
+            }
+        }
     }
     let table = cmyk_table();
     let data: Vec<vello_cpu::color::PremulRgba8> = pm
@@ -854,12 +903,19 @@ fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync:
         })
         .collect();
     let out = std::sync::Arc::new(vello_cpu::Pixmap::from_parts(data, pm.width(), pm.height()));
-    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let map = c.get_or_insert_with(Default::default);
-    if map.len() > 32 {
-        map.clear();
+    let bytes = (pm.width() as usize).saturating_mul(pm.height() as usize).saturating_mul(8);
+    if bytes <= BUDGET {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let (previous, map, used) = guard.get_or_insert_with(|| (settings.clone(), Default::default(), 0));
+        if *previous != settings || used.saturating_add(bytes) > BUDGET {
+            map.clear();
+            *used = 0;
+            *previous = settings;
+        }
+        if map.insert(key, (pm.clone(), out.clone())).is_none() {
+            *used += bytes;
+        }
     }
-    map.insert(key, out.clone());
     out
 }
 
@@ -874,6 +930,16 @@ thread_local! {
     static RICH_BLACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Separations Preview plate for the render on this thread.
     static PLATE: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
+}
+
+/// Screen indicators and placeholders are display sRGB, independent of the document's RGB
+/// working profile. Encode their inks only while drawing a process plate or CMYK blend pass.
+pub(crate) fn screen_color(rgb: [u8; 3], alpha: u8) -> peniko::Color {
+    if PLATE.with(|plate| plate.get()).is_none() {
+        return peniko::Color::from_rgba8(rgb[0], rgb[1], rgb[2], alpha);
+    }
+    let [c, m, y, k] = cmyk_in(&cmyk_table(), rgb.map(|v| v as f32 / 255.0));
+    color_of(&designcraft_color::Color::Cmyk { c, m, y, k }, alpha as f32 / 255.0)
 }
 
 pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
