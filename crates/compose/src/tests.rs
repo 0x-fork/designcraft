@@ -195,7 +195,7 @@ fn a_wrap_object_cutting_a_narrow_frame_leaves_its_sliver_empty() {
     add_wrap_objects(&mut d, &[(Rect::new(0.0, 50.0, 52.0, 120.0), [0.0; 4], WrapMode::BoundingBox)]);
     let cs = compose_story(&d, sid, &ComposeOptions::default());
     let lines = &cs.frames[0].lines;
-    assert!(lines.iter().all(|l| l.baseline + l.descent <= 50.0 + 1e-6 || l.baseline - l.ascent >= 120.0 - 1e-6), "a line beside the object");
+    assert!(lines.iter().all(|l| l.baseline <= 50.0 + 1e-6 || l.baseline - l.ascent >= 120.0 - 1e-6), "a line beside the object");
     assert!(lines.iter().any(|l| l.baseline - l.ascent >= 120.0 - 1e-6), "no text below the object");
 }
 
@@ -663,9 +663,11 @@ fn an_image_contour_stops_at_its_frame() {
         asset: designcraft_doc::AssetId(d.alloc()),
         size: (300.0, 250.0),
         xf: designcraft_geom::Affine::IDENTITY,
+        clip: None,
         auto_fit: designcraft_doc::Fitting::None,
         fit_align: 4,
         crop: [0.0; 4],
+        wrap: Default::default(),
     });
     it.wrap.mode = WrapMode::Contour;
     it.wrap.side = WrapSide::RightSide;
@@ -681,6 +683,46 @@ fn an_image_contour_stops_at_its_frame() {
     // Below the step the frame is wider.
     let low = cs.frames[0].lines.iter().find(|l| l.baseline - l.ascent > 154.0 && l.baseline < 196.0).unwrap();
     assert!((low.x0 - 254.0).abs() < 0.5, "{}", low.x0);
+}
+
+/// A clipping path (Detect Edges with a large inset) that overhangs its frame: a Same As
+/// Clipping wrap follows it only within the frame.
+#[test]
+fn a_clipping_path_contour_stops_at_its_frame() {
+    let (mut d, sid, _) = doc_with(&[LOREM; 4].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
+    let lid = d.default_layer();
+    let mut it = designcraft_doc::Item::new(
+        ItemId(d.alloc()),
+        lid,
+        designcraft_doc::Shape::Rectangle,
+        designcraft_geom::shapes::rectangle(Rect::new(150.0, 100.0, 300.0, 300.0)),
+    );
+    // The clip path reaches 100 pt left of the frame.
+    let wide = designcraft_geom::path::PathData::single(designcraft_geom::path::SubPath::polyline(
+        &[Point::new(-100.0, 0.0), Point::new(150.0, 0.0), Point::new(150.0, 200.0), Point::new(-100.0, 200.0)],
+        true,
+    ));
+    it.content = designcraft_doc::Content::Graphic(designcraft_doc::Graphic {
+        asset: designcraft_doc::AssetId(1),
+        size: (150.0, 200.0),
+        xf: designcraft_geom::Affine::translate((150.0, 100.0)),
+        clip: Some(std::sync::Arc::new(designcraft_doc::ClippingPath::new(designcraft_doc::ClippingKind::DetectEdges, wide))),
+        auto_fit: Default::default(),
+        fit_align: 0,
+        crop: [0.0; 4],
+        wrap: Default::default(),
+    });
+    it.wrap.mode = WrapMode::Contour;
+    it.wrap.side = WrapSide::LeftSide;
+    it.wrap.contour = designcraft_doc::ContourType::SameAsClipping;
+    it.wrap.offsets = [4.0; 4];
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let beside: Vec<&Line> = cs.frames[0].lines.iter().filter(|l| l.baseline - l.ascent > 104.0 && l.baseline < 296.0).collect();
+    assert!(beside.len() >= 5, "{} lines beside the frame", beside.len());
+    for l in beside {
+        assert!(l.x1 > 140.0 && l.x1 <= 146.0 + 1e-6, "line at {} ends at {}", l.baseline, l.x1);
+    }
 }
 
 #[test]
@@ -6376,9 +6418,9 @@ fn anchor_box(d: &mut Document, sid: StoryId, at: usize, x: f64, y: f64, y_rel: 
     d.story_mut(sid).unwrap().insert_object(at, designcraft_doc::AnchoredObject::new(it, position));
 }
 
-/// Lines whose band meets `y0..y1`.
+/// Lines whose band (top to baseline) meets `y0..y1`.
 fn lines_in_band(cs: &ComposedStory, y0: f64, y1: f64) -> Vec<&Line> {
-    all_lines(cs).into_iter().filter(|l| l.baseline - l.ascent < y1 && l.baseline + l.descent > y0).collect()
+    all_lines(cs).into_iter().filter(|l| l.baseline - l.ascent < y1 && l.baseline > y0).collect()
 }
 
 fn line_layout(cs: &ComposedStory) -> Vec<(Range<usize>, u64, u64, u64)> {
