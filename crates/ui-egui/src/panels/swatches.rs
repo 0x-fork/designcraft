@@ -287,7 +287,7 @@ pub fn color_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 done |= channel(ui, label, &mut v[k], 100.0, "%", |x| cmyk_ramp(k, x));
             }
             if done {
-                send = Some(json!({"c": v[0] * 100.0, "m": v[1] * 100.0, "y": v[2] * 100.0, "k": v[3] * 100.0}));
+                send = Some(json!({"model": "cmyk", "c": v[0], "m": v[1], "y": v[2], "k": v[3]}));
             }
         }
         ColorMode::Rgb => {
@@ -301,7 +301,7 @@ pub fn color_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 });
             }
             if done {
-                send = Some(json!([(v[0] * 255.0).round(), (v[1] * 255.0).round(), (v[2] * 255.0).round()]));
+                send = Some(json!({"model": "rgb", "r": v[0], "g": v[1], "b": v[2]}));
             }
         }
         ColorMode::Lab => {
@@ -347,12 +347,20 @@ fn channel(ui: &mut egui::Ui, label: &str, v: &mut f32, scale: f32, suffix: &str
             *v = ((p.x - track.min.x) / track.width()).clamp(0.0, 1.0);
         }
         changed |= resp.drag_stopped() || resp.clicked();
-        let mut num = (*v * scale).round();
-        let field = ui.add(egui::DragValue::new(&mut num).range(0.0..=scale).suffix(suffix));
-        if field.changed() {
-            *v = num / scale;
+        // The value is applied when typing ends or a drag stops; until then the field's number
+        // lives here, because `v` is read back from the document every frame.
+        let pending_id = ui.id().with(("channel", label));
+        let mut num = ui.data(|d| d.get_temp::<f32>(pending_id)).unwrap_or((*v * scale).round());
+        let field = ui.add(egui::DragValue::new(&mut num).range(0.0..=scale).suffix(suffix).update_while_editing(false));
+        if field.dragged() {
+            ui.data_mut(|d| d.insert_temp(pending_id, num));
+        } else {
+            ui.data_mut(|d| d.remove::<f32>(pending_id));
+            if field.changed() || field.drag_stopped() {
+                *v = num / scale;
+                changed = true;
+            }
         }
-        changed |= field.lost_focus() || field.drag_stopped();
     });
     changed
 }
@@ -386,7 +394,8 @@ fn spectrum(app: &mut DesignApp, ui: &mut egui::Ui, target: &str) {
         && let Some(p) = resp.interact_pointer_pos()
     {
         let c = at(((p.x - r.min.x) / r.width()).clamp(0.0, 1.0), ((p.y - r.min.y) / r.height()).clamp(0.0, 1.0));
-        let _ = app.run("object.color", json!({"color": [(c[0] * 255.0).round(), (c[1] * 255.0).round(), (c[2] * 255.0).round()], "target": target}));
+        let q = |v: f32| (v * 255.0).round() / 255.0;
+        let _ = app.run("object.color", json!({"color": {"model": "rgb", "r": q(c[0]), "g": q(c[1]), "b": q(c[2])}, "target": target}));
     }
 }
 
@@ -571,5 +580,51 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 let _ = app.run("object.gradient", json!({"stops": stops}));
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod color_panel_tests {
+    use egui::vec2;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use serde_json::json;
+
+    use crate::DesignApp;
+
+    fn fill(app: &DesignApp, id: u64) -> designcraft_color::Color {
+        let d = &app.session.active().unwrap().doc;
+        d.resolve_color(&d.item(designcraft_doc::ItemId(id)).unwrap().fill.swatch, 1.0).unwrap()
+    }
+
+    /// A number typed into the M field stays while typing and applies as a percent on Enter:
+    /// M 1 is 1 %, not 100 %.
+    #[test]
+    fn a_typed_channel_value_is_kept_and_applied_as_a_percent() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [36, 36, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        app.run("selection.set", json!({"ids": [id]})).unwrap();
+        app.run("object.color", json!({"color": {"c": 0, "m": 50, "y": 100, "k": 0}})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(320.0, 300.0)).build_ui_state(|ui, app: &mut DesignApp| super::color_panel(app, ui), app);
+        h.run_steps(3);
+        let fields: Vec<egui::Rect> = h.query_all_by(|n| n.role() == egui::accesskit::Role::SpinButton).map(|n| n.rect()).collect();
+        assert_eq!(fields.len(), 4, "C, M, Y and K fields");
+        let m = fields[1].center();
+        h.hover_at(m);
+        h.drag_at(m);
+        h.drop_at(m);
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.event(egui::Event::Text("1".into()));
+        h.run_steps(4);
+        let typed = h.query_by(|n| n.role() == egui::accesskit::Role::SpinButton && n.is_focused()).and_then(|n| n.value());
+        assert_eq!(typed.as_deref(), Some("1"), "the typed text stays while the field has focus");
+        let designcraft_color::Color::Cmyk { m, .. } = fill(h.state(), id) else { panic!("not CMYK") };
+        assert!((m - 0.5).abs() < 1e-6, "nothing is applied while typing: {m}");
+        h.key_press(egui::Key::Enter);
+        h.run_steps(2);
+        let designcraft_color::Color::Cmyk { c, m, y, k } = fill(h.state(), id) else { panic!("not CMYK") };
+        assert!(c == 0.0 && (m - 0.01).abs() < 1e-6 && (y - 1.0).abs() < 1e-6 && k == 0.0, "{c} {m} {y} {k}");
     }
 }
