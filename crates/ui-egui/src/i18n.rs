@@ -3167,6 +3167,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Justification…", ["Blocksatzeinstellungen …", "Justification…", "Justificación…", "両端揃え…", "两端对齐…"]),
     ("Rule Below", ["Linie unterhalb", "Filet après", "Filete después", "後境界線", "下方横线"]),
     ("Tint:", ["Farbton:", "Teinte:", "Matiz:", "濃淡:", "色调："]),
+    ("Apply To:", ["Anwenden auf:", "Appliquer à :", "Aplicar a:", "適用先:", "应用于："]),
+    ("Frame", ["Rahmen", "Bloc", "Marco", "フレーム", "框架"]),
     ("Column", ["Spalte", "Colonne", "Columna", "段", "栏"]),
     // File › New › Document
     ("Recent", ["Zuletzt verwendet", "Récents", "Recientes", "最近使用", "最近"]),

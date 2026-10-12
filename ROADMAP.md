@@ -129,6 +129,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-11** · Properties › Appearance's Fill and Stroke menus gain InDesign's Tint field and, for a text frame, Apply To: Frame / Text. No readiness percentage change.
 - **2026-10-11** · `story.replaceRange`, `story.setText`, notes, footnotes, endnotes, type on a path and table cells read `\r` and `\r\n` as paragraph returns, as `frame.create` and `text.insert` already did. No readiness percentage change.
 - **2026-10-11** · Corner Options keep curved sides curved and round every corner point, including where an arc meets a line (a Pathfinder quarter circle with rounded corners stayed a triangle). No readiness percentage change.
 - **2026-10-11:** Type › Justification… (Cmd+Alt+Shift+J, also in the Paragraph panel menu) sets word and letter spacing, glyph scaling and the composer on the selected paragraphs, sharing the Paragraph Style Options section (#531). No readiness percentage change.
