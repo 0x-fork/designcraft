@@ -844,13 +844,42 @@ fn loaded_drag_snaps_like_frame_drawing() {
 
 #[test]
 fn alt_click_stays_loaded() {
-    let td = thread_doc();
-    let cx = td.cx();
+    let mut td = thread_doc();
+    let original = td.d.clone();
     let mut t = create("selection");
-    click(&mut t, &cx, td.port(td.a, true), Mods::default());
     let alt = Mods { alt: true, ..Default::default() };
-    assert_eq!(click(&mut t, &cx, td.at(175.0, 450.0), alt), thread_exec(serde_json::json!({"from": td.a.0, "to": td.e.0})));
-    assert_eq!(t.cursor(&cx, td.at(500.0, 700.0), Mods::default()), Cursor::LoadedText);
+    let col = td.d.spreads[0].pages[0].column_rects()[0];
+    let empty = td.at(200.0, 600.0);
+    let new_frame_from =
+        |f: ItemId| thread_exec(serde_json::json!({"from": f.0, "rect": [col.x0, 600.0, col.x1, col.y1], "spread": {"kind": "doc", "index": 0}}));
+    {
+        let cx = td.cx();
+        click(&mut t, &cx, td.port(td.a, true), Mods::default());
+        assert_eq!(click(&mut t, &cx, td.at(175.0, 450.0), alt), thread_exec(serde_json::json!({"from": td.a.0, "to": td.e.0})));
+        assert_eq!(t.cursor(&cx, td.at(500.0, 700.0), Mods::default()), Cursor::LoadedText);
+        // The thread failed (the document is unchanged): still loaded from a.
+        assert_eq!(click(&mut t, &cx, empty, alt), new_frame_from(td.a));
+    }
+    // That click's command ran: the next click threads after the frame it added.
+    let (n, _) =
+        td.d.add_text_frame(SpreadRef::Doc(0), Rect::new(col.x0, 600.0, col.x1, col.y1), td.d.default_layer(), "", ParaFormat::default()).unwrap();
+    td.d.thread(td.a, n).unwrap();
+    {
+        let cx = td.cx();
+        assert_eq!(click(&mut t, &cx, td.at(175.0, 450.0), alt), thread_exec(serde_json::json!({"from": n.0, "to": td.e.0})));
+    }
+    // Undone: back on a, not on a's old neighbour or the frame the undo removed.
+    td.d = original;
+    {
+        let cx = td.cx();
+        assert_eq!(click(&mut t, &cx, empty, Mods::default()), new_frame_from(td.a));
+    }
+    // From x, which threads into y: when threading e in between fails, x stays loaded, not y.
+    let td = ThreadDoc { s: Selection::items(vec![td.x]), ..td };
+    let cx = td.cx();
+    click(&mut t, &cx, td.port(td.x, true), Mods::default());
+    assert_eq!(click(&mut t, &cx, td.at(175.0, 450.0), alt), thread_exec(serde_json::json!({"from": td.x.0, "to": td.e.0})));
+    assert_eq!(click(&mut t, &cx, empty, Mods::default()), new_frame_from(td.x));
 }
 
 #[test]

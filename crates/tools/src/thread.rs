@@ -105,12 +105,33 @@ pub(crate) fn drag_frame(cx: &ToolContext, start: Point, p: Point) -> Option<(Sp
 /// The loaded text cursor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Loaded {
-    /// The frame whose port was clicked.
+    /// The frame whose port was clicked, or the frame semi-autoflow moved on to.
     pub frame: ItemId,
     /// Loaded from the out port (thread after `frame`) or the in port (in front of it).
     pub out: bool,
-    /// Semi-autoflow: the frame just threaded on that side takes over once the document has it.
-    pub advance: bool,
+    /// Semi-autoflow: the frame expected to join on this side once the click's command has run.
+    /// The load moves on to it only if the document has it there.
+    pub advance: Option<Joins>,
+    /// The frame semi-autoflow moved on from: loaded again once `frame` is no longer its
+    /// neighbour on this side (undo).
+    pub back: Option<ItemId>,
+}
+
+/// The frame a `text.thread` from the loaded cursor adds on the loaded side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Joins {
+    /// This existing frame.
+    Frame(ItemId),
+    /// A new frame: any frame other than the neighbour there before the click (`None`: none).
+    NewFrameReplacing(Option<ItemId>),
+}
+
+/// A click with the loaded cursor: the command, and for `text.thread` the frame it adds.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Clicked {
+    pub id: &'static str,
+    pub params: Value,
+    pub joins: Option<Joins>,
 }
 
 /// What a click with the loaded cursor does at a point.
@@ -127,11 +148,35 @@ pub(crate) enum Target {
 }
 
 impl Loaded {
-    /// The loaded frame now (an advancing load moves on to the frame threaded last), or None
-    /// when that frame is gone (undo, delete).
+    pub fn new(frame: ItemId, out: bool) -> Self {
+        Self { frame, out, advance: None, back: None }
+    }
+
+    /// The loaded frame now, or None when that frame is gone (undo, delete). A semi-autoflow load
+    /// moves on to the frame its click added once the document has it there, and goes back to
+    /// the frame it came from once an undo takes that frame out again.
     pub fn resolve(self, doc: &Document) -> Option<Loaded> {
-        let frame = if self.advance { self.neighbour(doc).unwrap_or(self.frame) } else { self.frame };
-        doc.item(frame).filter(|i| i.is_text_frame()).map(|_| Loaded { frame, out: self.out, advance: false })
+        let usable = |id: ItemId| doc.item(id).is_some_and(Item::is_text_frame);
+        let mut l = self;
+        if let Some(b) = l.back
+            && usable(b)
+            && Loaded::new(b, l.out).neighbour(doc) != Some(l.frame)
+        {
+            l = Loaded::new(b, l.out);
+        }
+        if let Some(joins) = l.advance.take()
+            && let Some(n) = l.neighbour(doc)
+            && usable(n)
+        {
+            let arrived = match joins {
+                Joins::Frame(f) => n == f,
+                Joins::NewFrameReplacing(before) => Some(n) != before,
+            };
+            if arrived {
+                l = Loaded { frame: n, out: l.out, advance: None, back: Some(l.frame) };
+            }
+        }
+        usable(l.frame).then_some(l)
     }
 
     /// The next frame from an out port, the previous one from an in port.
@@ -170,21 +215,22 @@ impl Loaded {
     }
 
     /// The command for a click at `p`, or a drag from `start` to `p` (canvas). None: nothing to do.
-    pub fn click(self, cx: &ToolContext, start: Point, p: Point, mods: Mods) -> Option<(&'static str, Value)> {
-        let (pair, new_rect) = if is_drag(cx, start, p) {
+    pub fn click(self, cx: &ToolContext, start: Point, p: Point, mods: Mods) -> Option<Clicked> {
+        let new_frame = Joins::NewFrameReplacing(self.neighbour(cx.doc));
+        let (pair, new_rect, joins) = if is_drag(cx, start, p) {
             let (sr, r, _) = drag_frame(cx, start, p)?;
-            (self.pair(cx.doc, None), Some((sr, r)))
+            (self.pair(cx.doc, None), Some((sr, r)), new_frame)
         } else {
             match self.target(cx, p) {
                 Target::Unthread => {
                     let side = if self.out { "after" } else { "before" };
-                    return Some(("text.unthread", json!({"frame": self.frame.0, "side": side})));
+                    return Some(Clicked { id: "text.unthread", params: json!({"frame": self.frame.0, "side": side}), joins: None });
                 }
                 Target::Invalid => return None,
-                Target::Thread(t) => (self.pair(cx.doc, Some(t)), None),
+                Target::Thread(t) => (self.pair(cx.doc, Some(t)), None, Joins::Frame(t)),
                 Target::Empty => {
                     let (sr, sp) = cx.layout.spread_at(p)?;
-                    (self.pair(cx.doc, None), Some((sr, click_frame_rect(cx.doc, sr, sp)?)))
+                    (self.pair(cx.doc, None), Some((sr, click_frame_rect(cx.doc, sr, sp)?)), new_frame)
                 }
             }
         };
@@ -202,7 +248,7 @@ impl Loaded {
         if mods.shift {
             params.insert("autoflow".into(), json!(true));
         }
-        Some(("text.thread", Value::Object(params)))
+        Some(Clicked { id: "text.thread", params: Value::Object(params), joins: Some(joins) })
     }
 }
 

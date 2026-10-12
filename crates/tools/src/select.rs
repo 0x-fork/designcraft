@@ -132,7 +132,7 @@ impl SelectionTool {
         self.loaded = self.loaded.and_then(|l| l.resolve(cx.doc));
         match (ev.kind, self.loaded) {
             (PointerKind::Down | PointerKind::DoubleClick, _) if let Some((frame, out)) = crate::thread::port_at(cx, p) => {
-                self.loaded = Some(Loaded { frame, out, advance: false });
+                self.loaded = Some(Loaded::new(frame, out));
                 self.drag = Drag::None;
                 Some(vec![])
             }
@@ -148,13 +148,12 @@ impl SelectionTool {
             }
             (PointerKind::Up, Some(l)) => {
                 let Drag::Place { start, .. } = std::mem::replace(&mut self.drag, Drag::None) else { return Some(vec![]) };
-                let cmd = l.click(cx, start, p, ev.mods);
+                let clicked = l.click(cx, start, p, ev.mods);
                 // Alt (semi-autoflow) stays loaded with what is left; an invalid target keeps the load.
-                if cmd.is_some() {
-                    self.loaded = (ev.mods.alt && !ev.mods.shift && cmd.as_ref().is_some_and(|c| c.0 == "text.thread"))
-                        .then_some(Loaded { advance: true, ..l });
+                if let Some(c) = &clicked {
+                    self.loaded = c.joins.filter(|_| ev.mods.alt && !ev.mods.shift).map(|j| Loaded { advance: Some(j), ..l });
                 }
-                Some(exec(cmd))
+                Some(exec(clicked.map(|c| (c.id, c.params))))
             }
             (PointerKind::Move, Some(_)) => Some(vec![]),
             _ => None,
