@@ -309,6 +309,10 @@ pub struct UiState {
     /// Type › Tabs: the selected stop and where the panel sits.
     #[serde(skip)]
     pub tabs_panel: panels::tabs::PanelState,
+    /// Fill/Stroke proxy (Tools and Color panels): the stroke is in front, so Apply None and the
+    /// Color panel act on it (X toggles).
+    #[serde(skip)]
+    pub stroke_front: bool,
 }
 
 impl Default for UiState {
@@ -390,6 +394,7 @@ impl Default for UiState {
             palette: None,
             flyout: None,
             tabs_panel: Default::default(),
+            stroke_front: false,
         }
     }
 }
