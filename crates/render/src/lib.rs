@@ -779,30 +779,35 @@ impl Renderer {
     }
 }
 
-/// sRGB → working CMYK through a 17³ table built once per colour settings (trilinear).
-fn cmyk_lut(rgb: [f32; 3]) -> [f32; 4] {
-    const N: usize = 17;
+const CMYK_N: usize = 17;
+
+/// The sRGB → working CMYK table for the current colour settings (17³, built once per settings,
+/// trilinear);
+/// sample it with [`cmyk_in`]. Fetch it once for many pixels.
+pub(crate) fn cmyk_table() -> std::sync::Arc<Vec<[f32; 4]>> {
+    const N: usize = CMYK_N;
     type Lut = (designcraft_color::cms::ColorSettings, std::sync::Arc<Vec<[f32; 4]>>);
     static LUT: std::sync::Mutex<Option<Lut>> = std::sync::Mutex::new(None);
     let settings = designcraft_color::cms::active_settings();
-    let table = {
-        let mut g = LUT.lock().unwrap_or_else(|e| e.into_inner());
-        match g.as_ref() {
-            Some((s, t)) if *s == settings => t.clone(),
-            _ => {
-                let cms = designcraft_color::cms::active();
-                let step = |i: usize| i as f32 / (N - 1) as f32;
-                let t: Vec<[f32; 4]> = (0..N * N * N)
-                    .map(|i| {
-                        cms.srgb_to_cmyk([step(i / (N * N)), step(i / N % N), step(i % N)], designcraft_color::cms::Intent::RelativeColorimetric)
-                    })
-                    .collect();
-                let t = std::sync::Arc::new(t);
-                *g = Some((settings, t.clone()));
-                t
-            }
+    let mut g = LUT.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some((s, t)) if *s == settings => t.clone(),
+        _ => {
+            let cms = designcraft_color::cms::active();
+            let step = |i: usize| i as f32 / (N - 1) as f32;
+            let t: Vec<[f32; 4]> = (0..N * N * N)
+                .map(|i| cms.srgb_to_cmyk([step(i / (N * N)), step(i / N % N), step(i % N)], designcraft_color::cms::Intent::RelativeColorimetric))
+                .collect();
+            let t = std::sync::Arc::new(t);
+            *g = Some((settings, t.clone()));
+            t
         }
-    };
+    }
+}
+
+/// Trilinear lookup of `rgb` in a [`cmyk_table`].
+pub(crate) fn cmyk_in(table: &[[f32; 4]], rgb: [f32; 3]) -> [f32; 4] {
+    const N: usize = CMYK_N;
     let f = rgb.map(|v| v.clamp(0.0, 1.0) * (N - 1) as f32);
     let i = f.map(|v| (v as usize).min(N - 2));
     let d = [f[0] - i[0] as f32, f[1] - i[1] as f32, f[2] - i[2] as f32];
@@ -812,8 +817,10 @@ fn cmyk_lut(rgb: [f32; 3]) -> [f32; 4] {
         let w = (if a == 1 { d[0] } else { 1.0 - d[0] }) * (if b == 1 { d[1] } else { 1.0 - d[1] }) * (if cc == 1 { d[2] } else { 1.0 - d[2] });
         ((i[0] + a) * N * N + (i[1] + b) * N + i[2] + cc, w)
     }) {
-        for k in 0..4 {
-            out[k] += table[corner][k] * w;
+        if let Some(t) = table.get(corner) {
+            for k in 0..4 {
+                out[k] += t[k] * w;
+            }
         }
     }
     out
@@ -827,6 +834,7 @@ fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync:
     if let Some(v) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.get(&key).cloned()) {
         return v;
     }
+    let table = cmyk_table();
     let data: Vec<vello_cpu::color::PremulRgba8> = pm
         .data()
         .iter()
@@ -836,7 +844,7 @@ fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync:
             }
             let k = 255.0 / p.a as f32;
             let rgb = [p.r, p.g, p.b].map(|v| (v as f32 * k / 255.0).min(1.0));
-            let cmyk = cmyk_lut(rgb);
+            let cmyk = cmyk_in(&table, rgb);
             let ink = |i: usize| ((1.0 - cmyk[i].clamp(0.0, 1.0)) * p.a as f32).round() as u8;
             if plate == 4 {
                 return vello_cpu::color::PremulRgba8 { r: ink(0), g: ink(1), b: ink(2), a: p.a };

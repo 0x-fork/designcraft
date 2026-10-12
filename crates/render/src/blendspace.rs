@@ -113,28 +113,34 @@ pub(crate) fn blend_inks(mode: DcBlend, backdrop: [f32; 4], source: [f32; 4]) ->
     out
 }
 
-/// Working CMYK → sRGB through a 9⁴ table built once per colour settings (quadrilinear).
-fn srgb_of(cmyk: [f32; 4]) -> [f32; 3] {
-    const N: usize = 9;
+const RGB_N: usize = 9;
+
+/// The working CMYK → sRGB table for the current colour settings (9⁴, built once per settings);
+/// sample it with [`srgb_in`].
+fn srgb_table() -> std::sync::Arc<Vec<[f32; 3]>> {
+    const N: usize = RGB_N;
     type Lut = (designcraft_color::cms::ColorSettings, std::sync::Arc<Vec<[f32; 3]>>);
     static LUT: std::sync::Mutex<Option<Lut>> = std::sync::Mutex::new(None);
     let settings = designcraft_color::cms::active_settings();
-    let table = {
-        let mut g = LUT.lock().unwrap_or_else(|e| e.into_inner());
-        match g.as_ref() {
-            Some((s, t)) if *s == settings => t.clone(),
-            _ => {
-                let cms = designcraft_color::cms::active();
-                let step = |i: usize| i as f32 / (N - 1) as f32;
-                let t: Vec<[f32; 3]> = (0..N * N * N * N)
-                    .map(|i| cms.cmyk_to_srgb([step(i / (N * N * N)), step(i / (N * N) % N), step(i / N % N), step(i % N)], false))
-                    .collect();
-                let t = std::sync::Arc::new(t);
-                *g = Some((settings, t.clone()));
-                t
-            }
+    let mut g = LUT.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some((s, t)) if *s == settings => t.clone(),
+        _ => {
+            let cms = designcraft_color::cms::active();
+            let step = |i: usize| i as f32 / (N - 1) as f32;
+            let t: Vec<[f32; 3]> = (0..N * N * N * N)
+                .map(|i| cms.cmyk_to_srgb([step(i / (N * N * N)), step(i / (N * N) % N), step(i / N % N), step(i % N)], false))
+                .collect();
+            let t = std::sync::Arc::new(t);
+            *g = Some((settings, t.clone()));
+            t
         }
-    };
+    }
+}
+
+/// Quadrilinear lookup of `cmyk` in an [`srgb_table`].
+fn srgb_in(table: &[[f32; 3]], cmyk: [f32; 4]) -> [f32; 3] {
+    const N: usize = RGB_N;
     let f = cmyk.map(|v| v.clamp(0.0, 1.0) * (N - 1) as f32);
     let i = f.map(|v| (v as usize).min(N - 2));
     let d = [f[0] - i[0] as f32, f[1] - i[1] as f32, f[2] - i[2] as f32, f[3] - i[3] as f32];
@@ -209,6 +215,7 @@ impl Renderer {
             me.render(d, cache, std::slice::from_ref(pl), rw, rh, rview, &o).pixels
         };
         let first = order.iter().position(|(_, b)| *b).unwrap_or(order.len());
+        let (to_cmyk, to_rgb) = (crate::cmyk_table(), srgb_table());
         let mut acc = sub(self, doc, ids.get(..first).unwrap_or(&[]), false, None);
         let blended: Vec<usize> = order.iter().enumerate().filter(|(_, (_, b))| *b).map(|(i, _)| i).collect();
         for (j, &pos) in blended.iter().enumerate() {
@@ -240,9 +247,9 @@ impl Renderer {
                 let source = if ca > 0.0 {
                     [1.0 - cs[0], 1.0 - cs[1], 1.0 - cs[2], 1.0 - ks[0]]
                 } else {
-                    crate::cmyk_lut(straight(s).0)
+                    crate::cmyk_in(&to_cmyk, straight(s).0)
                 };
-                let backdrop = crate::cmyk_lut(brgb);
+                let backdrop = crate::cmyk_in(&to_cmyk, brgb);
                 let mixed = blend_inks(mode, backdrop, source);
                 // PDF compositing: the blend counts where the backdrop is.
                 let ar = ba + sa - ba * sa;
@@ -252,7 +259,7 @@ impl Renderer {
                     let m = (1.0 - ba) * source[i] + ba * mixed[i];
                     out[i] = (1.0 - t) * backdrop[i] + t * m;
                 }
-                let rgb_out = srgb_of(out);
+                let rgb_out = srgb_in(&to_rgb, out);
                 let a8 = (ar * 255.0).round().clamp(0.0, 255.0);
                 for i in 0..3 {
                     acc[p + i] = (rgb_out[i].clamp(0.0, 1.0) * a8).round() as u8;
