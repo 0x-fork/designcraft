@@ -1123,7 +1123,7 @@ attr_set! {
         space_before: f64 = 0.0,
         space_after: f64 = 0.0,
         /// Space between consecutive paragraphs of the same style; replaces space after/before there (None = ignore).
-        same_para_style_spacing: Option<f64> = None,
+        same_para_style_spacing: Option<f64> = None => "deserialize_explicit_value",
         /// Drop cap: the paragraph's first `drop_cap_chars` characters (code points, never
         /// splitting a base from its combining marks) set `drop_cap_lines` lines tall, in the
         /// character style `drop_cap_style` ("" or `[None]`: the text's own formatting).
@@ -1623,6 +1623,15 @@ mod tests {
         let p: ParaProps = serde_json::from_str(r#"{"align":"center"}"#).unwrap();
         assert_eq!(p.align, Align::Center);
         assert_eq!(p.word_space_max, 1.33);
+    }
+
+    #[test]
+    fn same_para_style_spacing_ignore_survives_serde() {
+        for v in [None, Some(None), Some(Some(0.0))] {
+            let a = ParaAttrs { same_para_style_spacing: v, ..Default::default() };
+            let back: ParaAttrs = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+            assert_eq!(back.same_para_style_spacing, v);
+        }
     }
 
     #[test]

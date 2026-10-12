@@ -3246,3 +3246,47 @@ fn same_para_style_spacing_imports_and_round_trips() {
     // The explicit Ignore survives the round trip too.
     assert_eq!(b.paras[1].para.same_para_style_spacing, Some(None));
 }
+
+/// SameParaStyleSpacing set as a `Properties` element on the based-on style (`Normal`) reaches
+/// the headings: consecutive headings sit one leading apart. SetIgnore keeps the usual spacing.
+#[test]
+fn same_para_style_spacing_from_a_based_on_style_element_closes_the_gap() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Styles xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="16.0">
+  <RootCharacterStyleGroup Self="rc">
+    <CharacterStyle Self="CharacterStyle/$ID/[No character style]" Name="$ID/[No character style]"/>
+  </RootCharacterStyleGroup>
+  <RootParagraphStyleGroup Self="rp">
+    <ParagraphStyle Self="ParagraphStyle/$ID/[No paragraph style]" Name="$ID/[No paragraph style]" PointSize="12">
+      <Properties><AppliedFont type="string">Source Serif 4</AppliedFont><Leading type="unit">13</Leading></Properties>
+    </ParagraphStyle>
+    <ParagraphStyle Self="ParagraphStyle/$ID/NormalParagraphStyle" Name="$ID/NormalParagraphStyle">
+      <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn><SameParaStyleSpacing type="unit">0</SameParaStyleSpacing></Properties>
+    </ParagraphStyle>
+    <ParagraphStyle Self="ParagraphStyle/Heading" Name="Heading" SpaceBefore="18" SpaceAfter="4.5">
+      <Properties><BasedOn type="object">ParagraphStyle/$ID/NormalParagraphStyle</BasedOn></Properties>
+    </ParagraphStyle>
+    <ParagraphStyle Self="ParagraphStyle/Loose" Name="Loose" SpaceBefore="18" SpaceAfter="4.5">
+      <Properties><BasedOn type="object">ParagraphStyle/$ID/NormalParagraphStyle</BasedOn><SameParaStyleSpacing type="enumeration">SetIgnore</SameParaStyleSpacing></Properties>
+    </ParagraphStyle>
+  </RootParagraphStyleGroup>
+</idPkg:Styles>"#;
+    let para = |style: &str, text: &str| {
+        format!(
+            r#"<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/{style}"><CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>{text}</Content><Br/></CharacterStyleRange></ParagraphStyleRange>"#
+        )
+    };
+    let story = format!(
+        r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">{}{}{}{}</Story></idPkg:Story>"#,
+        para("Heading", "One"),
+        para("Heading", "Two"),
+        para("Loose", "Three"),
+        para("Loose", "Four")
+    );
+    let d = import_idml(&fixture_with_table_styles(styles, &story)).unwrap();
+    let sid = d.stories.iter().find(|(_, s)| s.text.contains("One")).map(|(id, _)| *id).unwrap();
+    let cs = designcraft_compose::compose_story(&d, sid, &Default::default());
+    let baseline = |para: usize| cs.frames[0].lines.iter().find(|l| l.para == para).unwrap().baseline;
+    assert!((baseline(1) - baseline(0) - 13.0).abs() < 1e-6, "{} {}", baseline(0), baseline(1));
+    assert!((baseline(3) - baseline(2) - 13.0 - 4.5 - 18.0).abs() < 1e-6, "{} {}", baseline(2), baseline(3));
+}
