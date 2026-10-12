@@ -1061,7 +1061,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Count:", "Contagem:"),
     ("Create as a grid", "Criar como grade"),
     ("Rows:", "Linhas:"),
-    ("Columns:", "Colunas:"),
     ("Vertical:", "Vertical:"),
     ("Horizontal:", "Horizontal:"),
     ("Invalid value", "Valor inválido"),

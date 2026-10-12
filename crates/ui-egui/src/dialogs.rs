@@ -5130,7 +5130,8 @@ fn step_and_repeat_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog
                 let grid = d.b("grid");
                 let fields: &[(&str, &str)] = if grid { &[("rows", "Rows:"), ("columns", "Columns:")] } else { &[("count", "Count:")] };
                 for (k, l) in fields {
-                    crate::rtl::label(ui, tr(l));
+                    // A grid's columns, not a text frame's.
+                    crate::rtl::label(ui, crate::i18n::tr_context(&lang, l, "grid"));
                     text_field(ui, d, k, 70.0);
                     ui.end_row();
                 }

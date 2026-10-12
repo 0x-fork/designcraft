@@ -419,7 +419,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Count:", "Кількість:"),
     ("Create as a grid", "Створити як сітку"),
     ("Rows:", "Рядки:"),
-    ("Columns:", "Стовпці:"),
     ("Vertical:", "Вертикально:"),
     ("Horizontal:", "Горизонтально:"),
     ("Invalid value", "Неприпустиме значення"),
@@ -1650,4 +1649,4 @@ pub(super) const TABLE: &[(&str, &str)] = &[
 ];
 
 /// Contexts whose Ukrainian noun differs from the shared action/text-layout label.
-pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Columns", "table", "Стовпці"), ("Group", "selection", "Група")];
+pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Columns", "table", "Стовпці"), ("Columns:", "grid", "Стовпці:"), ("Group", "selection", "Група")];

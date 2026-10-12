@@ -1958,7 +1958,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
 ];
 
 /// Captions whose Japanese depends on where they appear: (English, context, Japanese).
-pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Span Columns", "paragraphLayout", "段抜き")];
+pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Span Columns", "paragraphLayout", "段抜き"), ("Columns:", "grid", "列:")];
 
 #[cfg(test)]
 mod tests {

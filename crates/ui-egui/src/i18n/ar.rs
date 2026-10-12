@@ -1064,7 +1064,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Count:", "العدد:"),
     ("Create as a grid", "إنشاء كشبكة"),
     ("Rows:", "الصفوف:"),
-    ("Columns:", "الأعمدة:"),
     ("Vertical:", "رأسي:"),
     ("Horizontal:", "أفقي:"),
     ("Invalid value", "قيمة غير صالحة"),

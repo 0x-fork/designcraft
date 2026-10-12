@@ -1096,7 +1096,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Count:", ["Anzahl:", "Nombre :", "Recuento:", "繰り返し数:", "计数:"]),
     ("Create as a grid", ["Als Raster erstellen", "Créer en tant que grille", "Crear como cuadrícula", "グリッドとして作成", "创建为网格"]),
     ("Rows:", ["Zeilen:", "Rangées :", "Filas:", "行:", "行:"]),
-    ("Columns:", ["Spalten:", "Colonnes :", "Columnas:", "列:", "列:"]),
     ("Vertical:", ["Vertikal:", "Vertical :", "Vertical:", "垂直方向:", "垂直:"]),
     ("Horizontal:", ["Horizontal:", "Horizontal :", "Horizontal:", "水平方向:", "水平:"]),
     ("Invalid value", ["Ungültiger Wert", "Valeur non valide", "Valor no válido", "無効な値", "无效值"]),
@@ -3916,6 +3915,10 @@ mod tests {
         assert_eq!(tr_context("uk", "Columns", "table"), "Стовпці");
         assert_eq!(tr("uk", "Columns"), "Колонки");
         assert_eq!(tr_context("uk", "Group", "selection"), "Група");
+        // Step and Repeat's grid columns are not a text frame's.
+        assert_eq!(tr_context("uk", "Columns:", "grid"), "Стовпці:");
+        assert_eq!(tr_context("ja", "Columns:", "grid"), "列:");
+        assert_eq!(tr("ja", "Columns:"), "段:");
         assert_eq!(tr("uk", "Group"), "Згрупувати");
         assert_eq!(tr_context("", "Columns", "table"), "Columns");
         assert_eq!(tr_context("ja", "Span Columns", "paragraphLayout"), "段抜き");

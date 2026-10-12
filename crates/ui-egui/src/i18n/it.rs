@@ -418,7 +418,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Count:", "Conteggio:"),
     ("Create as a grid", "Crea come griglia"),
     ("Rows:", "Righe:"),
-    ("Columns:", "Colonne:"),
     ("Vertical:", "Verticale:"),
     ("Horizontal:", "Orizzontale:"),
     ("Invalid value", "Valore non valido"),
