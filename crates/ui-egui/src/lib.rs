@@ -16,7 +16,9 @@ pub mod dock;
 pub mod i18n;
 pub mod icons;
 pub mod menus;
+mod panel_docking;
 pub mod panels;
+mod prefs;
 pub mod render_worker;
 mod rtl;
 pub mod story_editor;
@@ -101,6 +103,11 @@ pub struct SavedWorkspace {
     pub dock_expanded: bool,
     pub open_panel: Option<String>,
     pub floating: Vec<(String, [f32; 2])>,
+    /// Custom panel membership and placement; absent in older workspace files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docking: Option<craft_ui::docking::Layout<String>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub docking_hidden: std::collections::BTreeMap<String, craft_ui::docking::Location<String>>,
 }
 
 /// A missing on-by-default bool stays on. `bool::default` is false.
@@ -221,6 +228,20 @@ pub struct UiState {
     pub open_panel: Option<String>,
     /// Panels torn off the dock into their own floating windows: (panel id, top-left position).
     pub floating: Vec<(String, [f32; 2])>,
+    /// Shared panel layout after the user customizes the legacy dock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docking: Option<craft_ui::docking::Layout<String>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub docking_hidden: std::collections::BTreeMap<String, craft_ui::docking::Location<String>>,
+    /// Invalidates in-flight gestures when a workspace is replaced.
+    #[serde(skip)]
+    pub docking_generation: u64,
+    /// One-frame reveal request; z-order is never persisted.
+    #[serde(skip)]
+    pub docking_raise: Option<String>,
+    /// Last explicitly revealed customized panel, for the legacy closePanel control.
+    #[serde(skip)]
+    pub docking_opened: Option<String>,
     pub dock_expanded: bool,
     pub units: Unit,
     pub workspace: String,
@@ -317,6 +338,11 @@ impl Default for UiState {
             dock_tab: "properties".into(),
             open_panel: None,
             floating: Vec::new(),
+            docking: None,
+            docking_hidden: Default::default(),
+            docking_generation: 0,
+            docking_raise: None,
+            docking_opened: None,
             dock_expanded: true,
             units: Unit::Picas,
             workspace: "Essentials".into(),
@@ -497,6 +523,10 @@ pub struct DesignApp {
     /// A control-channel request is being handled: commands it runs never read or write the
     /// user's system clipboard (a control client must not see or replace it).
     pub(crate) in_control: bool,
+    /// The system clipboard's text that stands for the last object copy: what that copy put there
+    /// (no native menu: without it the paste keys produce no paste event), or what it held then
+    /// (native menu). It is never pasted as text: Paste with it pastes the copied objects.
+    object_clip_text: Option<String>,
 }
 
 impl DesignApp {
@@ -536,6 +566,7 @@ impl DesignApp {
             last_recovery: 0.0,
             egui_ctx: None,
             in_control: false,
+            object_clip_text: None,
         }
     }
 
@@ -588,8 +619,22 @@ impl DesignApp {
             Err(e) => self.status(e.clone()),
             // Copied text goes to the system clipboard too, whichever way Copy was chosen.
             Ok(v) if system_clipboard && matches!(id, "edit.copy" | "edit.cut") => {
-                if let (Some(t), Some(ctx)) = (v.get("text").and_then(Value::as_str), &self.egui_ctx) {
-                    ctx.copy_text(t.to_string());
+                let text = match v.get("text").and_then(Value::as_str) {
+                    Some(t) => {
+                        self.object_clip_text = None;
+                        Some(t.to_string())
+                    }
+                    None if !self.native_menu => {
+                        self.object_clip_text = Some(self.copied_objects_text());
+                        self.object_clip_text.clone()
+                    }
+                    None => {
+                        self.object_clip_text = self.services.clipboard_text.as_mut().and_then(|f| f());
+                        None
+                    }
+                };
+                if let (Some(t), Some(ctx)) = (text, &self.egui_ctx) {
+                    ctx.copy_text(t);
                     ctx.request_repaint();
                 }
             }
@@ -598,18 +643,67 @@ impl DesignApp {
         r
     }
 
-    /// Paste into text without the clipboard's text (a menu, not the paste keys): read it here.
+    /// Paste without the clipboard's text (a menu, not the paste keys): read it here. With no
+    /// insertion point, text that doesn't stand for copied objects becomes a new text frame
+    /// centred in the view.
     fn with_system_clipboard(&mut self, id: &str, mut params: Value) -> Value {
         let typing = self.session.active().is_some_and(|d| d.selection.text.is_some());
-        if typing
-            && matches!(id, "edit.paste" | "edit.pasteWithoutFormatting")
-            && params.get("text").is_none()
+        if !matches!(id, "edit.paste" | "edit.pasteWithoutFormatting") || !(typing || id == "edit.paste") {
+            return params;
+        }
+        if params.get("text").is_none()
             && let Some(text) = self.services.clipboard_text.as_mut().and_then(|f| f())
             && let Some(o) = params.as_object_mut()
         {
             o.insert("text".into(), Value::String(text));
         }
+        // Still what an object copy put there: paste those objects, not the placeholder text.
+        let norm = |t: &str| t.replace("\r\n", "\n");
+        if let Some(copied) = &self.object_clip_text
+            && params.get("text").and_then(Value::as_str).is_some_and(|t| norm(t) == norm(copied))
+            && let Some(o) = params.as_object_mut()
+        {
+            o.remove("text");
+        }
+        if !typing
+            && params.get("text").and_then(Value::as_str).is_some_and(|t| !t.is_empty())
+            && let Some((spread, at)) = canvas::view_centre(self)
+            && let Ok(spread) = serde_json::to_value(spread)
+            && let Some(o) = params.as_object_mut()
+        {
+            o.entry("spread").or_insert(spread);
+            o.entry("at").or_insert(json!([at.x, at.y]));
+        }
         params
+    }
+
+    /// Plain text for the system clipboard after copying objects: the copied text frames' stories,
+    /// or U+FFFC (object replacement character) when none has text.
+    fn copied_objects_text(&self) -> String {
+        let mut stories = Vec::new();
+        if let Some(clip) = &self.session.clipboard
+            && let Some(sp) = clip.spreads.first()
+        {
+            for it in &sp.items {
+                it.walk(&mut |i| {
+                    if let Some(tf) = i.text_frame()
+                        && !stories.contains(&tf.story)
+                    {
+                        stories.push(tf.story);
+                    }
+                });
+            }
+        }
+        let text = stories
+            .iter()
+            .filter_map(|id| self.session.clipboard.as_ref()?.story(*id))
+            .map(|st| {
+                st.text.chars().filter(|c| !('\u{E000}'..='\u{E1FF}').contains(c)).map(|c| if c == '\u{2028}' { '\n' } else { c }).collect::<String>()
+            })
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.is_empty() { '\u{FFFC}'.to_string() } else { text }
     }
 
     /// Handle requests produced by tools/commands (dialogs, view changes, file pickers).
@@ -829,6 +923,7 @@ impl DesignApp {
 
     /// Open (`file.open`, `file.openBytes`) or place (`file.place`) a file the user chose. A file
     /// that can't be opened or placed gets an alert with the reason, as well as the status line.
+    /// A successful import with warnings keeps the document and shows the warnings in an alert.
     pub fn open_file(&mut self, cmd: &str, params: Value) -> Result<Value, String> {
         let file = match params.get("path").and_then(Value::as_str) {
             Some(path) => std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string()),
@@ -838,6 +933,20 @@ impl DesignApp {
         if let Err(e) = &r {
             let title = if cmd == "file.place" { "Can't Place the File" } else { "Can't Open the File" };
             self.ui.dialog = Some(dialogs::Dialog::new("alert", json!({"title": title, "file": file, "message": e})));
+        } else if let Ok(result) = &r {
+            let warnings: Vec<&str> = result
+                .get("warnings")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|warning| !warning.is_empty())
+                .collect();
+            if !warnings.is_empty() {
+                self.status(format!("{file}: {}", warnings.join("; ")));
+                self.ui.dialog =
+                    Some(dialogs::Dialog::new("alert", json!({"title": "Import Warnings", "file": file, "message": warnings.join("\n")})));
+            }
         }
         r
     }
@@ -867,6 +976,9 @@ impl DesignApp {
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         let presenting = self.ui.screen_mode == ScreenMode::Presentation;
+        if presenting || self.ui.hidden_panels != 0 {
+            panel_docking::cancel_gesture(self, &ctx);
+        }
         let dbg = std::env::var_os("DESIGNCRAFT_DEBUG_LAYOUT").is_some();
         if dbg {
             eprintln!("root start {:?}", ui.available_rect_before_wrap());
@@ -898,16 +1010,29 @@ impl DesignApp {
             if !presenting {
                 chrome::doc_tabs(self, ui);
             }
-            if self.split && !presenting {
+            let split_layout = (self.split && !presenting)
+                .then(|| {
+                    craft_ui::layout::split_rect(
+                        ui.available_rect_before_wrap(),
+                        craft_ui::layout::SplitAxis::Horizontal,
+                        craft_ui::layout::SplitSize::Ratio(0.5),
+                        2.0,
+                        0.0,
+                    )
+                })
+                .flatten();
+            if let Some(layout) = split_layout {
                 // Two panes with a divider; each has its own view (zoom, scroll) and render cache.
-                let r = ui.available_rect_before_wrap();
-                let mid = r.center().x;
-                let halves = [
-                    egui::Rect::from_min_max(r.min, egui::pos2(mid - 1.0, r.max.y)),
-                    egui::Rect::from_min_max(egui::pos2(mid + 1.0, r.min.y), r.max),
-                ];
-                ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(mid - 1.0, r.min.y), egui::pos2(mid + 1.0, r.max.y)), 0.0, t.border);
-                for (k, half) in halves.into_iter().enumerate() {
+                ui.painter().rect_filled(layout.divider, 0.0, t.border);
+                // Resolve the clicked pane before either canvas handles this frame's keys.
+                if let Some(p) = ui.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten()) {
+                    if layout.first.contains(p) {
+                        self.focus_pane = 0;
+                    } else if layout.second.contains(p) {
+                        self.focus_pane = 1;
+                    }
+                }
+                for (k, half) in [layout.first, layout.second].into_iter().enumerate() {
                     self.switch_pane(k as u8);
                     // A new pane starts at the other pane's view.
                     if k == 1 && self.view().is_none() {
@@ -920,9 +1045,6 @@ impl DesignApp {
                         }
                     }
                     ui.scope_builder(egui::UiBuilder::new().max_rect(half), |ui| canvas::show(self, ui));
-                    if ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| half.contains(p))) {
-                        self.focus_pane = k as u8;
-                    }
                 }
                 self.switch_pane(self.focus_pane);
             } else {
@@ -1320,6 +1442,99 @@ mod tests {
         let control::Outcome::Done(r) = control::handle(&mut app, &egui::Context::default(), &req) else { panic!("app.open answers") };
         assert_eq!(r["ok"], json!(false), "{r}");
         assert!(app.ui.dialog.is_none(), "a control-channel app.open doesn't raise an alert");
+    }
+}
+
+#[cfg(test)]
+mod import_warning_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn idml(missing_parts: bool) -> Vec<u8> {
+        let missing = if missing_parts { r#"<idPkg:Spread src="Spreads/missing.xml"/><idPkg:Story src="Stories/missing.xml"/>"# } else { "" };
+        let map = format!(
+            r#"<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" Self="d"><idPkg:Spread src="Spreads/one.xml"/>{missing}</Document>"#
+        );
+        let spread = r#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Spread Self="s"><Page Self="p" GeometricBounds="0 0 100 100" ItemTransform="1 0 0 1 0 0"/><Rectangle Self="r" ItemTransform="1 0 0 1 0 0"/></Spread></idPkg:Spread>"#;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, text) in [("mimetype", designcraft_idml::MIMETYPE), ("designmap.xml", &map), ("Spreads/one.xml", spread)] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn app() -> DesignApp {
+        let mut app = DesignApp::new(Session::new(), Services { inbox: Some(Inbox::default()), ..Default::default() });
+        app.run("file.new", json!({"title": "Existing work"})).unwrap();
+        app.run("frame.create", json!({"rect": [10, 10, 50, 50]})).unwrap();
+        app
+    }
+
+    fn assert_partial_import_warning(app: &mut DesignApp, file: &str) {
+        let dialog = app.ui.dialog.as_ref().expect("partial import must show an alert");
+        assert_eq!(dialog.id, "alert");
+        assert_eq!(dialog.fields["title"], "Import Warnings");
+        assert_eq!(dialog.fields["file"], file);
+        for part in ["Spreads/missing.xml", "Stories/missing.xml"] {
+            assert!(dialog.fields["message"].as_str().unwrap().contains(part), "every missing part is named");
+            assert!(app.ui.status.contains(part), "the status line retains the warning");
+        }
+        assert_eq!(app.session.documents().len(), 2);
+        assert_eq!(app.session.documents()[0].doc.title, "Existing work");
+        assert!(app.session.documents()[0].is_dirty(), "existing unsaved work stays intact");
+        assert_eq!(app.session.documents()[0].doc.spreads[0].items.len(), 1);
+        assert_eq!(app.session.doc().unwrap().doc.spreads.len(), 1);
+        assert_eq!(app.session.doc().unwrap().doc.spreads[0].items.len(), 1, "available document content is kept");
+        dialogs::confirm(app).unwrap();
+        assert!(app.ui.dialog.is_none(), "OK dismisses the warning");
+        assert_eq!(app.session.documents().len(), 2, "dismissing the warning keeps the imported document");
+    }
+
+    #[test]
+    fn byte_open_reports_partial_import_warnings_without_losing_documents() {
+        let mut app = app();
+        let result =
+            app.open_file("file.openBytes", json!({"name": "partial.idml", "base64": designcraft_engine::cmd::base64_encode(&idml(true))})).unwrap();
+        assert_eq!(result["warnings"].as_array().unwrap().len(), 2);
+        assert_partial_import_warning(&mut app, "partial.idml");
+    }
+
+    #[test]
+    fn native_open_reports_partial_import_warnings_without_losing_documents() {
+        let path = std::env::temp_dir().join(format!("designcraft-partial-import-{}", std::process::id())).join("partial.idml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, idml(true)).unwrap();
+        let picked = path.to_string_lossy().to_string();
+        let mut app = app();
+        app.services.pick_open = Some(Box::new(move |_| Some(picked.clone())));
+        let result = app.run("app.openDialog", json!({}));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+        assert_eq!(result.unwrap()["warnings"].as_array().unwrap().len(), 2);
+        assert_partial_import_warning(&mut app, "partial.idml");
+    }
+
+    #[test]
+    fn inbox_open_reports_partial_import_warnings_without_losing_documents() {
+        let mut app = app();
+        let request = app.import_request("open");
+        app.services.inbox.as_ref().unwrap().lock().unwrap().push(ImportedFile { request, name: "partial.idml".into(), bytes: idml(true) });
+        app.drain_inbox();
+        assert_partial_import_warning(&mut app, "partial");
+    }
+
+    #[test]
+    fn complete_import_does_not_show_a_warning() {
+        let mut app = app();
+        let result = app
+            .open_file("file.openBytes", json!({"name": "complete.idml", "base64": designcraft_engine::cmd::base64_encode(&idml(false))}))
+            .unwrap();
+        assert_eq!(result["warnings"], json!([]));
+        assert!(app.ui.dialog.is_none());
+        assert!(app.ui.status.is_empty());
+        assert_eq!(app.session.documents().len(), 2);
     }
 }
 

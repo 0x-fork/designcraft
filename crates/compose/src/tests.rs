@@ -1589,8 +1589,11 @@ fn only_english_text_gets_english_hyphenation() {
     assert_eq!(hyphenated(&d2, sid), 0, "French isn't hyphenated with English rules");
 }
 
-/// OS/2 field offsets: sTypoAscender, sxHeight, sCapHeight.
+/// OS/2 field offsets: sTypoAscender, sTypoDescender, the high half of ulCodePageRange1, sxHeight,
+/// sCapHeight.
 const TYPO_ASCENDER: usize = 68;
+const TYPO_DESCENDER: usize = 70;
+const CODE_PAGES_HIGH: usize = 78;
 const X_HEIGHT: usize = 86;
 const CAP_HEIGHT: usize = 88;
 
@@ -1693,6 +1696,116 @@ fn ascent_first_baseline_uses_the_typographic_ascender() {
     // … and 1 em × 16 pt beats it.
     d.story_mut(sid).unwrap().format_chars(3..7, |f| f.over.size = Some(16.0));
     assert!(close(first(&d), top + 16.0), "{}", first(&d));
+}
+
+#[test]
+fn em_box_first_baseline_follows_base_then_the_typo_box_or_the_cap_height() {
+    use designcraft_doc::FirstBaseline;
+    let db = designcraft_fonts::FontDb::global();
+    // [`test_font`] (typo descender -326, cap height 660), with or without its `BASE` table, whose
+    // em box bottom (`ideo`) is at -170 units.
+    let add = |family: &str, base: bool, fields: &[(usize, i16)]| {
+        let mut b = test_font(family, Some(fields));
+        if !base {
+            let tables = u16::from_be_bytes([b[4], b[5]]) as usize;
+            let rec = (0..tables).map(|t| 12 + 16 * t).find(|&r| &b[r..r + 4] == b"BASE").unwrap();
+            // Still sorted between its neighbours, so the table directory stays valid.
+            b[rec..rec + 4].copy_from_slice(b"BASX");
+        }
+        db.add_font(b);
+        db.face(family, "Regular").declared_em_box()
+    };
+    // Typo ascender − descender = 1 em in a CJK font (JIS code page, bit 17): the typo ascender is
+    // the top.
+    let typo = [(TYPO_ASCENDER, 850), (TYPO_DESCENDER, -150)];
+    assert_eq!(add("EmBoxTypo 850", false, &[typo[0], typo[1], (CODE_PAGES_HIGH, 1 << 1)]), Some((850.0, -150.0)));
+    // In a Latin font the cap height decides: 0.5 em + 660 / 2.
+    assert_eq!(add("EmBoxLatn 850", false, &typo), Some((830.0, -170.0)));
+    // Otherwise the em box is centred on half the cap height: 0.5 em + 600 / 2.
+    assert_eq!(add("EmBoxCapH 600", false, &[(TYPO_ASCENDER, 700), (CAP_HEIGHT, 600)]), Some((800.0, -200.0)));
+    // No OS/2 cap height: the H glyph's top, 656.
+    assert_eq!(add("EmBoxGlyphH 0", false, &[(TYPO_ASCENDER, 700), (CAP_HEIGHT, 0)]), Some((828.0, -172.0)));
+    // A `BASE` em box comes first.
+    assert_eq!(add("EmBoxBase 850", true, &[(TYPO_ASCENDER, 850), (TYPO_DESCENDER, -150)]), Some((830.0, -170.0)));
+    let (mut d, sid, fid) = doc_with("Hxg Hxg", Rect::new(36.0, 36.0, 300.0, 300.0), ParaAttrs::default());
+    let mut first = |family: &str, sizes: [f64; 2], kind: FirstBaseline| {
+        let st = d.story_mut(sid).unwrap();
+        for (range, size) in [(0..4, sizes[0]), (4..7, sizes[1])] {
+            st.format_chars(range, |f| {
+                f.over.font_family = Some(family.into());
+                f.over.font_style = Some("Regular".into());
+                f.over.size = Some(size);
+            });
+        }
+        d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.first_baseline = kind;
+        compose_story(&d, sid, &ComposeOptions::default()).frames[0].lines[0].baseline - 36.0
+    };
+    let close = |a: f64, b: f64| (a - b).abs() < 0.01;
+    let asc = first("EmBoxCapH 600", [10.0; 2], FirstBaseline::Ascent);
+    assert!(close(asc, 7.0), "{asc}");
+    for (family, top) in [("EmBoxTypo 850", 8.5), ("EmBoxLatn 850", 8.3), ("EmBoxCapH 600", 8.0), ("EmBoxGlyphH 0", 8.28), ("EmBoxBase 850", 8.3)] {
+        let emb = first(family, [10.0; 2], FirstBaseline::EmboxHeight);
+        assert!(close(emb, top), "{family}: {emb}");
+    }
+    // A mixed first line takes its largest size.
+    let emb = first("EmBoxCapH 600", [10.0, 20.0], FirstBaseline::EmboxHeight);
+    assert!(close(emb, 16.0), "{emb}");
+}
+
+#[test]
+fn em_box_first_baseline_in_a_latin_font_with_a_one_em_typo_box_follows_the_cap_height() {
+    use designcraft_doc::FirstBaseline;
+    // DejaVu Serif: 2048 units per em, typo ascender 1556 and descender -492 (one em), cap height
+    // 1493. Read from the system fonts; the test skips where it isn't installed.
+    let Some(bytes) = designcraft_fonts::system_font_dirs().iter().find_map(|dir| {
+        ["truetype/dejavu/DejaVuSerif.ttf", "dejavu/DejaVuSerif.ttf", "DejaVuSerif.ttf"].iter().find_map(|p| std::fs::read(dir.join(p)).ok())
+    }) else {
+        eprintln!("skipped: DejaVu Serif isn't installed");
+        return;
+    };
+    let db = designcraft_fonts::FontDb::global();
+    db.add_font(bytes);
+    let face = db.face("DejaVu Serif", "Book");
+    assert_eq!(face.family, "DejaVu Serif");
+    let (mut d, sid, fid) = doc_with("Hxg Hxg", Rect::new(36.0, 36.0, 300.0, 300.0), ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    let n = st.len();
+    st.format_chars(0..n, |f| {
+        f.over.font_family = Some("DejaVu Serif".into());
+        f.over.font_style = Some("Book".into());
+        f.over.size = Some(10.0);
+    });
+    d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.first_baseline = FirstBaseline::EmboxHeight;
+    let first = compose_story(&d, sid, &ComposeOptions::default()).frames[0].lines[0].baseline - 36.0;
+    // 0.5 em + cap height / 2, not the 1556-unit typo ascender (7.60 pt).
+    let expected = 5.0 + 1493.0 / 2048.0 * 5.0;
+    assert!((first - expected).abs() < 0.01, "{first}, expected {expected}");
+}
+
+#[test]
+fn em_box_first_baseline_ignores_baseline_shift() {
+    use designcraft_doc::FirstBaseline;
+    let db = designcraft_fonts::FontDb::global();
+    // Source Sans 3's `BASE` em box tops 0.83 em above the baseline.
+    db.add_font(test_font("EmBoxShft 830", Some(&[])));
+    let (mut d, sid, fid) = doc_with("Hxg Hxg", Rect::new(36.0, 36.0, 300.0, 300.0), ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    st.format_chars(0..7, |f| {
+        f.over.font_family = Some("EmBoxShft 830".into());
+        f.over.font_style = Some("Regular".into());
+        f.over.size = Some(10.0);
+    });
+    st.format_chars(4..7, |f| f.over.baseline_shift = Some(1.0));
+    d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.first_baseline = FirstBaseline::EmboxHeight;
+    let frames = compose_story(&d, sid, &ComposeOptions::default()).frames;
+    let line = &frames[0].lines[0];
+    // The unshifted run's baseline stays 8.3 pt below the frame top; the shifted run is drawn 1 pt
+    // higher.
+    assert!((line.baseline - 36.0 - 8.3).abs() < 0.01, "{}", line.baseline);
+    let ys: Vec<f64> = line.glyphs.iter().map(|g| g.y).collect();
+    assert_eq!(ys.len(), 7, "{ys:?}");
+    assert!(ys[..3].iter().all(|y| y.abs() < 0.01), "{ys:?}");
+    assert!(ys[4..].iter().all(|y| (y + 1.0).abs() < 0.01), "{ys:?}");
 }
 
 #[test]
@@ -1860,18 +1973,18 @@ fn cap_height_and_x_height_first_baselines_use_the_fonts_cap_and_x_heights() {
 fn cap_height_and_x_height_fall_back_without_usable_os2_values() {
     use designcraft_doc::FirstBaseline;
     let db = designcraft_fonts::FontDb::global();
-    // No OS/2 table, zero / negative and absurd values: the top of the H (0.656 em) and 0.5 of the
-    // (1 em) ascent.
+    // No OS/2 table, zero / negative and absurd values: the top of the H (0.656 em) and of the x
+    // (0.486 em).
     let zero: &[(usize, i16)] = &[(CAP_HEIGHT, 0), (X_HEIGHT, -40)];
     let big: &[(usize, i16)] = &[(CAP_HEIGHT, i16::MAX), (X_HEIGHT, i16::MAX)];
     for (family, fields) in [("CapXHeightNoO", None), ("CapXHeightNeg", Some(zero)), ("CapXHeightBig", Some(big))] {
         db.add_font(test_font(family, fields));
         let face = db.face(family, "Regular");
         assert_eq!(face.family, family);
-        assert_eq!((face.cap_height, face.x_height), (656.0, face.ascent * 0.5), "{family}");
+        assert_eq!((face.cap_height, face.x_height), (656.0, 486.0), "{family}");
         let cap = first_baseline_in(family, |o| o.first_baseline = FirstBaseline::CapHeight);
         let x = first_baseline_in(family, |o| o.first_baseline = FirstBaseline::XHeight);
-        assert!((cap - (40.0 + 13.12)).abs() < 0.01 && (x - (40.0 + 10.0)).abs() < 0.01, "{family}: {cap} {x}");
+        assert!((cap - (40.0 + 13.12)).abs() < 0.01 && (x - (40.0 + 9.72)).abs() < 0.01, "{family}: {cap} {x}");
     }
 }
 
@@ -2088,6 +2201,15 @@ fn drop_cap_takes_its_character_style_and_nested_styles_count_it() {
     assert_eq!(fill(&cs, at(0)), "Initial Red");
     assert_eq!(fill(&cs, at(2)), "Initial Red");
     assert_eq!(fill(&cs, at(3)), "[Black]");
+    // The drop cap's style is a leading "through 1 drop cap" nested style: the nested styles start
+    // after the drop cap.
+    let one = designcraft_doc::NestedStyle { style: "Lead".into(), through: true, count: 1, until: designcraft_doc::NestedUntil::Characters };
+    d.story_mut(sid).unwrap().paras[0].para.nested_styles = Some(vec![one]);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let l = &cs.frames[0].lines[0];
+    let at = |b: usize| l.glyphs.iter().find(|g| g.byte == b).unwrap();
+    assert_eq!(fill(&cs, at(0)), "Initial Red");
+    assert_eq!((fill(&cs, at(3)), fill(&cs, at(4))), ("Lead Blue".to_string(), "[Black]".to_string()));
     // A nested style "through 1 drop cap" covers the drop cap; the next one starts after it.
     let ns = |style: &str, until: designcraft_doc::NestedUntil| designcraft_doc::NestedStyle { style: style.into(), through: true, count: 1, until };
     d.story_mut(sid).unwrap().paras[0].para = ParaAttrs {
@@ -2126,8 +2248,9 @@ fn drop_cap_caret_and_hit_testing() {
 }
 
 #[test]
-fn drop_cap_sits_on_its_line_as_set() {
-    // Lines on a 15 pt baseline grid (not the 12 pt leading): the drop cap follows line 3.
+fn drop_cap_on_a_baseline_grid_reaches_down_by_grid_steps() {
+    // Lines on a 15 pt baseline grid (not the 12 pt leading): the drop cap reaches down two grid
+    // steps, to line 3.
     let (mut d, sid, _) = drop_doc(LOREM, ParaAttrs { grid_align: Some(designcraft_doc::GridAlign::AllLines), ..drop_cap(3, 1) });
     d.settings.baseline_grid.increment = 15.0;
     d.settings.baseline_grid.start = 0.0;
@@ -2141,6 +2264,86 @@ fn drop_cap_sits_on_its_line_as_set() {
     // Scaled to the grid's line pitch: its cap top is still line 1's.
     let body = lines[0].glyphs.iter().find(|g| g.byte == 1).unwrap();
     assert!((lines[2].baseline - cap_of(dc) - (lines[0].baseline - cap_of(body))).abs() < 0.01);
+}
+
+/// A line with a larger auto leading doesn't move the drop cap: it reaches down `lines − 1`
+/// leadings of the text after it, not to where line N is set.
+#[test]
+fn drop_cap_reaches_down_by_the_text_leading_past_a_line_with_larger_leading() {
+    use designcraft_doc::{CharAttrs, Composer, Leading};
+    let text = [LOREM; 2].join(" ");
+    let para = ParaAttrs { composer: Some(Composer::SingleLine), ..drop_cap(3, 1) };
+    let (mut d, sid, _) = doc_with(&text, Rect::new(0.0, 0.0, 300.0, 1000.0), para);
+    d.story_mut(sid).unwrap().paras[0].chars = CharAttrs { size: Some(12.0), leading: Some(Leading::Auto), ..Default::default() };
+    // A larger word starts line 2, so lines 2 and 3 are set further down than 2 × 14.4 pt.
+    let start2 = all_lines(&compose_story(&d, sid, &ComposeOptions::default()))[1].range.start;
+    d.story_mut(sid).unwrap().format_chars(start2..start2 + 3, |f| f.over.size = Some(20.0));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = all_lines(&cs);
+    assert_eq!(lines[1].range.start, start2);
+    assert!(lines[2].baseline - lines[0].baseline > 2.0 * 14.4 + 5.0, "{} {}", lines[0].baseline, lines[2].baseline);
+    let dc = &lines[0].glyphs[0];
+    assert!((dc.y - 2.0 * 14.4).abs() < 1e-6, "drop cap baseline {} below line 1", dc.y);
+    let b = lines[0].drop_cap.unwrap();
+    assert!((b.baseline - (lines[0].baseline + 2.0 * 14.4)).abs() < 1e-6, "{}", b.baseline);
+}
+
+/// A space after the drop cap is set at its size on its baseline and doesn't widen the indent: the
+/// lines beside it start where its characters end.
+#[test]
+fn space_after_a_drop_cap_does_not_widen_the_indent() {
+    let (d, sid, _) = drop_doc(&format!("In 2003 {LOREM}"), drop_cap(2, 2));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = all_lines(&cs);
+    let (i, n) = (&lines[0].glyphs[0], &lines[0].glyphs[1]);
+    assert_eq!((i.byte, n.byte), (0, 1));
+    let end = n.x + n.adv;
+    for l in &lines[..2] {
+        assert!((text_x(l, 3) - end).abs() < 1e-6, "{} vs {end}", text_x(l, 3));
+    }
+    let space = lines[0].glyphs.iter().find(|g| g.byte == 2).unwrap();
+    assert!((space.sy - n.sy).abs() < 1e-9 && (space.y - n.y).abs() < 1e-9, "the space is set like the drop cap");
+    assert_eq!(lines[0].drop_cap.unwrap().end, 3);
+}
+
+/// A one-line drop cap keeps its characters' own size (a smaller verse number stays smaller), and
+/// the tabs in it advance to the paragraph's tab stops.
+#[test]
+fn one_line_drop_cap_keeps_its_size_and_sets_its_tabs() {
+    let stop = |position, align| designcraft_doc::TabStop { position, align, leader: String::new(), align_on: String::new() };
+    let para = ParaAttrs { tabs: Some(vec![stop(30.0, TabAlign::Right), stop(40.0, TabAlign::Left)]), ..drop_cap(1, 3) };
+    let (mut d, sid, _) = drop_doc(&format!("\t7\t{LOREM}"), para);
+    d.story_mut(sid).unwrap().format_chars(0..3, |f| f.over.size = Some(8.0));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let l = &cs.frames[0].lines[0];
+    let at = |b: usize| l.glyphs.iter().find(|g| g.byte == b).unwrap();
+    let (seven, body) = (at(1), at(3));
+    assert!((seven.sy / body.sy - 0.8).abs() < 1e-9, "{} vs {}", seven.sy, body.sy);
+    assert!(seven.y.abs() < 1e-9);
+    assert!((seven.x + seven.adv - 30.0).abs() < 1e-6, "the number ends at the right tab: {}", seven.x + seven.adv);
+    assert!((text_x(l, 3) - 40.0).abs() < 1e-6, "the text starts at the left tab: {}", text_x(l, 3));
+}
+
+/// Right to left, the tabs in a drop cap advance to tab stops measured from the column's right
+/// edge.
+#[test]
+fn right_to_left_drop_cap_sets_its_tabs_from_the_right_edge() {
+    let stop = |position, align| designcraft_doc::TabStop { position, align, leader: String::new(), align_on: String::new() };
+    let para = ParaAttrs {
+        direction: Some(designcraft_doc::TextDirection::RightToLeft),
+        align: Some(Align::Right),
+        tabs: Some(vec![stop(30.0, TabAlign::Right), stop(40.0, TabAlign::Left)]),
+        ..drop_cap(1, 3)
+    };
+    let (d, sid, _) = drop_doc(&format!("\t7\t{LOREM}"), para);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let l = &cs.frames[0].lines[0];
+    let seven = l.glyphs.iter().find(|g| g.byte == 1).unwrap();
+    // The 300 pt column's right edge is at 300: the number's far (left) end is 30 pt from it.
+    assert!((seven.x - 270.0).abs() < 1e-6, "the number ends at the right tab: {}", seven.x);
+    // The text beside it starts at the left tab, 40 pt from the edge.
+    let right = l.glyphs.iter().filter(|g| g.byte >= 3 && g.visible).map(|g| g.x + g.adv).fold(f64::NEG_INFINITY, f64::max);
+    assert!(right <= 260.0 + 1e-6 && right > 255.0, "text ends at {right}");
 }
 
 /// A rule in Text Color takes the colour of the paragraph's text: the first character's for the
@@ -2307,6 +2510,23 @@ fn spanish_text_gets_spanish_hyphenation() {
         let es = hyphen::Lang::for_language("Spanish").unwrap();
         let pts = hyphen::hyphen_points_in(whole, &hyphen::Limits::default(), es);
         assert!(pts.contains(&last.chars().count()), "break {last}- in {whole} is a Bezos point");
+    }
+}
+
+#[test]
+fn portuguese_text_gets_portuguese_hyphenation() {
+    let text = "matemática matemática matemática matemática matemática matemática";
+    let (mut d, sid, _) = doc_with(text, Rect::new(36.0, 36.0, 76.0, 700.0), ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    let n = st.len();
+    st.format_chars(0..n, |f| f.over.language = Some("Portuguese: Brazilian".into()));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let breaks: Vec<&str> = all_lines(&cs).into_iter().filter(|l| l.hyphenated).map(|l| text[l.range.clone()].trim_end()).collect();
+    assert!(!breaks.is_empty(), "Portuguese text is hyphenated");
+    // Portuguese syllables: ma-te-má-tica.
+    for b in breaks {
+        let tail = b.rsplit(' ').next().unwrap_or(b);
+        assert!(["ma", "mate", "matemá"].contains(&tail), "{b:?}");
     }
 }
 
