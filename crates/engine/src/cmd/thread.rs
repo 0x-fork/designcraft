@@ -74,6 +74,9 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|d, sel| {
         let mut new_frame = || -> Result<ItemId> {
             let r = rect.ok_or_else(|| bad("text.thread", "give two of from, to and rect"))?;
+            if d.layer(layer).is_none_or(|l| l.locked || !l.visible) {
+                return Err(bad("text.thread", "the active layer is locked or hidden"));
+            }
             let para = ParaFormat { style: d.styles.default_paragraph.clone(), ..Default::default() };
             Ok(d.add_text_frame(sr, r, layer, "", para)?.0)
         };
@@ -239,6 +242,29 @@ mod tests {
         }
         assert_eq!(s.doc().unwrap().history.undo.len(), undo);
         assert_eq!(*s.doc().unwrap().doc, *doc);
+    }
+
+    #[test]
+    fn locked_frames_and_layers_refuse_threads() {
+        let mut s = session();
+        let (a, _) = text_frame(&mut s, [72.0, 72.0, 200.0, 120.0], &LONG.repeat(8));
+        let (b, _) = text_frame(&mut s, [72.0, 300.0, 200.0, 400.0], "");
+        let layer = s.doc().unwrap().active_layer.0;
+        let undo = s.doc().unwrap().history.undo.len();
+        s.execute("object.lock", &json!({"ids": [b]})).unwrap();
+        assert!(s.execute("text.thread", &json!({"from": a, "to": b})).is_err(), "locked frame");
+        assert!(s.execute("text.thread", &json!({"from": b, "to": a})).is_err(), "locked frame");
+        s.execute("edit.undo", &json!({})).unwrap();
+        for (set, rect) in [(json!({"locked": true}), false), (json!({"locked": true}), true), (json!({"visible": false}), true)] {
+            let mut p = json!({"id": layer});
+            p.as_object_mut().unwrap().extend(set.as_object().unwrap().clone());
+            s.execute("layer.set", &p).unwrap();
+            let t = if rect { json!({"from": a, "rect": [300, 300, 400, 400]}) } else { json!({"from": a, "to": b}) };
+            assert!(s.execute("text.thread", &t).is_err(), "{p} {t}");
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+        assert_eq!(frames(&mut s, a), [a]);
     }
 
     #[test]
