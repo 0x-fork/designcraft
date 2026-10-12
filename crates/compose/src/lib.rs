@@ -890,12 +890,16 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         let pf = &story.paras[pi];
         let (mut pp, base_chars) = doc.styles.resolve_para(pf);
         // A break character that ends the previous paragraph sends this one on, like a start option.
-        let after_break = pi
-            .checked_sub(1)
-            .and_then(|p| para_ranges.get(p))
-            .and_then(|r| story.text.get(r.clone()))
-            .and_then(|t| t.chars().next_back())
-            .and_then(break_start);
+        // Deleted paragraphs in between don't count, nor does a deleted or hidden break.
+        let after_break = (0..pi).rev().find(|p| !deleted.get(*p).copied().unwrap_or(false)).and_then(|p| {
+            let r = para_ranges.get(p)?;
+            let (i, c) = story.text.get(r.clone())?.char_indices().next_back()?;
+            let start = break_start(c)?;
+            let (_, chars) = doc.styles.resolve_para(story.paras.get(p)?);
+            let props = doc.styles.resolve_char(&chars, story.char_format_at(r.start + i + c.len_utf8()));
+            let gone = props.change == designcraft_doc::ChangeMark::Deleted || doc.conditions_hide(&props.conditions);
+            (!gone).then_some(start)
+        });
         if let Some(t) = story.para_table(pi) {
             if cur.last_baseline.is_some() {
                 cur.start(after_break.unwrap_or(pp.start_paragraph), &cols, frames, doc);
