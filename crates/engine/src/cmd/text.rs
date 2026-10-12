@@ -36,6 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "text.select", "Select Text", [], None, "{story, anchor, focus} (UTF-8 byte offsets into the story text, as find.find reports them: á or — counts 2 or 3)", has_doc, |s, p| {
             let sid = StoryId(p.get("story").and_then(Value::as_u64).unwrap_or(0));
+            s.typing_format = None;
             let st = s.doc_mut()?;
             let text = &st.doc.story(sid).ok_or_else(|| bad("text.select", "no such story"))?.text;
             let a = floor_char_boundary(text, p.get("anchor").and_then(Value::as_u64).unwrap_or(0) as usize);
@@ -340,6 +341,7 @@ fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
         other => return Err(bad(ID, format!("unknown unit `{other}` (word, line, paragraph or story)"))),
     };
     s.text_drag = false;
+    s.typing_format = None;
     let st = s.doc_mut()?;
     st.selection = Selection::text(TextSel { story: sid, anchor: a, focus: e, frame: Some(frame), cell });
     st.revision += 1;
@@ -411,6 +413,7 @@ fn place(s: &mut Session, p: &Value, extend: bool) -> Result<Value> {
     } else if s.text_drag {
         return Ok(json!({"story": sid.0, "dragging": true}));
     }
+    s.typing_format = None;
     let st = s.doc_mut()?;
     // Dragging from one cell into another selects cells.
     if extend
@@ -815,6 +818,7 @@ fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
         "storyEnd" => text.len(),
         other => return Err(bad("text.move", format!("unknown dir `{other}`"))),
     };
+    s.typing_format = None;
     let stm = s.doc_mut()?;
     stm.selection.text = Some(if extend { TextSel { focus: new, ..t } } else { TextSel { anchor: new, focus: new, ..t } });
     stm.revision += 1;
@@ -1442,6 +1446,46 @@ mod multi_click_tests {
     use serde_json::{Value, json};
 
     use crate::Session;
+
+    #[test]
+    fn moving_the_caret_drops_the_pending_typing_format() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 500, 200], "content": "text", "text": "Hello world"})).unwrap();
+        let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
+        let size_at = |s: &Session, b: usize| s.doc().unwrap().doc.story(designcraft_doc::StoryId(sid)).unwrap().char_format_at(b).over.size;
+        let pending = |s: &mut Session| {
+            s.execute("text.select", &json!({"story": sid, "anchor": 5})).unwrap();
+            s.execute("type.char", &json!({"attrs": {"size": 30}})).unwrap();
+        };
+        // Away and back by arrow keys, by a click, by selecting and by double-clicking: typing at the
+        // same caret is in the text's own format.
+        let moves: Vec<Box<dyn Fn(&mut Session)>> = vec![
+            Box::new(|s| {
+                s.execute("text.move", &json!({"dir": "right"})).unwrap();
+                s.execute("text.move", &json!({"dir": "left"})).unwrap();
+            }),
+            Box::new(|s| {
+                s.execute("text.placeCaret", &json!({"frame": fid, "point": [80, 80]})).unwrap();
+                s.execute("text.select", &json!({"story": sid, "anchor": 5})).unwrap();
+            }),
+            Box::new(|s| {
+                s.execute("text.selectAt", &json!({"frame": fid, "point": [80, 80], "unit": "story"})).unwrap();
+                s.execute("text.select", &json!({"story": sid, "anchor": 5})).unwrap();
+            }),
+        ];
+        for m in &moves {
+            pending(&mut s);
+            m(&mut s);
+            s.execute("text.insert", &json!({"text": "x"})).unwrap();
+            assert_eq!(size_at(&s, 6), None);
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
+        // Without a move it applies.
+        pending(&mut s);
+        s.execute("text.insert", &json!({"text": "x"})).unwrap();
+        assert_eq!(size_at(&s, 6), Some(30.0));
+    }
 
     #[test]
     fn word_selection_keeps_grapheme_clusters_whole() {
