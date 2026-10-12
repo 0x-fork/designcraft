@@ -129,6 +129,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-12** · The Effects dialog, as in InDesign: Object › Effects (Transparency…, Drop Shadow… and the rest, and their shortcuts) and the Effects panel's fx button open it on the chosen effect, turned on. Transparency and every effect in one window, in the document's units, with X/Y offsets, Preview on the page, Cancel putting things back, and OK as one undo step (`object.effects`). Shadows default to InDesign's 120° light angle. No readiness percentage change.
 - **2026-10-12** · Window close and application/menu Quit ask about unsaved documents; later Cancel keeps every tab open, including earlier Don't Save choices. Approvals are rechecked after edits. Cancelable macOS Dock Quit remains open (#544). No readiness percentage change.
 - **2026-10-12** · Each running app keeps recovery data in its own locked folder; current folder and lock ownership are checked before writes and cleanup. Failed isolation disables recovery with a warning instead of sharing document IDs. No readiness percentage change.
 - **2026-10-12** · Native engine saves and exports replace files atomically; failed writes retain the original, private staging preserves Unix permissions, and valid long filenames work. Desktop Services and CLI raster exports remain separate follow-ups. No readiness percentage change.

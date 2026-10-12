@@ -1150,6 +1150,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "layerOptions" => crate::i18n::tr(&app.ui.language, "Object Layer Options"),
         "keyboardShortcuts" => crate::i18n::tr(&app.ui.language, "Keyboard Shortcuts"),
         "colorPicker" => crate::i18n::tr(&app.ui.language, "Color Picker"),
+        crate::effects_dialog::ID => crate::i18n::tr(&app.ui.language, "Effects"),
         id => match id.strip_prefix("cmd:").and_then(designcraft_engine::find_command) {
             Some(c) => crate::i18n::tr(&app.ui.language, c.label.trim_end_matches('…')),
             None => crate::i18n::tr(&app.ui.language, "Dialog"),
@@ -1161,6 +1162,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let preferred_width: f32 = match d.id.as_str() {
             "alert" => 440.0,
             "closeDocument" => 380.0,
+            crate::effects_dialog::ID => 720.0,
             "newDocument" if crate::i18n::is_rtl(&app.ui.language) => 380.0,
             _ => 640.0,
         };
@@ -1396,6 +1398,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             "insertXref" => insert_xref(app, ui, &mut d),
             "findFont" => find_font(app, ui, &mut d),
             "colorPicker" => color_picker(ui, &mut d),
+            crate::effects_dialog::ID => crate::effects_dialog::show(app, ui, &mut d),
             "preferences" => preferences(app, ui, &mut d, body_height),
             "print" => print_dialog(app, ui, &mut d),
             "pdfImport" => {
@@ -1733,12 +1736,20 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         Some(true) => {
             let _ = confirm(app);
         }
-        Some(false) => {
-            app.ui.dialog = None;
-            app.cancel_pdf_import();
-        }
+        Some(false) => cancel(app),
         None => {}
     }
+}
+
+/// Close the open dialog without applying it (Cancel, Esc, the control channel): a previewing
+/// dialog puts the document back as it was.
+pub fn cancel(app: &mut DesignApp) {
+    if let Some(d) = app.ui.dialog.take()
+        && d.id == crate::effects_dialog::ID
+    {
+        crate::effects_dialog::cancel(app, &d);
+    }
+    app.cancel_pdf_import();
 }
 
 /// Apply the open dialog.
@@ -2165,6 +2176,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.run("footnote.options", p)
         }
         "alert" => Ok(Value::Null),
+        crate::effects_dialog::ID => crate::effects_dialog::confirm(app, &d),
         "findChange" if d.b("objectMode") => Ok(Value::Null),
         "findChange" => app.run("find.change", json!({"find": d.s("find"), "change": d.s("change"), "grep": d.b("grep"), "caseSensitive": d.b("caseSensitive"), "wholeWord": d.b("wholeWord"), "scope": d.s("scope")})),
         id if id.starts_with("cmd:") => {
