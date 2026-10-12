@@ -378,12 +378,15 @@ mod tests {
             }
             s.execute("file.saveAs", &json!({"path": p(name)})).unwrap();
             s.execute("book.add", &json!({"path": p(name)})).unwrap();
+            // Book updates write closed chapters only.
+            s.execute("file.close", &json!({})).unwrap();
         }
         let r = s.execute("book.paginate", &json!({})).unwrap();
         // Same as previous takes the number, written in the document's own style.
         assert_eq!(r["chapters"], json!(["I", "1", "2", "g", "8"]));
         assert_eq!(super::load(&p("e.designcraft")).unwrap().settings.chapter_number, 8);
-        // The open document (e) names its book.
+        // An open chapter (e) names its book.
+        s.execute("file.open", &json!({"path": p("e.designcraft")})).unwrap();
         assert_eq!(s.execute("layout.chapterNumbering", &json!({})).unwrap()["book"], "Field Guide");
         std::fs::remove_dir_all(&dir).ok();
     }
