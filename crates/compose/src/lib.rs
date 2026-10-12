@@ -462,9 +462,15 @@ fn wrap_exclusion(
 }
 
 /// The outline a contour wrap of `kind` around frame `it` follows, in the frame's inner space.
-/// Bounding Box follows the part of the placed graphic the frame shows; detected edges, alpha
-/// channels and image paths need the image, so they follow the frame's path (as other frames do).
+/// Bounding Box follows the part of the placed graphic the frame shows; Same As Clipping follows
+/// the graphic's clipping path when it has one; detected edges, alpha channels and image paths need
+/// the image, so they follow the frame's path (as other frames do).
 fn contour_path(it: &Item, kind: designcraft_doc::ContourType) -> designcraft_geom::BezPath {
+    if kind == designcraft_doc::ContourType::SameAsClipping
+        && let Some((path, _)) = it.graphic().and_then(|g| g.clip_region())
+    {
+        return path;
+    }
     if kind == designcraft_doc::ContourType::BoundingBox
         && let Some(r) = it.graphic().and_then(|g| g.shown_bounds(it.inner_bounds()))
     {

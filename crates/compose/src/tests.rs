@@ -422,6 +422,38 @@ fn wrap_on_both_sides_sets_text_left_then_right_of_the_object() {
     assert!(!cs.is_overset());
 }
 
+/// Same As Clipping follows a placed graphic's clipping path: beside a triangle that widens
+/// downwards, text reaches further in at the narrow top than at the wide bottom.
+#[test]
+fn same_as_clipping_wrap_follows_the_clipping_path() {
+    use designcraft_geom::{PathData, Point, SubPath};
+    let (mut d, sid, _) = doc_with(&[LOREM; 4].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
+    let lid = d.default_layer();
+    let id = ItemId(d.alloc());
+    let mut it =
+        designcraft_doc::Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(150.0, 100.0, 300.0, 300.0)));
+    let triangle = PathData::single(SubPath::polyline(&[Point::new(75.0, 0.0), Point::new(150.0, 200.0), Point::new(0.0, 200.0)], true));
+    it.content = designcraft_doc::Content::Graphic(designcraft_doc::Graphic {
+        asset: designcraft_doc::AssetId(1),
+        size: (150.0, 200.0),
+        xf: designcraft_geom::Affine::translate((150.0, 100.0)),
+        clip: Some(std::sync::Arc::new(designcraft_doc::ClippingPath::new(designcraft_doc::ClippingKind::DetectEdges, triangle))),
+        auto_fit: Default::default(),
+        fit_align: 0,
+        crop: [0.0; 4],
+        wrap: Default::default(),
+    });
+    it.wrap.mode = WrapMode::Contour;
+    it.wrap.side = WrapSide::LeftSide;
+    it.wrap.contour = designcraft_doc::ContourType::SameAsClipping;
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let beside: Vec<&Line> = cs.frames[0].lines.iter().filter(|l| l.baseline - l.ascent > 100.0 && l.baseline + l.descent < 300.0).collect();
+    let (top, bottom) = (beside.first().unwrap().x1, beside.last().unwrap().x1);
+    assert!(top > bottom + 40.0, "top {top}, bottom {bottom}");
+    assert!(bottom < 160.0, "the bottom lines stop near the triangle's base: {bottom}");
+}
+
 #[test]
 fn one_sided_wrap_leaves_the_other_side_empty() {
     for (side, right) in [(WrapSide::RightSide, true), (WrapSide::LeftSide, false), (WrapSide::LargestArea, false)] {

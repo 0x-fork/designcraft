@@ -477,7 +477,7 @@ pub enum ContourType {
     PhotoshopPath,
     /// The frame's path.
     GraphicFrame,
-    /// The graphic's clipping path, which is the frame's path.
+    /// The graphic's clipping path, or the frame's path when it has none.
     #[default]
     SameAsClipping,
 }
