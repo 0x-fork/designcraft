@@ -75,7 +75,8 @@ fn one_file_placed_several_times_imports_as_one_asset() {
         reads.set(reads.get() + 1);
         p.ends_with("couple.jpg").then(|| bytes.clone())
     };
-    // Three placements linking the file, and one embedding the same bytes under another path.
+    // Three placements linking the file, and one embedding the same bytes under another path:
+    // that one keeps its own asset and path.
     let frames = vec![
         frame(1, 0.0, 1.0, &image(1, PHOTO, None)),
         frame(2, 100.0, 2.0, &image(2, PHOTO, None)),
@@ -84,19 +85,21 @@ fn one_file_placed_several_times_imports_as_one_asset() {
     ];
     let d = import_idml_with(&package(&frames), &reader).unwrap();
     assert_eq!(reads.get(), 1, "the linked file is read once");
-    assert_eq!(d.assets.len(), 1);
-    let a = d.assets.values().next().unwrap();
-    assert_eq!(a.link.as_deref(), Some("/photos/wedding day/couple.jpg"));
+    assert_eq!(d.assets.len(), 2);
     let p = placements(&d);
     assert_eq!(p.iter().map(|(_, c, _)| c[0]).collect::<Vec<_>>(), vec![1.0, 2.0, 3.0, 4.0]);
-    assert!(p.iter().all(|(id, _, _)| *id == a.id));
+    let link = |id| d.assets.get(id).and_then(|a| a.link.as_deref());
+    let links: Vec<_> = p.iter().map(|(id, _, _)| link(id)).collect();
+    assert_eq!(links[..3], [Some("/photos/wedding day/couple.jpg"); 3]);
+    assert_eq!(links[3], Some("/elsewhere/copy.jpg"));
+    assert!(p[..3].iter().all(|(id, _, _)| *id == p[0].0));
 
-    // Exported linked or embedded, the round trip keeps one asset and each placement's crop and
-    // transform.
+    // Exported linked or embedded, the round trip keeps the two assets and each placement's crop
+    // and transform.
     for embed_images in [false, true] {
         let out = export_idml_with(&d, &ExportOptions { embed_images });
         let back = import_idml_with(&out, &reader).unwrap();
-        assert_eq!(back.assets.len(), 1, "embed_images: {embed_images}");
+        assert_eq!(back.assets.len(), 2, "embed_images: {embed_images}");
         let q = placements(&back);
         assert_eq!(q.len(), 4);
         for ((_, c0, x0), (_, c1, x1)) in p.iter().zip(&q) {
