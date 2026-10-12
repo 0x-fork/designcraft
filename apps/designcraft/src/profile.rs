@@ -32,10 +32,20 @@ fn root_with(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -> 
     env("DESIGNCRAFT_CONFIG_DIR").or_else(|| exe_dir.and_then(portable_dir).map(PathBuf::into_os_string))
 }
 
-/// `<exe_dir>/DesignCraftData` when `exe_dir` holds [`PORTABLE_MARKER`]. A folder of that name is
-/// no marker. On macOS `exe_dir` is `DesignCraft.app/Contents/MacOS`, which ships none.
+/// `<dir>/DesignCraftData` when `dir` holds [`PORTABLE_MARKER`], where `dir` is the folder the
+/// user sees the app in: the executable's, or the one holding `DesignCraft.app` when the executable
+/// sits inside a macOS bundle (`DesignCraft.app/Contents/MacOS`, signed, never edited by hand).
+/// A folder named like the marker is no marker.
 fn portable_dir(exe_dir: &Path) -> Option<PathBuf> {
-    exe_dir.join(PORTABLE_MARKER).is_file().then(|| exe_dir.join(PORTABLE_DATA_DIR))
+    let dir = app_bundle_parent(exe_dir).unwrap_or(exe_dir);
+    dir.join(PORTABLE_MARKER).is_file().then(|| dir.join(PORTABLE_DATA_DIR))
+}
+
+/// The folder holding `X.app` when `exe_dir` is `X.app/Contents/MacOS`.
+fn app_bundle_parent(exe_dir: &Path) -> Option<&Path> {
+    let contents = exe_dir.parent().filter(|_| exe_dir.file_name() == Some("MacOS".as_ref()))?;
+    let bundle = contents.parent().filter(|_| contents.file_name() == Some("Contents".as_ref()))?;
+    bundle.extension().filter(|ext| *ext == "app").and(bundle.parent())
 }
 
 fn executable_dir() -> Option<PathBuf> {
@@ -117,6 +127,19 @@ mod tests {
             Some(exe.join("DesignCraftData/Recovery"))
         );
         let _ = std::fs::remove_dir_all(&exe);
+    }
+
+    #[test]
+    fn inside_a_macos_bundle_the_marker_sits_next_to_the_app() {
+        let folder = install("bundle", |marker| std::fs::write(marker, "").unwrap());
+        let exe = folder.join("DesignCraft.app/Contents/MacOS");
+        std::fs::create_dir_all(&exe).unwrap();
+        assert_eq!(config_dir_with("macos", environment, Some(&exe)), Some(folder.join("DesignCraftData")));
+        // a marker dropped inside the bundle is not looked at
+        std::fs::remove_file(folder.join(PORTABLE_MARKER)).unwrap();
+        std::fs::write(exe.join(PORTABLE_MARKER), "").unwrap();
+        assert_eq!(config_dir_with("macos", environment, Some(&exe)), Some("/user/Library/Application Support/DesignCraft".into()));
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
