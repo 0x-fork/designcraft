@@ -2,8 +2,8 @@
 
 use designcraft_color::BlendMode;
 use designcraft_doc::{
-    Align, Arrowhead, AutoSize, Cap, Capitalization, ClippingKind, ContourType, FirstBaseline, Join, Leading, NumberStyle, Position, StartParagraph, StrokeAlign,
-    StrokeType, TabAlign, VerticalJustification, WrapMode, WrapSide,
+    Align, Arrowhead, AutoSize, Cap, Capitalization, ClippingKind, ContourType, FirstBaseline, Join, Leading, NumberStyle, Position, StartParagraph,
+    StrokeAlign, StrokeType, TabAlign, VerticalJustification, WrapMode, WrapSide,
 };
 use designcraft_geom::Unit;
 use designcraft_geom::corners::CornerShape;

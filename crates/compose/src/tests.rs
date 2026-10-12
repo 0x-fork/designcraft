@@ -430,8 +430,12 @@ fn same_as_clipping_wrap_follows_the_clipping_path() {
     let (mut d, sid, _) = doc_with(&[LOREM; 4].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
     let lid = d.default_layer();
     let id = ItemId(d.alloc());
-    let mut it =
-        designcraft_doc::Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(150.0, 100.0, 300.0, 300.0)));
+    let mut it = designcraft_doc::Item::new(
+        id,
+        lid,
+        designcraft_doc::Shape::Rectangle,
+        designcraft_geom::shapes::rectangle(Rect::new(150.0, 100.0, 300.0, 300.0)),
+    );
     let triangle = PathData::single(SubPath::polyline(&[Point::new(75.0, 0.0), Point::new(150.0, 200.0), Point::new(0.0, 200.0)], true));
     it.content = designcraft_doc::Content::Graphic(designcraft_doc::Graphic {
         asset: designcraft_doc::AssetId(1),
