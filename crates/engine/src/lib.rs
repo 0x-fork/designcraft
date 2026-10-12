@@ -577,24 +577,20 @@ impl Session {
         }
         let mut d = (*st.doc).clone();
         if overset {
-            let _ = cmd::place_text_autoflow(&mut d, sid, 500, "Smart Text Reflow");
+            let _ = cmd::place_text_autoflow(&mut d, sid, 500, "Smart Text Reflow", true);
         } else {
-            // Drop empty trailing frames on the last pages (one frame, nothing else there).
+            // Drop the last pages while all they hold is empty frames of the story.
             while let Some(story) = d.story(sid) {
-                if story.frames.len() < 2 {
-                    break;
-                }
                 let Some(&last) = story.frames.last() else { break };
-                let cs = designcraft_compose::compose_story(&d, sid, &Default::default());
-                if cs.frame(last).is_some_and(|ft| !ft.range.is_empty()) {
-                    break;
-                }
                 let Some(page) = d.page_of_item(last) else { break };
-                let alone = d.spreads.iter().flat_map(|sp| sp.items.iter()).filter(|i| d.page_of_item(i.id) == Some(page)).count() == 1;
-                if page + 1 != d.page_count() || !alone || d.page_count() < 2 {
+                let cs = designcraft_compose::compose_story(&d, sid, &Default::default());
+                let on_page: Vec<_> =
+                    d.spreads.iter().flat_map(|sp| sp.items.iter()).map(|i| i.id).filter(|id| d.page_of_item(*id) == Some(page)).collect();
+                let empty = |id: &designcraft_doc::ItemId| story.frames.contains(id) && cs.frame(*id).is_none_or(|ft| ft.range.is_empty());
+                if page + 1 != d.page_count() || d.page_count() < 2 || !on_page.iter().all(empty) || on_page.len() >= story.frames.len() {
                     break;
                 }
-                if d.remove_item(last).is_err() || d.delete_pages(&[page]).is_err() {
+                if on_page.iter().any(|id| d.remove_item(*id).is_err()) || d.delete_pages(&[page]).is_err() {
                     break;
                 }
             }

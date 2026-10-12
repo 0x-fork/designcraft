@@ -95,7 +95,7 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
         d.check_thread(from, to)?;
         d.thread_keeping_story(from, to)?;
         let sid = d.item(from).and_then(|i| i.text_frame()).map(|t| t.story).ok_or_else(|| bad("text.thread", "threading lost the story"))?;
-        let pages = if autoflow { super::place_text_autoflow(d, sid, AUTOFLOW_MAX_PAGES, "text.thread")? } else { 0 };
+        let pages = if autoflow { super::place_text_autoflow(d, sid, AUTOFLOW_MAX_PAGES, "text.thread", false)? } else { 0 };
         *sel = Selection::items(vec![joined]);
         Ok(json!({"story": sid.0, "from": from.0, "to": to.0, "overset": overset(d, sid), "pagesAdded": pages}))
     })
