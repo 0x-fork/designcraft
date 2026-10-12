@@ -284,21 +284,18 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32) {
             if stroke_front { !fresp.clicked() } else { sresp.clicked() && !fill_r.contains(sresp.interact_pointer_pos().unwrap_or_default()) };
         ui.data_mut(|d| d.insert_temp(stroke_front_id, front));
     }
-    // A double-click opens the Color Picker for that box (as InDesign's), with the selection's
-    // colour: the selected text's when text is selected.
+    // A double-click opens the Color Picker for that box (as InDesign's), with the colour of what
+    // colour edits apply to (see `colors_affect_text`).
     if fresp.double_clicked() || sresp.double_clicked() {
         let on_fill = fresp.double_clicked() && (!stroke_front || !sresp.double_clicked());
         let stroke = !on_fill;
-        let text = crate::panels::text_attrs(app).filter(|_| app.session.active().is_some_and(|d| d.selection.text.is_some()));
-        let current = match text {
-            Some(a) => a["chars"][if stroke { "stroke" } else { "fill" }].as_str().unwrap_or("[None]").to_string(),
-            None if stroke => stroke_sw.clone(),
-            None => fill_sw.clone(),
-        };
-        let rgb = doc.as_ref().and_then(|d| d.resolve_color(&current, 1.0)).map_or([0.0; 3], |c| c.to_rgb());
+        let current = if stroke { &stroke_sw } else { &fill_sw };
+        let rgb = doc.as_ref().and_then(|d| d.resolve_color(current, 1.0)).map_or([0.0; 3], |c| c.to_rgb());
         let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
         let hex = format!("#{:02x}{:02x}{:02x}", byte(rgb[0]), byte(rgb[1]), byte(rgb[2]));
-        app.ui.dialog = Some(crate::dialogs::Dialog::new("colorPicker", json!({"target": if stroke { "stroke" } else { "fill" }, "hex": hex})));
+        let text = crate::panels::colors_affect_text(app);
+        app.ui.dialog =
+            Some(crate::dialogs::Dialog::new("colorPicker", json!({"target": if stroke { "stroke" } else { "fill" }, "hex": hex, "text": text})));
     }
     ui.add_space(3.0);
     // Formatting affects container / text.
@@ -488,13 +485,8 @@ mod tests {
         assert!(!h.state().app.ui.tools_double_column);
     }
 
-    #[test]
-    fn double_clicking_the_fill_box_opens_the_color_picker_with_the_selections_colour() {
-        let mut app = app(false);
-        app.run("file.new", serde_json::json!({})).unwrap();
-        let id = app.run("frame.create", serde_json::json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].clone();
-        app.run("object.color", serde_json::json!({"color": "#456daf", "ids": [id]})).unwrap();
-        app.run("selection.set", serde_json::json!({"ids": [id]})).unwrap();
+    /// Runs `app` in a window and double-clicks the Tools panel's Fill box.
+    fn double_click_fill(app: crate::DesignApp) -> egui_kittest::Harness<'static, crate::DesignApp> {
         // Frames 1 ms apart, so two clicks make a double-click.
         let mut h = egui_kittest::Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(0.001).build_ui_state(
             |ui, app: &mut crate::DesignApp| {
@@ -513,9 +505,45 @@ mod tests {
             h.step();
         }
         h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn double_clicking_the_fill_box_opens_the_color_picker_with_the_selections_colour() {
+        let mut app = app(false);
+        app.run("file.new", serde_json::json!({})).unwrap();
+        let id = app.run("frame.create", serde_json::json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].clone();
+        app.run("object.color", serde_json::json!({"color": "#456daf", "ids": [id]})).unwrap();
+        app.run("selection.set", serde_json::json!({"ids": [id]})).unwrap();
+        let h = double_click_fill(app);
         let d = h.state().ui.dialog.clone().expect("the Color Picker opened");
         assert_eq!(d.id, "colorPicker");
         assert_eq!((d.fields["target"].as_str(), d.fields["hex"].as_str()), (Some("fill"), Some("#456daf")), "{:?}", d.fields);
+    }
+
+    /// With Formatting Affects Text on and a text frame selected, the picker opened from the Fill
+    /// box colours the frame's text, not the frame.
+    #[test]
+    fn the_color_picker_from_the_fill_box_follows_formatting_affects_text() {
+        let mut app = app(false);
+        app.run("file.new", serde_json::json!({})).unwrap();
+        let r = app.run("frame.create", serde_json::json!({"rect": [72, 72, 300, 200], "content": "text", "text": "words", "caret": false})).unwrap();
+        let id = designcraft_doc::ItemId(r["id"].as_u64().unwrap());
+        app.run("selection.set", serde_json::json!({"ids": [id.0]})).unwrap();
+        app.ui.formatting_affects_text = true;
+        let mut h = double_click_fill(app);
+        let app = h.state_mut();
+        let d = app.ui.dialog.as_mut().expect("the Color Picker opened");
+        assert_eq!(d.fields["text"], true, "{:?}", d.fields);
+        d.fields.insert("hex".into(), serde_json::json!("#456daf"));
+        crate::dialogs::confirm(app).unwrap();
+        let st = app.session.active().unwrap();
+        let it = st.doc.item(id).unwrap();
+        assert_eq!(it.fill.swatch, "[None]", "the frame keeps its fill");
+        let story = st.doc.stories.values().find(|s| s.text.starts_with("words")).unwrap();
+        let fill = story.runs().next().unwrap().1.over.fill.clone().expect("the text has a fill");
+        let rgb = st.doc.resolve_color(&fill, 1.0).unwrap().to_rgb();
+        assert!((rgb[0] - 0x45 as f32 / 255.0).abs() < 0.01 && (rgb[2] - 0xaf as f32 / 255.0).abs() < 0.01, "{rgb:?}");
     }
 
     #[test]
