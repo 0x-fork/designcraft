@@ -491,6 +491,8 @@ pub struct DesignApp {
     pub color_applied: bool,
     pub perf: Perf,
     pub synthetic: Vec<egui::Event>,
+    /// The toolbox's Stroke box is in front (the toolbox keeps it; tools read it).
+    pub stroke_in_front: bool,
     /// Story open in the Story Editor.
     pub story_editor: Option<designcraft_doc::StoryId>,
     control_rx: Option<Receiver<ControlRequest>>,
@@ -545,6 +547,7 @@ impl DesignApp {
             color_applied: false,
             perf: Perf::default(),
             synthetic: vec![],
+            stroke_in_front: false,
             story_editor: None,
             control_rx: None,
             pending_shots: vec![],
@@ -593,7 +596,12 @@ impl DesignApp {
         self.pane = pane;
     }
     pub fn view_info(&self) -> ViewInfo {
-        ViewInfo { zoom: self.view().map(|v| v.zoom).unwrap_or(1.0), snap: self.ui.snap_view(), unit: self.ui.units }
+        ViewInfo {
+            zoom: self.view().map(|v| v.zoom).unwrap_or(1.0),
+            snap: self.ui.snap_view(),
+            unit: self.ui.units,
+            stroke_in_front: self.stroke_in_front,
+        }
     }
 
     pub fn status(&mut self, s: impl Into<String>) {

@@ -199,6 +199,7 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32) {
     let stroke_front_id = egui::Id::new("proxy_stroke_front");
     let text_id = egui::Id::new("proxy_text");
     let stroke_front: bool = ui.data(|d| d.get_temp(stroke_front_id)).unwrap_or(false);
+    app.stroke_in_front = stroke_front;
     let text_mode: bool = ui.data(|d| d.get_temp(text_id)).unwrap_or(false);
     let (fill_sw, stroke_sw) = match &info {
         Some(i) => (i.fill.clone(), i.stroke.clone()),
@@ -279,6 +280,7 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32) {
         let front =
             if stroke_front { !fresp.clicked() } else { sresp.clicked() && !fill_r.contains(sresp.interact_pointer_pos().unwrap_or_default()) };
         ui.data_mut(|d| d.insert_temp(stroke_front_id, front));
+        app.stroke_in_front = front;
     }
     if fresp.double_clicked() || sresp.double_clicked() {
         let _ = app.run("window.panel", json!({"panel": "swatches"}));

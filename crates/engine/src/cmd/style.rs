@@ -1731,4 +1731,15 @@ mod sample_color_tests {
             assert_eq!(text.format_after(0).over.stroke.as_deref(), r["swatch"].as_str(), "selected text stroke: {command}");
         }
     }
+
+    #[test]
+    fn sampling_with_the_stroke_in_front_colours_a_lines_stroke() {
+        let (mut s, _) = session_with_image();
+        let line = s.execute("line.create", &json!({"a": [300, 300], "b": [500, 300]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("selection.set", &json!({"ids": [line]})).unwrap();
+        let r = s.execute("color.sample", &json!({"at": [100, 100], "target": "stroke"})).unwrap();
+        let it = s.doc().unwrap().doc.item(ItemId(line)).unwrap().clone();
+        assert_eq!(it.stroke.swatch, r["swatch"].as_str().unwrap(), "{r}");
+        assert!(it.fill.is_none(), "the fill stays empty");
+    }
 }
