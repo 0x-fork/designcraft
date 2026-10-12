@@ -1113,8 +1113,12 @@ impl DesignApp {
                 .collect();
             if !warnings.is_empty() {
                 self.status(format!("{file}: {}", warnings.join("; ")));
-                self.ui.dialog =
-                    Some(dialogs::Dialog::new("alert", json!({"title": "Import Warnings", "file": file, "message": warnings.join("\n")})));
+                // Find Font, offered for the document's missing fonts, stays up: the status line
+                // keeps the warnings.
+                if !self.ui.dialog.as_ref().is_some_and(|d| d.id == "findFont") {
+                    self.ui.dialog =
+                        Some(dialogs::Dialog::new("alert", json!({"title": "Import Warnings", "file": file, "message": warnings.join("\n")})));
+                }
             }
         }
         r
@@ -1942,6 +1946,24 @@ mod import_warning_tests {
         app.services.inbox.as_ref().unwrap().lock().unwrap().push(ImportedFile { request, name: "partial.idml".into(), bytes: idml(true) });
         app.drain_inbox();
         assert_partial_import_warning(&mut app, "partial");
+    }
+
+    #[test]
+    fn find_font_on_open_outranks_the_warning_alert() {
+        let mut app = app();
+        app.run("frame.create", json!({"rect": [0, 0, 200, 200], "content": "text", "text": "Sample"})).unwrap();
+        let d = std::sync::Arc::make_mut(&mut app.session.doc_mut().unwrap().doc);
+        let sid = *d.stories.keys().next().unwrap();
+        let story = d.story_mut(sid).unwrap();
+        story.format_chars(0..6, |f| f.over.font_family = Some("Unavailable Test Family".into()));
+        story.paras[0].para.grep_styles = Some(vec![designcraft_doc::GrepStyle { style: "Keep".into(), pattern: "[a-".into() }]);
+        let path = std::env::temp_dir().join(format!("designcraft-font-warning-{}.designcraft", std::process::id()));
+        app.run("file.save", json!({"path": path})).unwrap();
+        let result = app.open_file("file.open", json!({"path": path}));
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(result.unwrap()["warnings"].as_array().unwrap().len(), 1);
+        assert_eq!(app.ui.dialog.as_ref().unwrap().id, "findFont");
+        assert!(app.ui.status.contains("GREP style not applied"), "{}", app.ui.status);
     }
 
     #[test]
