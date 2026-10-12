@@ -173,7 +173,7 @@ fn wrap_on_both_sides_sets_text_left_then_right_of_the_object() {
         assert!(l.x1 < 150.0 && r.x0 > 150.0, "{} {}", l.x1, r.x0);
         assert_eq!(l.range.end, r.range.start);
         // No glyph inside the wrapped outline at its line.
-        let (a, b) = ex.contour.as_ref().unwrap().band_extent(l.baseline - l.ascent, l.baseline + l.descent).unwrap();
+        let (a, b) = ex.contour.as_ref().unwrap().band_extent(l.baseline - l.ascent, l.baseline).unwrap();
         let n = l.glyphs.len().saturating_sub(1);
         // The left segment's last glyph may be the space the line breaks at.
         for g in l.glyphs.iter().take(n).chain(&r.glyphs).filter(|g| g.visible) {
@@ -222,7 +222,7 @@ fn words_stay_whole_beside_a_wrap_sliver() {
                     assert!(g.x + g.adv <= l.x1 + 0.5, "{align:?} {hyphenate}: {line:?} overflows its {}..{} segment", l.x0, l.x1);
                 }
                 // A left segment beside the object whose sliver stays empty: the next word doesn't fit it.
-                let Some((_, b)) = ex.contour.as_ref().unwrap().band_extent(l.baseline - l.ascent, l.baseline + l.descent) else { continue };
+                let Some((_, b)) = ex.contour.as_ref().unwrap().band_extent(l.baseline - l.ascent, l.baseline) else { continue };
                 let next = lines.get(i + 1);
                 if l.x1 > b || 300.0 - b < 18.0 || next.is_some_and(|n| n.baseline == l.baseline) {
                     continue;
@@ -276,6 +276,32 @@ fn contour_wrap_follows_the_outline_band_by_band() {
     let ex = &frame_specs(&d, sid)[0].exclusions[0];
     assert!(ex.contour.is_none());
     assert_eq!(ex.rect, Rect::new(106.0, 96.0, 194.0, 204.0));
+}
+
+/// A contour wrap with a slanted right edge, x = 100 + 2(y − 50) for y in 50..100, text to its right.
+fn doc_with_slant(contour: designcraft_geom::path::PathData) -> (Document, StoryId) {
+    let (mut d, sid, _) = doc_with(&[LOREM; 2].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
+    let lid = d.default_layer();
+    let mut it = designcraft_doc::Item::new(ItemId(d.alloc()), lid, designcraft_doc::Shape::Polygon, contour);
+    it.wrap.mode = WrapMode::Contour;
+    it.wrap.side = WrapSide::RightSide;
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    (d, sid)
+}
+
+#[test]
+fn a_line_meets_the_wrap_from_its_top_to_its_baseline() {
+    let pts = [Point::new(0.0, 50.0), Point::new(100.0, 50.0), Point::new(200.0, 100.0), Point::new(0.0, 100.0)];
+    let path = designcraft_geom::path::PathData::single(designcraft_geom::path::SubPath::polyline(&pts, true));
+    let (d, sid) = doc_with_slant(path);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let beside: Vec<&Line> = cs.frames[0].lines.iter().filter(|l| l.baseline - l.ascent > 50.0 && l.baseline < 100.0).collect();
+    assert!(beside.len() >= 2, "{} lines beside the slant", beside.len());
+    for l in beside {
+        // The edge at the baseline, not at the bottom of the descenders (about 6 pt further out).
+        let edge = 100.0 + 2.0 * (l.baseline - 50.0);
+        assert!((l.x0 - edge).abs() < 0.5, "line at {} starts at {}, edge {edge}", l.baseline, l.x0);
+    }
 }
 
 #[test]

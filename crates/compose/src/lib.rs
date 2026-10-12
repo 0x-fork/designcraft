@@ -1088,7 +1088,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     if !f.exclusions.is_empty() {
                         let mut tries = 0;
                         loop {
-                            let segs = free_slots(f, col, baseline - asc, baseline + desc, base_size, rtl);
+                            let segs = free_slots(f, col, baseline - asc, baseline, base_size, rtl);
                             let segs: Vec<(f64, f64)> = segs.into_iter().skip_while(|seg| !holds(seg)).collect();
                             if let Some((&first, rest)) = segs.split_first() {
                                 (x0, x1) = first;
@@ -2244,7 +2244,8 @@ fn line_metrics(
     (asc, desc, lead)
 }
 
-/// Free segments of `col` in the band `y0..y1`, in the order text fills them (left to right, or
+/// Free segments of `col` in the band `y0..y1` (a line's top to its baseline: descenders may reach
+/// into the wrap), in the order text fills them (left to right, or
 /// right to left for right-to-left paragraphs); empty if the band is blocked. A line beside an
 /// object that lets text through on both sides has a segment on each side. Segments narrower than
 /// 1.5 em of `size` are skipped (the model has no minimum segment width).
@@ -2314,7 +2315,7 @@ fn estimate_slots(f: &FrameSpec, col: Rect, first: f64, lead: f64, size: f64, gl
     while v.len() < n + carry.len() {
         let mut tries = 0;
         let slots = loop {
-            let s = free_slots(f, col, b - size * 0.8, b + size * 0.25, size, rtl);
+            let s = free_slots(f, col, b - size * 0.8, b, size, rtl);
             if !s.is_empty() {
                 break s;
             }
