@@ -596,8 +596,7 @@ fn load_cursor(s: &mut Session, mut asset: Asset, size: (f64, f64)) -> Result<Va
 }
 
 fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
-    let crate::LoadedGraphic { asset: aid, size: (nw, nh) } =
-        s.loaded.ok_or_else(|| bad("place.drop", "nothing loaded in the place cursor"))?;
+    let crate::LoadedGraphic { asset: aid, size: (nw, nh) } = s.loaded.ok_or_else(|| bad("place.drop", "nothing loaded in the place cursor"))?;
     // Undo can remove the loaded graphic's asset.
     if !s.doc()?.doc.assets.contains_key(&aid) {
         s.loaded = None;

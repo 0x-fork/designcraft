@@ -150,7 +150,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "{} — each selected object's fill and stroke colours (and tints) trade places (object.swapFillStroke), or the text's with Formatting Affects Text",
     ),
     ("color.toggleFillStroke", "Toggle Fill and Stroke", Some("X"), "{} → {strokeFront} — which of fill and stroke the proxy has in front"),
-    ("color.applyNone", "Apply None", Some("/"), "{} — [None] for the fill or stroke in front of the proxy, of the objects or the text (Formatting Affects Text)"),
+    (
+        "color.applyNone",
+        "Apply None",
+        Some("/"),
+        "{} — [None] for the fill or stroke in front of the proxy, of the objects or the text (Formatting Affects Text)",
+    ),
     ("view.frameEdges", "Show/Hide Frame Edges", Some("Cmd+H"), "{}"),
     ("view.rulers", "Show/Hide Rulers", Some("Cmd+R"), "{}"),
     ("view.guides", "Show/Hide Guides", Some("Cmd+;"), "{}"),
