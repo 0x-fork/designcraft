@@ -2005,7 +2005,7 @@ fn spacing_for(pp: &ParaProps, base_size: f64) -> Spacing {
         ragged_stretch: base_size * 2.0,
         // The zone is the Single-line Composer's (unjustified text only), as in InDesign: the
         // Paragraph Composer weighs every break of the paragraph instead.
-        hyph_zone: if pp.align.is_justified() || pp.composer != Composer::SingleLine { 0.0 } else { pp.hyph_zone },
+        hyph_zone: if pp.align.is_justified() || !pp.composer.single_line() { 0.0 } else { pp.hyph_zone },
         optical: pp.optical_margin,
         korean_char_breaks: pp.korean_char_breaks,
         kinsoku_priority: match pp.kinsoku_type.as_str() {
