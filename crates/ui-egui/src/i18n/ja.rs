@@ -398,6 +398,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Spreads of up to 10 pages", "最大10ページのスプレッド"),
     ("for", "に対して"),
     ("About DesignCraft", "DesignCraft について"),
+    ("Quit DesignCraft", "DesignCraft を終了"),
     ("Accept All Changes", "すべての変更を採用"),
     ("Activate Document", "ドキュメントをアクティブ化"),
     ("Add Anchor Point", "アンカーポイントを追加"),

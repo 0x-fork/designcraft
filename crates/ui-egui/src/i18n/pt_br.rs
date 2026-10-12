@@ -149,6 +149,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Bookmarks", "Indicadores"),
     ("Show All Menu Items", "Mostrar todos os itens de menu"),
     ("About DesignCraft", "Sobre o DesignCraft"),
+    ("Quit DesignCraft", "Encerrar o DesignCraft"),
     ("Welcome to DesignCraft", "Bem-vindo ao DesignCraft"),
     ("Page layout for print and screen — fast, open and scriptable.", "Layout de página para impressão e tela — rápido, aberto e scriptável."),
     ("  New file  ", "  Novo arquivo  "),
