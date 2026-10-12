@@ -81,7 +81,16 @@ fn paste_text(s: &mut Session, text: Option<String>, formatted: bool) -> Result<
         });
     }
     let text = text.or_else(|| clip.map(|(_, p)| p)).ok_or_else(|| super::bad("edit.paste", "clipboard is empty"))?;
-    s.execute("text.insert", &json!({"text": text.replace("\r\n", "\n").replace('\r', "\n"), "raw": true}))
+    let text = outside_text(&text)?;
+    s.execute("text.insert", &json!({"text": text, "raw": true}))
+}
+
+/// Text from the system clipboard as story text: Unix line ends, and none of the private-use
+/// characters (U+E000–U+E1FF) that stories use as markers for breaks, footnotes, tables and
+/// variables, since a stray one would be read as a marker without its payload.
+fn outside_text(text: &str) -> Result<String> {
+    let text: String = text.replace("\r\n", "\n").replace('\r', "\n").chars().filter(|c| !('\u{E000}'..='\u{E1FF}').contains(c)).collect();
+    if text.is_empty() { Err(super::bad("edit.paste", "the clipboard holds no text")) } else { Ok(text) }
 }
 
 /// Pasted text with no insertion point: a new text frame holding it, as wide as the first column
@@ -96,7 +105,7 @@ fn paste_text_frame(s: &mut Session, p: &Value, text: &str) -> Result<Value> {
         .map(|a| Point::new(a.x.clamp(-LIMIT, LIMIT), a.y.clamp(-LIMIT, LIMIT)));
     let lid = s.doc()?.active_layer;
     let cache = s.cache.clone();
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let text = outside_text(text)?;
     s.edit(|d, sel| {
         let sp = d.spread(sr).ok_or_else(|| super::bad("edit.paste", "no such spread"))?;
         let page = at.and_then(|a| sp.page_at_x(a.x)).and_then(|i| sp.pages.get(i)).or_else(|| sp.pages.first());
@@ -401,6 +410,25 @@ mod text_clipboard_tests {
         assert_eq!(r["ids"].as_array().unwrap().len(), 1);
         assert_eq!(items(&s), n + 1);
         assert!(s.doc().unwrap().doc.item(ItemId(r["ids"][0].as_u64().unwrap())).unwrap().text_frame().is_none());
+        s.doc().unwrap().doc.check().unwrap();
+    }
+
+    #[test]
+    fn outside_text_never_pastes_markers() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        // Private-use characters from another app would read as footnote, table or variable markers.
+        let dirty = "a\u{E00A}b\u{E009}c\u{E1FF}d\u{E200}";
+        let r = s.execute("edit.paste", &json!({"text": dirty})).unwrap();
+        let st = s.doc().unwrap().doc.item(ItemId(r["id"].as_u64().unwrap())).unwrap().text_frame().unwrap().story;
+        assert_eq!(s.doc().unwrap().doc.story(st).unwrap().text, "abcd\u{E200}");
+        s.doc().unwrap().doc.check().unwrap();
+        let b = frame(&mut s, "Target");
+        s.execute("text.select", &json!({"story": b.0, "anchor": 6, "focus": 6})).unwrap();
+        s.execute("edit.paste", &json!({"text": dirty})).unwrap();
+        s.execute("edit.pasteWithoutFormatting", &json!({"text": dirty})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.story(b).unwrap().text, "Targetabcd\u{E200}abcd\u{E200}");
+        assert!(s.execute("edit.paste", &json!({"text": "\u{E00A}"})).is_err());
         s.doc().unwrap().doc.check().unwrap();
     }
 
