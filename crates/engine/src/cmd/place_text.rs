@@ -251,6 +251,11 @@ pub(super) fn place_text(s: &mut Session, p: &Value, name: &str, bytes: &[u8], p
     let map = map_styles(&s.doc()?.doc, &mut imp, &map, conflict);
     // Create Links When Placing Text Files (only a file on disk can be linked).
     let link = path.filter(|_| p.get("link").and_then(Value::as_bool).unwrap_or(s.prefs.link_text_files));
+    // A file too large for the Links panel to check isn't linked.
+    let (link, too_large) = match link {
+        Some(_) if !super::links::checkable_size(bytes.len()) => (None, true),
+        l => (l, false),
+    };
     let autoflow_on = p.get("autoflow").and_then(Value::as_bool).unwrap_or(false);
     let st = s.doc()?;
     let caret = st.selection.text.filter(|t| t.cell.is_none());
@@ -260,6 +265,9 @@ pub(super) fn place_text(s: &mut Session, p: &Value, name: &str, bytes: &[u8], p
     let page = p.get("page").and_then(Value::as_u64).map(|v| (v as usize).saturating_sub(1));
     let rect = super::rect_param(p, "rect");
     let mut warnings = imp.warnings.clone();
+    if too_large {
+        warnings.push("not linked: the file is too large to keep linked".into());
+    }
     s.edit(|d, sel| {
         add_styles(d, &imp, conflict);
         let sid = if let Some(t) = caret {

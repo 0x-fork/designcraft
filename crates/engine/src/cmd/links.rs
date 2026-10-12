@@ -18,7 +18,7 @@ use crate::{EngineError, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "links.list", "Links", [], None, "{} → [{asset, name, path, status: ok|modified|missing|embedded, pixels, uses: [{id, page, ppi}]}], then linked text files: [{story, name, path, status, edited (the story was changed in the layout), uses: [{id, page}]}]", has_doc, |s, _| {
+        cmd!(query "links.list", "Links", [], None, "{} → [{asset, name, path, status: ok|modified|missing|embedded, pixels, uses: [{id, page, ppi}]}], then linked text files: [{story, name, path, status (also tooLarge: unchanged size, too big to check), edited (the story was changed in the layout), uses: [{id, page}]}]", has_doc, |s, _| {
             Ok(Value::Array(list(&s.doc()?.doc)))
         }),
         cmd!(
@@ -145,14 +145,26 @@ pub fn status(a: &designcraft_doc::Asset) -> &'static str {
     }
 }
 
-/// Link status of a linked text file.
+/// The largest linked text file read (the Data Merge source limit). Only regular files are read,
+/// so a link to a FIFO or a device (e.g. `/dev/zero`) can't block or fill memory.
+const MAX_TEXT_LINK_BYTES: u64 = super::datamerge::MAX_DATA_FILE_BYTES;
+
+/// Can a linked text file this size be checked and updated?
+pub(crate) fn checkable_size(len: usize) -> bool {
+    len as u64 <= MAX_TEXT_LINK_BYTES
+}
+
+/// Link status of a linked text file: `tooLarge` when it is the recorded size but over
+/// [`MAX_TEXT_LINK_BYTES`], so its contents aren't checked.
 pub fn text_status(l: &TextFileLink) -> &'static str {
     #[cfg(not(target_arch = "wasm32"))]
     {
         match std::fs::metadata(&l.path) {
             Err(_) => "missing",
+            Ok(m) if !m.is_file() => "missing",
             Ok(m) if m.len() != l.size => "modified",
-            Ok(_) => match std::fs::read(&l.path) {
+            Ok(m) if m.len() > MAX_TEXT_LINK_BYTES => "tooLarge",
+            Ok(_) => match read_text(&l.path) {
                 Ok(b) if fnv_hex(&b) == l.hash => "ok",
                 Ok(_) => "modified",
                 Err(_) => "missing",
@@ -210,7 +222,23 @@ fn list(d: &Document) -> Vec<Value> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_text(path: &str) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    use std::io::Read;
+    let err = |e: std::io::Error| EngineError::Other(format!("{path}: {e}"));
+    let m = std::fs::metadata(path).map_err(err)?;
+    if !m.is_file() {
+        return Err(EngineError::Other(format!("{path}: not a file")));
+    }
+    let too_large = || EngineError::Other(format!("{path}: larger than {} MiB", MAX_TEXT_LINK_BYTES / (1024 * 1024)));
+    if m.len() > MAX_TEXT_LINK_BYTES {
+        return Err(too_large());
+    }
+    // At most one byte over the limit, in case the file grew since.
+    let mut b = Vec::new();
+    std::fs::File::open(path).map_err(err)?.take(MAX_TEXT_LINK_BYTES + 1).read_to_end(&mut b).map_err(err)?;
+    if b.len() as u64 > MAX_TEXT_LINK_BYTES {
+        return Err(too_large());
+    }
+    Ok(b)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -709,6 +737,64 @@ mod text_link_tests {
         let r = s.execute("file.place", &json!({"path": path.to_string_lossy()})).unwrap();
         assert!(r["warnings"][0].as_str().unwrap().contains("not linked"), "{r}");
         assert!(s.doc().unwrap().doc.story(StoryId(sid)).unwrap().file_link.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod text_link_read_tests {
+    use std::time::Duration;
+
+    use designcraft_doc::TextFileLink;
+
+    use super::{MAX_TEXT_LINK_BYTES, read_text, text_status};
+
+    /// `f` on another thread: a call that blocks fails the test instead of hanging it.
+    fn promptly<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        // A timeout means the call blocked.
+        rx.recv_timeout(Duration::from_secs(10)).unwrap()
+    }
+
+    fn status_of(path: &std::path::Path, size: u64) -> &'static str {
+        let l = TextFileLink { path: path.to_string_lossy().to_string(), size, hash: "0".into(), ..Default::default() };
+        promptly(move || text_status(&l))
+    }
+
+    fn read(path: &std::path::Path) -> Result<usize, String> {
+        let p = path.to_string_lossy().to_string();
+        promptly(move || read_text(&p).map(|b| b.len()).map_err(|e| e.to_string()))
+    }
+
+    #[test]
+    fn links_to_fifos_devices_folders_and_huge_files_are_not_read() {
+        let dir = std::env::temp_dir().join(format!("dc-text-link-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A FIFO with no writer: reading it would block for ever.
+        let fifo = dir.join("pipe.docx");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        assert_eq!(status_of(&fifo, 0), "missing");
+        assert!(read(&fifo).is_err());
+        // A device that never ends, recorded with size 0 (as its metadata reports).
+        let zero = std::path::Path::new("/dev/zero");
+        assert_eq!(status_of(zero, 0), "missing");
+        assert!(read(zero).is_err());
+        // A folder.
+        assert_eq!(status_of(&dir, 0), "missing");
+        assert!(read(&dir).is_err());
+        // Over the limit (sparse, so cheap): not read; the same size is reported as too large
+        // to check rather than OK, another size as modified.
+        let big = dir.join("big.txt");
+        std::fs::File::create(&big).unwrap().set_len(MAX_TEXT_LINK_BYTES + 1).unwrap();
+        assert_eq!(status_of(&big, MAX_TEXT_LINK_BYTES + 1), "tooLarge");
+        assert_eq!(status_of(&big, 10), "modified");
+        assert!(read(&big).unwrap_err().contains("larger than"));
+        assert!(!super::checkable_size(MAX_TEXT_LINK_BYTES as usize + 1), "placing it doesn't link it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

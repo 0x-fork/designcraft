@@ -1850,6 +1850,7 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 "missing" => ("\u{26A0} Missing", egui::Color32::from_rgb(0xe5, 0x4b, 0x4b)),
                 "modified" => ("\u{25B2} Modified", egui::Color32::from_rgb(0xe8, 0xb3, 0x2c)),
                 "embedded" => ("Embedded", t.text_dim),
+                "tooLarge" => ("Too large to check", egui::Color32::from_rgb(0xe8, 0xb3, 0x2c)),
                 _ => ("OK", t.text_dim),
             };
             crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, txt)).color(col).size(11.0));
