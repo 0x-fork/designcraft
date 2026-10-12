@@ -568,7 +568,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fitting",
             ["Object", "Fitting"],
             None,
-            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, axis?: both|height|width (text frames: which sides Fit Frame to Content moves; default both), ids?}",
+            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, axis?: both|height|width (frame-local sides Fit Frame to Content moves; default both), ids?}",
             has_selection,
             fit
         ),
@@ -1761,7 +1761,9 @@ fn fitting_options(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn fit(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = targets(s, p)?;
+    let doc = &s.doc()?.doc;
+    let ids: Vec<_> =
+        targets(s, p)?.into_iter().filter(|id| doc.item(*id).is_some_and(|it| !it.locked && doc.layer(it.layer).is_none_or(|l| !l.locked))).collect();
     let mode = str_param(p, "mode").unwrap_or("fitProportionally").to_string();
     let (height, width) = match str_param(p, "axis").unwrap_or("both") {
         "height" => (true, false),
@@ -1774,7 +1776,7 @@ fn fit(s: &mut Session, p: &Value) -> Result<Value> {
     if mode == "fitFrameToContent" {
         let d = s.doc()?.doc.clone();
         for id in &ids {
-            if let Some(r) = fitted_text_frame(&d, &s.cache, *id, height, width) {
+            if let Some(r) = fitted_text_frame(&d, *id, height, width)? {
                 text_fits.push((*id, r));
             }
         }
@@ -1792,7 +1794,12 @@ fn fit(s: &mut Session, p: &Value) -> Result<Value> {
             let (nw, nh) = g.size;
             let cur = g.xf.transform_rect_bbox(Rect::new(0.0, 0.0, nw, nh));
             if mode == "fitFrameToContent" {
-                it.path = shapes::rectangle(cur);
+                it.path = shapes::rectangle(Rect::new(
+                    if width { cur.x0 } else { r.x0 },
+                    if height { cur.y0 } else { r.y0 },
+                    if width { cur.x1 } else { r.x1 },
+                    if height { cur.y1 } else { r.y1 },
+                ));
                 continue;
             }
             let m = fitting_mode(&mode)
@@ -1806,45 +1813,89 @@ fn fit(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// The inner rectangle that fits text frame `id` to its text (Fit Frame to Content): the bottom at
-/// the last line's descent (`height`), the right side at the longest line's end (`width`, one
-/// column only), plus the insets; the top-left stays. Overset text grows the frame first. None for
+/// The inner rectangle that fits text frame `id` to its text (Fit Frame to Content): the smallest
+/// fitting height and the right side at the longest line's end (`width`, one column only),
+/// including insets; the top-left stays. Overset text grows the frame first. None for
 /// frames that aren't horizontal text frames, have no text, or are threaded on to another frame.
-fn fitted_text_frame(d: &Document, cache: &designcraft_compose::Cache, id: ItemId, height: bool, width: bool) -> Option<Rect> {
-    let it = d.item(id)?;
-    let tf = it.text_frame()?;
+fn fitted_text_frame(d: &Document, id: ItemId, height: bool, width: bool) -> Result<Option<Rect>> {
+    let Some(it) = d.item(id) else { return Ok(None) };
+    let Some(tf) = it.text_frame() else { return Ok(None) };
     if d.frame_vertical(it) || tf.options.path.is_some() {
-        return None;
+        return Ok(None);
     }
-    let story = d.story(tf.story)?;
+    let Some(story) = d.story(tf.story) else { return Ok(None) };
     // The last frame of its thread only: an earlier frame's text runs on.
     if story.frames.last() != Some(&id) {
-        return None;
+        return Ok(None);
     }
     let r = it.inner_bounds();
-    let inset = tf.options.inset;
-    // Room for everything: a tall frame, composed on a copy.
-    let mut tall = d.clone();
-    if height {
-        tall.item_mut(id)?.path = shapes::rectangle(Rect::new(r.x0, r.y0, r.x1, r.y0 + r.height().max(1.0) + 20_000.0));
+    if !(r.width().is_finite() && r.height().is_finite() && r.width() > 0.0 && r.height() > 0.0) {
+        return Err(bad("object.fit", "text frame bounds must be finite and nonempty"));
     }
-    let cs = cache.get(&tall, tf.story, None);
-    let ft = cs.frame(id)?;
-    let last = ft.lines.iter().map(|l| l.baseline + l.descent).fold(f64::NEG_INFINITY, f64::max);
-    if !last.is_finite() {
-        return None;
+    // Keep trial layouts out of the session cache. Search with the actual columns and frame
+    // options: measuring a very tall frame collapses columns and includes vertical alignment's
+    // extra space. A fitting trial must compose all the text, regardless of its justification.
+    let cache = designcraft_compose::Cache::new();
+    let mut trial = d.clone();
+    let mut compose = |rect| {
+        if let Some(it) = trial.item_mut(id) {
+            it.path = shapes::rectangle(rect);
+        }
+        cache.get(&trial, tf.story, None)
+    };
+    let initial = compose(r);
+    if initial.frame(id).is_none_or(|ft| ft.lines.is_empty()) && !initial.is_overset() {
+        return Ok(None);
     }
     let mut out = r;
+    // First fit the height at the existing width, then measure the complete text's width.
+    // Recheck height after fitting width, since a small width change can change a line break.
     if height {
-        out.y1 = (last + inset[2]).max(r.y0 + 1.0);
+        out = fit_text_height(out, &mut compose)?;
     }
     if width && tf.options.columns <= 1 {
-        let right = ft.lines.iter().map(|l| l.end_x).fold(f64::NEG_INFINITY, f64::max);
-        if right.is_finite() {
-            out.x1 = (right + inset[3]).max(r.x0 + 1.0);
+        let cs = compose(out);
+        if let Some(ft) = cs.frame(id) {
+            let right = ft.lines.iter().map(|l| l.end_x).fold(f64::NEG_INFINITY, f64::max);
+            if right.is_finite() {
+                out.x1 = (right + tf.options.inset[3] + 0.001).max(r.x0 + 1.0);
+            }
+        }
+        if height {
+            out = fit_text_height(out, &mut compose)?;
         }
     }
-    Some(out)
+    Ok(Some(out))
+}
+
+fn fit_text_height(mut rect: Rect, compose: &mut impl FnMut(Rect) -> Arc<designcraft_compose::ComposedStory>) -> Result<Rect> {
+    let mut low = 1.0;
+    let limit = 20_000.0;
+    let mut high = rect.height().clamp(1.0, limit);
+    rect.y1 = rect.y0 + high;
+    while compose(rect).is_overset() {
+        if high >= limit {
+            return Err(bad("object.fit", "text does not fit within the 20,000 pt fitting limit"));
+        }
+        low = high;
+        high = (high * 2.0).min(limit);
+        rect.y1 = rect.y0 + high;
+    }
+    // Bounded search, always retaining a verified fitting upper bound.
+    for _ in 0..32 {
+        if high - low < 0.001 {
+            break;
+        }
+        let mid = low + (high - low) / 2.0;
+        rect.y1 = rect.y0 + mid;
+        if compose(rect).is_overset() {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    rect.y1 = rect.y0 + high;
+    Ok(rect)
 }
 
 pub(crate) trait RemoveKeep {
@@ -2922,5 +2973,80 @@ mod fit_text_frame_tests {
         assert!(!s.cache.get(&d, sid, None).is_overset(), "{:?}", bounds(&s, id));
         assert!(bounds(&s, id).height() > 100.0);
         assert!(s.execute("object.fit", &json!({"mode": "fitFrameToContent", "axis": "diagonal", "ids": [id.0]})).is_err());
+    }
+
+    #[test]
+    fn fitting_text_keeps_columns_and_vertical_justification() {
+        use designcraft_doc::VerticalJustification::{Bottom, Center, Justify, Top};
+        for columns in [1, 2] {
+            for justification in [Top, Bottom, Center, Justify] {
+                let mut s = Session::new();
+                s.execute("file.new", &json!({})).unwrap();
+                let id = frame(&mut s, [100.0, 100.0, 500.0, 500.0], "one two three four five six seven eight nine ten eleven twelve");
+                let options = &mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(id).unwrap().text_frame_mut().unwrap().options;
+                options.columns = columns;
+                options.vertical_justification = justification;
+                s.execute("object.fit", &json!({"mode": "fitFrameToContent", "axis": "height"})).unwrap();
+                let d = &s.doc().unwrap().doc;
+                let it = d.item(id).unwrap();
+                let tf = it.text_frame().unwrap();
+                let composed = s.cache.get(d, tf.story, None);
+                assert!(!composed.is_overset(), "{columns} {justification:?}");
+                assert!(it.bounds().height() < 250.0, "{columns} {justification:?}: {:?}", it.bounds());
+                assert_eq!(tf.options.vertical_justification, justification);
+                assert_eq!(tf.options.columns, columns);
+                if columns == 2 {
+                    let ft = composed.frame(id).unwrap();
+                    assert!(ft.lines.iter().any(|l| l.column == 1), "both columns stay in use: {ft:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn graphic_fitting_obeys_each_axis_and_locked_text_and_graphics_stay_put() {
+        for graphic in [false, true] {
+            for lock_layer in [false, true] {
+                let mut s = Session::new();
+                s.execute("file.new", &json!({})).unwrap();
+                let id = frame(&mut s, [100.0, 100.0, 500.0, 300.0], "Fit me");
+                if graphic {
+                    let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
+                    s.execute("file.place", &json!({"base64": super::super::file::base64_encode(&png), "name": "test.png", "frame": id.0})).unwrap();
+                    let it = Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(id).unwrap();
+                    let Content::Graphic(g) = &mut it.content else { panic!("graphic") };
+                    g.xf = Affine::translate((80.0, 90.0)) * Affine::scale(3.0);
+                    let original = it.inner_bounds();
+                    s.execute("object.fit", &json!({"mode": "fitFrameToContent", "axis": "width", "ids": [id.0]})).unwrap();
+                    let fitted = s.doc().unwrap().doc.item(id).unwrap().inner_bounds();
+                    assert_eq!(fitted, Rect::new(80.0, original.y0, 200.0, original.y1));
+                    Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(id).unwrap().path = shapes::rectangle(original);
+                    s.execute("object.fit", &json!({"mode": "fitFrameToContent", "axis": "height", "ids": [id.0]})).unwrap();
+                    assert_eq!(s.doc().unwrap().doc.item(id).unwrap().inner_bounds(), Rect::new(original.x0, 90.0, original.x1, 150.0));
+                    Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(id).unwrap().path = shapes::rectangle(original);
+                }
+                let before = bounds(&s, id);
+                if lock_layer {
+                    let layer = s.doc().unwrap().doc.item(id).unwrap().layer;
+                    Arc::make_mut(&mut s.doc_mut().unwrap().doc).layer_mut(layer).unwrap().locked = true;
+                } else {
+                    Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(id).unwrap().locked = true;
+                }
+                s.execute("object.fit", &json!({"mode": "fitFrameToContent", "ids": [id.0]})).unwrap();
+                assert_eq!(bounds(&s, id), before, "graphic={graphic}, layer={lock_layer}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_unfittable_frame_returns_an_error_without_changing_any_target() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = frame(&mut s, [100.0, 100.0, 500.0, 300.0], "Fits");
+        let b = frame(&mut s, [100.0, 400.0, 500.0, 600.0], "Cannot fit");
+        Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(b).unwrap().text_frame_mut().unwrap().options.first_baseline_min = 30_000.0;
+        let before = [bounds(&s, a), bounds(&s, b)];
+        assert!(s.execute("object.fit", &json!({"mode": "fitFrameToContent", "ids": [a.0, b.0]})).is_err());
+        assert_eq!([bounds(&s, a), bounds(&s, b)], before);
     }
 }
