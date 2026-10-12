@@ -1169,7 +1169,7 @@ fn apply_color(s: &mut Session, p: &Value) -> Result<Value> {
 fn sample_color(s: &mut Session, p: &Value) -> Result<Value> {
     const ID: &str = "color.sample";
     let at = super::point_param(p, "at").ok_or_else(|| bad(ID, "missing at"))?;
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, ID)?;
     let st = s.doc()?;
     let Some((from, color)) = image_color_at(&st.doc, sr, at) else {
         // No opaque image pixel there (an empty part of an image frame, a transparent pixel): the

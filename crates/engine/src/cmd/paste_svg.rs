@@ -284,7 +284,7 @@ fn paste_svg(s: &mut Session, p: &Value) -> Result<Value> {
     let mut art = Vec::new();
     convert(tree.root(), 0, &mut notes, &mut art);
     let b = bounds(&art).ok_or_else(|| bad(ID, "the SVG on the clipboard has no paths to paste"))?;
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, ID)?;
     let layer = s.doc()?.active_layer;
     let at = match super::point_param(p, "at") {
         Some(at) => at,

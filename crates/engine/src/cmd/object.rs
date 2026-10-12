@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create Frame",
             [],
             None,
-            "{spread?, rect: [x0,y0,x1,y1] (spread coords), shape?: rectangle|ellipse|polygon, content?: graphic|text|unassigned, sides?: 6, text?: string, caret?: bool, vertical?: bool (text: a new vertical story)}",
+            "{spread?: index | {kind: doc|parent, index} (a parent spread: index into `parents` of document.inspect), rect: [x0,y0,x1,y1] (spread coords), shape?: rectangle|ellipse|polygon, content?: graphic|text|unassigned, sides?: 6, text?: string, caret?: bool, vertical?: bool (text: a new vertical story)}",
             has_doc,
             frame_create
         ),
@@ -851,7 +851,7 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
     let rect = rect_param(p, "rect").ok_or_else(|| bad("frame.create", "missing rect"))?;
     let shape = str_param(p, "shape").unwrap_or("rectangle");
     let content = str_param(p, "content").unwrap_or("graphic");
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "frame.create")?;
     let lid = s.doc()?.active_layer;
     let text = super::text_param(p, "text");
     let caret = bool_or(p, "caret", content == "text");
@@ -914,7 +914,7 @@ pub(crate) fn polygon_in(r: Rect, sides: u32, inset: f64) -> designcraft_geom::P
 fn line_create(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point_param(p, "a").ok_or_else(|| bad("line.create", "missing a"))?;
     let b = point_param(p, "b").ok_or_else(|| bad("line.create", "missing b"))?;
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "line.create")?;
     let lid = s.doc()?.active_layer;
     s.edit(|d, sel| {
         let id = ItemId(d.alloc());
@@ -2165,7 +2165,7 @@ fn gap_move(s: &mut Session, p: &Value) -> Result<Value> {
         .and_then(Value::as_array)
         .and_then(|a| Some(Point::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?)))
         .ok_or_else(|| bad(ID, "missing at"))?;
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, ID)?;
     let (vertical, a, z, before, after) = find_gap(&s.doc()?.doc, sr, at).ok_or_else(|| bad(ID, "no gap there"))?;
     // `delta` along the gap's axis, or a drag (dx, dy) of which the axis part counts.
     let delta =
@@ -2671,7 +2671,7 @@ fn path_create(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("path.create", "a path needs at least two anchors"));
     }
     let closed = bool_or(p, "closed", false);
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "path.create")?;
     let lid = s.doc()?.active_layer;
     s.edit(|d, sel| {
         let id = ItemId(d.alloc());
@@ -4185,5 +4185,31 @@ mod fit_text_frame_tests {
         let before = [bounds(&s, a), bounds(&s, b)];
         assert!(s.execute("object.fit", &json!({"mode": "fitFrameToContent", "ids": [a.0, b.0]})).is_err());
         assert_eq!([bounds(&s, a), bounds(&s, b)], before);
+    }
+}
+
+#[cfg(test)]
+mod spread_target_tests {
+    use super::*;
+
+    #[test]
+    fn creating_on_a_parent_spread_and_rejecting_unknown_spreads() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1, "facingPages": false})).unwrap();
+        let parent = json!({"kind": "parent", "index": 0});
+        let r = s.execute("frame.create", &json!({"spread": parent, "rect": [0, 0, 100, 100]})).unwrap();
+        let id = ItemId(r["id"].as_u64().unwrap());
+        assert_eq!(s.doc().unwrap().doc.find(id).unwrap().spread, SpreadRef::Parent(0));
+        s.execute("line.create", &json!({"spread": parent, "a": [0, 0], "b": [50, 50]})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.parents[0].items.len(), 2);
+
+        // Each of these used to land on the first body page.
+        for bad in
+            [json!("A-Parent"), json!("0"), json!(-1), json!(1.5), json!({"kind": "master", "index": 0}), json!({"kind": "parent"}), json!([0])]
+        {
+            assert!(s.execute("frame.create", &json!({"spread": bad, "rect": [0, 0, 100, 100]})).is_err(), "frame.create spread {bad}");
+            assert!(s.execute("line.create", &json!({"spread": bad, "a": [0, 0], "b": [50, 50]})).is_err(), "line.create spread {bad}");
+        }
+        assert!(s.doc().unwrap().doc.spreads[0].items.is_empty());
     }
 }
