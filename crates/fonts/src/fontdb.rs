@@ -132,6 +132,8 @@ pub struct FontFace {
     style_aliases: Vec<String>,
     /// Format, class and PANOSE numbers (the font menus), read on first use.
     kind: std::sync::OnceLock<crate::kind::FaceKind>,
+    /// The PostScript name, read on first use.
+    postscript: std::sync::OnceLock<Option<String>>,
 }
 
 /// A cheap `Copy` handle to a face. Faces are never unloaded, so the handle lives for the rest of
@@ -327,6 +329,13 @@ impl FontFace {
         let (g, n) = self.group.get_or_init(|| self.skrifa().map(|f| crate::group::classify(&f, &self.family)).unwrap_or_default());
         (*g, n.as_deref())
     }
+    /// The PostScript name (`name` ID 6), read from the font once. None for a variable font's
+    /// named instance: the file's name belongs to its default instance.
+    pub fn postscript_name(&self) -> Option<&str> {
+        self.postscript
+            .get_or_init(|| if self.is_variable() { None } else { self.skrifa().and_then(|f| name(&f, &[StringId::POSTSCRIPT_NAME])) })
+            .as_deref()
+    }
     /// Glyph id for `c` (0 = .notdef).
     pub fn glyph_for(&self, c: char) -> u32 {
         self.skrifa().and_then(|f| f.charmap().map(c)).map(|g| g.to_u32()).unwrap_or(0)
@@ -361,6 +370,7 @@ struct CatalogEntry {
     group: FontGroup,
     native: Option<String>,
     aliases: Vec<String>,
+    postscript: Option<String>,
 }
 
 /// What the scan reads of one face in a font file: its names and font menu group.
@@ -372,6 +382,7 @@ struct ScannedFace {
     group: FontGroup,
     native: Option<String>,
     aliases: Vec<String>,
+    postscript: Option<String>,
 }
 
 /// Process-wide font database: the fonts every document shares (bundled, installed, added), and
@@ -648,7 +659,15 @@ fn file_face_names(path: &std::path::Path) -> Vec<ScannedFace> {
                     crate::group::classify(&skrifa::FontRef::new(&font).ok()?, &family)
                 }
             };
-            Some(ScannedFace { family, style, group, native, aliases: aliases(&f, &[StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME]) })
+            let postscript = name(&f, &[StringId::POSTSCRIPT_NAME]);
+            Some(ScannedFace {
+                family,
+                style,
+                group,
+                native,
+                aliases: aliases(&f, &[StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME]),
+                postscript,
+            })
         })
         .collect()
 }
@@ -836,6 +855,7 @@ fn make_face(bytes: FontBytes, source: FontSource, index: u32, family: String, s
         icf: std::sync::OnceLock::new(),
         group: std::sync::OnceLock::new(),
         kind: std::sync::OnceLock::new(),
+        postscript: std::sync::OnceLock::new(),
     })
 }
 
@@ -1148,6 +1168,7 @@ impl FontDb {
                         group: f.group,
                         native: f.native,
                         aliases: f.aliases,
+                        postscript: f.postscript,
                     });
                 }
             }
@@ -1156,7 +1177,15 @@ impl FontDb {
         // decide what is a font.
         for p in unscanned_font_files((self.font_files)(), &mut scanned) {
             for f in file_face_names(&p) {
-                found.push(CatalogEntry { family: f.family, style: f.style, path: p.clone(), group: f.group, native: f.native, aliases: f.aliases });
+                found.push(CatalogEntry {
+                    family: f.family,
+                    style: f.style,
+                    path: p.clone(),
+                    group: f.group,
+                    native: f.native,
+                    aliases: f.aliases,
+                    postscript: f.postscript,
+                });
             }
         }
         let n = found.len();
@@ -1302,6 +1331,11 @@ impl FontDb {
     /// The shared fonts' face for `family` + `style` (see [`ScopedFonts::face`]).
     pub fn face(&self, family: &str, style: &str) -> Arc<FontFace> {
         self.scoped(0).face(family, style)
+    }
+
+    /// The shared face with PostScript name `name` (see [`ScopedFonts::postscript_face`]).
+    pub fn postscript_face(&self, name: &str) -> Option<(String, String)> {
+        self.scoped(0).postscript_face(name)
     }
 
     /// Is `family` among the shared fonts (loaded, or installed on the system)?
@@ -1689,6 +1723,21 @@ impl ScopedFonts<'_> {
             Some((face.kind(), face.added()))
         }
         #[cfg(target_arch = "wasm32")]
+        None
+    }
+
+    /// The family and style of the face whose PostScript name is `name`, ignoring case (the
+    /// document's, loaded, or installed on the system, not loading it). SVGs exported from
+    /// Illustrator name fonts this way (`font-family="'MyriadPro-Regular'"`).
+    pub fn postscript_face(&self, name: &str) -> Option<(String, String)> {
+        let named = |ps: Option<&str>| ps.is_some_and(|ps| ps.eq_ignore_ascii_case(name));
+        if let Some(f) = self.own().iter().chain(self.db.read_faces().iter()).find(|f| named(f.postscript_name())) {
+            return Some((f.family.clone(), f.style.clone()));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(c) = self.db.read_catalog().iter().find(|c| named(c.postscript.as_deref())) {
+            return Some((c.family.clone(), c.style.clone()));
+        }
         None
     }
 

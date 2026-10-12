@@ -350,3 +350,23 @@ fn a_rescan_does_not_cache_an_older_in_flight_glyph_miss() {
     assert_eq!(db.fallback_for(c, 0, None).unwrap().family, family);
     std::fs::remove_dir_all(db.font_dirs.first().unwrap()).unwrap();
 }
+
+#[test]
+fn installed_and_loaded_fonts_are_found_by_postscript_name() {
+    let dir = std::env::temp_dir().join(format!("dc-sysfonts-postscript-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ps.ttf"), crate::testing::font_with("DC Test PS Installed", &['a']).unwrap()).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir]);
+    let found = Some(("DC Test PS Installed".to_string(), "Regular".to_string()));
+    // From the catalog, without loading the font; case doesn't matter.
+    assert_eq!(db.postscript_face("dctestpsinstalled-regular"), found);
+    assert!(!db.is_loaded("DC Test PS Installed"));
+    // Bundled and added (loaded) faces.
+    assert_eq!(db.postscript_face("SourceSerif4-Semibold"), Some(("Source Serif 4".to_string(), "Semibold".to_string())));
+    db.add_font(crate::testing::font_with("DC Test PS Added", &['a']).unwrap());
+    assert_eq!(db.postscript_face("DCTestPSAdded-Regular"), Some(("DC Test PS Added".to_string(), "Regular".to_string())));
+    // A family name isn't a PostScript name.
+    assert_eq!(db.postscript_face("Source Serif 4"), None);
+    assert_eq!(db.postscript_face("NoSuchFont-Regular"), None);
+}
