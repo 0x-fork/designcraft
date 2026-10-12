@@ -899,7 +899,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
         "Select a placed video or sound (File › Place a .mp4, .mov, .mp3, .wav …).",
         "Выделите размещенное видео или звук («Файл» › «Поместить» файл .mp4, .mov, .mp3, .wav …).",
     ),
-    ("Select an object to color its fill or stroke.", "Выделите объект, чтобы изменить цвет его заливки или обводки."),
+    ("Select an object or text to color its fill or stroke.", "Выделите объект или текст, чтобы изменить цвет его заливки или обводки."),
     ("Select an object to give its fill a gradient.", "Выделите объект, чтобы применить градиент к его заливке."),
     ("Select an object to make it a button.", "Выделите объект, чтобы превратить его в кнопку."),
     (
