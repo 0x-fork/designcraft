@@ -312,7 +312,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Selection Attributes",
             [],
             None,
-            "{mixed?: bool} → resolved character/paragraph attributes at the text selection; with mixed, paraMixed lists the paragraph attributes that differ across the selected paragraphs",
+            "{mixed?: bool} → resolved character/paragraph attributes at the text selection; with mixed, paraMixed lists the paragraph attributes that differ across the selected paragraphs; the selection's start as `selectedText` (one line, up to 60 characters)",
             has_doc,
             selection_attrs
         ),
@@ -1454,6 +1454,9 @@ fn open_type(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"features": list, "figures": otf::figures(&list)}))
 }
 
+/// How much of the selected text `type.selectionAttrs` reports.
+const SELECTED_TEXT_CHARS: usize = 60;
+
 fn selection_attrs(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let targets = format_targets(s);
@@ -1467,8 +1470,17 @@ fn selection_attrs(s: &mut Session, p: &Value) -> Result<Value> {
         apply_typing_format(&mut cf, f);
     }
     let cp = st.doc.styles.resolve_char(&base, &cf);
+    // The selected text (its start, on one line), for previews such as the font menu's.
+    let line: String = story
+        .text
+        .get(r.start..r.end)
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_control() || c == designcraft_doc::OBJECT_MARK { ' ' } else { c })
+        .collect();
+    let selected: String = line.trim_start().chars().take(SELECTED_TEXT_CHARS).collect();
     let mut out = json!({"story": sid.0, "paragraphStyle": pf.style, "characterStyle": cf.style, "para": pp, "chars": cp,
-        "paraOverrides": pf.para.count(), "charOverrides": cf.over.count()});
+        "paraOverrides": pf.para.count(), "charOverrides": cf.over.count(), "selectedText": selected.trim()});
     if bool_or(p, "mixed", false) {
         out["paraMixed"] = json!(mixed_para_attrs(&st.doc, &targets));
     }
@@ -1719,6 +1731,26 @@ mod open_type_tests {
         assert_eq!(text, "字🙂x");
         assert!(text.is_char_boundary(t.anchor) && text.is_char_boundary(t.focus), "caret {t:?} in {text:?}");
         s.execute("text.move", &json!({"dir": "right"})).unwrap();
+    }
+
+    #[test]
+    fn selection_attrs_report_the_selected_text() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s
+            .execute(
+                "frame.create",
+                &json!({"rect": [72, 72, 300, 200], "content": "text", "text": "Spring issue
+What's new in typography this season, and why it matters to every designer"}),
+            )
+            .unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 13})).unwrap();
+        assert_eq!(s.execute("type.selectionAttrs", &json!({})).unwrap()["selectedText"], "Spring issue", "on one line, trimmed");
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 13, "focus": 200})).unwrap();
+        let long = s.execute("type.selectionAttrs", &json!({})).unwrap()["selectedText"].as_str().unwrap().to_string();
+        assert!(long.starts_with("What's new") && (55..=60).contains(&long.chars().count()), "the line break skipped, capped: {long}");
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 3, "focus": 3})).unwrap();
+        assert_eq!(s.execute("type.selectionAttrs", &json!({})).unwrap()["selectedText"], "", "a caret selects nothing");
     }
 
     #[test]
