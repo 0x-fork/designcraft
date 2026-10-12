@@ -1081,8 +1081,12 @@ dependencies = [
  "designcraft-color",
  "designcraft-fonts",
  "image",
+ "log",
+ "moxcms",
  "resvg",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
