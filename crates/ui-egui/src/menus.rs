@@ -1877,6 +1877,11 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
         return;
     }
     let p = if params.is_null() { json!({}) } else { params.clone() };
+    // Update Link asks before replacing edits made to linked text in the layout.
+    if id == "links.update" {
+        crate::panels::properties::update_links(app, p);
+        return;
+    }
     let _ = app.run(id, p);
 }
 
