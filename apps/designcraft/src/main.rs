@@ -17,6 +17,7 @@
 mod apple_events;
 mod control_server;
 mod gpu;
+mod gpu_limits;
 mod logging;
 #[cfg(target_os = "macos")]
 mod mac_window;
@@ -382,6 +383,9 @@ fn main() -> std::process::ExitCode {
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
+    // The adapter's largest texture side instead of eframe's 8192, so a window across several
+    // monitors keeps its surface (see `gpu_limits`).
+    gpu_limits::request_adapter_texture_size(&mut options);
     // The graphics backend, decided before the window exists: a driver that faults takes the
     // process down before any Rust code can catch it (see `gpu::backend`).
     let fallback = gpu::backend::Fallback::begin(
@@ -439,6 +443,7 @@ fn main() -> std::process::ExitCode {
             Box::new(move |cc| {
                 let mut restarted = None;
                 if let Some(rs) = &cc.wgpu_render_state {
+                    gpu_limits::log_uncaptured_errors(&rs.device);
                     // What a bug report needs to know about the graphics driver.
                     let info = rs.adapter.get_info();
                     log::info!(
