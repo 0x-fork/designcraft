@@ -1101,6 +1101,17 @@ impl Item {
         self.path.bounds().unwrap_or(Rect::ZERO)
     }
 
+    /// The box a gradient feather spans, in item space: the path's bounds, or a group's objects'
+    /// (a group has no path of its own).
+    pub fn feather_bounds(&self) -> Rect {
+        if self.is_group()
+            && let Content::Group { items } = &self.content
+        {
+            return items.iter().map(|c| c.bounds()).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO);
+        }
+        self.inner_bounds()
+    }
+
     /// Spread-space geometric bounds (axis-aligned box of the transformed path; groups: union).
     /// A group (its bounds are its children's). A frame holding pasted-into items is not.
     pub fn is_group(&self) -> bool {

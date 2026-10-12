@@ -64,6 +64,27 @@ fn shadow(sigma: f64, color: peniko::Color) -> Filter {
     })
 }
 
+/// Keep what was drawn in the current layer as much as `it`'s gradient feather says, over `area`
+/// (item space; past the gradient's ends its end opacities carry on).
+pub(crate) fn gradient_feather_mask(ctx: &mut RenderContext, f: &Frame, it: &Item, xf: Affine, area: Rect) {
+    let gf = &it.effects.gradient_feather;
+    let (p0, p1) = gf.points(it.feather_bounds());
+    let stop = |o: f32, a: f32| peniko::ColorStop::from((o, peniko::Color::from_rgba8(0, 0, 0, (a.clamp(0.0, 1.0) * 255.0).round() as u8)));
+    let stops = [stop(0.0, gf.start), stop(1.0, gf.end)];
+    let grad = if gf.radial {
+        peniko::Gradient::new_radial(p0, (p1 - p0).hypot().max(1e-3) as f32).with_stops(stops.as_slice())
+    } else {
+        peniko::Gradient::new_linear(p0, p1).with_stops(stops.as_slice())
+    };
+    ctx.set_transform(Affine::IDENTITY);
+    ctx.push_layer(None, Some(BlendMode::new(Mix::Normal, Compose::DestIn)), None, None, None);
+    ctx.set_transform(f.view * xf);
+    ctx.set_paint(grad);
+    ctx.fill_rect(&area);
+    ctx.reset_paint_transform();
+    ctx.pop_layer();
+}
+
 impl Renderer {
     /// Draw an item with soft effects: below-effects, the (feathered) body, inner shadow.
     pub(crate) fn draw_item_fx(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine, page: Option<usize>) {
@@ -170,22 +191,8 @@ impl Renderer {
             }
         }
         if gf.on {
-            let (p0, p1) = gf.points(it.inner_bounds());
-            let stop = |o: f32, a: f32| peniko::ColorStop::from((o, peniko::Color::from_rgba8(0, 0, 0, (a.clamp(0.0, 1.0) * 255.0).round() as u8)));
-            let stops = [stop(0.0, gf.start), stop(1.0, gf.end)];
-            let grad = if gf.radial {
-                peniko::Gradient::new_radial(p0, (p1 - p0).hypot().max(1e-3) as f32).with_stops(stops.as_slice())
-            } else {
-                peniko::Gradient::new_linear(p0, p1).with_stops(stops.as_slice())
-            };
-            ctx.set_transform(Affine::IDENTITY);
-            ctx.push_layer(None, Some(BlendMode::new(Mix::Normal, Compose::DestIn)), None, None, None);
-            ctx.set_transform(f.view * xf);
-            ctx.set_paint(grad);
             let area = if xf.determinant().abs() > 1e-12 { xf.inverse().transform_rect_bbox(reach) } else { it.inner_bounds() };
-            ctx.fill_rect(&area.inflate(4.0, 4.0));
-            ctx.reset_paint_transform();
-            ctx.pop_layer();
+            gradient_feather_mask(ctx, f, it, xf, area.inflate(4.0, 4.0));
         }
         if gf.on || directional {
             ctx.pop_layer();
