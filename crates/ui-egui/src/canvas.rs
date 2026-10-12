@@ -1873,11 +1873,9 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     {
         // Count presses in a row here: egui reports double and triple clicks only on release and
         // stops at three, but a press must know (word, line, paragraph, story).
-        // Like egui, the next press must come within the double-click delay of the last release.
         let (delay, dist) = ui.ctx().options(|o| (o.input_options.max_double_click_delay, o.input_options.max_click_dist));
-        let (released_at, last_pos, last_n): (f64, Pos2, u8) = ui.data(|d| d.get_temp(clicks_id)).unwrap_or((f64::NEG_INFINITY, o, 0));
-        let n = if now - released_at <= delay && (o - last_pos).length() <= dist { last_n.saturating_add(1) } else { 1 };
-        ui.data_mut(|d| d.insert_temp(clicks_id, (f64::NEG_INFINITY, o, n)));
+        let n = press_count(ui.data(|d| d.get_temp(clicks_id)), o, now, delay, dist);
+        ui.data_mut(|d| d.insert_temp(clicks_id, Clicks { at: f64::NEG_INFINITY, pos: o, n }));
         events.push(PointerEvent { kind: PointerKind::Down, pos: pos(o), mods: m, clicks: n });
         down = true;
     }
@@ -1909,8 +1907,9 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
         ui.data_mut(|d| d.remove::<(f64, bool)>(hold_id));
     }
     if down && released {
-        if let Some((_, at, n)) = ui.data(|d| d.get_temp::<(f64, Pos2, u8)>(clicks_id)) {
-            ui.data_mut(|d| d.insert_temp(clicks_id, (now, at, n)));
+        if let Some(c) = ui.data(|d| d.get_temp::<Clicks>(clicks_id)) {
+            let dist = ui.ctx().options(|o| o.input_options.max_click_dist);
+            ui.data_mut(|d| d.insert_temp(clicks_id, release_clicks(c, latest.unwrap_or(c.pos), now, dist)));
         }
         let p = latest.unwrap_or(rect.center());
         events.push(PointerEvent { kind: PointerKind::Up, pos: pos(p), mods: m, clicks: 1 });
@@ -2425,12 +2424,54 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
     true
 }
 
+/// Presses in a row on the canvas: the last press's count, and where and when it was released
+/// (`at` is −∞ while the button is down).
+#[derive(Clone, Copy, Debug)]
+struct Clicks {
+    at: f64,
+    pos: Pos2,
+    n: u8,
+}
+
+/// The count of a press at `pos` at time `now`: one more than the last press when it comes within
+/// the double-click delay of the last release and near where that release was, else 1.
+fn press_count(last: Option<Clicks>, pos: Pos2, now: f64, delay: f64, dist: f32) -> u8 {
+    match last {
+        Some(c) if now - c.at <= delay && (pos - c.pos).length() <= dist => c.n.saturating_add(1),
+        _ => 1,
+    }
+}
+
+/// The record a release at `pos` leaves: a release away from its press ended a drag, which is
+/// not a click, so the next press counts from one.
+fn release_clicks(press: Clicks, pos: Pos2, now: f64, dist: f32) -> Clicks {
+    let n = if (pos - press.pos).length() <= dist { press.n } else { 0 };
+    Clicks { at: now, pos, n }
+}
+
 #[cfg(test)]
 mod tests {
     use designcraft_geom::Unit;
     use egui_kittest::{Harness, kittest::Queryable};
 
     use super::*;
+
+    #[test]
+    fn a_press_after_a_drag_is_not_a_double_click() {
+        let (delay, dist) = (0.3, 6.0);
+        let press = |last, x: f32, now| press_count(last, pos2(x, 0.0), now, delay, dist);
+        // Click, click: a double click.
+        let n = press(None, 0.0, 0.0);
+        let up = release_clicks(Clicks { at: f64::NEG_INFINITY, pos: pos2(0.0, 0.0), n }, pos2(0.0, 0.0), 0.1, dist);
+        assert_eq!(press(Some(up), 1.0, 0.2), 2);
+        // A drag from 0 to 100, then a fast press where it started or where it ended: a single click.
+        let up = release_clicks(Clicks { at: f64::NEG_INFINITY, pos: pos2(0.0, 0.0), n: 1 }, pos2(100.0, 0.0), 0.1, dist);
+        assert_eq!(press(Some(up), 0.0, 0.2), 1);
+        assert_eq!(press(Some(up), 100.0, 0.2), 1);
+        // Too slow: a single click.
+        let up = release_clicks(Clicks { at: f64::NEG_INFINITY, pos: pos2(0.0, 0.0), n: 1 }, pos2(0.0, 0.0), 0.1, dist);
+        assert_eq!(press(Some(up), 0.0, 1.0), 1);
+    }
 
     fn harness(app: DesignApp) -> Harness<'static, DesignApp> {
         let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).build_ui_state(

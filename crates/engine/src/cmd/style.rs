@@ -1577,6 +1577,40 @@ mod color_tests {
         s.execute("object.color", &json!({"color": {"c": 10, "m": 20, "y": 30, "k": 0}})).unwrap();
         assert_eq!(s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().fill.swatch, "Sand");
     }
+
+    #[test]
+    fn add_to_swatches_renames_the_colour_in_text_cells_and_notes() {
+        use std::sync::Arc;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Hello world"})).unwrap();
+        let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
+        s.execute("text.select", &json!({"story": sid.0, "anchor": 11})).unwrap();
+        s.execute("footnote.insert", &json!({"text": "note"})).unwrap();
+        s.execute("text.select", &json!({"story": sid.0, "anchor": 0})).unwrap();
+        s.execute("table.insert", &json!({"rows": 1, "cols": 1})).unwrap();
+        s.execute("text.select", &json!({"story": sid.0, "anchor": 1, "focus": 4})).unwrap();
+        let old = s.execute("object.color", &json!({"color": {"c": 10, "m": 20, "y": 30, "k": 0}})).unwrap()["swatch"].as_str().unwrap().to_string();
+        // The same unnamed colour on a cell, the cell's text and the footnote's text.
+        s.edit(|d, _| {
+            let st = d.story_mut(sid).unwrap();
+            let t = Arc::make_mut(st.tables.values_mut().next().unwrap());
+            t.cells[0].fill = old.clone();
+            t.cells[0].text.chars[0].format.over.fill = Some(old.clone());
+            Arc::make_mut(&mut st.notes[0]).text.chars[0].format.over.stroke = Some(old.clone());
+            Ok(())
+        })
+        .unwrap();
+        s.execute("swatch.addToSwatches", &json!({"swatch": old, "name": "Sand"})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let st = d.story(sid).unwrap();
+        assert_eq!(st.char_format_at(2).over.fill.as_deref(), Some("Sand"));
+        let cell = &st.tables.values().next().unwrap().cells[0];
+        assert_eq!(cell.fill, "Sand");
+        assert_eq!(cell.text.chars[0].format.over.fill.as_deref(), Some("Sand"));
+        assert_eq!(st.notes[0].text.chars[0].format.over.stroke.as_deref(), Some("Sand"));
+        d.check().unwrap();
+    }
 }
 
 #[cfg(test)]

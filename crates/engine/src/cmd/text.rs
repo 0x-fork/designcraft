@@ -30,12 +30,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "Select Text Unit",
             [],
             None,
-            "{frame, point, unit: word|line|paragraph|story} — what a double, triple, quadruple or quintuple click selects: the word (or run of spaces) under the point, its line, paragraph or the whole story",
+            "{frame, point, unit: word|line|paragraph|story} — what a double, triple, quadruple or quintuple click selects: the word (or run of spaces) under the point, its line, its paragraph with the paragraph return, or the whole story",
             has_doc,
             |s, p| select_at(s, p, str_param(p, "unit").unwrap_or("word"))
         ),
         cmd!(noundo "text.select", "Select Text", [], None, "{story, anchor, focus} (UTF-8 byte offsets into the story text, as find.find reports them: á or — counts 2 or 3)", has_doc, |s, p| {
             let sid = StoryId(p.get("story").and_then(Value::as_u64).unwrap_or(0));
+            s.typing_format = None;
             let st = s.doc_mut()?;
             let text = &st.doc.story(sid).ok_or_else(|| bad("text.select", "no such story"))?.text;
             let a = floor_char_boundary(text, p.get("anchor").and_then(Value::as_u64).unwrap_or(0) as usize);
@@ -366,7 +367,7 @@ fn hit_byte_with(
 fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
     const ID: &str = "text.selectAt";
     let frame = id_param(p, "frame").ok_or_else(|| bad(ID, "missing frame"))?;
-    let pt = point_param(p, "point").unwrap_or(Point::ZERO);
+    let pt = point_param(p, "point").ok_or_else(|| bad(ID, "missing point"))?;
     let (sid, b, cell) = hit_byte_with(s, frame, pt, compose::hit_char).ok_or_else(|| bad(ID, "not a text frame"))?;
     let st = s.doc()?;
     let story = st.doc.text_story(sid, cell).ok_or(designcraft_doc::DocError::NoStory(sid))?;
@@ -378,33 +379,49 @@ fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
             let cs = s.cache.get(&st.doc, sid, None);
             line_at(&text_composition(cs, cell), b).unwrap_or((b, b))
         }
-        "paragraph" => story.para_ranges().get(story.para_at(b)).map_or((b, b), |r| (r.start, r.end)),
+        // The paragraph with its return (the last paragraph has none).
+        "paragraph" => story.para_ranges().get(story.para_at(b)).map_or((b, b), |r| (r.start, (r.end + 1).min(text.len()))),
         "story" => (0, text.len()),
         other => return Err(bad(ID, format!("unknown unit `{other}` (word, line, paragraph or story)"))),
     };
     s.text_drag = false;
+    s.typing_format = None;
     let st = s.doc_mut()?;
     st.selection = Selection::text(TextSel { story: sid, anchor: a, focus: e, frame: Some(frame), cell });
     st.bump_revision();
     Ok(json!({"story": sid.0, "anchor": a, "focus": e}))
 }
 
-/// The word at byte `i`; on spaces the run of spaces; on anything else that one character. At
-/// the end of a paragraph, what ends it.
+/// The word at byte `i`; on spaces the run of spaces; on anything else that one character
+/// (grapheme cluster). At the end of a paragraph, what ends it. Grapheme clusters are never split:
+/// combining marks, viramas, variation selectors and emoji ZWJ sequences stay with their base.
 fn word_or_spaces_at(s: &str, i: usize) -> (usize, usize) {
-    let at = |i: usize| s.get(i..).and_then(|r| r.chars().next()).filter(|c| *c != '\n');
-    let i = if at(i).is_none() && i > 0 { prev_char(s, i) } else { i };
-    let Some(c) = at(i) else { return (i, i) };
-    let space = |c: char| c.is_whitespace() && c != '\n';
-    if is_word(c) {
-        word_bounds(s, i)
-    } else if space(c) {
-        let a = s[..i].char_indices().rev().take_while(|(_, c)| space(*c)).last().map_or(i, |(k, _)| k);
-        let e = s[i..].char_indices().find(|(_, c)| !space(*c)).map_or(s.len(), |(k, _)| i + k);
-        (a, e)
-    } else {
-        (i, i + c.len_utf8())
+    use unicode_segmentation::UnicodeSegmentation;
+    let i = floor_char_boundary(s, i.min(s.len()));
+    // Clusters never span a paragraph return, so the paragraph is enough.
+    let ps = s[..i].rfind('\n').map_or(0, |k| k + 1);
+    let pe = s[i..].find('\n').map_or(s.len(), |k| i + k);
+    let g: Vec<(usize, &str)> = s[ps..pe].grapheme_indices(true).collect();
+    let Some(k) = g.iter().rposition(|(o, _)| ps + o <= i) else { return (i, i) };
+    let kind = |c: &str| match c.chars().next() {
+        Some(c) if is_word(c) => 1,
+        Some(c) if c.is_whitespace() => 2,
+        _ => 0,
+    };
+    let span = |a: usize, e: usize| g.get(a).zip(g.get(e)).map_or((i, i), |((oa, _), (oe, ge))| (ps + oa, ps + oe + ge.len()));
+    let kd = g.get(k).map_or(0, |(_, c)| kind(c));
+    if kd == 0 {
+        return span(k, k);
     }
+    let mut a = k;
+    while a > 0 && g.get(a - 1).is_some_and(|(_, c)| kind(c) == kd) {
+        a -= 1;
+    }
+    let mut e = k;
+    while g.get(e + 1).is_some_and(|(_, c)| kind(c) == kd) {
+        e += 1;
+    }
+    span(a, e)
 }
 
 /// The composition whose lines hold a story's text: the story's own, a table cell's or a footnote's.
@@ -440,6 +457,7 @@ fn place(s: &mut Session, p: &Value, extend: bool) -> Result<Value> {
     } else if s.text_drag {
         return Ok(json!({"story": sid.0, "dragging": true}));
     }
+    s.typing_format = None;
     let st = s.doc_mut()?;
     // Dragging from one cell into another selects cells.
     if extend
@@ -778,12 +796,6 @@ pub fn prev_word(s: &str, i: usize) -> usize {
     }
     0
 }
-fn word_bounds(s: &str, i: usize) -> (usize, usize) {
-    let a = s[..i.min(s.len())].char_indices().rev().take_while(|(_, c)| is_word(*c)).last().map(|(k, _)| k).unwrap_or(i);
-    let b = s[i.min(s.len())..].char_indices().find(|(_, c)| !is_word(*c)).map(|(k, _)| i + k).unwrap_or(s.len());
-    (a, b)
-}
-
 /// Type ▸ Story Direction.
 fn story_direction(s: &mut Session, p: &Value) -> Result<Value> {
     let vertical = p.get("vertical").and_then(Value::as_bool).ok_or_else(|| bad("type.storyDirection", "missing vertical"))?;
@@ -864,6 +876,7 @@ fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
         "storyEnd" => text.len(),
         other => return Err(bad("text.move", format!("unknown dir `{other}`"))),
     };
+    s.typing_format = None;
     let stm = s.doc_mut()?;
     stm.selection.text = Some(if extend { TextSel { focus: new, ..t } } else { TextSel { anchor: new, focus: new, ..t } });
     stm.revision += 1;
@@ -1566,6 +1579,10 @@ fn link_style(s: &mut Session, p: &Value, bold: bool) -> Result<Value> {
                 });
             }
         }
+        // No undo step for nothing.
+        if changed == 0 {
+            return Err(bad(id, "nothing to change"));
+        }
         ok()
     });
     r?;
@@ -1867,6 +1884,69 @@ mod multi_click_tests {
     use crate::Session;
 
     #[test]
+    fn moving_the_caret_drops_the_pending_typing_format() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 500, 200], "content": "text", "text": "Hello world"})).unwrap();
+        let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
+        let size_at = |s: &Session, b: usize| s.doc().unwrap().doc.story(designcraft_doc::StoryId(sid)).unwrap().char_format_at(b).over.size;
+        let pending = |s: &mut Session| {
+            s.execute("text.select", &json!({"story": sid, "anchor": 5})).unwrap();
+            s.execute("type.char", &json!({"attrs": {"size": 30}})).unwrap();
+        };
+        // Away and back by arrow keys, by a click, by selecting and by double-clicking: typing at the
+        // same caret is in the text's own format.
+        let moves: Vec<Box<dyn Fn(&mut Session)>> = vec![
+            Box::new(|s| {
+                s.execute("text.move", &json!({"dir": "right"})).unwrap();
+                s.execute("text.move", &json!({"dir": "left"})).unwrap();
+            }),
+            Box::new(|s| {
+                s.execute("text.placeCaret", &json!({"frame": fid, "point": [80, 80]})).unwrap();
+                s.execute("text.select", &json!({"story": sid, "anchor": 5})).unwrap();
+            }),
+            Box::new(|s| {
+                s.execute("text.selectAt", &json!({"frame": fid, "point": [80, 80], "unit": "story"})).unwrap();
+                s.execute("text.select", &json!({"story": sid, "anchor": 5})).unwrap();
+            }),
+        ];
+        for m in &moves {
+            pending(&mut s);
+            m(&mut s);
+            s.execute("text.insert", &json!({"text": "x"})).unwrap();
+            assert_eq!(size_at(&s, 6), None);
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
+        // Without a move it applies.
+        pending(&mut s);
+        s.execute("text.insert", &json!({"text": "x"})).unwrap();
+        assert_eq!(size_at(&s, 6), Some(30.0));
+    }
+
+    #[test]
+    fn word_selection_keeps_grapheme_clusters_whole() {
+        use super::word_or_spaces_at as word;
+        // Decomposed "café": the combining acute belongs to the word, wherever the click lands.
+        let s = "un cafe\u{301} noir";
+        let cafe = (3, 3 + "cafe\u{301}".len());
+        assert_eq!(word(s, 4), cafe);
+        assert_eq!(word(s, 7), cafe, "on the combining mark");
+        // Devanagari with a virama (U+094D) and a dependent vowel sign.
+        let s = "\u{928}\u{92E}\u{938}\u{94D}\u{924}\u{947} x";
+        let w = "\u{928}\u{92E}\u{938}\u{94D}\u{924}\u{947}".len();
+        assert_eq!(word(s, 0), (0, w));
+        assert_eq!(word(s, 9), (0, w), "on the virama");
+        // An emoji ZWJ sequence and a variation selector stay one character.
+        let s = "a \u{1F469}\u{200D}\u{1F4BB} b \u{263A}\u{FE0F}";
+        let e = (2, 2 + "\u{1F469}\u{200D}\u{1F4BB}".len());
+        assert_eq!(word(s, 2), e);
+        assert_eq!(word(s, 6), e, "on the joiner");
+        assert_eq!(word(s, s.len() - 1), (s.len() - 6, s.len()), "at the end: the last character whole");
+        // Empty paragraphs select nothing.
+        assert_eq!(word("a\n\nb", 2), (2, 2));
+    }
+
+    #[test]
     fn clicks_select_words_spaces_lines_paragraphs_and_the_story() {
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
@@ -1890,7 +1970,7 @@ mod multi_click_tests {
         assert_eq!(select("word", 5), (5, 7), "the run of spaces after it");
         assert_eq!(select("word", 18), (18, 19), "punctuation alone");
         assert_eq!(select("line", 9), (0, 19));
-        assert_eq!(select("paragraph", 9), (0, 19));
+        assert_eq!(select("paragraph", 9), (0, 20), "with its return");
         assert_eq!(select("paragraph", 22), (20, text.len()));
         assert_eq!(select("story", 9), (0, text.len()));
         // A second click inside the selected word selects again rather than starting a text drag.
@@ -1908,6 +1988,7 @@ mod multi_click_tests {
         let t = s.doc().unwrap().selection.text.unwrap();
         assert_eq!((t.anchor, t.focus), (7, 12));
         assert!(s.execute("text.selectAt", &json!({"frame": fid, "point": p, "unit": "sentence"})).is_err());
+        assert!(s.execute("text.selectAt", &json!({"frame": fid, "unit": "word"})).is_err(), "no point");
     }
 }
 
@@ -1940,6 +2021,11 @@ mod style_link_tests {
         s.execute("type.bold", &json!({})).unwrap();
         assert_eq!(style_at(&mut s, 0), "Italic");
         assert_eq!(style_at(&mut s, 7), "Regular");
+        // Nothing to change: an error and no undo step.
+        s.execute("text.select", &json!({"story": sid, "anchor": 6, "focus": 11})).unwrap();
+        let steps = s.doc().unwrap().history.undo.len();
+        assert!(s.execute("type.bold", &json!({"on": false})).is_err());
+        assert_eq!(s.doc().unwrap().history.undo.len(), steps);
         // At a caret the style is for what is typed next.
         let end = "plain words here".len();
         s.execute("text.select", &json!({"story": sid, "anchor": end, "focus": end})).unwrap();

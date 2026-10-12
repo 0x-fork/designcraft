@@ -390,6 +390,9 @@ impl Document {
             if !matches!(it.content, Content::Text(_) | Content::Unassigned) || it.shape == Shape::GraphicLine {
                 return Err(DocError::Invalid(format!("{id} is not a text frame or an empty frame")));
             }
+            if it.locked || self.layer(it.layer).is_some_and(|l| l.locked) {
+                return Err(DocError::Invalid(format!("{id} is locked or on a locked layer")));
+            }
         }
         let (Some(fl), Some(tl)) = (self.find(from), self.find(to)) else { return Err(DocError::NoItem(to)) };
         let same_place = match (fl.spread, tl.spread) {
