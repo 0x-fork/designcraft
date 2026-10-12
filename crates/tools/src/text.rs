@@ -336,10 +336,19 @@ impl Tool for TypeTool {
         if cx.selection.text.is_none() || self.preedit.is_some() {
             return vec![];
         }
-        let mv = |dir: &str| {
-            vec![Action::Exec("text.move".into(), json!({"dir": dir, "extend": mods.shift, "word": mods.alt || mods.ctrl, "far": mods.cmd}))]
+        // Words: Cmd+arrow on macOS, Ctrl+arrow elsewhere (`cmd`); Option/Alt+Shift+arrow extends
+        // by words too.
+        let mv =
+            |dir: &str| vec![Action::Exec("text.move".into(), json!({"dir": dir, "extend": mods.shift, "word": mods.cmd || mods.ctrl || mods.alt}))];
+        // Option/Alt+Left/Right: kerning at the caret, tracking of a selection; with Cmd (Ctrl
+        // elsewhere), five times the increment.
+        let kern = |sign: f64| {
+            let steps = if mods.cmd || mods.ctrl { 5.0 } else { 1.0 };
+            vec![Action::Exec("type.kernStep".into(), json!({"steps": sign * steps}))]
         };
         match key {
+            ToolKey::Left if mods.alt && !mods.shift => kern(-1.0),
+            ToolKey::Right if mods.alt && !mods.shift => kern(1.0),
             ToolKey::Left => mv("left"),
             ToolKey::Right => mv("right"),
             ToolKey::Up => mv("up"),

@@ -354,6 +354,8 @@ pub struct DocSettings {
     pub bleed_color: [u8; 3],
     pub slug_color: [u8; 3],
     pub keyboard_increment: f64,
+    /// Kerning/Tracking increment (Alt+Left/Right in text), in 1/1000 em.
+    pub kerning_increment: f64,
     /// Named lists (Type › Bulleted and Numbered Lists › Define Lists).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lists: Vec<NumberedList>,
@@ -421,6 +423,7 @@ impl Default for DocSettings {
             bleed_color: [255, 72, 103],
             slug_color: [100, 188, 221],
             keyboard_increment: 1.0,
+            kerning_increment: 20.0,
             primary_story: None,
             lists: Vec::new(),
             chapter_number: 1,

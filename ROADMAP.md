@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-12** · Type tool: Option/Alt+Left/Right kerns the pair at the caret (manual kerning) or tracks a selection by the Kerning/Tracking increment (Preferences › Units & Increments, 20/1000 em), five times with Cmd/Ctrl; moving by words is Cmd+Left/Right on macOS and Ctrl+Left/Right elsewhere, and Option/Alt+Shift+Left/Right still selects by words (#621). No readiness percentage change.
 - **2026-10-12** · Autoflow on Place threads one frame per page column (right to left in a right-to-left story), so text no longer runs across the gutter; pages Smart Text Reflow adds get a primary frame with the page's columns (#625). No readiness percentage change.
 - **2026-10-12** · Vector art copied in Illustrator, VectorCraft, Figma or Inkscape pastes as editable paths, as InDesign pastes Illustrator art: the SVG those apps put on the clipboard becomes paths with their fills, strokes (weight, caps, joins, dashes) and opacity, groups stay groups and text comes in as outlines, centred in the view (`edit.pasteSvg`, `ui.paste`). Edit › Paste reads the system clipboard when nothing was copied in DesignCraft. No readiness percentage change.
 - **2026-10-12** · Pages panel: double-clicking a parent shows that parent and selects only its row; parent rows show rendered thumbnails. Commands name parents by id, full name, or a prefix only one parent has; an unknown or ambiguous name is an error instead of clearing the page's parent (#624). No readiness percentage change.

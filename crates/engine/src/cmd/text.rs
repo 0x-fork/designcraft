@@ -279,6 +279,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_frames,
             story_direction
         ),
+        cmd!(
+            "type.kernStep",
+            "Kerning/Tracking Step",
+            [],
+            None,
+            "{steps?: n (default 1; negative tightens), amount?: 1/1000 em (in place of steps × the document's kerningIncrement)} — with a caret, the manual kerning between the characters at the caret (from the pair's manual value, else 0); with a selection, the tracking of the selected text",
+            has_text_or_frames,
+            kern_step
+        ),
         cmd!("type.sizeUp", "Increase Point Size", [], Some("Cmd+Shift+."), "{}", has_text_or_frames, |s, _| step_size(s, 2.0)),
         cmd!("type.sizeDown", "Decrease Point Size", [], Some("Cmd+Shift+,"), "{}", has_text_or_frames, |s, _| step_size(s, -2.0)),
         cmd!(
@@ -1403,6 +1412,59 @@ pub(crate) fn format_paras(s: &mut Session, attrs: &Value) -> Result<Value> {
             }
         }
         ok()
+    })
+}
+
+/// Alt+Left/Right in text: kerning at a caret, tracking of a selection, by the Kerning/Tracking
+/// increment.
+fn kern_step(s: &mut Session, p: &Value) -> Result<Value> {
+    use designcraft_doc::Kerning;
+    let inc = s.doc()?.doc.settings.kerning_increment;
+    let inc = if inc.is_finite() { inc.clamp(1.0, 1000.0) } else { 20.0 };
+    let amount = match p.get("amount").and_then(Value::as_f64) {
+        Some(a) => a,
+        None => p.get("steps").and_then(Value::as_f64).unwrap_or(1.0) * inc,
+    };
+    if !amount.is_finite() {
+        return Err(bad("type.kernStep", "`amount` must be a number"));
+    }
+    let amount = amount.clamp(-11000.0, 11000.0);
+    // Kerning and tracking range, in 1/1000 em.
+    let clamp = |v: f64| v.clamp(-1000.0, 10000.0);
+    let targets = format_targets(s);
+    s.edit(|d, _| {
+        let styles = d.styles.clone();
+        let mut out = json!({});
+        for t in &targets {
+            let Some(st) = d.text_story_mut(t.story, t.cell) else { continue };
+            if t.range.is_empty() {
+                // Manual kerning sits on the character before the caret (it applies after it).
+                let pos = t.range.start;
+                let Some(c) = st.text.get(..pos).and_then(|before| before.chars().next_back()) else { continue };
+                let at = pos - c.len_utf8();
+                let para = st.paras.get(st.para_at(at)).cloned().unwrap_or_default();
+                let current = styles.resolve_char(&styles.resolve_para(&para).1, st.format_after(at)).kerning;
+                // The font's metrics or optical value isn't known here: those start from 0.
+                let v = clamp(if let Kerning::Manual(v) = current { v } else { 0.0 } + amount);
+                st.format_chars(at..pos, |f| f.over.kerning = Some(Kerning::Manual(v)));
+                out = json!({"kerning": v});
+            } else {
+                for (i, pr) in st.para_ranges().into_iter().enumerate() {
+                    let r = pr.start.max(t.range.start)..pr.end.min(t.range.end);
+                    let Some(para) = st.paras.get(i).cloned() else { break };
+                    if r.is_empty() {
+                        continue;
+                    }
+                    let pc = styles.resolve_para(&para).1;
+                    st.format_chars(r, |f| {
+                        let v = clamp(styles.resolve_char(&pc, f).tracking + amount);
+                        f.over.tracking = Some(v);
+                        out = json!({"tracking": v});
+                    });
+                }
+            }
+        }
+        Ok(out)
     })
 }
 

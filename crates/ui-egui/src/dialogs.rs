@@ -1410,6 +1410,11 @@ fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog, max_he
                         crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Cursor Key:"));
                         text_field(ui, d, "keyboardIncrement", 80.0);
                     });
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Kerning/Tracking:"));
+                        text_field(ui, d, "kerningIncrement", 60.0);
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "/1000 em"));
+                    });
                 }
                 _ => {
                     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Interface Language")).font(semibold(12.0)));
@@ -2583,6 +2588,9 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             }
             if let Some(v) = d.fields.get("keyboardIncrement").and_then(Value::as_str).and_then(|s| parse_measure(s, Unit::Points).ok()) {
                 doc["keyboardIncrement"] = json!(v.max(0.001));
+            }
+            if let Some(v) = d.n("kerningIncrement").filter(|v| v.is_finite()) {
+                doc["kerningIncrement"] = json!(v.clamp(1.0, 1000.0));
             }
             let mut adv = json!({});
             for k in ["superscriptSize", "superscriptPosition", "subscriptSize", "subscriptPosition"] {

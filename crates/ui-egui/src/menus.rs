@@ -1174,6 +1174,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                     json!(words.as_array().map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")).unwrap_or_default());
                 let inc = doc["keyboardIncrement"].as_f64().unwrap_or(1.0);
                 f["keyboardIncrement"] = json!(designcraft_geom::format_measure(inc, designcraft_geom::Unit::Points));
+                f["kerningIncrement"] = json!(format!("{}", doc["kerningIncrement"].as_f64().unwrap_or(20.0)));
                 let units = app.session.active().map(|d| d.doc.settings.horizontal_units).unwrap_or_default();
                 let m = |v: &Value| json!(designcraft_geom::format_measure(v.as_f64().unwrap_or(0.0), units));
                 let (bg, g) = (&doc["baselineGrid"], &doc["grid"]);
