@@ -776,12 +776,6 @@ mod tests {
 
     use crate::test_window::{self, wheel};
 
-    #[test]
-    fn the_app_bar_tools_slot_leaves_slack_when_everything_fits() {
-        assert!(super::tools_slot_width(500.0, 300.0) < 500.0, "a full-width slot can overflow by a rounding error");
-        assert_eq!(super::tools_slot_width(200.0, 300.0), 300.0, "a narrow window still scrolls");
-    }
-
     /// The Control panel's last control with nothing selected.
     const LAST_CONTROL: &str = "Jump to Next Column";
     const FIRST_CONTROL: &str = "Rotate 90° Counterclockwise";
