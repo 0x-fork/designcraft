@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-12** · Placed Word documents keep their bullets and numbering (#626): `numbering.xml` levels become bullet or numbered paragraphs with Word's number formats, label text, start numbers, restarts and list indents, also when a paragraph style carries the list. No readiness percentage change.
 - **2026-10-12** · Text strokes can sit behind the fill: the stroke lies wholly outside the letters at its full weight on screen, in PNG and in PDF, set from the Properties panel or Character Style Options. IDML `StrokeAlignment` on text imports and exports as this setting, so imported text with outside-aligned strokes keeps its letter shapes (#619). No readiness percentage change.
 - **2026-10-12** · Type tool: Option/Alt+Left/Right kerns the pair at the caret (manual kerning) or tracks a selection by the Kerning/Tracking increment (Preferences › Units & Increments, 20/1000 em), five times with Cmd/Ctrl; moving by words is Cmd+Left/Right on macOS and Ctrl+Left/Right elsewhere, and Option/Alt+Shift+Left/Right still selects by words (#621). No readiness percentage change.
 - **2026-10-12** · Autoflow on Place threads one frame per page column (right to left in a right-to-left story), so text no longer runs across the gutter; pages Smart Text Reflow adds get a primary frame with the page's columns (#625). No readiness percentage change.
