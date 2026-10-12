@@ -256,6 +256,9 @@ pub struct UiState {
     pub custom_workspaces: Vec<SavedWorkspace>,
     /// File › New › Document › Recent: the settings of the last documents made, newest first.
     pub recent_new_documents: Vec<designcraft_doc::build::NewDocument>,
+    /// The font menus' sample text (a key of `panels::FONT_SAMPLES`) and size (0–2).
+    pub font_sample: String,
+    pub font_preview_size: u8,
     /// Transform reference point (0..8, row-major; 0 = top-left).
     pub ref_point: u8,
     /// Align To target (`selection`, `keyObject`, `margins`, `page`, `spread`).
@@ -361,6 +364,8 @@ impl Default for UiState {
             workspace: "Essentials".into(),
             custom_workspaces: Vec::new(),
             recent_new_documents: Vec::new(),
+            font_sample: "selected".into(),
+            font_preview_size: 1,
             ref_point: 0,
             align_to: "selection".into(),
             text_style_tab: 0,
