@@ -1,6 +1,6 @@
 # Typography and composition parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Optical kerning from outlines (#181); macOS lists fonts that font services and managers activate; Justification dialog for the selected paragraphs) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Optical kerning from outlines (#181); macOS lists fonts that font services and managers activate; Justification dialog for the selected paragraphs; anchored objects wrap text) · **Target:** Adobe InDesign 2026 (21.6)
 
 Typesetting is what InDesign is bought for. A feature can exist and still set text differently
 from InDesign: different line breaks, different page count, overset where InDesign fits. This
@@ -56,7 +56,7 @@ Fidelity: **unmeasured** unless stated.
 | Paragraph rules, borders, shading | ✓ | ✓ | ✓ | |
 | Balance ragged lines | ✓ | ✓ | ✓ | |
 | Optical margin alignment | ✓ | ✓ (hang table of our own) | ~ | hang amounts are ours, InDesign's unknown |
-| Text wrap | bounding box, shape, jump object/column, wrap sides (text on both sides of an object), contour options | ✓ | ~ | Detect Edges, Alpha Channel and Photoshop Path contours follow the frame's path (composition doesn't read the image) |
+| Text wrap | bounding box, shape, jump object/column, wrap sides (text on both sides of an object), contour options, on page items and anchored objects | ✓ | ~ | Detect Edges, Alpha Channel and Photoshop Path contours follow the frame's path (composition doesn't read the image) |
 | Anchored objects | inline, above line, custom | ✓ | ~ | anchored objects in table cells not drawn (#163) |
 | Footnotes, endnotes | ✓ | ✓ | ~ | footnotes don't split across columns yet |
 | Type on a path | ✓ | ✓ | ✓ | |

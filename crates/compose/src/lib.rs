@@ -28,6 +28,7 @@ pub mod shatai;
 pub mod table;
 pub mod vars;
 mod warichu;
+pub mod wrap;
 pub mod xref;
 
 use std::collections::HashMap;
@@ -338,6 +339,17 @@ pub struct Exclusion {
     pub side: WrapSide,
     /// Contour wrap, or a custom boundary: the outline the text follows (None wraps around `rect`).
     pub contour: Option<Contour>,
+    /// An anchored object in the frame's own story: it wraps only lines that start after this
+    /// story byte (its anchor).
+    pub after: Option<usize>,
+}
+
+impl Exclusion {
+    /// Does the exclusion wrap a line starting at story byte `line_start`? An own-story anchored
+    /// object wraps only the lines after its anchor.
+    pub fn wraps_line(&self, line_start: usize) -> bool {
+        self.after.is_none_or(|a| a < line_start)
+    }
 }
 
 /// An object outline for contour wrap: closed polylines in the frame's inner space and the
@@ -454,11 +466,11 @@ fn wrap_exclusion(
     if let Some(custom) = wrap.path.as_ref().and_then(|p| Contour::of(&p.to_bezpath(), inv * xf, 0.0)) {
         let rect = custom.bounds();
         let contour = matches!(wrap.mode, WrapMode::BoundingBox | WrapMode::Contour).then_some(custom);
-        return Exclusion { rect, mode: wrap.mode, side, contour };
+        return Exclusion { rect, mode: wrap.mode, side, contour, after: None };
     }
     let contour = if wrap.mode == WrapMode::Contour { outline() } else { None }.and_then(|path| Contour::of(&path, inv * xf, o[0]));
     let rect = contour.as_ref().map_or_else(|| inv.transform_rect_bbox(r), Contour::bounds);
-    Exclusion { rect, mode: wrap.mode, side, contour }
+    Exclusion { rect, mode: wrap.mode, side, contour, after: None }
 }
 
 /// The outline a contour wrap of `kind` around frame `it` follows, in the frame's inner space.
@@ -676,13 +688,12 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
     out
 }
 
-/// Compose a story of `doc` through its frames.
+/// Compose a story of `doc` through its frames, with the text wrap of page items and of anchored
+/// objects ([`wrap`]).
 pub fn compose_story(doc: &Document, sid: StoryId, opts: &ComposeOptions) -> ComposedStory {
-    let specs = frame_specs(doc, sid);
-    match doc.story(sid) {
-        Some(st) => compose(doc, st, &specs, opts),
-        None => ComposedStory { story: sid, ..Default::default() },
-    }
+    let others: Vec<ComposedStory> =
+        wrap::neighbours(doc, sid).into_iter().map(|o| wrap::compose_among(doc, o, &ComposeOptions::default(), &[])).collect();
+    wrap::compose_among(doc, sid, opts, &others.iter().collect::<Vec<_>>())
 }
 
 const DEFAULT_TAB: f64 = 36.0;
@@ -1354,9 +1365,10 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     // Segments after the first are carried to the next lines of the paragraph.
                     if !f.exclusions.is_empty() {
                         let jump = cur.jump(f, advance, asc, tops);
+                        let line_start = glyphs.get(s).map_or(prange.start, |g| g.byte);
                         let mut tries = 0;
                         loop {
-                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, desc, jump, base_size, rtl) else {
+                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, desc, jump, base_size, rtl, line_start) else {
                                 // No room in this column.
                                 baseline = baseline.max(col.y1) + 1.0;
                                 carry.clear();
@@ -1601,6 +1613,21 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     col_first_line = line_no;
                     g0 += b.next;
                     carry.clear();
+                    moved = true;
+                    break;
+                }
+                // An own-story anchored object anchored in this line wraps the lines after it,
+                // which were broken without it: break them again.
+                if k + 1 < breaks.len()
+                    && f.exclusions.iter().any(|ex| {
+                        ex.after.is_some_and(|a| (range_start..range_end).contains(&a))
+                            && ex.rect.x0 < col.x1
+                            && ex.rect.x1 > col.x0
+                            && ex.rect.y1 > baseline
+                            && ex.rect.y0 < col.y1
+                    })
+                {
+                    g0 += b.next;
                     moved = true;
                     break;
                 }
@@ -2664,14 +2691,25 @@ const JUMP_EPS: f64 = 1e-6;
 
 /// The first baseline at or below `baseline` where a line with ascent `asc` and descent `desc` has
 /// free segments in `col`, and those segments (see [`free_slots`], never empty); None if there are
-/// none above the column bottom.
+/// none above the column bottom. `line_start` is the story byte the line starts at (see
+/// [`Exclusion::wraps_line`]).
 ///
 /// A line under a Jump Object wrap moves below it as `jump` says. Around a rectangular wrap the
 /// free space only grows where one in the line's band ends: the search jumps from one such bottom
 /// edge to the next, and a line that clears a wrap has its top exactly on the wrap's bottom. A
 /// contour's width changes within its box, so beside one the search moves down 1 pt at a time.
 #[allow(clippy::too_many_arguments)]
-fn wrap_slot(f: &FrameSpec, col: Rect, baseline: f64, asc: f64, desc: f64, jump: Jump, size: f64, rtl: bool) -> Option<(f64, Vec<(f64, f64)>)> {
+fn wrap_slot(
+    f: &FrameSpec,
+    col: Rect,
+    baseline: f64,
+    asc: f64,
+    desc: f64,
+    jump: Jump,
+    size: f64,
+    rtl: bool,
+    line_start: usize,
+) -> Option<(f64, Vec<(f64, f64)>)> {
     let top = jump.top.max(0.0);
     let mut b = baseline;
     // Each step passes at least one wrap; the cap bounds hostile geometry.
@@ -2679,7 +2717,7 @@ fn wrap_slot(f: &FrameSpec, col: Rect, baseline: f64, asc: f64, desc: f64, jump:
         let jumped = f
             .exclusions
             .iter()
-            .filter(|e| e.mode == WrapMode::JumpObject)
+            .filter(|e| e.mode == WrapMode::JumpObject && e.wraps_line(line_start))
             .map(|e| e.rect)
             .filter(|r| r.x0 < col.x1 && r.x1 > col.x0 && b > r.y0 + JUMP_EPS && b - top < r.y1 - JUMP_EPS)
             .fold(f64::NEG_INFINITY, |m, r| m.max(r.y1));
@@ -2691,12 +2729,12 @@ fn wrap_slot(f: &FrameSpec, col: Rect, baseline: f64, asc: f64, desc: f64, jump:
                 jumped + top
             }
         } else {
-            let segs = free_slots(f, col, b - asc, b + desc, size, rtl);
+            let segs = free_slots(f, col, b - asc, b + desc, size, rtl, line_start);
             if !segs.is_empty() {
                 return Some((b, segs));
             }
             let (y0, y1) = (b - asc, b + desc);
-            let in_band = || f.exclusions.iter().filter(|e| e.mode != WrapMode::JumpObject).filter(|e| e.rect.y0 < y1 && e.rect.y1 > y0);
+            let in_band = || f.exclusions.iter().filter(|e| e.mode != WrapMode::JumpObject && e.wraps_line(line_start)).filter(|e| e.rect.y0 < y1 && e.rect.y1 > y0);
             let edge = in_band().fold(f64::INFINITY, |m, e| m.min(e.rect.y1)) + asc;
             if in_band().any(|e| e.contour.is_some()) { edge.min(b + 1.0) } else { edge }
         };
@@ -2710,10 +2748,12 @@ fn wrap_slot(f: &FrameSpec, col: Rect, baseline: f64, asc: f64, desc: f64, jump:
 /// Free segments of `col` in the band `y0..y1`, in the order text fills them (left to right, or
 /// right to left for right-to-left paragraphs); empty if the band is blocked. A line beside an
 /// object that lets text through on both sides has a segment on each side. Segments narrower than
-/// 1.5 em of `size` are skipped (the model has no minimum segment width).
-fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool) -> Vec<(f64, f64)> {
+/// 1.5 em of `size` are skipped (the model has no minimum segment width). `line_start` is the story
+/// byte the line starts at (see [`Exclusion::wraps_line`]).
+#[allow(clippy::too_many_arguments)]
+fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool, line_start: usize) -> Vec<(f64, f64)> {
     let mut free = vec![(col.x0, col.x1)];
-    for ex in &f.exclusions {
+    for ex in f.exclusions.iter().filter(|e| e.wraps_line(line_start)) {
         let r = ex.rect;
         let overlaps_band = r.y0 < y1 && r.y1 > y0;
         let blocked = match ex.mode {
@@ -2783,8 +2823,11 @@ fn estimate_slots(
     v.extend_from_slice(carry);
     let mut b = first;
     let mut jump = jump;
+    // Own-story anchored objects whose anchor is in these lines wrap only the lines after it: the
+    // rest is broken again once that line is set.
+    let line_start = glyphs.first().map_or(0, |g| g.byte);
     while v.len() < n + carry.len() {
-        let slots = match wrap_slot(f, col, b, size * 0.8, size * 0.25, jump, size, rtl) {
+        let slots = match wrap_slot(f, col, b, size * 0.8, size * 0.25, jump, size, rtl, line_start) {
             Some((nb, s)) => {
                 b = nb;
                 s
