@@ -1,6 +1,6 @@
 # DesignCraft parity with Adobe InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shared print spooler; Windows CI passes) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
 
 The authoritative assessment of how close DesignCraft is to Adobe InDesign. [ROADMAP.md](../ROADMAP.md)
 summarizes it; [gaps.md](gaps.md) lists every known shortfall one at a time; the feature-by-feature
@@ -16,7 +16,7 @@ presence checklist is [parity-checklist.md](parity-checklist.md) (`cargo xtask p
 | Essentials user (flyers, newsletters: the core only) | **~54%** | 135–250 h to ~95%; estimated, [method below](#essentials-user-54) |
 | Remaining effort to **beta** (~75% ready, main format reliable; 28 points away) | **420–750 Opus 5.5 agent-hours** | estimated |
 | Remaining effort to **full parity** | **1,150–1,950 Opus 5.5 agent-hours** | estimated |
-| Stage | **pre-alpha** (fails the core-workflow gate: no manual text threading); ~15–25 h to alpha | see [roadmap.md](roadmap.md#alpha-gate) |
+| Stage | **pre-alpha** (fails the core-workflow gate: Primary Text Frame adds pages users can't delete, #165); ~5–7 h to alpha | see [roadmap.md](roadmap.md#alpha-gate) |
 
 ## How breadth was measured
 
@@ -77,7 +77,7 @@ standard: 25×55 + 15×45 + 20×40 + 15×45 + 10×45 + 5×65 + 3×45 + 3×55 + 2
 today applied a further ×0.9 for cross-cutting core-path failures and reported 42%. That
 multiplicative step was dropped to match the standard (discounts belong only to the mainstream
 and essentials numbers). Those failures are already in the UI/UX (45%) and Stability (45%) rows,
-and the missing manual threading is what holds the stage at pre-alpha through the gate.
+and the Primary Text Frame page fixes (#165) are what hold the stage at pre-alpha through the gate.
 
 ## Mainstream practitioner and essentials user
 
@@ -108,7 +108,7 @@ twice.
 | Area | Weight | Depth | Evidence |
 |---|---|---|---|
 | Document setup: pages, margins, columns, parents, sections | 10% | 65% | features area table |
-| Text frames: type, select, edit, thread, autoflow | 15% | 45% | manual threading missing; autoflow and Primary Text Frame only |
+| Text frames: type, select, edit, thread, autoflow | 15% | 45% | threading by hand, autoflow; Primary Text Frame adds pages users can't delete (#165) |
 | Typography: composer, H&J, OpenType, tabs, lists, keeps | 15% | 65% | typography-parity.md: 18 ✓ / 16 ~; Tabs panel missing; InDesign-identical breaks counted under exchange |
 | Paragraph, character and object styles | 10% | 65% | dialogs, based-on, nested/GREP, Quick Apply |
 | Frames, shapes, transform, arrange, align | 10% | 70% | full tool set; copy/paste problems counted under interaction |
@@ -211,7 +211,7 @@ table is the one summed.
 | Fill, stroke, colour | 100% | 60% | 20–35 | hex entry (#323); Assign Profiles / Convert to Profile; color-managed proofing depth; Adobe Color Themes OOS |
 | Effects & transparency | 100% | 50% | 20–30 | effects fidelity vs InDesign unmeasured; Clear Effects / Clear All Transparency; flattener depth |
 | Placing & links | 93% | 55% | 20–35 | EPS is preview-only (no PostScript interpreter); Edit Original; placed PDF layer visibility; INDD page place |
-| Type & text frames | 99% | 45% | 40–60 | **no manual threading** (ports drawn, no out-port click, no thread/unthread command: alpha blocker; #352, #194, #165, #140); caret formatting discarded (#289); canvas IME (#322); Notes/Track Changes menus; frame grids |
+| Type & text frames | 99% | 45% | 40–60 | Primary Text Frame pages users can't delete (alpha blocker, #165); autoflow doesn't fill existing pages; no threading into grouped frames with the loaded cursor; caret formatting discarded (#289); canvas IME (#322); Notes/Track Changes menus; frame grids |
 | Typography | 100% | 45% | (typography dimension) | see [typography-parity.md](typography-parity.md) |
 | Styles | 100% | 60% | 15–25 | Paragraph Styles edit/delete reported failing (#169); style options depth |
 | Tables | 100% | 55% | 25–40 | anchored objects in cells not drawn (#163); Table ▸ Table Options submenus, Diagonal Lines, Convert Rows, Edit Header/Footer |
@@ -443,6 +443,7 @@ Task notes that headed ROADMAP.md:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Text threads by hand; stage note and distance to alpha follow the gate (5–7 h, #165); percentages unchanged |
 | 2026-10-10 | minor | Full number 42% → 47%: method aligned with the standard (plain weighted sum, the ×0.9 discount dropped), no new evidence; readiness table with hours for full, mainstream and essentials; beta distance 33 → 28 points |
 | 2026-10-10 | minor | Added mainstream practitioner (~42%) and essentials user (~54%) numbers with written weights and discounts and a user-evidence count; full number (42%) now written as 47.2% × 0.9, value unchanged |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate (manual threading missing); Type & text frames row updated |
