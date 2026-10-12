@@ -96,11 +96,14 @@ choice and is opened before the roots apply.
 What the roots do not cover: commands that take no path still read and change the open document,
 and `inspect_document` returns it. The system font scan, the installed fonts that `file.package`
 copies, and the app's own recovery folder are fixed paths, not agent input, and are not checked. A
-file inside a `Document Fonts` folder is read as a font even when it is a link that leads out of
-the read root (it is not returned to the agent, only parsed as a font and skipped when it isn't
-one). `file.print` hands a PDF to the system's print spooler, which is not a path the agent names.
-Anything that reads or writes a path goes through one place in the engine (the `io` module); a test
-keeps the rest of the engine from touching the file system on its own.
+`Document Fonts` folder and each font file in it are checked before they are opened, so a link that
+leads out of the read root is skipped with a note. `file.print` hands a PDF to the system's print
+spooler, which is not a path the agent names.
+Anything that reads or writes a path goes through one place in the engine (the `io` module). The
+crates below the engine have no file access of their own: the IDML import and the font folders take
+a reader or an access check from the engine, and ICC profiles arrive as bytes. A test scans the
+source of every crate for the file system, however it is imported or spelled, and lists the few
+files it excludes and why.
 
 The checks hold for every thread of the server process. A path is checked, then opened: another
 program that swaps a link in between can still win that race, so the roots keep an agent to the
