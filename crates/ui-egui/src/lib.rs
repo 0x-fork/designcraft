@@ -827,7 +827,6 @@ impl DesignApp {
     /// command right away; asynchronous ones (web) deliver the file through the inbox.
     pub fn pick_and_open(&mut self, purpose: &str) -> Result<Value, String> {
         let target = self.session.active().map(|d| d.uid);
-        let cmd = if purpose == "place" { "file.place" } else { "file.open" };
         if let Some(pick) = self.services.pick_open.as_mut() {
             return match pick(purpose) {
                 // Image Import Options: a multi-page PDF asks which page.
@@ -839,10 +838,11 @@ impl DesignApp {
                             Some(dialogs::Dialog::new("pdfImport", json!({"path": path, "page": "1", "pages": pages, "target": target})));
                         Ok(Value::Null)
                     } else {
-                        self.open_file(cmd, json!({"path": path}))
+                        self.place_file(json!({"path": path}))
                     }
                 }
-                Some(path) => self.open_file(cmd, json!({"path": path})),
+                Some(path) if purpose == "place" => self.place_file(json!({"path": path})),
+                Some(path) => self.open_file("file.open", json!({"path": path})),
                 None => Ok(Value::Null),
             };
         }
@@ -896,10 +896,8 @@ impl DesignApp {
     pub(crate) fn confirm_pdf_import(&mut self, page: u64, crop: String) -> Result<Value, String> {
         let file = self.pending_pdf.take().ok_or("PDF import cancelled: no pending file")?;
         self.activate_import_target(&file.request)?;
-        self.open_file(
-            "file.place",
-            json!({"name": file.name, "base64": designcraft_engine::cmd::base64_encode(&file.bytes), "pdfPage": page, "pdfCrop": crop}),
-        )
+        let params = json!({"name": file.name, "base64": designcraft_engine::cmd::base64_encode(&file.bytes), "pdfPage": page, "pdfCrop": crop});
+        if file.request.purpose == "place" { self.place_file(params) } else { self.open_file("file.place", params) }
     }
 
     /// A single unresolved PDF owns its bytes. Later deliveries cancel explicitly rather than
@@ -967,6 +965,8 @@ impl DesignApp {
         let b64 = designcraft_engine::cmd::base64_encode(&file.bytes);
         if lower.ends_with(".ase") || file.request.purpose == "swatches" {
             self.run("swatch.load", json!({"base64": b64}))
+        } else if file.request.purpose == "place" {
+            self.place_file(json!({"name": file.name, "base64": b64}))
         } else if place {
             self.open_file("file.place", json!({"name": file.name, "base64": b64}))
         } else {
@@ -1125,6 +1125,15 @@ impl DesignApp {
                 log::warn!("{path}: {e}");
             }
         }
+    }
+
+    /// File › Place: the file fills the selected empty or graphic frame; with none, an image loads
+    /// into the place cursor (click to place at its natural size, drag to draw the frame).
+    pub(crate) fn place_file(&mut self, mut params: Value) -> Result<Value, String> {
+        if let Some(o) = params.as_object_mut() {
+            o.insert("loadCursor".into(), json!(true));
+        }
+        self.open_file("file.place", params)
     }
 
     /// Open (`file.open`, `file.openBytes`) or place (`file.place`) a file the user chose. A file
@@ -2219,11 +2228,44 @@ mod browser_import_tests {
         assert_eq!(*asset.data, bytes);
         assert!(app.pending_pdf.is_none());
         assert!(app.session.documents()[1].doc.assets.is_empty());
+        app.run("place.drop", json!({"x": 36, "y": 36})).unwrap();
         let exported = app.run("file.exportPdf", json!({})).unwrap();
         let exported = designcraft_engine::cmd::base64_decode(exported["base64"].as_str().unwrap());
         let pixels = designcraft_render::render_pdf_page(&exported, 0, 400).unwrap();
         assert!(pixels.data().iter().filter(|p| p.g > 240 && p.r < 10 && p.b < 10).count() > 1000);
         assert_eq!(pixels.data().iter().filter(|p| p.r > 240 && p.g < 10 && p.b < 10).count(), 0);
+    }
+
+    #[test]
+    fn place_loads_the_cursor_unless_a_frame_can_take_the_graphic() {
+        let mut app = app();
+        let items = |app: &DesignApp| app.session.doc().unwrap().doc.spreads[0].items.len();
+        // Nothing selected: the graphic waits in the place cursor; Escape unloads it.
+        let request = app.import_request("place");
+        deliver(&mut app, request, "red.svg", image());
+        assert_eq!(app.session.tool_id(), "placeGun");
+        assert!(app.session.loaded.is_some());
+        assert_eq!(items(&app), 0);
+        let mods = designcraft_tools::Mods::default();
+        app.session.tool_key(designcraft_tools::ToolKey::Escape, mods, designcraft_engine::ViewInfo::at_zoom(1.0)).unwrap();
+        assert_eq!(app.session.tool_id(), "selection");
+        assert!(app.session.loaded.is_none());
+        // A click with the loaded cursor places the graphic at its natural size.
+        let request = app.import_request("place");
+        deliver(&mut app, request, "red.svg", image());
+        app.run("place.drop", json!({"x": 100, "y": 100})).unwrap();
+        let it = app.session.doc().unwrap().doc.spreads[0].items.last().unwrap();
+        assert_eq!(it.bounds(), designcraft_geom::Rect::new(100.0, 100.0, 107.5, 107.5), "10 CSS px = 7.5 pt");
+        // An empty graphic frame selected: the graphic fills it.
+        let f = app.run("frame.create", json!({"rect": [200, 200, 300, 300], "content": "graphic"})).unwrap()["id"].as_u64().unwrap();
+        app.run("selection.set", json!({"ids": [f]})).unwrap();
+        let request = app.import_request("place");
+        deliver(&mut app, request, "red.svg", image());
+        assert_eq!(app.session.tool_id(), "selection");
+        assert!(app.session.loaded.is_none());
+        assert_eq!(items(&app), 2);
+        let frame = app.session.doc().unwrap().doc.item(designcraft_doc::ItemId(f)).unwrap();
+        assert!(matches!(frame.content, designcraft_doc::Content::Graphic(_)));
     }
 
     #[test]

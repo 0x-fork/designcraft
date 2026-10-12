@@ -122,7 +122,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Place…",
             ["File"],
             Some("Cmd+D"),
-            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?, pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), layoutPage?: n (IDML / .designcraft: that page's objects as a group)} — places an image (into the selected empty frame if any); text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect` — {autoflow?: adds pages with threaded frames until the text fits, removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename}",
+            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?, pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), loadCursor?: with no frame to fill and no x/y, an image loads into the place cursor (File › Place), layoutPage?: n (IDML / .designcraft: that page's objects as a group)} — places an image (into the selected empty frame if any); text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect` — {autoflow?: adds pages with threaded frames until the text fits, removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename}",
             has_doc,
             file_place
         ),
@@ -453,6 +453,9 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
     let px = p.get("x").and_then(Value::as_f64);
     let py = p.get("y").and_then(Value::as_f64);
     let want_w = p.get("width").and_then(Value::as_f64);
+    if target_frame.is_none() && px.is_none() && py.is_none() && p.get("loadCursor").and_then(Value::as_bool) == Some(true) {
+        return load_cursor(s, asset, (bw, bh));
+    }
     s.edit(|d, sel| {
         let fresh = AssetId(d.alloc());
         let aid = d.add_asset(Asset { id: fresh, ..asset });
@@ -574,26 +577,32 @@ fn place_load(s: &mut Session, p: &Value) -> Result<Value> {
     let (bytes, name, link) = read_source(p)?;
     let (pw, ph) = designcraft_render::image_size(&bytes).ok_or_else(|| bad("place.load", "unsupported or corrupt image"))?;
     let natural = designcraft_render::natural_size(&bytes, 0).unwrap_or((pw as f64, ph as f64));
+    let mime = designcraft_render::image_mime(&bytes).to_string();
+    let asset = Asset { name, mime, link, data: Arc::new(bytes), pixels: Some((pw, ph)), ..Default::default() };
+    load_cursor(s, asset, natural)
+}
+
+/// Adds `asset` to the document (with a fresh id) and loads it into the place cursor.
+fn load_cursor(s: &mut Session, mut asset: Asset, size: (f64, f64)) -> Result<Value> {
+    let name = asset.name.clone();
+    let (pw, ph) = asset.pixels.unwrap_or_default();
     let aid = s.edit(|d, _| {
-        let fresh = AssetId(d.alloc());
-        let mime = designcraft_render::image_mime(&bytes).to_string();
-        Ok(d.add_asset(Asset {
-            id: fresh,
-            name: name.clone(),
-            mime,
-            link: link.clone(),
-            data: Arc::new(bytes),
-            pixels: Some((pw, ph)),
-            ..Default::default()
-        }))
+        asset.id = AssetId(d.alloc());
+        Ok(d.add_asset(asset))
     })?;
-    s.loaded = Some((aid, natural));
+    s.loaded = Some(crate::LoadedGraphic { asset: aid, size });
     s.set_tool("placeGun");
-    Ok(json!({"asset": aid.0, "name": name, "width": pw, "height": ph}))
+    Ok(json!({"asset": aid.0, "name": name, "width": pw, "height": ph, "loaded": true}))
 }
 
 fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
-    let (aid, (nw, nh)) = s.loaded.ok_or_else(|| bad("place.drop", "nothing loaded in the place cursor"))?;
+    let crate::LoadedGraphic { asset: aid, size: (nw, nh) } =
+        s.loaded.ok_or_else(|| bad("place.drop", "nothing loaded in the place cursor"))?;
+    // Undo can remove the loaded graphic's asset.
+    if !s.doc()?.doc.assets.contains_key(&aid) {
+        s.loaded = None;
+        return Err(bad("place.drop", "the loaded graphic is no longer in the document"));
+    }
     let sr = super::spread_param(p, "spread");
     let lid = s.doc()?.active_layer;
     let frame = super::id_param(p, "frame");
