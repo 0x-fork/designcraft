@@ -324,7 +324,7 @@ fn hit_byte_with(
 fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
     const ID: &str = "text.selectAt";
     let frame = id_param(p, "frame").ok_or_else(|| bad(ID, "missing frame"))?;
-    let pt = point_param(p, "point").unwrap_or(Point::ZERO);
+    let pt = point_param(p, "point").ok_or_else(|| bad(ID, "missing point"))?;
     let (sid, b, cell) = hit_byte_with(s, frame, pt, compose::hit_char).ok_or_else(|| bad(ID, "not a text frame"))?;
     let st = s.doc()?;
     let story = st.doc.text_story(sid, cell).ok_or(designcraft_doc::DocError::NoStory(sid))?;
@@ -1553,6 +1553,7 @@ mod multi_click_tests {
         let t = s.doc().unwrap().selection.text.unwrap();
         assert_eq!((t.anchor, t.focus), (7, 12));
         assert!(s.execute("text.selectAt", &json!({"frame": fid, "point": p, "unit": "sentence"})).is_err());
+        assert!(s.execute("text.selectAt", &json!({"frame": fid, "unit": "word"})).is_err(), "no point");
     }
 }
 
