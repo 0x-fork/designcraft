@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-12** · With a placed graphic selected (Direct Selection), the Transform values act on the graphic inside its frame, as in InDesign: a tilted frame's image can be straightened to 0°. No readiness percentage change.
 - **2026-10-11** · Font menu laid out like InDesign's: filters (classification, favourites,
   recently added), families opening to their styles, the selected text as the sample in three
   sizes, Recently Used fonts, Show Similar Fonts and each font's format.
