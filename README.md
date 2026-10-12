@@ -146,6 +146,13 @@ The file stops growing at 16 MiB. `--version` writes no file.
 
 The logger is `apps/designcraft/src/logging.rs`; the web build logs to the browser console instead.
 
+### Portable mode
+
+A file named `portable.txt` next to the executable makes the install portable: settings, logs and
+crash recovery are kept in a `DesignCraftData` folder beside it instead of the per-user folders
+above. The Windows portable zip ships with one; delete it to go back to `%APPDATA%\DesignCraft`.
+`DESIGNCRAFT_CONFIG_DIR` still takes precedence. The code is `apps/designcraft/src/profile.rs`.
+
 ### Graphics backend
 
 The canvas is rendered on the CPU; the GPU only composites the interface, through wgpu. A
