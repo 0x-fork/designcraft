@@ -1112,6 +1112,10 @@ fn text_appearance_section(app: &mut DesignApp, ui: &mut Ui) {
         }
         ui.add_space(4.0);
     }
+    let mut behind = c["strokeBehindFill"].as_bool().unwrap_or(false);
+    if ui.checkbox(&mut behind, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Stroke Behind Fill"))).changed() {
+        let _ = app.run("type.char", json!({"attrs": {"strokeBehindFill": behind}}));
+    }
 }
 
 /// Character section: font family (with search), style, size/leading, kerning/tracking, •••.

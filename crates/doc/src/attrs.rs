@@ -973,6 +973,9 @@ attr_set! {
         stroke: String = "[None]".into(),
         stroke_tint: f32 = 1.0,
         stroke_weight: f64 = 1.0,
+        /// Stroke behind fill: the stroke is painted under the fill and lies wholly outside the
+        /// letters at its full weight, so the letters keep their shape. Off, it straddles the outline.
+        stroke_behind_fill: bool = false,
         capitalization: Capitalization = Capitalization::Normal,
         position: Position = Position::Normal,
         underline: bool = false,
@@ -1427,6 +1430,20 @@ mod tests {
         assert!(a.set_json_over("ruleAbove", &serde_json::json!({"colour": "Blue"}), &current).is_err(), "unknown field");
         a.set_json_over("ruleBelow", &serde_json::Value::Null, &current).unwrap();
         assert_eq!(a.rule_below, None, "null clears the override");
+    }
+
+    #[test]
+    fn stroke_behind_fill_is_saved_only_when_set() {
+        assert!(!CharProps::default().stroke_behind_fill);
+        assert_eq!(serde_json::to_value(CharAttrs::default()).unwrap(), serde_json::json!({}));
+        let mut a = CharAttrs::default();
+        a.set_json("strokeBehindFill", &serde_json::json!(true)).unwrap();
+        let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v, serde_json::json!({"strokeBehindFill": true}));
+        assert_eq!(serde_json::from_value::<CharAttrs>(v).unwrap(), a);
+        let mut p = CharProps::default();
+        p.apply(&a);
+        assert!(p.stroke_behind_fill);
     }
 
     #[test]
