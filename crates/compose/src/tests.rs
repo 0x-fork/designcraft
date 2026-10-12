@@ -1417,6 +1417,52 @@ fn footnotes_sit_at_the_column_bottom_and_push_text() {
 }
 
 #[test]
+fn footnotes_stack_baseline_to_baseline() {
+    // Single-line footnotes read as one text: consecutive baselines sit one leading (plus
+    // Space Between Footnotes) apart, and only the last footnote's descent adds to the area.
+    let text = format!("{LOREM} {LOREM} {LOREM} {LOREM}");
+    for space_between in [0.0, 3.0] {
+        let (mut d, sid, fid) = doc_with(&text, Rect::new(36.0, 36.0, 300.0, 236.0), ParaAttrs::default());
+        d.footnote_options.space_between = space_between;
+        d.footnote_options.space_before = 4.0;
+        {
+            let st = d.story_mut(sid).unwrap();
+            for at in [60, 40, 20, 10] {
+                st.insert_note(at, "Note.", ParaFormat::default());
+            }
+            st.check().unwrap();
+        }
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        let ft = cs.frame(fid).unwrap();
+        assert_eq!(ft.notes.len(), 4);
+        let first_line = |n: &PlacedNote| {
+            let lines = &n.text.frames[0].lines;
+            assert_eq!(lines.len(), 1);
+            lines[0].clone()
+        };
+        let baselines: Vec<f64> = ft.notes.iter().map(|n| n.origin.y + first_line(n).baseline).collect();
+        let step = first_line(&ft.notes[1]).leading + space_between;
+        for w in baselines.windows(2) {
+            assert!((w[1] - w[0] - step).abs() < 1e-6, "baselines {baselines:?}, step {step}");
+        }
+        for w in ft.notes.windows(2) {
+            assert!(w[0].rect.y1 <= w[1].rect.y0 + 1e-6, "rects stack in order");
+        }
+        // Area: first-baseline offset + (n - 1) steps + the last descent, ending at the column bottom.
+        let col = ft.columns[0];
+        let top = ft.notes[0].rect.y0;
+        let (l0, l3) = (first_line(&ft.notes[0]), first_line(&ft.notes[3]));
+        assert!((col.y1 - top - (l0.baseline + 3.0 * step + l3.descent)).abs() < 1e-6);
+        assert!((ft.notes[3].rect.y1 - col.y1).abs() < 1e-6);
+        // The body text fills the room left above the footnotes and their space before.
+        let room = top - d.footnote_options.space_before;
+        let last = ft.lines.last().unwrap();
+        assert!(last.baseline + last.descent <= room + 0.01, "text clears the footnotes");
+        assert!(last.baseline + last.leading + last.descent > room, "one more line wouldn't fit");
+    }
+}
+
+#[test]
 fn footnote_first_line_wraps_at_the_column_edge_after_its_number() {
     // InDesign sets the footnote number and separator as part of the first line: that line
     // wraps at the same right edge as the others, whatever the separator. A tab separator
