@@ -2136,20 +2136,34 @@ impl<'r> Importer<'r> {
                     "Rectangle" | "Oval" | "Polygon" | "GraphicLine" | "Group" | "TextFrame" => {
                         if let Some(item) = self.item(c, designcraft_geom::Affine::IDENTITY) {
                             use designcraft_doc::anchored::AnchorAlign as A;
-                            let set = c.find("AnchoredObjectSetting");
-                            let get = |k: &str| set.and_then(|s| s.num(k)).unwrap_or(0.0);
-                            let position = match set.and_then(|s| s.get("AnchoredPosition")) {
-                                Some("AboveLine") => designcraft_doc::AnchorPosition::AboveLine {
-                                    align: match set.and_then(|s| s.get("HorizontalAlignment")) {
-                                        Some("CenterAlign") => A::Center,
-                                        Some("RightAlign") => A::Right,
+                            // Each setting the item leaves unset comes from its object style chain,
+                            // then from the IDML defaults.
+                            let levels: Vec<&El> = std::iter::once(c).chain(self.object_style_chain(c)).collect();
+                            let s = |k: &str| {
+                                let set = levels.iter().filter_map(|l| l.find("AnchoredObjectSetting")).find_map(|x| x.get(k));
+                                set.unwrap_or(match k {
+                                    "AnchoredPosition" => "InlinePosition",
+                                    "AnchorPoint" => "BottomRightAnchor",
+                                    "HorizontalAlignment" => "LeftAlign",
+                                    "HorizontalReferencePoint" => "TextFrame",
+                                    "VerticalAlignment" => "BottomAlign",
+                                    "VerticalReferencePoint" => "LineBaseline",
+                                    "PinPosition" => "true",
+                                    _ => "",
+                                })
+                            };
+                            let get = |k: &str| s(k).trim().parse::<f64>().ok().filter(|v| v.is_finite()).unwrap_or(0.0);
+                            let position = match s("AnchoredPosition") {
+                                "AboveLine" => designcraft_doc::AnchorPosition::AboveLine {
+                                    align: match s("HorizontalAlignment") {
+                                        "CenterAlign" => A::Center,
+                                        "RightAlign" => A::Right,
                                         _ => A::Left,
                                     },
                                     space_before: get("AnchorSpaceAbove"),
                                     space_after: get("AnchorYoffset"),
                                 },
-                                Some("Anchored") => {
-                                    let s = |k: &str| set.and_then(|x| x.get(k)).unwrap_or("");
+                                "Anchored" => {
                                     let col = match s("HorizontalAlignment") {
                                         "CenterAlign" => 1,
                                         "RightAlign" => 2,
@@ -2163,7 +2177,8 @@ impl<'r> Importer<'r> {
                                     designcraft_doc::AnchorPosition::Custom {
                                         x_relative: names::anchor_rel_in(s("HorizontalReferencePoint")),
                                         y_relative: names::anchor_rel_in(s("VerticalReferencePoint")),
-                                        x_offset: get("AnchorXoffset"),
+                                        // IDML measures a left-aligned object's X offset leftwards.
+                                        x_offset: if col == 0 { 0.0 - get("AnchorXoffset") } else { get("AnchorXoffset") },
                                         y_offset: get("AnchorYoffset"),
                                         object_point: names::anchor_in(s("AnchorPoint")),
                                         ref_point: row * 3 + col,
