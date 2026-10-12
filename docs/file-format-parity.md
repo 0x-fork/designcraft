@@ -60,7 +60,7 @@ score below).
 | EPS | `.eps` | ✓ (PostScript) | ~ preview only (no interpreter) | | <1% |
 | SVG | `.svg` | ✓ | ✓ (usvg) | | <1% |
 | HEIC | `.heic` | ✓ | ✗ | | <1% |
-| Word | `.docx` | ✓ styles, footnotes, tables, track changes, options | ✓ styles by name, footnotes, tables, tabs, breaks, moved text (#257), bullets and numbering from `numbering.xml` (#626; parent levels in a label are fixed text), style mapping and conflicts | `.doc` not supported (InDesign reads it) | 2% |
+| Word | `.docx` | ✓ styles, footnotes, tables, track changes, options | ✓ styles by name, footnotes, tables, tabs, breaks, moved text (#257), bullets and numbering from `numbering.xml` (#626; levels become list levels, parent numbers in a label level references), style mapping and conflicts | `.doc` not supported (InDesign reads it) | 2% |
 | RTF | `.rtf` | ✓ | ✓ | | <1% |
 | Excel | `.xlsx`, `.xls` | ✓ | ~ `.xlsx` first sheet's used range | no sheet/range options; `.xls` ✗ | <1% |
 | Plain text, Markdown | `.txt`, `.md` | ✓ (txt) | ✓ | | <1% |

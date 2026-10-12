@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::Read;
 
 use designcraft_doc::story::{BASIC_PARAGRAPH, NO_CHAR_STYLE};
-use designcraft_doc::{CharAttrs, CharFormat, ListType, ParaAttrs, ParaFormat, Story, StoryId, Table};
+use designcraft_doc::{CharAttrs, CharFormat, ListCounter, ListType, ParaAttrs, ParaFormat, ParaProps, Story, StoryId, Table};
 use quick_xml::events::Event;
 
 use crate::docx_numbering::{ListPara, Numbering};
@@ -222,7 +222,8 @@ struct Ctx {
     style_lists: HashMap<String, (Option<String>, Option<String>)>,
     /// The number the model's own list counter is at (it restarts after a paragraph that isn't
     /// in a list), to tell where a numbered paragraph needs an explicit Start At.
-    model_counter: u32,
+    /// The model's unnamed-list numbering as composition will count it.
+    model_counter: ListCounter,
 }
 
 impl Ctx {
@@ -254,8 +255,12 @@ impl Ctx {
                     let at = st.len();
                     st.format_paras(at..at, |f| *f = ParaFormat { style: style.clone(), para: attrs.clone(), ..Default::default() });
                     self.inline(e, st, allow_notes);
-                    if let Some(n) = self.start_at(list.as_ref(), st.len() == at) {
+                    let (start_at, expression) = self.start_at(list.as_ref(), st.len() == at);
+                    if let Some(n) = start_at {
                         st.format_paras(at..at, |f| f.para.start_at = Some(Some(n)));
+                    }
+                    if let Some(e) = expression {
+                        st.format_paras(at..at, |f| f.para.number_expression = Some(e.clone()));
                     }
                 }
                 "tbl" => {
@@ -300,21 +305,32 @@ impl Ctx {
     }
 
     /// Start At for a paragraph, so that the model numbers it as Word does: only where the
-    /// model's counter (which follows the previous numbered paragraph, and restarts after one
-    /// that isn't in a list) would give a different number.
-    fn start_at(&mut self, list: Option<&ListPara>, empty: bool) -> Option<u32> {
+    /// model's counter (per level; restarted after a paragraph that isn't in a list) would give a
+    /// different number. And the number expression with parent levels as text, where the model's
+    /// numbers for those levels differ from Word's.
+    fn start_at(&mut self, list: Option<&ListPara>, empty: bool) -> (Option<u32>, Option<String>) {
         let Some(l) = list else {
-            self.model_counter = 0;
-            return None;
+            self.model_counter = ListCounter::default();
+            return (None, None);
         };
         // Bullets and empty paragraphs leave the counter alone (they show no number).
         if l.attrs.list_type != Some(ListType::Numbers) || empty {
-            return None;
+            return (None, None);
         }
         let want = l.number.max(1);
-        let next = self.model_counter.saturating_add(1);
-        self.model_counter = want;
-        (want != next).then_some(want)
+        let mut pp = ParaProps::default();
+        pp.apply(&l.attrs);
+        let mut model = self.model_counter.clone();
+        let start = (model.advance(&pp) != want).then_some(want);
+        if start.is_some() {
+            model = self.model_counter.clone();
+            pp.start_at = start;
+            model.advance(&pp);
+        }
+        let level_text = |k: u32| ParaProps { number_expression: format!("^{k}"), ..ParaProps::default() }.number_label_in(&model);
+        let expression = l.parents.iter().any(|(k, text)| level_text(*k) != *text).then(|| l.fixed_expression.clone()).flatten();
+        self.model_counter = model;
+        (start, expression)
     }
 
     /// Runs (and hyperlinks, fields' results) of a paragraph.
@@ -423,7 +439,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
         next_table: 0,
         numbering: Numbering::default(),
         style_lists: HashMap::new(),
-        model_counter: 0,
+        model_counter: ListCounter::default(),
     };
     // Lists that can't be read leave plain paragraphs, not a failed import.
     match part_capped(&mut zip, "word/numbering.xml", NUMBERING_LIMIT).and_then(|s| s.map(|s| parse(&s)).transpose()) {
@@ -631,15 +647,28 @@ mod tests {
         i
     }
 
-    /// The label the model gives paragraph `i` when its number is `n`.
-    fn label(st: &Story, i: usize, n: u32) -> String {
-        let mut p = designcraft_doc::ParaProps::default();
-        p.apply(&st.paras[i].para);
-        match p.list_type {
-            ListType::Numbers => p.number_label(n),
-            ListType::Bullets => p.bullet_label(),
-            ListType::None => String::new(),
+    /// The label composition gives paragraph `i`: numbered paragraphs count per level on one
+    /// counter that a paragraph outside a list restarts; bullets and empty paragraphs leave it.
+    fn label(st: &Story, i: usize) -> String {
+        let mut counter = designcraft_doc::ListCounter::default();
+        let mut label = String::new();
+        for (f, r) in st.paras.iter().zip(st.para_ranges()).take(i + 1) {
+            let mut p = designcraft_doc::ParaProps::default();
+            p.apply(&f.para);
+            label = match p.list_type {
+                _ if r.is_empty() => String::new(),
+                ListType::Numbers => {
+                    counter.advance(&p);
+                    p.number_label_in(&counter)
+                }
+                ListType::Bullets => p.bullet_label(),
+                ListType::None => {
+                    counter = designcraft_doc::ListCounter::default();
+                    String::new()
+                }
+            };
         }
+        label
     }
 
     /// Regression (#626): pandoc's Markdown list example lost its bullets and numbers.
@@ -665,9 +694,9 @@ mod tests {
         let st = lists_docx(&numbering, "", &body).story;
         let types: Vec<Option<ListType>> = st.paras.iter().map(|p| p.para.list_type).collect();
         assert_eq!(types, [None, Some(ListType::Bullets), Some(ListType::Bullets), Some(ListType::Numbers), Some(ListType::Numbers)]);
-        assert_eq!(label(&st, 1, 1), "•\t");
+        assert_eq!(label(&st, 1), "•\t");
         assert_eq!(st.paras[3].para.number_style, Some(designcraft_doc::NumberStyle::Arabic));
-        assert_eq!((label(&st, 3, 1), label(&st, 4, 2)), ("1.\t".to_string(), "2.\t".to_string()));
+        assert_eq!((label(&st, 3), label(&st, 4)), ("1.\t".to_string(), "2.\t".to_string()));
         // The model's own counter already starts at 1 and carries on: no Start At needed.
         assert_eq!((st.paras[3].para.start_at, st.paras[4].para.start_at), (None, None));
         assert_eq!((st.paras[1].para.left_indent, st.paras[1].para.first_line_indent), (Some(24.0), Some(-24.0)));
@@ -703,13 +732,42 @@ mod tests {
         ];
         let st = lists_docx(&numbering, "", &body).story;
         let start: Vec<Option<Option<u32>>> = st.paras.iter().map(|p| p.para.start_at).collect();
-        // Word's numbers: 1, a, b, 1.b.I, 2, –, 3, 1 (own counter), 4 (shares numId 1's). E's 2
-        // follows the model's counter (1 after D).
-        assert_eq!(start, [None, Some(Some(1)), None, Some(Some(1)), None, None, Some(Some(3)), Some(Some(1)), Some(Some(4))]);
-        assert_eq!(label(&st, 1, 1), "a) ");
-        assert_eq!(label(&st, 3, 1), "1.b.I\t");
+        // Word's numbers: 1, a, b, 1.b.I, 2, –, 3, 1 (own counter), 4 (shares numId 1's). The
+        // model numbers each level on its own, so only the paragraphs after the plain one need
+        // Start At.
+        assert_eq!(start, [None, None, None, None, None, None, Some(Some(3)), Some(Some(1)), Some(Some(4))]);
+        let levels: Vec<Option<u32>> = st.paras.iter().map(|p| p.para.list_level).collect();
+        assert_eq!(levels, [Some(1), Some(2), Some(2), Some(3), Some(1), None, Some(1), Some(1), Some(1)]);
+        assert_eq!(label(&st, 1), "a) ");
+        // Parent numbers are the model's level references.
+        assert_eq!(st.paras[3].para.number_expression.as_deref(), Some("^1.^2.^#^t"));
+        assert_eq!(label(&st, 3), "1.b.I\t");
+        let labels: Vec<String> = (0..st.paras.len()).map(|i| label(&st, i)).collect();
+        assert_eq!(labels, ["1.\t", "a) ", "b) ", "1.b.I\t", "2.\t", "", "3.\t", "1.\t", "4.\t"]);
         assert_eq!(st.paras[1].para.left_indent, Some(72.0));
         assert_eq!(st.paras[1].para.first_line_indent, Some(-18.0));
+    }
+
+    /// Parent numbers the model's levels can't give are written as text: a list that starts at
+    /// level 1 (level 0 never numbered), and a legal-style label (decimal parents).
+    #[test]
+    fn parent_numbers_the_model_lacks_are_text() {
+        let numbering = format!(
+            r#"<w:numbering {W}>
+              <w:abstractNum w:abstractNumId="1">
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="upperRoman"/><w:lvlText w:val="%1."/></w:lvl>
+                <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/></w:lvl>
+                <w:lvl w:ilvl="2"><w:start w:val="1"/><w:isLgl/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2.%3"/></w:lvl>
+              </w:abstractNum>
+              <w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>
+            </w:numbering>"#
+        );
+        let body = [list_p("1", Some("1"), "A"), list_p("1", Some("0"), "B"), list_p("1", Some("1"), "C"), list_p("1", Some("2"), "D")];
+        let st = lists_docx(&numbering, "", &body).story;
+        let labels: Vec<String> = (0..st.paras.len()).map(|i| label(&st, i)).collect();
+        assert_eq!(labels, ["I.1\t", "I.\t", "I.1\t", "1.1.1\t"]);
+        assert_eq!(st.paras[0].para.number_expression.as_deref(), Some("I.^#^t"));
+        assert_eq!(st.paras[2].para.number_expression.as_deref(), Some("^1.^#^t"));
     }
 
     /// A paragraph style's `w:numPr` (inherited through `w:basedOn`) makes its paragraphs a list;
@@ -740,8 +798,8 @@ mod tests {
             styled("ListBullet", r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr>"#, "not a list"),
         ];
         let st = lists_docx(&numbering, &styles, &body).story;
-        assert_eq!(label(&st, 0, 1), "•\t");
-        assert_eq!(label(&st, 1, 1), "◦\t");
+        assert_eq!(label(&st, 0), "•\t");
+        assert_eq!(label(&st, 1), "◦\t");
         assert_eq!(st.paras[2].para.list_type, None);
         assert_eq!(st.paras[2].style, "List Bullet");
     }
@@ -789,7 +847,7 @@ mod tests {
         let expr = st.paras[8].para.number_expression.clone().unwrap_or_default();
         assert!(expr.starts_with("^#x") && expr.chars().count() < 80, "{expr}");
         // A start below 0 counts from 0, which the model shows as 1; `^` in a label is literal.
-        assert_eq!(label(&st, 9, 1), "1^\t");
+        assert_eq!(label(&st, 9), "1^\t");
         // Unreadable list definitions leave plain paragraphs and a warning, not a failed import.
         let document = format!(r#"<w:document {W}><w:body>{}</w:body></w:document>"#, list_p("1", None, "x"));
         let i = import(&docx_parts(&[("word/document.xml", &document), ("word/numbering.xml", "<w:numbering></w:num>")])).unwrap();
