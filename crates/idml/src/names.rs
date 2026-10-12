@@ -104,10 +104,11 @@ pub fn unescape_id(s: &str) -> String {
 /// An `AppliedFont` value → font family. InDesign can write the family with its `$ID/` prefix
 /// (`$ID/Arial`), and `$ID/` alone for no font; some writers append the style after a tab.
 pub fn font_family_in(v: &str) -> Option<String> {
-    let v = v.trim();
+    // Spaces are part of a family's name ("Minion Pro " is another font than "Minion Pro").
+    let v = v.trim_matches(['\n', '\r']);
     let family = v.split('\t').next().unwrap_or(v);
-    let family = family.strip_prefix("$ID/").unwrap_or(family).trim();
-    (!family.is_empty()).then(|| family.to_string())
+    let family = family.trim_start().strip_prefix("$ID/").unwrap_or(family);
+    (!family.trim().is_empty()).then(|| family.to_string())
 }
 
 /// Built-in style names: (ours, IDML `Name`).
