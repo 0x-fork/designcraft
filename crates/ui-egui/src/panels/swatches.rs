@@ -347,7 +347,7 @@ pub fn color_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
 
 /// The Color Picker's fields for `color` (`None`: black): its values in its own model, so OK
 /// keeps a CMYK colour CMYK.
-fn picker_fields(color: Option<designcraft_color::Color>, stroke: bool) -> serde_json::Value {
+pub(crate) fn picker_fields(color: Option<designcraft_color::Color>, stroke: bool) -> serde_json::Value {
     let color = color.unwrap_or(designcraft_color::Color::BLACK);
     let mut f = json!({"target": if stroke { "stroke" } else { "fill" }, "hex": color.to_hex()});
     match color {

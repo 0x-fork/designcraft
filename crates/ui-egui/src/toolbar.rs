@@ -285,12 +285,9 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32) {
         let on_fill = fresp.double_clicked() && (!stroke_front || !sresp.double_clicked());
         let stroke = !on_fill;
         let current = if stroke { &stroke_sw } else { &fill_sw };
-        let rgb = doc.as_ref().and_then(|d| d.resolve_color(current, 1.0)).map_or([0.0; 3], |c| c.to_rgb());
-        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-        let hex = format!("#{:02x}{:02x}{:02x}", byte(rgb[0]), byte(rgb[1]), byte(rgb[2]));
-        let text = crate::panels::colors_affect_text(app);
-        app.ui.dialog =
-            Some(crate::dialogs::Dialog::new("colorPicker", json!({"target": if stroke { "stroke" } else { "fill" }, "hex": hex, "text": text})));
+        let mut fields = crate::panels::swatches::picker_fields(doc.as_ref().and_then(|d| d.resolve_color(current, 1.0)), stroke);
+        fields["text"] = json!(crate::panels::colors_affect_text(app));
+        app.ui.dialog = Some(crate::dialogs::Dialog::new("colorPicker", fields));
     }
     ui.add_space(3.0);
     // Formatting affects container / text.
@@ -563,7 +560,11 @@ mod tests {
         let app = h.state_mut();
         let d = app.ui.dialog.as_mut().expect("the Color Picker opened");
         assert_eq!(d.fields["text"], true, "{:?}", d.fields);
-        d.fields.insert("hex".into(), serde_json::json!("#456daf"));
+        // What the picker's fields hold after #456daf is typed.
+        for (k, v) in [("hex", serde_json::json!("#456daf")), ("rgb", serde_json::json!([0x45, 0x6d, 0xaf])), ("model", serde_json::json!("rgb"))] {
+            d.fields.insert(k.into(), v);
+        }
+        d.fields.insert("edited".into(), serde_json::json!(true));
         crate::dialogs::confirm(app).unwrap();
         let st = app.session.active().unwrap();
         let it = st.doc.item(id).unwrap();
