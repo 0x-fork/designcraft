@@ -223,7 +223,7 @@ pub struct Renderer {
     resources: Resources,
     glyphs: text::GlyphCache,
     /// Composed stories looked up during the current render.
-    stories: HashMap<(StoryId, Option<String>), Arc<ComposedStory>>,
+    stories: HashMap<(StoryId, Option<usize>), Arc<ComposedStory>>,
     drawing_items: Vec<designcraft_doc::ItemId>,
     pub threads: u16,
     pub stats: FrameStats,
@@ -422,7 +422,6 @@ impl Renderer {
                     let Some((ppi, ppage)) = doc.parent_page_for(first + pi) else { continue };
                     let parent = &doc.parents[ppi];
                     let dx = page.x - parent.pages[ppage].x;
-                    let page_name = doc.page_name(first + pi);
                     let pr = parent.pages[ppage].bounds();
                     for it in &parent.items {
                         if it.layer != layer.id || page.overridden.contains(&it.id) {
@@ -433,7 +432,7 @@ impl Renderer {
                             continue;
                         }
                         let _ = pr;
-                        self.draw_item(ctx, f, it, Affine::translate((dx, 0.0)), Some(&page_name));
+                        self.draw_item(ctx, f, it, Affine::translate((dx, 0.0)), Some(first + pi));
                     }
                 }
             }
@@ -448,16 +447,16 @@ impl Renderer {
         }
     }
 
-    fn draw_item(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, parent: Affine, page_name: Option<&str>) {
+    fn draw_item(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, parent: Affine, page: Option<usize>) {
         if self.drawing_items.len() >= 64 || self.drawing_items.contains(&it.id) {
             return;
         }
         self.drawing_items.push(it.id);
-        self.draw_item_inner(ctx, f, it, parent, page_name);
+        self.draw_item_inner(ctx, f, it, parent, page);
         self.drawing_items.pop();
     }
 
-    fn draw_item_inner(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, parent: Affine, page_name: Option<&str>) {
+    fn draw_item_inner(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, parent: Affine, page: Option<usize>) {
         if it.hidden || f.opts.hidden.contains(&it.id) || f.opts.printing_only && it.nonprinting {
             return;
         }
@@ -484,7 +483,7 @@ impl Renderer {
             ctx.set_transform(f.view * xf);
             ctx.push_clip_layer(&bp);
             for c in it.children() {
-                self.draw_item(ctx, f, c, xf, page_name);
+                self.draw_item(ctx, f, c, xf, page);
             }
             ctx.pop_layer();
             if !it.stroke.is_none() {
@@ -515,11 +514,11 @@ impl Renderer {
                         ctx.fill_path(&c.path.to_bezpath());
                         ctx.pop_layer();
                     }
-                    self.draw_item(ctx, f, c, xf, page_name);
+                    self.draw_item(ctx, f, c, xf, page);
                 }
             } else {
                 for c in it.shown_children() {
-                    self.draw_item(ctx, f, c, xf, page_name);
+                    self.draw_item(ctx, f, c, xf, page);
                 }
             }
             if layered {
@@ -546,9 +545,9 @@ impl Renderer {
             ctx.push_layer(None, Some(blend_mode(it.blend)), Some(it.opacity), None, None);
         }
         if effects {
-            self.draw_item_fx(ctx, f, it, &bp, xf, page_name);
+            self.draw_item_fx(ctx, f, it, &bp, xf, page);
         } else {
-            self.draw_body(ctx, f, it, &bp, xf, page_name);
+            self.draw_body(ctx, f, it, &bp, xf, page);
         }
         if layered {
             ctx.pop_layer();
@@ -557,18 +556,18 @@ impl Renderer {
 
     /// The composed story for a frame (memoised for the current render: the cache lookup
     /// validates the whole thread each time).
-    fn story(&mut self, f: &Frame, sid: StoryId, page_name: Option<&str>) -> Arc<ComposedStory> {
-        let key = (sid, page_name.map(str::to_string));
+    fn story(&mut self, f: &Frame, sid: StoryId, page: Option<usize>) -> Arc<ComposedStory> {
+        let key = (sid, page);
         if let Some(cs) = self.stories.get(&key) {
             return cs.clone();
         }
-        let cs = f.cache.get(f.doc, sid, page_name);
+        let cs = f.cache.get(f.doc, sid, page);
         self.stories.insert(key, cs.clone());
         cs
     }
 
     /// Fill, content and stroke of a leaf item (no opacity, blend or effects).
-    pub(crate) fn draw_body(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine, page_name: Option<&str>) {
+    pub(crate) fn draw_body(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine, page: Option<usize>) {
         let doc = f.doc;
         // Fill.
         if !it.fill.is_none() {
@@ -601,7 +600,7 @@ impl Renderer {
                 ctx.pop_layer();
             }
             Content::Text(tf) => {
-                let cs = self.story(f, tf.story, page_name);
+                let cs = self.story(f, tf.story, page);
                 if let Some(ft) = cs.frame(it.id) {
                     match &tf.options.path {
                         Some(pt) => self.draw_path_text(ctx, f, &cs, ft, xf, bp, pt),
