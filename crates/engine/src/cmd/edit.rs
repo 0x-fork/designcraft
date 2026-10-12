@@ -95,8 +95,9 @@ fn outside_text(text: &str) -> Result<String> {
 
 /// Pasted text with no insertion point: a new text frame holding it, as wide as the first column
 /// of the page's margin area and as tall as the text (at most the margin area's height), centred
-/// on `at` (spread coordinates) or else on the margin area. The frame ends up selected.
-fn paste_text_frame(s: &mut Session, p: &Value, text: &str) -> Result<Value> {
+/// on `at` (spread coordinates) or else on the margin area. The frame ends up selected. With
+/// `slice` (the text copied here), the frame's story is that formatted copy.
+fn paste_text_frame(s: &mut Session, p: &Value, text: &str, slice: Option<&designcraft_doc::Story>) -> Result<Value> {
     use designcraft_geom::{Point, Rect, shapes};
     const LIMIT: f64 = 1.0e5;
     let sr = super::spread_param(p, "spread");
@@ -105,7 +106,7 @@ fn paste_text_frame(s: &mut Session, p: &Value, text: &str) -> Result<Value> {
         .map(|a| Point::new(a.x.clamp(-LIMIT, LIMIT), a.y.clamp(-LIMIT, LIMIT)));
     let lid = s.doc()?.active_layer;
     let cache = s.cache.clone();
-    let text = outside_text(text)?;
+    let text = if slice.is_some() { String::new() } else { outside_text(text)? };
     s.edit(|d, sel| {
         let sp = d.spread(sr).ok_or_else(|| super::bad("edit.paste", "no such spread"))?;
         let page = at.and_then(|a| sp.page_at_x(a.x)).and_then(|i| sp.pages.get(i)).or_else(|| sp.pages.first());
@@ -116,8 +117,14 @@ fn paste_text_frame(s: &mut Session, p: &Value, text: &str) -> Result<Value> {
         let max_h = margins.height().max(12.0);
         let c = at.unwrap_or(Point::new(column.center().x, margins.center().y));
         let rect = |h: f64| Rect::new(c.x - w / 2.0, c.y - h / 2.0, c.x + w / 2.0, c.y + h / 2.0);
-        let para = designcraft_doc::ParaFormat { style: d.styles.default_paragraph.clone(), ..Default::default() };
+        let para = match slice.and_then(|sl| sl.paras.first()) {
+            Some(pf) => designcraft_doc::ParaFormat { table: None, ..pf.clone() },
+            None => designcraft_doc::ParaFormat { style: d.styles.default_paragraph.clone(), ..Default::default() },
+        };
         let (id, sid) = d.add_text_frame(sr, rect(max_h), lid, &text, para)?;
+        if let Some(sl) = slice {
+            d.story_mut(sid).ok_or(designcraft_doc::DocError::NoStory(sid))?.insert_story(0, sl);
+        }
         // Shrink to the composed text unless it already fills the frame.
         let composed = cache.get(d, sid, None);
         if !composed.is_overset()
@@ -288,7 +295,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     return paste_text(s, text.map(str::to_string), true);
                 }
                 if let Some(text) = text {
-                    return paste_text_frame(s, p, text);
+                    // What our own text copy put on the clipboard keeps its formatting.
+                    let slice = s.text_clipboard.clone().filter(|(_, plain)| text.replace("\r\n", "\n") == *plain).map(|(slice, _)| slice);
+                    return paste_text_frame(s, p, text, slice.as_deref());
                 }
                 let Some(clip) = s.clipboard.clone() else {
                     return Err(super::bad("edit.paste", "clipboard is empty"));
@@ -430,6 +439,28 @@ mod text_clipboard_tests {
         assert_eq!(s.doc().unwrap().doc.story(b).unwrap().text, "Targetabcd\u{E200}abcd\u{E200}");
         assert!(s.execute("edit.paste", &json!({"text": "\u{E00A}"})).is_err());
         s.doc().unwrap().doc.check().unwrap();
+    }
+
+    #[test]
+    fn copied_text_pasted_with_no_insertion_point_keeps_its_formatting() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = frame(&mut s, "Bold words\nSecond");
+        s.execute("text.select", &json!({"story": a.0, "anchor": 0, "focus": 4})).unwrap();
+        s.execute("type.bold", &json!({})).unwrap();
+        s.execute("text.select", &json!({"story": a.0, "anchor": 11, "focus": 17})).unwrap();
+        s.execute("type.para", &json!({"attrs": {"align": "center"}})).unwrap();
+        s.execute("text.select", &json!({"story": a.0, "anchor": 0, "focus": 17})).unwrap();
+        let copied = s.execute("edit.copy", &json!({})).unwrap()["text"].as_str().unwrap().to_string();
+        s.execute("edit.deselectAll", &json!({})).unwrap();
+        let r = s.execute("edit.paste", &json!({"text": copied})).unwrap();
+        let d = s.doc().unwrap();
+        let st = d.doc.story(d.doc.item(ItemId(r["id"].as_u64().unwrap())).unwrap().text_frame().unwrap().story).unwrap();
+        assert_eq!(st.text, "Bold words\nSecond");
+        assert_eq!(st.char_format_at(2).over.font_style.as_deref(), Some("Bold"));
+        assert_eq!(st.char_format_at(7).over.font_style, None);
+        assert_eq!(st.paras[1], d.doc.story(a).unwrap().paras[1]);
+        d.doc.check().unwrap();
     }
 
     #[test]
