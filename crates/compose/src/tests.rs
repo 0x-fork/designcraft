@@ -1836,6 +1836,23 @@ fn cjk_fallback_follows_the_language() {
 }
 
 #[test]
+fn malayalam_falls_back_to_a_font_that_forms_its_conjuncts() {
+    // Run against the installed fonts: on macOS the first file mapping Malayalam is Arial
+    // Unicode MS, which leaves ക്ഷ as three glyphs.
+    let db = designcraft_fonts::FontDb::global();
+    if !["Malayalam Sangam MN", "Malayalam MN", "Nirmala UI", "Noto Sans Malayalam"].iter().any(|f| db.has_family(f)) {
+        return;
+    }
+    let text = "ക്ഷ";
+    let (mut d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, 300.0, 100.0), ParaAttrs::default());
+    d.settings.glyph_fallback = true;
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let glyphs: Vec<_> = all_lines(&cs).iter().flat_map(|l| l.glyphs.iter()).map(|g| (g.face.family.clone(), g.gid)).collect();
+    assert_eq!(glyphs.len(), 1, "one conjunct: {glyphs:?}");
+    assert_ne!(glyphs[0].1, 0);
+}
+
+#[test]
 fn missing_glyphs_are_the_fonts_box_unless_fallback_is_on() {
     use designcraft_fonts::testing::font_with;
     // Some font draws 語 when fallback fonts are allowed (a system CJK font, or this stand-in).
