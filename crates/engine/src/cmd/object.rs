@@ -2451,10 +2451,14 @@ fn fit(s: &mut Session, p: &Value) -> Result<Value> {
 /// The inner rectangle that fits text frame `id` to its text (Fit Frame to Content): the smallest
 /// fitting height and the right side at the longest line's end (`width`, one column only),
 /// including insets; the top-left stays. Overset text grows the frame first. None for
-/// frames that aren't horizontal text frames, have no text, or are threaded on to another frame.
+/// frames that aren't horizontal text frames, have no text, or are threaded on to another frame,
+/// and for auto-size frames, which already fit their text around their reference point.
 fn fitted_text_frame(d: &Document, id: ItemId, height: bool, width: bool) -> Result<Option<Rect>> {
     let Some(it) = d.item(id) else { return Ok(None) };
     let Some(tf) = it.text_frame() else { return Ok(None) };
+    if tf.options.auto_size != designcraft_doc::AutoSize::Off {
+        return Ok(None);
+    }
     if d.frame_vertical(it) || tf.options.path.is_some() {
         return Ok(None);
     }
