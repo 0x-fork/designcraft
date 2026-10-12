@@ -15,11 +15,11 @@ If DesignCraft flashes a spinner and closes, update to the [latest release](http
 
 ## Fix
 
-1. Install the [latest release](https://github.com/storytold/designcraft/releases/latest). DesignCraft remembers a start that never showed a window and tries the next graphics backend on the following start. On Windows the order is DirectX 12, Vulkan, then OpenGL, and the status bar says when it switches. A reporter who could not start 0.5.0 on Windows 11 Enterprise wrote that 0.6.0 launched without trouble.
-2. If it still closes, set an environment variable named `WGPU_BACKEND` with the value `dx12`. Start DesignCraft from a shell where it is set, or add it in Windows settings for your account. People who hit this crash with an AMD graphics driver reported that DesignCraft starts with `WGPU_BACKEND=dx12`.
+1. Install the [latest release](https://github.com/storytold/designcraft/releases/latest). DesignCraft remembers a start that never showed a window and tries the next graphics backend on the following start. On Windows the order is DirectX 12, Vulkan, then OpenGL, and the status bar says when it switches. A reporter who could not start 0.5.0 on Windows 11 Enterprise wrote that 0.6.0 launched without trouble ([issue #273](https://github.com/storytold/designcraft/issues/273)).
+2. If it still closes, set an environment variable named `WGPU_BACKEND` with the value `dx12`. Start DesignCraft from a shell where it is set, or add it in Windows settings for your account. People who hit this crash with an AMD graphics driver reported that DesignCraft starts with `WGPU_BACKEND=dx12`. `dx12` also avoids Intel's Vulkan driver (`igvk64.dll`), which crashed in [issue #192](https://github.com/storytold/designcraft/issues/192).
 3. Start DesignCraft again.
 
-Setting `WGPU_BACKEND` also turns off the automatic fallback. Other accepted values are `vulkan` and `gl`, and a comma-separated list lets the graphics library choose among them.
+Setting `WGPU_BACKEND` also turns off the automatic fallback. Other accepted values are `vulkan` and `gl`, and a comma-separated list lets the graphics library choose among them. Do not pick `vulkan` on Intel graphics or `gl` on AMD graphics: those are the drivers in the crash reports.
 
 ## Why this happens
 

@@ -7,6 +7,8 @@ verified: 0.6.0
 
 Choose **File**, then **New Document…** (Ctrl+N), set the page size and margins, and click **OK**.
 
+Shortcuts on this page use Ctrl. On macOS, use Cmd instead of Ctrl.
+
 ## Steps
 
 1. Open the **File** menu and choose **New Document…**. On the start screen you can click **New file** instead.

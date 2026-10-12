@@ -6,6 +6,9 @@ verified: 0.6.0
 ---
 
 Choose **File**, then **Place…** (Ctrl+D), pick a file, and DesignCraft puts it into your document.
+
+Shortcuts on this page use Ctrl. On macOS, use Cmd instead of Ctrl.
+
 ## Steps
 
 1. Open the **File** menu and choose **Place…**.

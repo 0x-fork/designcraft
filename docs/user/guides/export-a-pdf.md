@@ -7,6 +7,8 @@ verified: 0.6.0
 
 Choose **File**, then **Export PDF…**, pick a **Preset**, click **OK** and name the file.
 
+Shortcuts on this page use Ctrl. On macOS, use Cmd instead of Ctrl.
+
 ## Steps
 
 1. Open the **File** menu and choose **Export PDF…**.
