@@ -1033,6 +1033,7 @@ fn graphic_frame(doc: &mut Document) -> ItemId {
         asset: designcraft_doc::AssetId(1),
         size: (200.0, 100.0),
         xf: designcraft_geom::Affine::translate((50.0, 100.0)),
+        clip: None,
         auto_fit: Default::default(),
         fit_align: 4,
         crop: [0.0; 4],

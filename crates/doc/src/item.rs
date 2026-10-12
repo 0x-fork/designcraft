@@ -1418,6 +1418,7 @@ mod tests {
             auto_fit: Fitting::None,
             fit_align: 4,
             crop: [0.0; 4],
+            wrap: Default::default(),
         };
         let v = serde_json::to_value(&g).unwrap();
         assert!(v.get("clip").is_none(), "{v}");

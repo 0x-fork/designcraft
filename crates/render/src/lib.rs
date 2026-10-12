@@ -1699,6 +1699,7 @@ mod tests {
                 link: None,
                 data: Arc::new(png),
                 pixels: Some((4, 4)),
+                ..Default::default()
             }),
         );
         // A 100 pt image at 100,100 clipped by a triangle with its apex at the top middle.
@@ -1717,6 +1718,7 @@ mod tests {
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [0.0; 4],
+            wrap: Default::default(),
             clip: Some(Arc::new(clip.clone())),
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
