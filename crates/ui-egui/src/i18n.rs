@@ -699,6 +699,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     ("for", ["for", "pour", "por", "に対して", "行"]),
     ("About DesignCraft", ["About DesignCraft", "About DesignCraft", "About DesignCraft", "About DesignCraft", "关于 DesignCraft"]),
+    ("Quit DesignCraft", ["DesignCraft beenden", "Quitter DesignCraft", "Salir de DesignCraft", "DesignCraft を終了", "退出 DesignCraft"]),
     ("Accept All Changes", ["Accept All Changes", "Accept All Changes", "Accept All Changes", "Accept All Changes", "接受所有更改"]),
     ("Activate Document", ["Activate Document", "Activate Document", "Activate Document", "Activate Document", "激活文档"]),
     ("Add Anchor Point", ["Add Anchor Point", "Add Anchor Point", "Add Anchor Point", "Add Anchor Point", "添加锚点"]),
