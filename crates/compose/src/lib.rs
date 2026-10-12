@@ -357,6 +357,9 @@ impl Exclusion {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Contour {
     pub rings: Vec<Vec<Point>>,
+    /// The frame path of an outline taken from a placed graphic: the frame clips the graphic, so
+    /// the outline counts only within it (empty: no clip).
+    pub clip: Vec<Vec<Point>>,
     pub offset: f64,
 }
 
@@ -366,63 +369,103 @@ const MAX_CONTOUR_POINTS: usize = 8192;
 impl Contour {
     /// The outline of `path` (after `to_inner`), flattened; None if it is empty or too detailed.
     fn of(path: &designcraft_geom::BezPath, to_inner: designcraft_geom::Affine, offset: f64) -> Option<Contour> {
-        let mut rings: Vec<Vec<Point>> = Vec::new();
-        let mut n = 0usize;
-        let mut too_many = false;
-        designcraft_geom::kurbo::flatten(to_inner * path.clone(), 0.25, |el| {
-            n += 1;
-            too_many |= n > MAX_CONTOUR_POINTS;
-            match el {
-                designcraft_geom::PathEl::MoveTo(p) => rings.push(vec![p]),
-                designcraft_geom::PathEl::LineTo(p) => match rings.last_mut() {
-                    Some(r) => r.push(p),
-                    None => rings.push(vec![p]),
-                },
-                _ => {}
-            }
-        });
-        rings.retain(|r| r.len() >= 2 && r.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
-        (!too_many && !rings.is_empty() && offset.is_finite()).then_some(Contour { rings, offset: offset.max(0.0) })
+        let rings = flatten_rings(path, to_inner)?;
+        offset.is_finite().then_some(Contour { rings, clip: Vec::new(), offset: offset.max(0.0) })
+    }
+
+    /// This outline counted only within `frame` (after `to_inner`); unclipped if the frame is
+    /// empty or too detailed.
+    fn within(self, frame: &designcraft_geom::BezPath, to_inner: designcraft_geom::Affine) -> Contour {
+        match flatten_rings(frame, to_inner) {
+            Some(clip) => Contour { clip, ..self },
+            None => self,
+        }
+    }
+
+    /// The outline mapped by `a`.
+    fn transformed(self, a: designcraft_geom::Affine) -> Contour {
+        let map = |rings: Vec<Vec<Point>>| rings.into_iter().map(|r| r.into_iter().map(|p| a * p).collect()).collect();
+        Contour { rings: map(self.rings), clip: map(self.clip), offset: self.offset }
     }
 
     fn bounds(&self) -> Rect {
-        let mut pts = self.rings.iter().flatten();
-        let Some(&p0) = pts.next() else { return Rect::ZERO };
-        let r = pts.fold(Rect::from_points(p0, p0), |r, &p| r.union_pt(p));
+        let Some(r) = rings_bounds(&self.rings) else { return Rect::ZERO };
+        let r = match rings_bounds(&self.clip) {
+            Some(c) => r.intersect(c),
+            None => r,
+        };
         r.inflate(self.offset, self.offset)
     }
 
     /// Horizontal extent of the outline (offset included) within the band `y0..y1`: the band is
-    /// widened by the offset, and the outline's x-range there is widened by it too.
+    /// widened by the offset, the outline's x-range there is limited to the clip's x-range there,
+    /// then widened by the offset too.
     fn band_extent(&self, y0: f64, y1: f64) -> Option<(f64, f64)> {
         let (y0, y1) = (y0 - self.offset, y1 + self.offset);
-        let mut lo = f64::INFINITY;
-        let mut hi = f64::NEG_INFINITY;
-        for ring in &self.rings {
-            let Some(&last) = ring.last() else { continue };
-            let mut p = last;
-            for &q in ring {
-                let (a, b) = (p, q);
-                p = q;
-                if a.y.max(b.y) < y0 || a.y.min(b.y) > y1 {
-                    continue;
-                }
-                let dy = b.y - a.y;
-                let (t0, t1) = if dy.abs() < 1e-12 {
-                    (0.0, 1.0)
-                } else {
-                    let (ta, tb) = ((y0 - a.y) / dy, (y1 - a.y) / dy);
-                    (ta.min(tb).clamp(0.0, 1.0), ta.max(tb).clamp(0.0, 1.0))
-                };
-                for t in [t0, t1] {
-                    let x = a.x + t * (b.x - a.x);
-                    lo = lo.min(x);
-                    hi = hi.max(x);
-                }
-            }
+        let (mut lo, mut hi) = rings_band_extent(&self.rings, y0, y1)?;
+        if !self.clip.is_empty() {
+            let (a, b) = rings_band_extent(&self.clip, y0, y1)?;
+            (lo, hi) = (lo.max(a), hi.min(b));
         }
         (lo <= hi).then_some((lo - self.offset, hi + self.offset))
     }
+}
+
+/// The closed polylines of `path` (after `to_inner`), flattened; None if it is empty or too detailed.
+fn flatten_rings(path: &designcraft_geom::BezPath, to_inner: designcraft_geom::Affine) -> Option<Vec<Vec<Point>>> {
+    let mut rings: Vec<Vec<Point>> = Vec::new();
+    let mut n = 0usize;
+    let mut too_many = false;
+    designcraft_geom::kurbo::flatten(to_inner * path.clone(), 0.25, |el| {
+        n += 1;
+        too_many |= n > MAX_CONTOUR_POINTS;
+        match el {
+            designcraft_geom::PathEl::MoveTo(p) => rings.push(vec![p]),
+            designcraft_geom::PathEl::LineTo(p) => match rings.last_mut() {
+                Some(r) => r.push(p),
+                None => rings.push(vec![p]),
+            },
+            _ => {}
+        }
+    });
+    rings.retain(|r| r.len() >= 2 && r.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
+    (!too_many && !rings.is_empty()).then_some(rings)
+}
+
+fn rings_bounds(rings: &[Vec<Point>]) -> Option<Rect> {
+    let mut pts = rings.iter().flatten();
+    let &p0 = pts.next()?;
+    Some(pts.fold(Rect::from_points(p0, p0), |r, &p| r.union_pt(p)))
+}
+
+/// Horizontal extent of closed polylines within the band `y0..y1`.
+fn rings_band_extent(rings: &[Vec<Point>], y0: f64, y1: f64) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for ring in rings {
+        let Some(&last) = ring.last() else { continue };
+        let mut p = last;
+        for &q in ring {
+            let (a, b) = (p, q);
+            p = q;
+            if a.y.max(b.y) < y0 || a.y.min(b.y) > y1 {
+                continue;
+            }
+            let dy = b.y - a.y;
+            let (t0, t1) = if dy.abs() < 1e-12 {
+                (0.0, 1.0)
+            } else {
+                let (ta, tb) = ((y0 - a.y) / dy, (y1 - a.y) / dy);
+                (ta.min(tb).clamp(0.0, 1.0), ta.max(tb).clamp(0.0, 1.0))
+            };
+            for t in [t0, t1] {
+                let x = a.x + t * (b.x - a.x);
+                lo = lo.min(x);
+                hi = hi.max(x);
+            }
+        }
+    }
+    (lo <= hi).then_some((lo, hi))
 }
 
 /// The wrap exclusion of `other` (an item whose inner space maps to the spread by `xf`) for a
@@ -448,7 +491,7 @@ pub fn graphic_exclusion(it: &Item, xf: Affine, inv: Affine, left_page: bool) ->
 fn wrap_exclusion(
     wrap: &designcraft_doc::TextWrap,
     b: Rect,
-    outline: impl FnOnce() -> Option<designcraft_geom::BezPath>,
+    outline: impl FnOnce() -> Option<(designcraft_geom::BezPath, Option<designcraft_geom::BezPath>)>,
     xf: Affine,
     inv: Affine,
     left_page: bool,
@@ -468,27 +511,35 @@ fn wrap_exclusion(
         let contour = matches!(wrap.mode, WrapMode::BoundingBox | WrapMode::Contour).then_some(custom);
         return Exclusion { rect, mode: wrap.mode, side, contour, after: None };
     }
-    let contour = if wrap.mode == WrapMode::Contour { outline() } else { None }.and_then(|path| Contour::of(&path, inv * xf, o[0]));
+    let contour = if wrap.mode == WrapMode::Contour { outline() } else { None }.and_then(|(path, frame)| {
+        let c = Contour::of(&path, inv * xf, o[0])?;
+        Some(match frame {
+            Some(frame) => c.within(&frame, inv * xf),
+            None => c,
+        })
+    });
     let rect = contour.as_ref().map_or_else(|| inv.transform_rect_bbox(r), Contour::bounds);
     Exclusion { rect, mode: wrap.mode, side, contour, after: None }
 }
 
-/// The outline a contour wrap of `kind` around frame `it` follows, in the frame's inner space.
-/// Bounding Box follows the part of the placed graphic the frame shows; Same As Clipping follows
-/// the graphic's clipping path when it has one; detected edges, alpha channels and image paths need
-/// the image, so they follow the frame's path (as other frames do).
-fn contour_path(it: &Item, kind: designcraft_doc::ContourType) -> designcraft_geom::BezPath {
+/// The outline a contour wrap of `kind` around frame `it` follows, in the frame's inner space, and
+/// for an outline taken from the placed graphic, the frame path that clips it. Bounding Box
+/// follows the part of the placed graphic the frame shows; Same As Clipping follows the graphic's
+/// clipping path when it has one; detected edges, alpha channels and image paths need the image,
+/// so they follow the frame's path (as other frames do).
+fn contour_path(it: &Item, kind: designcraft_doc::ContourType) -> (designcraft_geom::BezPath, Option<designcraft_geom::BezPath>) {
+    let frame = designcraft_geom::corners::apply(&it.path, &it.corners);
     if kind == designcraft_doc::ContourType::SameAsClipping
         && let Some((path, _)) = it.graphic().and_then(|g| g.clip_region())
     {
-        return path;
+        return (path, Some(frame));
     }
     if kind == designcraft_doc::ContourType::BoundingBox
         && let Some(r) = it.graphic().and_then(|g| g.shown_bounds(it.inner_bounds()))
     {
-        return designcraft_geom::kurbo::Shape::to_path(&r, 0.1);
+        return (designcraft_geom::kurbo::Shape::to_path(&r, 0.1), Some(frame));
     }
-    designcraft_geom::corners::apply(&it.path, &it.corners)
+    (frame, None)
 }
 
 /// One frame of the thread, ready for composition.
@@ -668,11 +719,7 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
             let v = designcraft_doc::vertical_text_xf(area).inverse();
             let ex = exclusions
                 .into_iter()
-                .map(|e| Exclusion {
-                    rect: v.transform_rect_bbox(e.rect),
-                    contour: e.contour.map(|c| Contour { rings: c.rings.iter().map(|r| r.iter().map(|&p| v * p).collect()).collect(), ..c }),
-                    ..e
-                })
+                .map(|e| Exclusion { rect: v.transform_rect_bbox(e.rect), contour: e.contour.map(|c| c.transformed(v)), ..e })
                 .collect();
             let pr = page_rect.map(|(a, b)| (v.transform_rect_bbox(a), v.transform_rect_bbox(b)));
             (Rect::new(0.0, 0.0, area.height(), area.width()), ex, None, pr)
@@ -1417,7 +1464,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                         let line_start = glyphs.get(s).map_or(prange.start, |g| g.byte);
                         let mut tries = 0;
                         loop {
-                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, desc, jump, base_size, rtl, line_start, &holds) else {
+                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, jump, base_size, rtl, line_start, &holds) else {
                                 // No room in this column.
                                 baseline = baseline.max(col.y1) + 1.0;
                                 carry.clear();
@@ -2767,10 +2814,10 @@ struct Jump {
 /// Slack for float error when a line is tested against a Jump Object wrap's edges.
 const JUMP_EPS: f64 = 1e-6;
 
-/// The first baseline at or below `baseline` where a line with ascent `asc` and descent `desc` has
-/// free segments in `col` one of which `holds` the line (its first word fits), and the segments
-/// from that one on (see [`free_slots`], never empty); None if there are none above the column
-/// bottom. `line_start` is the story byte the line starts at (see
+/// The first baseline at or below `baseline` where a line with ascent `asc` has free segments in
+/// `col`, from its top to its baseline, one of which `holds` the line (its first word fits), and
+/// the segments from that one on (see [`free_slots`], never empty); None if there are none above
+/// the column bottom. `line_start` is the story byte the line starts at (see
 /// [`Exclusion::wraps_line`]).
 ///
 /// A line under a Jump Object wrap moves below it as `jump` says. Around a rectangular wrap the
@@ -2783,7 +2830,6 @@ fn wrap_slot(
     col: Rect,
     baseline: f64,
     asc: f64,
-    desc: f64,
     jump: Jump,
     size: f64,
     rtl: bool,
@@ -2811,11 +2857,11 @@ fn wrap_slot(
         } else {
             // Segments before the first that `holds` the line's first word stay empty.
             let segs: Vec<(f64, f64)> =
-                free_slots(f, col, b - asc, b + desc, size, rtl, line_start).into_iter().skip_while(|seg| !holds(seg)).collect();
+                free_slots(f, col, b - asc, b, size, rtl, line_start).into_iter().skip_while(|seg| !holds(seg)).collect();
             if !segs.is_empty() {
                 return Some((b, segs));
             }
-            let (y0, y1) = (b - asc, b + desc);
+            let (y0, y1) = (b - asc, b);
             let in_band = || {
                 f.exclusions
                     .iter()
@@ -2832,7 +2878,8 @@ fn wrap_slot(
     None
 }
 
-/// Free segments of `col` in the band `y0..y1`, in the order text fills them (left to right, or
+/// Free segments of `col` in the band `y0..y1` (a line's top to its baseline: descenders may reach
+/// into the wrap), in the order text fills them (left to right, or
 /// right to left for right-to-left paragraphs); empty if the band is blocked. A line beside an
 /// object that lets text through on both sides has a segment on each side. When an object cuts
 /// the column, segments narrower than 1.5 em of `size` are skipped (slivers beside it); a column
@@ -2919,7 +2966,7 @@ fn estimate_slots(
     // rest is broken again once that line is set.
     let line_start = glyphs.first().map_or(0, |g| g.byte);
     while v.len() < n + carry.len() {
-        let slots = match wrap_slot(f, col, b, size * 0.8, size * 0.25, jump, size, rtl, line_start, &|_| true) {
+        let slots = match wrap_slot(f, col, b, size * 0.8, jump, size, rtl, line_start, &|_| true) {
             Some((nb, s)) => {
                 b = nb;
                 s
