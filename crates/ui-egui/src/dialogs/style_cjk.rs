@@ -158,7 +158,10 @@ fn font_fields(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog, cf: &Char
                     cf.set(d, style_key, json!(""));
                 }
                 if let Some(f) = crate::panels::font_menu_body(app, ui, &menu, &fam, 200.0) {
-                    cf.set(d, fam_key, json!(f));
+                    cf.set(d, fam_key, json!(f.family));
+                    if let Some(style) = f.style {
+                        cf.set(d, style_key, json!(style));
+                    }
                 }
             });
     });
