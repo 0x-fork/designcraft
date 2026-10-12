@@ -1297,16 +1297,12 @@ fn ruby_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     format_chars(s, &Value::Object(body))
 }
 
+/// A character fill must name a swatch of the document.
 pub(crate) fn validate_char_fill(document: &designcraft_doc::Document, attrs: &CharAttrs, command_id: &str) -> Result<()> {
-    if let Some(fill) = &attrs.fill
-        && document.swatch(fill).is_none()
-    {
-        return Err(bad(
-            command_id,
-            format!("unknown character fill `{fill}`; create a swatch with `swatch.create` and use its returned name as `fill`"),
-        ));
+    match &attrs.fill {
+        Some(fill) => super::object::known_swatch(document, fill, command_id, "fill"),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 pub(crate) fn format_chars(s: &mut Session, attrs: &Value) -> Result<Value> {
