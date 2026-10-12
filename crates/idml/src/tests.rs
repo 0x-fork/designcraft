@@ -843,6 +843,25 @@ fn cjk_character_attributes_import_from_independent_xml_and_round_trip() {
 }
 
 #[test]
+fn text_stroke_alignment_imports_as_stroke_behind_fill_and_round_trips() {
+    let story = r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">
+      <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/[No paragraph style]">
+        <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" StrokeColor="Color/Black" StrokeWeight="2" StrokeAlignment="OutsideAlignment"><Content>Behind</Content></CharacterStyleRange>
+        <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" StrokeColor="Color/Black" StrokeAlignment="CenterAlignment"><Content>Over</Content></CharacterStyleRange>
+        <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>Plain</Content></CharacterStyleRange>
+      </ParagraphStyleRange></Story></idPkg:Story>"#;
+    let flags = |d: &Document| -> Vec<(String, Option<bool>)> {
+        let st = d.stories.values().find(|s| s.text.contains("Behind")).unwrap();
+        st.runs().map(|(r, f)| (st.text[r].to_string(), f.over.stroke_behind_fill)).filter(|(t, _)| !t.trim().is_empty()).collect()
+    };
+    let want = vec![("Behind".to_string(), Some(true)), ("Over".to_string(), Some(false)), ("Plain".to_string(), None)];
+    let doc = import_idml(&fixture_with_story(story)).unwrap();
+    assert_eq!(flags(&doc), want);
+    let back = import_idml(&export_idml(&doc)).unwrap();
+    assert_eq!(flags(&back), want);
+}
+
+#[test]
 fn warichu_imports_from_idml_and_round_trips() {
     let story = r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">
       <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/[No paragraph style]">

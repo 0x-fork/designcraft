@@ -1172,6 +1172,12 @@ impl<'r> Importer<'r> {
         }
         a.stroke_tint = tint(e.num("StrokeTint"));
         a.stroke_weight = e.num("StrokeWeight");
+        // Text strokes are centred on the outline or lie outside it, behind the fill.
+        a.stroke_behind_fill = e.prop("StrokeAlignment").and_then(|v| match v.trim() {
+            "OutsideAlignment" => Some(true),
+            "CenterAlignment" => Some(false),
+            _ => None,
+        });
         a.capitalization = e.prop("Capitalization").and_then(|v| names::caps_in(v.trim()));
         a.position = e.prop("Position").and_then(|v| names::position_in(v.trim()));
         a.underline = e.boolean("Underline");

@@ -138,6 +138,7 @@ impl StyleTable<'_> {
             stroke: p.stroke.clone(),
             stroke_tint: p.stroke_tint,
             stroke_weight: p.stroke_weight,
+            stroke_behind_fill: p.stroke_behind_fill,
             underline: p.underline,
             strikethrough: p.strikethrough,
             underline_rule: crate::Rule {

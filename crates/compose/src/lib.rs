@@ -50,6 +50,8 @@ pub struct RunStyle {
     pub stroke: String,
     pub stroke_tint: f32,
     pub stroke_weight: f64,
+    /// The stroke goes under the fill at double width, so its full weight shows outside the glyphs.
+    pub stroke_behind_fill: bool,
     pub underline: bool,
     pub strikethrough: bool,
     /// The underline and strikethrough bars (Underline / Strikethrough Options resolved).

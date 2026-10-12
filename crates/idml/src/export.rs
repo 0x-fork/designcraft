@@ -1117,6 +1117,9 @@ impl<'a> Ex<'a> {
         if let Some(v) = a.stroke_weight {
             el.set("StrokeWeight", num(v));
         }
+        if let Some(v) = a.stroke_behind_fill {
+            el.set("StrokeAlignment", if v { "OutsideAlignment" } else { "CenterAlignment" });
+        }
         if let Some(v) = a.capitalization {
             el.set("Capitalization", names::caps_out(v));
         }
