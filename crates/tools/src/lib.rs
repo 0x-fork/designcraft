@@ -335,6 +335,8 @@ pub enum Cursor {
     ResizeNeSw,
     Rotate,
     Pen,
+    /// Over a type-on-a-path bracket: dragging it moves where the text starts or ends.
+    PathBracket,
     Text,
     Hand,
     HandGrab,

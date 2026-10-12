@@ -417,7 +417,8 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                     path: None,
                     ..tf.options.clone()
                 };
-                (Rect::new(0.0, 0.0, (len - pt.start).max(1.0), size * 1.6), opts)
+                let end = pt.end.map_or(len, |e| e.clamp(0.0, len));
+                (Rect::new(0.0, 0.0, (end - pt.start).max(1.0), size * 1.6), opts)
             }
             None => (item.text_area(), tf.options.clone()),
         };

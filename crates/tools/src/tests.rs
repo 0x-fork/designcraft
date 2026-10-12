@@ -705,3 +705,51 @@ fn pen_click_snaps_to_a_guide() {
     let x = p["anchors"][0]["p"][0].as_f64().unwrap();
     assert!((x - 100.0).abs() < 1e-6, "anchor x {x}");
 }
+
+#[test]
+fn the_selection_tool_drags_a_path_type_bracket_along_its_path() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let id = ItemId(d.alloc());
+    let line = designcraft_geom::PathData::single(designcraft_geom::SubPath::new(
+        vec![designcraft_geom::Anchor::corner(Point::new(100.0, 300.0)), designcraft_geom::Anchor::corner(Point::new(500.0, 300.0))],
+        false,
+    ));
+    let mut it = Item::new(id, lid, Shape::GraphicLine, line);
+    let sid = designcraft_doc::StoryId(d.alloc());
+    let mut tf = designcraft_doc::TextFrame { story: sid, options: Default::default() };
+    tf.options.path = Some(designcraft_doc::PathType { start: 40.0, end: Some(300.0), ..Default::default() });
+    it.content = designcraft_doc::Content::Text(tf);
+    let mut st = designcraft_doc::Story::with_text(sid, "On the line", Default::default());
+    st.frames = vec![id];
+    d.stories.insert(sid, Arc::new(st));
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let at = |x: f64, y: f64| Point::new(x + off.x, y + off.y);
+    let ev = |k: PointerKind, p: Point| PointerEvent::new(k, p.x, p.y);
+    // Not selected: no brackets.
+    let none = Selection::default();
+    assert!(create("selection").overlays(&ctx(&d, &none, &c, &l)).is_empty());
+    let s = Selection { items: vec![id], ..Default::default() };
+    let cx = ctx(&d, &s, &c, &l);
+    let mut t = create("selection");
+    // Both brackets drawn across the path at 140 and 400 (a line and a tick each).
+    let o = t.overlays(&cx);
+    let xs: Vec<f64> = o.iter().filter_map(|o| if let Overlay::Line { a, b, .. } = o { (a.x == b.x).then_some(a.x - off.x) } else { None }).collect();
+    assert_eq!(xs, [140.0, 400.0], "{o:?}");
+    assert_eq!(t.cursor(&cx, at(140.0, 300.0), Mods::default()), Cursor::PathBracket);
+    assert_ne!(t.cursor(&cx, at(250.0, 300.0), Mods::default()), Cursor::PathBracket);
+    // Drag the start bracket: its distance along the path follows the pointer, off the path too.
+    assert_eq!(t.pointer(&cx, &ev(PointerKind::Down, at(140.0, 301.0))), vec![Action::Begin("Move Bracket".into())]);
+    let a = t.pointer(&cx, &ev(PointerKind::Drag, at(220.0, 330.0)));
+    let [Action::Preview(cmd, p)] = a.as_slice() else { panic!("{a:?}") };
+    assert_eq!((cmd.as_str(), p["id"].as_u64()), ("type.pathOptions", Some(id.0)));
+    assert!((p["start"].as_f64().unwrap() - 120.0).abs() < 1e-6, "{p}");
+    assert_eq!(t.pointer(&cx, &ev(PointerKind::Up, at(220.0, 330.0))), vec![Action::Commit]);
+    // The end bracket.
+    t.pointer(&cx, &ev(PointerKind::Down, at(400.0, 300.0)));
+    let a = t.pointer(&cx, &ev(PointerKind::Drag, at(450.0, 290.0)));
+    let [Action::Preview(_, p)] = a.as_slice() else { panic!("{a:?}") };
+    assert!((p["end"].as_f64().unwrap() - 350.0).abs() < 1e-6, "{p}");
+}

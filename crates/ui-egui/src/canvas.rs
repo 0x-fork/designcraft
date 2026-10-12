@@ -353,6 +353,7 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
         Cursor::ResizeNeSw => C::ResizeNeSw,
         Cursor::Rotate => C::Alias,
         Cursor::Pen => C::Crosshair,
+        Cursor::PathBracket => C::ResizeColumn,
         Cursor::Text => C::Text,
         Cursor::Hand => C::Grab,
         Cursor::HandGrab => C::Grabbing,
