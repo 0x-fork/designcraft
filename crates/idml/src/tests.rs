@@ -3225,3 +3225,24 @@ fn tracked_deleted_text_takes_no_room_and_round_trips() {
     let back = import_idml(&export_idml(&d)).unwrap();
     assert_eq!(marks(back.stories.values().next().unwrap()), want);
 }
+
+#[test]
+fn same_para_style_spacing_imports_and_round_trips() {
+    let story = r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">
+    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/[No paragraph style]" SameParaStyleSpacing="0">
+    <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>Gap</Content><Br/></CharacterStyleRange>
+    </ParagraphStyleRange>
+    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/[No paragraph style]" SameParaStyleSpacing="Nothing">
+    <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>Ignore</Content></CharacterStyleRange>
+    </ParagraphStyleRange></Story></idPkg:Story>"#;
+    let d = import_idml(&fixture_with_story(story)).unwrap();
+    let st = d.stories.values().find(|s| s.text.contains("Gap")).unwrap();
+    assert_eq!(st.paras[0].para.same_para_style_spacing, Some(Some(0.0)));
+    // Ignore is an explicit "off", not an unset value.
+    assert_eq!(st.paras[1].para.same_para_style_spacing, Some(None));
+    let back = import_idml(&export_idml(&d)).unwrap();
+    let b = back.stories.values().find(|s| s.text.contains("Gap")).unwrap();
+    assert_eq!(b.paras[0].para.same_para_style_spacing, Some(Some(0.0)));
+    // The explicit Ignore survives the round trip too.
+    assert_eq!(b.paras[1].para.same_para_style_spacing, Some(None));
+}

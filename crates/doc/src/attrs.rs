@@ -1122,6 +1122,8 @@ attr_set! {
         last_line_indent: f64 = 0.0,
         space_before: f64 = 0.0,
         space_after: f64 = 0.0,
+        /// Space between consecutive paragraphs of the same style; replaces space after/before there (None = ignore).
+        same_para_style_spacing: Option<f64> = None,
         /// Drop cap: the paragraph's first `drop_cap_chars` characters (code points, never
         /// splitting a base from its combining marks) set `drop_cap_lines` lines tall, in the
         /// character style `drop_cap_style` ("" or `[None]`: the text's own formatting).
