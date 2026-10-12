@@ -1471,9 +1471,9 @@ fn transform_content(s: &mut Session, p: &Value, ids: &[ItemId]) -> Result<Value
                 let b = (frame * gx).transform_rect_bbox(rect);
                 let a = designcraft_geom::reference_point(b, rf);
                 let (fx, fy) = (w.map_or(1.0, |w| w / b.width().max(1e-9)), h.map_or(1.0, |h| h / b.height().max(1e-9)));
-                let page_x =
-                    d.spread(loc.spread).and_then(|sp| sp.page_at_x(b.center().x).and_then(|pi| sp.pages.get(pi)).map(|pg| pg.x)).unwrap_or(0.0);
-                let to = Point::new(x.map_or(a.x, |x| x + page_x), y.map_or(a.y, |y| y));
+                // x/y are measured from the rulers' zero point, as for a frame.
+                let o = d.ruler_origin(loc.spread, b.center().x).unwrap_or(Point::ORIGIN);
+                let to = Point::new(x.map_or(a.x, |x| x + o.x), y.map_or(a.y, |y| y + o.y));
                 let m = Affine::translate(to.to_vec2()) * Affine::scale_non_uniform(fx, fy) * Affine::translate(-a.to_vec2());
                 gx = frame.inverse() * m * frame * gx;
             }
@@ -3757,6 +3757,30 @@ mod content_transform_tests {
         // `id` names the target explicitly, like `ids`: the frame.
         let by_id = s.execute("transform.info", &json!({"id": f})).unwrap();
         assert!((by_id["rotation"].as_f64().unwrap() + 45.0).abs() < 1e-6, "{by_id}");
+    }
+
+    #[test]
+    fn the_graphic_moves_to_x_and_y_from_the_rulers_zero_point() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [100, 100, 300, 300], "content": "graphic"})).unwrap()["id"].as_u64().unwrap();
+        let png = designcraft_render::Rendered { width: 200, height: 100, pixels: vec![200u8; 200 * 100 * 4] }.to_png();
+        s.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&png), "name": "a.png", "frame": f})).unwrap();
+        s.execute("view.zeroPoint", &json!({"at": [72, 36]})).unwrap();
+        s.execute("selection.set", &json!({"ids": [f], "content": true})).unwrap();
+        s.execute("transform.set", &json!({"x": 10, "y": 20, "ref": 0})).unwrap();
+        // The graphic's top-left, measured from the zero point (what the Transform fields show).
+        let d = &s.doc().unwrap().doc;
+        let id = designcraft_doc::ItemId(f);
+        let loc = d.find(id).unwrap();
+        let it = d.item(id).unwrap();
+        let g = it.graphic().unwrap();
+        let b = (d.parent_xf(&loc) * it.xf * g.xf).transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1));
+        let o = d.ruler_origin(loc.spread, b.center().x).unwrap();
+        assert!(o.x > 0.0 && o.y > 0.0, "the zero point moved: {o:?}");
+        assert!((b.x0 - o.x - 10.0).abs() < 1e-6 && (b.y0 - o.y - 20.0).abs() < 1e-6, "{b:?} from {o:?}");
+        // The frame stays.
+        assert!((it.bounds().x0 - 100.0).abs() < 1e-6, "{:?}", it.bounds());
     }
 
     #[test]
