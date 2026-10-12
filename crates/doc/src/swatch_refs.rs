@@ -144,8 +144,8 @@ impl Names<'_> {
 impl Document {
     /// Point every reference to swatch `from` at `to`: tints based on it, colour groups, inks,
     /// styles, page items (fills, strokes, gaps, effects, column rules), text, kenten and ruby
-    /// colours, rules, shading, borders and border gaps, tables (with stroke gaps) and the
-    /// footnote rule. The swatch itself is renamed by the
+    /// colours, rules, shading, borders and border gaps, tables (with stroke gaps), footnotes,
+    /// endnotes and the footnote rule. The swatch itself is renamed by the
     /// caller.
     pub fn rename_swatch_refs(&mut self, from: &str, to: &str) {
         if from == to {
@@ -221,6 +221,9 @@ impl Document {
         for sid in self.stories.keys().copied().collect::<Vec<_>>() {
             if let Some(story) = self.story_mut(sid) {
                 story.for_each_text_mut(&mut |st| n.story(st));
+                for e in &mut story.endnotes {
+                    Arc::make_mut(e).text.for_each_text_mut(&mut |st| n.story(st));
+                }
             }
         }
     }

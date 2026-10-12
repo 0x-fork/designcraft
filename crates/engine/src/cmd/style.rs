@@ -1586,6 +1586,8 @@ mod color_tests {
         let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Hello world"})).unwrap();
         let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
         s.execute("text.select", &json!({"story": sid.0, "anchor": 11})).unwrap();
+        s.execute("endnote.insert", &json!({"text": "end"})).unwrap();
+        s.execute("text.select", &json!({"story": sid.0, "anchor": 11})).unwrap();
         s.execute("footnote.insert", &json!({"text": "note"})).unwrap();
         s.execute("text.select", &json!({"story": sid.0, "anchor": 0})).unwrap();
         s.execute("table.insert", &json!({"rows": 1, "cols": 1})).unwrap();
@@ -1598,6 +1600,7 @@ mod color_tests {
             t.cells[0].fill = old.clone();
             t.cells[0].text.chars[0].format.over.fill = Some(old.clone());
             Arc::make_mut(&mut st.notes[0]).text.chars[0].format.over.stroke = Some(old.clone());
+            Arc::make_mut(&mut st.endnotes[0]).text.chars[0].format.over.underline_color = Some(old.clone());
             Ok(())
         })
         .unwrap();
@@ -1609,6 +1612,7 @@ mod color_tests {
         assert_eq!(cell.fill, "Sand");
         assert_eq!(cell.text.chars[0].format.over.fill.as_deref(), Some("Sand"));
         assert_eq!(st.notes[0].text.chars[0].format.over.stroke.as_deref(), Some("Sand"));
+        assert_eq!(st.endnotes[0].text.chars[0].format.over.underline_color.as_deref(), Some("Sand"));
         d.check().unwrap();
     }
 }
