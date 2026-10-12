@@ -1876,7 +1876,8 @@ impl<'r> Importer<'r> {
                                     designcraft_doc::AnchorPosition::Custom {
                                         x_relative: names::anchor_rel_in(s("HorizontalReferencePoint")),
                                         y_relative: names::anchor_rel_in(s("VerticalReferencePoint")),
-                                        x_offset: get("AnchorXoffset"),
+                                        // IDML measures a left-aligned object's X offset leftwards.
+                                        x_offset: if col == 0 { 0.0 - get("AnchorXoffset") } else { get("AnchorXoffset") },
                                         y_offset: get("AnchorYoffset"),
                                         object_point: names::anchor_in(s("AnchorPoint")),
                                         ref_point: row * 3 + col,
