@@ -85,7 +85,7 @@ impl Session {
         }
     }
 
-    fn with_ctx<T>(&mut self, view: ViewInfo, f: impl FnOnce(&mut dyn designcraft_tools::Tool, &ToolContext) -> T) -> Option<T> {
+    fn with_ctx<T>(&mut self, view: ViewInfo, f: impl FnOnce(&mut Self, &ToolContext) -> T) -> Option<T> {
         let st = self.active()?;
         let doc = st.doc.clone();
         let sel = st.selection.clone();
@@ -102,7 +102,7 @@ impl Session {
             snap: view.snap,
             unit: view.unit,
         };
-        Some(f(self.tool.as_mut(), &cx))
+        Some(f(self, &cx))
     }
 
     pub fn pointer(&mut self, ev: &PointerEvent, view: ViewInfo) -> Result<()> {
@@ -111,7 +111,14 @@ impl Session {
         if matches!(ev.kind, PointerKind::Down | PointerKind::DoubleClick) {
             self.end_composition()?;
         }
-        let actions = self.with_ctx(view, |t, cx| t.pointer(cx, ev)).unwrap_or_default();
+        let actions = self.with_ctx(view, |s, cx| s.tool.pointer(cx, ev)).unwrap_or_default();
+        self.run_actions(actions)
+    }
+
+    /// Dispatch a temporary view tool without replacing the active tool or its state.
+    /// Its actions use the same execution path as the selected tool's gestures.
+    pub fn pointer_with_tool(&mut self, tool: &mut dyn designcraft_tools::Tool, ev: &PointerEvent, view: ViewInfo) -> Result<()> {
+        let actions = self.with_ctx(view, |_, cx| tool.pointer(cx, ev)).unwrap_or_default();
         self.run_actions(actions)
     }
 
@@ -120,18 +127,18 @@ impl Session {
         if self.tool.composing() {
             return Ok(true);
         }
-        let actions = self.with_ctx(view, |t, cx| t.key(cx, key, mods)).unwrap_or_default();
+        let actions = self.with_ctx(view, |s, cx| s.tool.key(cx, key, mods)).unwrap_or_default();
         let handled = !actions.is_empty();
         self.run_actions(actions)?;
         Ok(handled)
     }
 
     pub fn overlays(&mut self, view: ViewInfo) -> Vec<Overlay> {
-        self.with_ctx(view, |t, cx| t.overlays(cx)).unwrap_or_default()
+        self.with_ctx(view, |s, cx| s.tool.overlays(cx)).unwrap_or_default()
     }
 
     pub fn cursor(&mut self, p: designcraft_geom::Point, mods: Mods, view: ViewInfo) -> Cursor {
-        self.with_ctx(view, |t, cx| t.cursor(cx, p, mods)).unwrap_or_default()
+        self.with_ctx(view, |s, cx| s.tool.cursor(cx, p, mods)).unwrap_or_default()
     }
 
     /// Canvas centres of the content grabbers the Selection tool shows: the selected frame's and
@@ -148,18 +155,18 @@ impl Session {
     }
 
     pub fn wants_text(&mut self) -> bool {
-        self.with_ctx(ViewInfo::at_zoom(1.0), |t, cx| t.wants_text(cx)).unwrap_or(false)
+        self.with_ctx(ViewInfo::at_zoom(1.0), |s, cx| s.tool.wants_text(cx)).unwrap_or(false)
     }
 
     /// IME marked text at the text caret (see `Tool::ime_preedit`; `active_chars` counts
     /// characters of `text`). It shows in place as a preview: no undo step, nothing journaled.
     pub fn tool_preedit(&mut self, text: &str, active_chars: Option<std::ops::Range<usize>>, view: ViewInfo) -> Result<()> {
-        let actions = self.with_ctx(view, |t, cx| t.ime_preedit(cx, text, active_chars)).unwrap_or_default();
+        let actions = self.with_ctx(view, |s, cx| s.tool.ime_preedit(cx, text, active_chars)).unwrap_or_default();
         let r = self.run_actions(actions);
         if r.is_err() && self.tool.composing() {
             // The marked text can't show (its story went away): the composition ends with nothing
             // typed, so no gesture stays open.
-            match self.with_ctx(view, |t, cx| t.ime_preedit(cx, "", None)) {
+            match self.with_ctx(view, |s, cx| s.tool.ime_preedit(cx, "", None)) {
                 Some(cancel) => self.run_actions(cancel)?,
                 None => self.tool = designcraft_tools::create(self.tool.id()),
             }
@@ -170,7 +177,7 @@ impl Session {
     /// The IME committed `text`: it replaces the marked text as one `text.insert` (one undo step,
     /// one journaled command).
     pub fn tool_ime_commit(&mut self, text: &str, view: ViewInfo) -> Result<()> {
-        let actions = self.with_ctx(view, |t, cx| t.ime_commit(cx, text)).unwrap_or_default();
+        let actions = self.with_ctx(view, |s, cx| s.tool.ime_commit(cx, text)).unwrap_or_default();
         self.run_actions(actions)
     }
 
@@ -185,7 +192,7 @@ impl Session {
         if !self.tool.composing() {
             return Ok(());
         }
-        match self.with_ctx(ViewInfo::default(), |t, cx| t.ime_end(cx)) {
+        match self.with_ctx(ViewInfo::default(), |s, cx| s.tool.ime_end(cx)) {
             Some(actions) => self.run_actions(actions),
             None => {
                 // No document to type into: only the tool's state goes.
@@ -197,7 +204,7 @@ impl Session {
 
     /// The caret line (canvas space) the IME candidate window follows.
     pub fn tool_ime_caret(&mut self, view: ViewInfo) -> Option<(designcraft_geom::Point, designcraft_geom::Point)> {
-        self.with_ctx(view, |t, cx| t.ime_caret(cx)).flatten()
+        self.with_ctx(view, |s, cx| s.tool.ime_caret(cx)).flatten()
     }
 
     pub fn run_actions(&mut self, actions: Vec<Action>) -> Result<()> {

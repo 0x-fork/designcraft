@@ -290,6 +290,68 @@ fn mods(i: &egui::InputState, space: bool) -> Mods {
     Mods { shift: i.modifiers.shift, alt: i.modifiers.alt, cmd: i.modifiers.command, ctrl: i.modifiers.ctrl, space }
 }
 
+/// Held Space belongs to navigation only when neither the document nor a text field is typing.
+fn navigation_space(app: &mut DesignApp, ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.focused && i.key_down(egui::Key::Space)) && !app.session.wants_text() && !ctx.text_edit_focused()
+}
+
+fn spring_zoom_mode(app: &DesignApp, ctx: &egui::Context, space: bool) -> bool {
+    let down = ctx.data(|d| d.get_temp::<bool>(egui::Id::new(("canvas_pointer_down", app.pane)))).unwrap_or(false);
+    space && ctx.input(|i| i.modifiers.command) && !down && !app.session.tool_busy()
+}
+
+#[derive(Clone, Default)]
+struct SpringZoom {
+    tool: designcraft_tools::ZoomTool,
+    down: bool,
+}
+
+/// Lend the Zoom tool the gesture; the selected tool and document selection stay intact.
+fn spring_zoom_input(app: &mut DesignApp, ui: &egui::Ui, resp: &egui::Response, xf: &Xf, active: bool) -> bool {
+    let id = egui::Id::new(("canvas_spring_zoom", app.pane));
+    let mut zoom: SpringZoom = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    if !ui.input(|i| i.focused) {
+        ui.data_mut(|d| d.remove::<SpringZoom>(id));
+        return false;
+    }
+    if !zoom.down && (!active || ui.input(|i| i.pointer.middle_down())) {
+        return false;
+    }
+    let (pointer, m) = ui.input(|i| (i.pointer.clone(), mods(i, true)));
+    let vi = app.view_info();
+    let mut events = Vec::new();
+    let canvas = if xf.rot == 0 { app.canvas_rect } else { Some(resp.rect) };
+    if pointer.primary_pressed()
+        && resp.hovered()
+        && let Some(p) = pointer.press_origin().filter(|p| canvas.is_some_and(|r| r.contains(*p)))
+    {
+        events.push(PointerEvent { kind: PointerKind::Down, pos: xf.to_canvas(p), mods: m, clicks: 1 });
+        zoom.down = true;
+        resp.request_focus();
+    }
+    if zoom.down
+        && let Some(p) = pointer.interact_pos()
+    {
+        if resp.dragged() && resp.drag_delta() != egui::Vec2::ZERO {
+            events.push(PointerEvent { kind: PointerKind::Drag, pos: xf.to_canvas(p), mods: m, clicks: 1 });
+        }
+        if pointer.primary_released() {
+            events.push(PointerEvent { kind: PointerKind::Up, pos: xf.to_canvas(p), mods: m, clicks: 1 });
+            zoom.down = false;
+        }
+    }
+    for e in events {
+        if let Err(err) = app.session.pointer_with_tool(&mut zoom.tool, &e, vi) {
+            app.status(err.to_string());
+        }
+    }
+    app.after_engine();
+    // Keep ownership until pointer release even if the shortcut was released first, so an Up
+    // cannot leak into the previous tool and edit the document.
+    ui.data_mut(|d| d.insert_temp(id, zoom));
+    true
+}
+
 pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let outer = ui.available_rect_before_wrap();
@@ -408,14 +470,17 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     // Cursor.
     if let Some(p) = resp.hover_pos().filter(|p| screen.contains(*p)) {
         let wants_text = app.session.wants_text();
-        let space = ui.input(|i| i.key_down(egui::Key::Space)) && !wants_text;
+        let space = navigation_space(app, ui.ctx());
+        let zoom = spring_zoom_mode(app, ui.ctx(), space);
         let middle = ui.input(|i| i.pointer.middle_down());
         let alt_hand: bool = ui.data(|d| d.get_temp(egui::Id::new(("canvas_alt_hand", app.pane)))).unwrap_or(false);
         let tool_drag: bool = ui.data(|d| d.get_temp(egui::Id::new(("canvas_pointer_down", app.pane)))).unwrap_or(false);
         let alt_text = wants_text && !tool_drag && ui.input(|i| i.modifiers.alt);
         let c = if middle || alt_hand {
             Cursor::HandGrab
-        } else if space || alt_text {
+        } else if zoom {
+            if ui.input(|i| i.modifiers.alt) { Cursor::ZoomOut } else { Cursor::ZoomIn }
+        } else if (space && !ui.input(|i| i.modifiers.command)) || alt_text {
             Cursor::Hand
         } else {
             app.session.cursor(xf.to_canvas(p), ui.input(|i| mods(i, false)), app.view_info())
@@ -1801,7 +1866,7 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     let Some(v) = app.view().copied() else { return };
     let xf = Xf::new(rect, &v);
     let wants_text = app.session.wants_text();
-    let space = ui.input(|i| i.key_down(egui::Key::Space)) && !wants_text && !ui.ctx().text_edit_focused();
+    let space = navigation_space(app, ui.ctx());
     // Scroll / zoom.
     let alt = wheel_alt(ui);
     if resp.hovered() {
@@ -1823,11 +1888,16 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
             }
         }
     }
+    let zoom = spring_zoom_mode(app, ui.ctx(), space);
+    if spring_zoom_input(app, ui, resp, &xf, zoom) {
+        return;
+    }
     // Space-drag = hand (unless a tool drag is under way: then Space is a modifier, e.g. Live
     // Distribute while resizing). Middle-drag pans too, with any tool; tools only
     // see the primary button.
     let tool_drag: bool = ui.data(|d| d.get_temp(egui::Id::new(("canvas_pointer_down", app.pane)))).unwrap_or(false);
-    if !tool_drag && ((space && resp.dragged()) || resp.dragged_by(egui::PointerButton::Middle)) {
+    let hand = space && !ui.input(|i| i.modifiers.command);
+    if !tool_drag && ((hand && resp.dragged()) || resp.dragged_by(egui::PointerButton::Middle)) {
         let d = xf.unrotate_delta(resp.drag_delta());
         if let Some(v) = app.view_mut() {
             v.origin = Point::new(v.origin.x - d.x as f64 / v.zoom, v.origin.y - d.y as f64 / v.zoom);
@@ -2583,6 +2653,222 @@ mod tests {
     fn units(h: &Harness<'_, DesignApp>) -> (Unit, Unit) {
         let s = &h.state().session.doc().unwrap().doc.settings;
         (s.horizontal_units, s.vertical_units)
+    }
+
+    fn zoom_app(tool: &str) -> DesignApp {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.select_tool(tool);
+        app.ui.rulers = false;
+        app
+    }
+
+    fn canvas_frame(app: &mut DesignApp, ctx: &egui::Context, m: egui::Modifiers, mut events: Vec<egui::Event>) -> egui::CursorIcon {
+        events.insert(0, egui::Event::ModifiersChanged(m));
+        let mut output = ctx.run_ui(
+            egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() },
+            |ui| {
+                app.logic(ui.ctx());
+                // Fonts installed by logic become available at the start of the next frame,
+                // just as in the full application UI.
+                if app.fonts_ready {
+                    show(app, ui);
+                }
+            },
+        );
+        output.textures_delta.clear();
+        output.platform_output.cursor_icon
+    }
+
+    /// The cursor icon the canvas sets for `c` on this platform (bitmap and painted cursors
+    /// report their own icon).
+    fn shown(c: Cursor) -> egui::CursorIcon {
+        crate::cursors::show(&egui::Context::default(), &mut crate::cursors::Images::default(), c, Pos2::ZERO)
+    }
+
+    fn space_key(pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key { key: egui::Key::Space, physical_key: None, pressed, repeat: false, modifiers }
+    }
+
+    fn press(pos: Pos2, pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers }
+    }
+
+    fn hover(app: &mut DesignApp, ctx: &egui::Context, p: Pos2) {
+        for _ in 0..3 {
+            canvas_frame(app, ctx, egui::Modifiers::NONE, vec![egui::Event::PointerMoved(p)]);
+        }
+    }
+
+    const CMD: egui::Modifiers = egui::Modifiers { command: true, mac_cmd: true, ..egui::Modifiers::NONE };
+
+    #[test]
+    fn spring_zoom_click_is_anchored_view_only_and_release_restores_previous_tool() {
+        for tool in ["rectangleFrame", "directSelection", "type", "hand", "zoom"] {
+            let mut app = zoom_app(tool);
+            if tool == "rectangleFrame" {
+                let frame = app.run("frame.create", json!({"rect":[36,36,300,200],"content":"text","text":"Hello"})).unwrap();
+                app.run("text.select", json!({"story":frame["story"],"anchor":5})).unwrap();
+            }
+            let ctx = egui::Context::default();
+            let p = pos2(300.0, 250.0);
+            hover(&mut app, &ctx, p);
+            let before = *app.view().unwrap();
+            let doc = app.session.doc().unwrap().doc.clone();
+            let selection = app.session.doc().unwrap().selection.clone();
+            let history = app.run("document.history", json!({})).unwrap();
+            let cursor = canvas_frame(&mut app, &ctx, CMD, vec![space_key(true, CMD)]);
+            assert_eq!(cursor, shown(Cursor::ZoomIn), "{tool}");
+            canvas_frame(&mut app, &ctx, CMD, vec![press(p, true, CMD)]);
+            canvas_frame(&mut app, &ctx, CMD, vec![press(p, false, CMD)]);
+            let after = *app.view().unwrap();
+            assert_eq!(after.zoom, before.zoom * 2.0, "{tool}");
+            let anchor = Xf::new(app.canvas_rect.unwrap(), &before).to_canvas(p);
+            assert!((Xf::new(app.canvas_rect.unwrap(), &after).to_canvas(p) - anchor).hypot() < 1e-9);
+            let cursor = canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![space_key(false, egui::Modifiers::NONE)]);
+            assert_eq!(app.session.tool_id(), tool);
+            let expected = app.session.cursor(anchor, Mods::default(), app.view_info());
+            assert_eq!(cursor, shown(expected), "{tool}");
+            assert!(std::sync::Arc::ptr_eq(&doc, &app.session.doc().unwrap().doc));
+            assert_eq!(selection, app.session.doc().unwrap().selection);
+            assert_eq!(history, app.run("document.history", json!({})).unwrap());
+        }
+    }
+
+    #[test]
+    fn spring_zoom_alt_clicks_out_and_modifier_release_switches_back_to_hand() {
+        let mut app = zoom_app("rectangleFrame");
+        let ctx = egui::Context::default();
+        let p = pos2(300.0, 250.0);
+        hover(&mut app, &ctx, p);
+        let z = app.view().unwrap().zoom;
+        let alt = egui::Modifiers { alt: true, ..CMD };
+        assert_eq!(canvas_frame(&mut app, &ctx, CMD, vec![space_key(true, CMD)]), shown(Cursor::ZoomIn));
+        assert_eq!(canvas_frame(&mut app, &ctx, alt, vec![]), shown(Cursor::ZoomOut));
+        canvas_frame(&mut app, &ctx, alt, vec![press(p, true, alt)]);
+        canvas_frame(&mut app, &ctx, alt, vec![press(p, false, alt)]);
+        assert_eq!(app.view().unwrap().zoom, z * 0.5);
+        assert_eq!(canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![]), shown(Cursor::Hand));
+        let before = *app.view().unwrap();
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![press(p, true, egui::Modifiers::NONE)]);
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![egui::Event::PointerMoved(p + vec2(80.0, 0.0))]);
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![press(p + vec2(80.0, 0.0), false, egui::Modifiers::NONE)]);
+        assert_eq!(app.view().unwrap().zoom, before.zoom);
+        assert!(app.view().unwrap().origin.x < before.origin.x);
+        assert_eq!(app.session.tool_id(), "rectangleFrame");
+    }
+
+    #[test]
+    fn spring_zoom_scrubs_and_owns_pointer_release_after_shortcut_release() {
+        let mut app = zoom_app("rectangleFrame");
+        let ctx = egui::Context::default();
+        let p = pos2(300.0, 250.0);
+        hover(&mut app, &ctx, p);
+        let z = app.view().unwrap().zoom;
+        let doc = app.session.doc().unwrap().doc.clone();
+        // Ctrl is the platform command modifier on Windows/Linux, using the same input path.
+        let cmd = egui::Modifiers { command: true, ctrl: true, ..egui::Modifiers::NONE };
+        canvas_frame(&mut app, &ctx, cmd, vec![space_key(true, cmd), press(p, true, cmd)]);
+        let end = p + vec2(150.0, 0.0);
+        canvas_frame(&mut app, &ctx, cmd, vec![egui::Event::PointerMoved(end)]);
+        assert!((app.view().unwrap().zoom - z * std::f64::consts::E).abs() < 1e-9);
+        let scrubbed = app.view().unwrap().zoom;
+        assert_eq!(canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![space_key(false, egui::Modifiers::NONE)]), shown(Cursor::Crosshair));
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![press(end, false, egui::Modifiers::NONE)]);
+        assert_eq!(app.view().unwrap().zoom, scrubbed, "no extra click zoom at the end of a scrub");
+        assert!(std::sync::Arc::ptr_eq(&doc, &app.session.doc().unwrap().doc));
+        // The original tool still draws after the temporary gesture.
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![press(p, true, egui::Modifiers::NONE)]);
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![egui::Event::PointerMoved(p + vec2(50.0, 50.0))]);
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![press(p + vec2(50.0, 50.0), false, egui::Modifiers::NONE)]);
+        assert!(!std::sync::Arc::ptr_eq(&doc, &app.session.doc().unwrap().doc));
+        assert_eq!(app.session.tool_id(), "rectangleFrame");
+    }
+
+    #[test]
+    fn spring_zoom_is_suppressed_while_typing_in_a_text_frame() {
+        let mut app = zoom_app("type");
+        let frame = app.run("frame.create", json!({"rect":[36,36,300,200],"content":"text","text":"Hello"})).unwrap();
+        app.run("text.select", json!({"story":frame["story"],"anchor":5})).unwrap();
+        assert!(app.session.wants_text());
+        let ctx = egui::Context::default();
+        let p = pos2(300.0, 250.0);
+        hover(&mut app, &ctx, p);
+        let before = *app.view().unwrap();
+        let alt = egui::Modifiers { alt: true, ..CMD };
+        for m in [CMD, alt] {
+            app.run("text.select", json!({"story":frame["story"],"anchor":5})).unwrap();
+            assert!(app.session.wants_text());
+            assert!(!matches!(canvas_frame(&mut app, &ctx, m, vec![space_key(true, m)]), egui::CursorIcon::ZoomIn | egui::CursorIcon::ZoomOut));
+            canvas_frame(&mut app, &ctx, m, vec![press(p, true, m)]);
+            canvas_frame(&mut app, &ctx, m, vec![press(p, false, m)]);
+            assert_eq!(app.view().unwrap().zoom, before.zoom);
+            assert_eq!(app.view().unwrap().origin, before.origin);
+            canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![space_key(false, egui::Modifiers::NONE)]);
+        }
+    }
+
+    #[test]
+    fn spring_zoom_is_suppressed_while_a_text_field_has_focus() {
+        let mut app = zoom_app("rectangleFrame");
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        let p = pos2(300.0, 250.0);
+        hover(&mut app, &ctx, p);
+        let before = *app.view().unwrap();
+        for m in [egui::Modifiers::NONE, CMD, egui::Modifiers { alt: true, ..CMD }] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    events: vec![egui::Event::ModifiersChanged(m), space_key(true, m), egui::Event::Text("x".into()), egui::Event::PointerMoved(p)],
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.text_edit_singleline(&mut text).request_focus();
+                    show(&mut app, ui);
+                },
+            );
+            output.textures_delta.clear();
+            assert!(ctx.text_edit_focused());
+            assert!(!matches!(output.platform_output.cursor_icon, egui::CursorIcon::ZoomIn | egui::CursorIcon::ZoomOut | egui::CursorIcon::Grab));
+            assert_eq!(app.view().unwrap().zoom, before.zoom);
+            assert_eq!(app.session.tool_id(), "rectangleFrame");
+        }
+        assert!(!text.is_empty(), "typing still reaches the field");
+    }
+
+    #[test]
+    fn spring_zoom_does_not_interrupt_an_existing_tool_drag() {
+        let mut app = zoom_app("rectangleFrame");
+        let ctx = egui::Context::default();
+        let p = pos2(300.0, 250.0);
+        hover(&mut app, &ctx, p);
+        let before = *app.view().unwrap();
+        let doc = app.session.doc().unwrap().doc.clone();
+        canvas_frame(&mut app, &ctx, egui::Modifiers::NONE, vec![press(p, true, egui::Modifiers::NONE)]);
+        let end = p + vec2(100.0, 100.0);
+        canvas_frame(&mut app, &ctx, CMD, vec![space_key(true, CMD), egui::Event::PointerMoved(end)]);
+        canvas_frame(&mut app, &ctx, CMD, vec![press(end, false, CMD)]);
+        assert_eq!(app.view().unwrap().zoom, before.zoom);
+        assert_eq!(app.view().unwrap().origin, before.origin);
+        assert!(!std::sync::Arc::ptr_eq(&doc, &app.session.doc().unwrap().doc));
+    }
+
+    #[test]
+    fn spring_zoom_does_not_zoom_on_the_rulers() {
+        let mut app = zoom_app("rectangleFrame");
+        app.ui.rulers = true;
+        let ctx = egui::Context::default();
+        hover(&mut app, &ctx, pos2(300.0, 250.0));
+        let rect = app.canvas_rect.unwrap();
+        let p = pos2(rect.min.x - RULER / 2.0, rect.center().y);
+        hover(&mut app, &ctx, p);
+        let before = *app.view().unwrap();
+        canvas_frame(&mut app, &ctx, CMD, vec![space_key(true, CMD)]);
+        canvas_frame(&mut app, &ctx, CMD, vec![press(p, true, CMD)]);
+        canvas_frame(&mut app, &ctx, CMD, vec![press(p, false, CMD)]);
+        assert_eq!(app.view().unwrap().zoom, before.zoom);
+        assert_eq!(app.view().unwrap().origin, before.origin);
     }
 
     #[test]

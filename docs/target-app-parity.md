@@ -1,6 +1,6 @@
 # DesignCraft parity with Adobe InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343)) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343); spring-loaded Zoom navigation) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
 
 The authoritative assessment of how close DesignCraft is to Adobe InDesign. [ROADMAP.md](../ROADMAP.md)
 summarizes it; [gaps.md](gaps.md) lists every known shortfall one at a time; the feature-by-feature
@@ -407,6 +407,7 @@ It is evidence of breadth: each item exists. It is not a claim of InDesign-level
 - Table and cell styles (round-trip through IDML): cell styles (fill, insets, vertical justification, strokes, paragraph style) and table styles (region cell styles, border, alternating rows, spacing); apply from the Table panel, edits re-apply to every user; `style.cell.*`, `style.table.*`.
 - Style groups: paragraph and character styles shown in group folders, Move to Group (new, existing, none); `style.group` renames every use (styles, stories, table cells, footnotes, object styles).
 - Scrubby zoom: drag the Zoom tool left or right to zoom continuously around the press point.
+- Spring-loaded Zoom: hold Cmd+Space (Ctrl+Space on Windows/Linux) for the Zoom cursor and click/scrubby zoom; Alt-click zooms out. Release returns to the previous tool without changing the document or undo history. Text-frame and text-field typing suppress the shortcut; Space remains Hand.
 - Guides belong to the active layer: hidden with it (or with its Show Guides off) and locked with it.
 - Pencil tool (N): freehand strokes, shown as you draw in the layer's colour, simplified to smooth paths (Alt closes); Smooth and Erase tools re-fit or remove the stretch you drag along (`path.smooth`, `path.erase`).
 - Edit › Keyboard Shortcuts: every command, click and press the new keys, conflicts shown, per-command and global reset; `window.setShortcut`.
@@ -453,6 +454,7 @@ Task notes that headed ROADMAP.md:
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-12 | minor | Text threads by hand; stage note and distance to alpha follow the gate (5–7 h, #165); percentages unchanged |
+| 2026-10-11 | minor | Spring-loaded Zoom navigation added to the working feature inventory (DC-1); readiness estimates unchanged |
 | 2026-10-10 | minor | Full number 42% → 47%: method aligned with the standard (plain weighted sum, the ×0.9 discount dropped), no new evidence; readiness table with hours for full, mainstream and essentials; beta distance 33 → 28 points |
 | 2026-10-10 | minor | Added mainstream practitioner (~42%) and essentials user (~54%) numbers with written weights and discounts and a user-evidence count; full number (42%) now written as 47.2% × 0.9, value unchanged |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate (manual threading missing); Type & text frames row updated |
