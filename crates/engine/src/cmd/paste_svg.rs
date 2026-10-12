@@ -63,6 +63,8 @@ struct StrokeStyle {
 struct Notes {
     gradients: usize,
     images: usize,
+    /// Paths whose fill-opacity and stroke-opacity differ (one object opacity holds only one).
+    mixed_opacity: usize,
     too_deep: bool,
 }
 
@@ -149,6 +151,11 @@ fn convert(g: &usvg::Group, depth: usize, notes: &mut Notes, out: &mut Vec<Art>)
                 if fill.is_none() && stroke.is_none() {
                     continue;
                 }
+                if let (Some(f), Some((c, _))) = (&fill, &stroke)
+                    && (f.opacity - c.opacity).abs() > f32::EPSILON
+                {
+                    notes.mixed_opacity += 1;
+                }
                 out.push(Art::Path { path: bezpath(path.data(), xf), fill, stroke, opacity: 1.0 });
             }
             usvg::Node::Group(child) => {
@@ -227,7 +234,8 @@ fn build(d: &mut designcraft_doc::Document, art: Vec<Art>, layer: designcraft_do
                 // A straight two-point segment is a graphic line (Line tool); anything else a path.
                 let straight = |a: &designcraft_geom::Anchor| a.h_in == a.p && a.h_out == a.p;
                 let line = data.subpaths.len() == 1 && anchors == 2 && data.subpaths.iter().all(|s| !s.closed && s.anchors.iter().all(straight));
-                // The object's opacity: its own times the paint's (fill-opacity, else stroke-opacity).
+                // The object's opacity: its own times the paint's. Items have no separate fill and
+                // stroke opacity, so a path with both takes the fill's (`Notes::mixed_opacity`).
                 let paint = fill.map(|f| f.opacity).or(stroke.as_ref().map(|(c, _)| c.opacity)).unwrap_or(1.0);
                 let mut it = Item::new(ItemId(d.alloc()), layer, if line { Shape::GraphicLine } else { Shape::Path }, data);
                 it.fill = match fill {
@@ -296,6 +304,9 @@ fn paste_svg(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if notes.too_deep {
         warnings.push(format!("objects nested more than {MAX_DEPTH} groups deep left out"));
+    }
+    if notes.mixed_opacity > 0 {
+        warnings.push(format!("{} object(s) with different fill and stroke opacity pasted with the fill's opacity for both", notes.mixed_opacity));
     }
     if notes.images > 0 {
         warnings.push(format!("{} embedded image(s) left out (place images with File › Place)", notes.images));
@@ -381,6 +392,24 @@ mod tests {
         // Centred on the first page by default.
         let page = st.doc.spread(SpreadRef::Doc(0)).unwrap().pages[0].bounds();
         assert!((all.center().x - page.center().x).abs() < 0.5, "{all:?} {page:?}");
+    }
+
+    #[test]
+    fn differing_fill_and_stroke_opacity_takes_the_fills_and_warns() {
+        let mut s = session();
+        let svg = |stroke_opacity: &str| {
+            format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="100pt" viewBox="0 0 100 100"><rect width="100" height="100" fill="#ff0000" fill-opacity="0.4" stroke="#000" stroke-opacity="{stroke_opacity}"/></svg>"##
+            )
+        };
+        let r = s.execute("edit.pasteSvg", &json!({"svg": svg("0.9")})).unwrap();
+        let id = ItemId(r["ids"][0].as_u64().unwrap());
+        assert!((s.doc().unwrap().doc.item(id).unwrap().opacity - 0.4).abs() < 1e-3);
+        assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("fill's opacity")), "{r}");
+        let r = s.execute("edit.pasteSvg", &json!({"svg": svg("0.4")})).unwrap();
+        let id = ItemId(r["ids"][0].as_u64().unwrap());
+        assert!((s.doc().unwrap().doc.item(id).unwrap().opacity - 0.4).abs() < 1e-3);
+        assert_eq!(r["warnings"], json!([]), "equal opacities fit the object's");
     }
 
     #[test]
