@@ -9,9 +9,9 @@
 
 mod fontdb;
 mod group;
+mod kind;
 #[cfg(target_os = "macos")]
 mod mac_fonts;
-mod kind;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod vertical;
