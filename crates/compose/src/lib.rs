@@ -498,6 +498,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
     };
     let para_ranges = story.para_ranges();
     let np = para_ranges.len();
+    let deleted = deleted_paras(story, &para_ranges);
     let hyph_exceptions = doc.hyphenation_exception_map();
     let mut list_counter: u32 = 0;
     // Named lists number independently of layout: one pass up front.
@@ -507,9 +508,10 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             .paras
             .iter()
             .zip(&para_ranges)
-            .map(|(p, r)| {
+            .zip(&deleted)
+            .map(|((p, r), del)| {
                 let (pp, _) = doc.styles.resolve_para(p);
-                if pp.list_type != designcraft_doc::ListType::Numbers || pp.list_name.is_empty() || r.is_empty() {
+                if pp.list_type != designcraft_doc::ListType::Numbers || pp.list_name.is_empty() || r.is_empty() || *del {
                     return None;
                 }
                 let c = counters.entry(pp.list_name.clone()).or_insert_with(|| doc.list_start(story.id, &pp.list_name));
@@ -564,6 +566,27 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             rewind(j, &snaps, &note_snaps, &mut notes, &mut out, &mut cur, &mut list_counter, &mut force_col, &mut line_cap);
             pi = j;
             continue 'paras;
+        }
+        if deleted.get(pi).copied().unwrap_or(false) {
+            // A deleted paragraph takes no room; for keeps it stands in for the one before it.
+            let filler = info.last().map_or(
+                ParaInfo {
+                    start: (cur.fi, cur.col),
+                    at_top: cur.last_baseline.is_none(),
+                    end: (cur.fi, cur.col),
+                    lines: 0,
+                    lines_in_end_col: 0,
+                    keep_with_next: 0,
+                    keep_together: false,
+                    keep_all: false,
+                    keep_first: 1,
+                    keep_last: 1,
+                },
+                |p| ParaInfo { lines_in_end_col: 0, ..p.clone() },
+            );
+            info.push(filler);
+            pi += 1;
+            continue;
         }
         let pf = &story.paras[pi];
         let (pp, base_chars) = doc.styles.resolve_para(pf);
@@ -1588,6 +1611,33 @@ fn rewind(
         (notes.num, notes.key) = (num, key);
         notes.placed.truncate(placed);
     }
+}
+
+/// Paragraphs that tracked changes delete: all their text is deleted, and so is their return or
+/// the return before them (then they join a paragraph and add nothing to it).
+fn deleted_paras(story: &Story, ranges: &[Range<usize>]) -> Vec<bool> {
+    let mut spans: Vec<Range<usize>> = Vec::new();
+    for (r, f) in story.runs() {
+        if f.over.change != Some(designcraft_doc::ChangeMark::Deleted) {
+            continue;
+        }
+        match spans.last_mut() {
+            Some(l) if l.end == r.start => l.end = r.end,
+            _ => spans.push(r),
+        }
+    }
+    if spans.is_empty() {
+        return vec![false; ranges.len()];
+    }
+    let covered = |r: Range<usize>| {
+        r.is_empty() || spans.get(spans.partition_point(|s| s.end <= r.start)).is_some_and(|s| s.start <= r.start && s.end >= r.end)
+    };
+    let return_deleted = |r: &Range<usize>| r.end < story.text.len() && covered(r.end..r.end + 1);
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(i, r)| covered(r.clone()) && (return_deleted(r) || i.checked_sub(1).and_then(|p| ranges.get(p)).is_some_and(return_deleted)))
+        .collect()
 }
 
 /// Where a placed paragraph sits (for keep resolution).
