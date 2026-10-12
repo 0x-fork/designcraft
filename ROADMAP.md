@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5–7 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery) · **Target:** Adobe InDesign 2026
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents) · **Target:** Adobe InDesign 2026
 
 DesignCraft aims at full Adobe InDesign parity, and to be better: faster, open (documented JSON
 format + IDML), scriptable by agents (MCP), and available on the web.
@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-12** · Pages panel: double-clicking a parent shows that parent and selects only its row; parent rows show rendered thumbnails. Commands name parents by id, full name, or a prefix only one parent has; an unknown or ambiguous name is an error instead of clearing the page's parent (#624). No readiness percentage change.
 - **2026-10-12** · With the Type tool, dragging a table's column or row border resizes it (the double-arrow cursor shows over a border): later columns and rows move along, Shift keeps the table size, and Shift on the right or bottom edge scales every column or row. A dragged row becomes At Least; one undo step per drag, Esc cancels; works in rotated frames and turned spreads. Scripts use `table.resizeBorder`. No readiness percentage change.
 - **2026-10-12** · The Tools panel's Fill/Stroke keys work: D (default fill and stroke), X (fill or stroke in front), Shift+X (swap per object, tints included) and / (Apply None), as `color.*` commands; swap and default are one undo step (`object.swapFillStroke`, `object.defaultFillStroke`); the Color panel follows the proxy's fill/stroke choice. No readiness percentage change.
 - **2026-10-12** · With a placed graphic selected (Direct Selection), the Transform values act on the graphic inside its frame, as in InDesign: a tilted frame's image can be straightened to 0°. No readiness percentage change.
