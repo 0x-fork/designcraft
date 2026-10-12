@@ -11,6 +11,7 @@ mod fontdb;
 mod group;
 #[cfg(target_os = "macos")]
 mod mac_fonts;
+mod kind;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod vertical;
@@ -22,6 +23,7 @@ pub use fontdb::{
 pub use group::{FamilyInfo, FontGroup, sort_for_menu};
 pub use harfrust::Feature;
 use harfrust::{Direction, Language, ShapeOptions, Tag, UnicodeBuffer};
+pub use kind::{FaceKind, FontClass, FontFormat, classify, panose_distance};
 pub use kurbo::BezPath;
 use skrifa::MetadataProvider;
 use skrifa::instance::Size;
