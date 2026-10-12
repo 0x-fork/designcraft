@@ -92,7 +92,7 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
         d.check_thread(from, to)?;
         d.thread_keeping_story(from, to)?;
         let sid = d.item(from).and_then(|i| i.text_frame()).map(|t| t.story).ok_or_else(|| bad("text.thread", "threading lost the story"))?;
-        let pages = if autoflow { super::place_text_autoflow(d, sid, AUTOFLOW_MAX_PAGES)? } else { 0 };
+        let pages = if autoflow { super::place_text_autoflow(d, sid, AUTOFLOW_MAX_PAGES, "text.thread")? } else { 0 };
         *sel = Selection::items(vec![joined]);
         Ok(json!({"story": sid.0, "from": from.0, "to": to.0, "overset": overset(d, sid), "pagesAdded": pages}))
     })
@@ -292,7 +292,7 @@ mod tests {
         let undo = s.doc().unwrap().history.undo.len();
         let doc = s.doc().unwrap().doc.clone();
         let e = s.execute("text.thread", &json!({"from": a, "rect": [72, 300, 300, 700], "spread": parent, "autoflow": true})).unwrap_err();
-        assert!(e.to_string().contains("document page"), "{e}");
+        assert!(e.to_string().contains("text.thread"), "{e}");
         assert_eq!(s.doc().unwrap().history.undo.len(), undo);
         assert_eq!(*s.doc().unwrap().doc, *doc);
         assert_eq!(s.doc().unwrap().doc.page_count(), 2);
