@@ -1989,7 +1989,7 @@ pub fn effects_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         }
     });
     // The level the settings apply to, with its blend mode and opacity ("Group: Color Dodge 100%").
-    let group = matches!(it.content, designcraft_doc::Content::Group { .. });
+    let group = it.is_group();
     ui.horizontal(|ui| {
         let level = crate::i18n::tr(&app.ui.language, if group { "Group:" } else { "Object:" });
         crate::rtl::label(ui, egui::RichText::new(level).font(crate::theme::semibold(12.0)));
@@ -2292,5 +2292,31 @@ mod effects_panel_tests {
         assert!(texts.iter().any(|t| t == "Object:"), "{texts:?}");
         click(&mut app, &ctx, "Knockout Group");
         assert!(!item(&app, a).knockout);
+    }
+
+    #[test]
+    fn pasted_into_frames_keep_object_level_and_disable_group_blending() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Default::default());
+        app.run("file.new", json!({})).unwrap();
+        let child = app.run("frame.create", json!({"rect": [80, 80, 120, 120]})).unwrap()["id"].clone();
+        app.run("selection.set", json!({"ids": [child]})).unwrap();
+        app.run("edit.copy", json!({})).unwrap();
+        let container = app.run("frame.create", json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        app.run("selection.set", json!({"ids": [container]})).unwrap();
+        app.run("edit.pasteInto", json!({})).unwrap();
+        app.run("selection.set", json!({"ids": [container]})).unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "en");
+        crate::theme::apply(&ctx, &Tokens::for_brightness(crate::theme::Brightness::default()));
+        let texts: Vec<String> = frame(&mut app, &ctx, vec![]).into_iter().map(|(t, _)| t).collect();
+        assert!(texts.iter().any(|t| t == "Object:"), "a frame remains an object after Paste Into: {texts:?}");
+        let undo = app.session.doc().unwrap().history.undo.len();
+        click(&mut app, &ctx, "Isolate Blending");
+        click(&mut app, &ctx, "Knockout Group");
+        let st = app.session.doc().unwrap();
+        let it = st.doc.item(designcraft_doc::ItemId(container)).unwrap();
+        assert!(it.has_nested_items());
+        assert!(!it.isolate && !it.knockout, "group-only options stay disabled for a frame holding content");
+        assert_eq!(st.history.undo.len(), undo, "disabled controls do not create undo steps");
     }
 }
