@@ -1362,12 +1362,13 @@ impl<'r> Importer<'r> {
     fn char_attrs(&mut self, e: &El) -> CharAttrs {
         let mut a = CharAttrs::default();
         if let Some(f) = e.prop("AppliedFont") {
-            let f = f.trim();
-            // Some writers append the style after a tab.
-            let fam = f.split('\t').next().unwrap_or(f);
-            a.font_family = self.composite_names.get(fam).cloned().or_else(|| names::font_family_in(fam));
+            // Some writers append the style after a tab. Spaces are part of a family's name
+            // ("Minion Pro " is another font than "Minion Pro"); line breaks around it aren't.
+            let fam = f.split('\t').next().unwrap_or(&f).trim_matches(['\n', '\r']);
+            a.font_family = self.composite_names.get(fam.trim()).cloned().or_else(|| names::font_family_in(fam));
         }
-        a.font_style = e.prop("FontStyle");
+        // "Nothing" leaves the style unset: it comes from the paragraph style.
+        a.font_style = e.prop("FontStyle").filter(|s| !matches!(s.trim(), "Nothing" | "$ID/Nothing"));
         a.size = e.num("PointSize");
         a.leading = e.prop("Leading").and_then(|l| names::leading_in(l.trim()));
         // Automatic kerning may carry an inactive numeric value (including the
