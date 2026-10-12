@@ -408,6 +408,13 @@ impl Renderer {
         if let Some(area) = grid_area.filter(|_| grid.in_back) {
             grid::draw(ctx, f, sp, grid, area);
         }
+        // Blend modes blend with the objects below, not with the paper (as in InDesign and in PDF,
+        // where the page's group starts transparent): a Color Dodge or Screen object over blank paper
+        // shows as it is. So the items are drawn in their own group, laid over the paper once.
+        let isolate = f.opts.paper && spread_blends(doc, sp);
+        if isolate {
+            ctx.push_layer(None, None, None, None, None);
+        }
         // Layers back to front; within each layer parent items first (document spreads only).
         for layer in doc.layers.iter().rev() {
             if !layer.visible || f.opts.printing_only && !layer.printable {
@@ -441,6 +448,9 @@ impl Renderer {
                     self.draw_item(ctx, f, it, Affine::IDENTITY, None);
                 }
             }
+        }
+        if isolate {
+            ctx.pop_layer();
         }
         if let Some(area) = grid_area.filter(|_| !grid.in_back) {
             grid::draw(ctx, f, sp, grid, area);
@@ -971,6 +981,17 @@ fn set_fill_paint(ctx: &mut RenderContext, doc: &Document, fill: &designcraft_do
 /// overprints by default)? It's then multiplied over what's beneath.
 pub(crate) fn overprints(f: &Frame, swatch: &str, tint: f32, flag: bool) -> bool {
     f.opts.overprint_preview && (flag || (f.doc.settings.overprint_black && swatch == designcraft_color::swatch::BLACK && tint >= 0.999))
+}
+
+/// Does any item on the spread, or on the parent pages it shows, use a blend mode other than
+/// Normal (groups and pasted-in items included)?
+fn spread_blends(doc: &Document, sp: &designcraft_doc::Spread) -> bool {
+    let blends = |it: &Item| {
+        let mut any = false;
+        it.walk(&mut |i| any |= i.blend != Default::default());
+        any
+    };
+    sp.items.iter().any(|i| blends(i)) || doc.parents.iter().any(|p| p.items.iter().any(|i| blends(i)))
 }
 
 pub fn blend_mode(b: DcBlend) -> BlendMode {
