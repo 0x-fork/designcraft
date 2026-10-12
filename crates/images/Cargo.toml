@@ -15,7 +15,7 @@ image = { workspace = true }
 tiff = { workspace = true }
 resvg = { workspace = true }
 log = { workspace = true }
-moxcms = "0.8"
+craft-cms = { workspace = true }
 zune-core = { version = "0.5", default-features = false }
 zune-jpeg = "0.5"
 

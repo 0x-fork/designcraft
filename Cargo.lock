@@ -809,6 +809,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-cms"
+version = "0.1.0"
+source = "git+https://github.com/aiongg/craft-libs.git?rev=6710c2353842eab1be23840aafaf16a20811d25c#6710c2353842eab1be23840aafaf16a20811d25c"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "craft-print"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=d991bf6792f8ade99c51358bf3c1d902c8cd96b5#d991bf6792f8ade99c51358bf3c1d902c8cd96b5"
@@ -939,8 +947,8 @@ dependencies = [
 name = "designcraft-color"
 version = "0.7.1"
 dependencies = [
+ "craft-cms",
  "kurbo",
- "moxcms",
  "proptest",
  "serde",
  "serde_json",
@@ -1078,11 +1086,11 @@ dependencies = [
 name = "designcraft-images"
 version = "0.7.1"
 dependencies = [
+ "craft-cms",
  "designcraft-color",
  "designcraft-fonts",
  "image",
  "log",
- "moxcms",
  "resvg",
  "tiff",
  "zune-core",
