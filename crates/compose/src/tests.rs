@@ -6155,6 +6155,42 @@ fn anchored_object_wraps_another_storys_text() {
     assert!(lines_in_band(&moved, 200.0, 260.0).iter().all(|l| l.x0 >= left + 100.0 - 1e-6));
 }
 
+/// An anchored object's wrap is built as a page item's: a contour on both sides of an oval sets
+/// text left and right of it, closer in where the oval narrows.
+#[test]
+fn anchored_object_wraps_with_its_contour_and_side() {
+    use designcraft_doc::anchored::AnchorRelative as R;
+    let long = [LOREM; 4].join(" ");
+    let (mut d, a, fa) = doc_with("Anchor here.", Rect::new(0.0, 0.0, 300.0, 400.0), ParaAttrs::default());
+    let lid = d.default_layer();
+    let (_, b) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(320.0, 0.0, 620.0, 400.0), lid, &long, ParaFormat::default()).unwrap();
+    let left = all_lines(&compose_story(&d, b, &ComposeOptions::default()))[0].x0;
+    let area = d.item(fa).unwrap().text_area();
+    let mut it =
+        designcraft_doc::Item::new(ItemId(d.alloc()), lid, designcraft_doc::Shape::Oval, designcraft_geom::shapes::ellipse(Rect::new(0.0, 0.0, 100.0, 100.0)));
+    it.wrap.mode = WrapMode::Contour;
+    it.wrap.side = WrapSide::BothSides;
+    let position = designcraft_doc::AnchorPosition::Custom {
+        x_relative: R::TextFrame,
+        y_relative: R::TextFrame,
+        x_offset: left + 100.0 - area.x0,
+        y_offset: 100.0 - area.y0,
+        object_point: 0,
+        ref_point: 0,
+        keep_within_column: false,
+    };
+    d.story_mut(a).unwrap().insert_object(0, designcraft_doc::AnchoredObject::new(it, position));
+    let cs = compose_story(&d, b, &ComposeOptions::default());
+    let lines = all_lines(&cs);
+    let pairs: Vec<(&Line, &Line)> = lines.windows(2).filter(|w| w[0].baseline == w[1].baseline).map(|w| (w[0], w[1])).collect();
+    assert!(pairs.len() >= 3, "{} lines share a baseline", pairs.len());
+    let centre = left + 150.0;
+    assert!(pairs.iter().all(|(l, r)| l.x1 < centre && r.x0 > centre), "text on both sides");
+    let top = pairs.first().unwrap().0.x1;
+    let mid = pairs.iter().map(|(l, _)| l.x1).fold(f64::INFINITY, f64::min);
+    assert!(top > mid + 5.0, "top {top}, middle {mid}");
+}
+
 const OBJECT_LEN: usize = designcraft_doc::OBJECT_MARK.len_utf8();
 
 #[test]
