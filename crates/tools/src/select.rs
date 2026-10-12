@@ -179,6 +179,26 @@ fn handle_at(cx: &ToolContext, p: Point) -> Option<usize> {
     handles(b).iter().position(|h| (h.x - p.x).abs() <= tol && (h.y - p.y).abs() <= tol)
 }
 
+/// Side handles are drawn on the canvas bounding box; fitting uses the frame's local axes.
+fn fitting_axis(cx: &ToolContext, handle: usize) -> &'static str {
+    if handle.is_multiple_of(2) {
+        return "both";
+    }
+    let canvas_height = matches!(handle, 1 | 5);
+    let local_width_is_vertical = cx
+        .selection
+        .items
+        .first()
+        .and_then(|id| {
+            let it = cx.doc.item(*id)?;
+            let xf = cx.item_canvas_xf(*id)? * it.xf;
+            let [a, b, _, _, _, _] = xf.as_coeffs();
+            Some(b.abs() > a.abs())
+        })
+        .unwrap_or(false);
+    if canvas_height == local_width_is_vertical { "width" } else { "height" }
+}
+
 /// Just outside a corner handle of the selection → rotate.
 fn rotate_zone(cx: &ToolContext, p: Point) -> Option<Point> {
     let b = cx.selection_bounds()?;
@@ -778,11 +798,7 @@ impl Tool for SelectionTool {
                 if !self.direct
                     && let Some(h) = handle_at(cx, p)
                 {
-                    let axis = match h {
-                        1 | 5 => "height",
-                        3 | 7 => "width",
-                        _ => "both",
-                    };
+                    let axis = fitting_axis(cx, h);
                     self.drag = Drag::None;
                     return vec![Action::Exec("object.fit".into(), json!({"mode": "fitFrameToContent", "axis": axis}))];
                 }
