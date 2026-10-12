@@ -477,9 +477,60 @@ fn transform_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
         set.insert("ref".into(), json!(rp));
         let _ = app.run("transform.set", Value::Object(set));
     }
+    transform_angles(app, ui, rp);
     if more_options(ui, &app.ui.language).clicked() {
         app.ui.open_panel = Some("info".into());
     }
+}
+
+/// Properties › Transform, below X/Y/W/H as in InDesign: rotation and shear angles beside the
+/// X and Y scales (totals, as Transformations are Totals), then rotate a quarter turn and flip.
+fn transform_angles(app: &mut DesignApp, ui: &mut Ui, rp: u8) {
+    let t = Tokens::get(ui.ctx());
+    let lang = app.ui.language.clone();
+    let tv = app.session.execute("transform.info", &json!({})).ok();
+    let tv_get = |k: &str| tv.as_ref().and_then(|v| v[k].as_f64());
+    ui.add_space(4.0);
+    let b = block(ui, 2.0 * FIELD_H + 4.0);
+    let mut set = serde_json::Map::new();
+    let rows = [
+        [("tool-rotate", "Rotation Angle", "rotation", "°", "p_rot"), ("tool-scale", "Scale X Percentage", "scaleX", "%", "p_sx")],
+        [("tool-shear", "Shear X Angle", "shear", "°", "p_shear"), ("tool-scale", "Scale Y Percentage", "scaleY", "%", "p_sy")],
+    ];
+    for (row, cells) in rows.into_iter().enumerate() {
+        let yy = row as f32 * 25.0;
+        for (col, (icon, tip, key, suffix, id)) in cells.into_iter().enumerate() {
+            let x = if col == 0 { 40.0 } else { 120.0 };
+            let ir = sub(b, x, yy + 2.0, 17.0, 17.0);
+            icons::paint(ui.painter(), ir, icon, t.icon);
+            ui.interact(ir, ui.id().with(id), Sense::hover()).on_hover_text(crate::i18n::tr(&lang, tip));
+            if let Some(v) = place(ui, sub(b, x + 19.0, yy, 54.0, FIELD_H), |ui| widgets::number(ui, id, tv_get(key), suffix, 54.0, 1)) {
+                set.insert(key.into(), json!(v));
+            }
+        }
+    }
+    if !set.is_empty() {
+        set.insert("ref".into(), json!(rp));
+        let _ = app.run("transform.set", Value::Object(set));
+    }
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.add_space(36.0);
+        ui.spacing_mut().item_spacing.x = 10.0;
+        for (icon, tip, cmd, params) in [
+            ("rotate-cw", "Rotate 90° Clockwise", "transform.rotate", json!({"angle": -90})),
+            ("rotate-ccw", "Rotate 90° Counterclockwise", "transform.rotate", json!({"angle": 90})),
+            ("flip-h", "Flip Horizontal", "transform.flip", json!({"axis": "horizontal"})),
+            ("flip-v", "Flip Vertical", "transform.flip", json!({"axis": "vertical"})),
+        ] {
+            let label = crate::i18n::tr(&lang, tip);
+            let resp = icon_toggle(ui, icon, false, label);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+            if resp.clicked() {
+                let _ = app.run(cmd, params);
+            }
+        }
+    });
 }
 
 /// A stroke-type preview dropdown (light box with the line style).
@@ -2547,5 +2598,33 @@ mod tests {
         let doc = &h.state().session.active().unwrap().doc;
         assert_eq!(doc.story(story).unwrap().char_format_at(0).over.fill.as_deref(), Some(CYAN), "the text is cyan");
         assert_eq!(doc.item(designcraft_doc::ids::ItemId(id)).unwrap().fill.swatch, "[None]", "the frame isn't");
+    }
+
+    #[test]
+    fn transform_flips_and_rotates_from_properties() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [72, 72, 300, 200]})).unwrap()["id"].as_u64().unwrap();
+        app.run("selection.set", json!({"ids": [id]})).unwrap();
+        let mut h = panel(app);
+        let xf = |h: &Harness<'_, DesignApp>| h.state().session.active().unwrap().doc.item(designcraft_doc::ids::ItemId(id)).unwrap().xf;
+        // Flip Horizontal mirrors the frame (a negative determinant); Flip Vertical as well brings it
+        // back to a half turn, as in the tutorial's petal.
+        h.get_by_label("Flip Horizontal").click();
+        h.run_steps(3);
+        assert!(xf(&h).determinant() < 0.0, "{:?}", xf(&h));
+        h.get_by_label("Flip Vertical").click();
+        h.run_steps(3);
+        let c = xf(&h).as_coeffs();
+        assert!((c[0] + 1.0).abs() < 1e-9 && (c[3] + 1.0).abs() < 1e-9, "a half turn: {c:?}");
+        let info = h.state_mut().session.execute("transform.info", &json!({})).unwrap();
+        assert!((info["rotation"].as_f64().unwrap().abs() - 180.0).abs() < 1e-6, "{info}");
+        // A quarter turn clockwise from there.
+        h.get_by_label("Rotate 90° Clockwise").click();
+        h.run_steps(3);
+        let info = h.state_mut().session.execute("transform.info", &json!({})).unwrap();
+        assert!((info["rotation"].as_f64().unwrap() - 90.0).abs() < 1e-6, "{info}");
+        // The angle and scale fields are there.
+        assert!(h.query_by(|n| n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("90°")).is_some());
     }
 }
