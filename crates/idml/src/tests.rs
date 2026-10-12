@@ -775,6 +775,60 @@ fn round_trips_anchored_objects() {
     assert_eq!(s.objects[1].position, AnchorPosition::AboveLine { align: AnchorAlign::Center, space_before: 3.0, space_after: 4.0 });
 }
 
+/// Anchored settings an item leaves unset come from its object style chain, attribute by attribute.
+#[test]
+fn anchored_objects_take_unset_settings_from_object_styles() {
+    use designcraft_doc::{AnchorPosition, anchored::AnchorRelative as R};
+    let styles = STYLES.replace(
+        r#"<ObjectStyle Self="ObjectStyle/$ID/[None]" Name="$ID/[None]"/>"#,
+        r#"<ObjectStyle Self="ObjectStyle/$ID/[None]" Name="$ID/[None]">
+          <AnchoredObjectSetting AnchoredPosition="InlinePosition" SpineRelative="false" LockPosition="false" PinPosition="true"
+            AnchorPoint="BottomRightAnchor" HorizontalAlignment="LeftAlign" HorizontalReferencePoint="TextFrame"
+            VerticalAlignment="BottomAlign" VerticalReferencePoint="LineBaseline" AnchorXoffset="0" AnchorYoffset="0" AnchorSpaceAbove="0"/>
+        </ObjectStyle>
+        <ObjectStyle Self="ObjectStyle/Side" Name="Side"><AnchoredObjectSetting HorizontalReferencePoint="PageMargins" PinPosition="false"/></ObjectStyle>
+        <ObjectStyle Self="ObjectStyle/Note" Name="Note"><Properties><BasedOn type="object">ObjectStyle/Side</BasedOn></Properties></ObjectStyle>"#,
+    );
+    let rect = |style: &str, setting: &str| {
+        format!(
+            r#"<Rectangle Self="r{style}" AppliedObjectStyle="ObjectStyle/{style}" ItemTransform="1 0 0 1 0 0">
+              <Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>
+                <PathPointType Anchor="0 0"/><PathPointType Anchor="0 10"/><PathPointType Anchor="10 10"/><PathPointType Anchor="10 0"/>
+              </PathPointArray></GeometryPathType></PathGeometry></Properties>
+              <AnchoredObjectSetting AnchoredPosition="Anchored" {setting}/>
+            </Rectangle>"#
+        )
+    };
+    let story = format!(
+        r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">
+          <ParagraphStyleRange><CharacterStyleRange><Content>a</Content>{}{}{}</CharacterStyleRange></ParagraphStyleRange>
+        </Story></idPkg:Story>"#,
+        rect("$ID/[None]", r#"AnchorXoffset="5" AnchorYoffset="-3""#),
+        rect("$ID/[None]", r#"AnchorPoint="TopLeftAnchor" VerticalReferencePoint="PageEdge""#),
+        rect("Note", r#"AnchorXoffset="2""#),
+    );
+    let d = import_idml(&fixture_with_table_styles(&styles, &story)).unwrap();
+    let s = d.stories.values().find(|s| !s.objects.is_empty()).unwrap();
+    let custom = |x_relative, y_relative, x_offset, y_offset, object_point, keep_within_column| AnchorPosition::Custom {
+        x_relative,
+        y_relative,
+        x_offset,
+        y_offset,
+        object_point,
+        ref_point: 6,
+        keep_within_column,
+    };
+    let positions: Vec<_> = s.objects.iter().map(|o| o.position.clone()).collect();
+    assert_eq!(
+        positions,
+        [
+            custom(R::TextFrame, R::Anchor, 5.0, -3.0, 8, true),
+            custom(R::TextFrame, R::PageEdge, 0.0, 0.0, 0, true),
+            custom(R::PageMargin, R::Anchor, 2.0, 0.0, 8, false),
+        ]
+    );
+}
+
 #[test]
 fn round_trips_frames_with_pasted_in_items() {
     let mut d = Document::new(&NewDocument::default());
