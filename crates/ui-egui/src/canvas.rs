@@ -2010,10 +2010,10 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     let _ = DVec2::ZERO;
 }
 
-/// Does the current pane take the keyboard? Both panes of a split window see the same events, so
-/// typing, tool keys, the clipboard and the input method serve only the pane last clicked.
+/// Does the current pane take the keyboard? Both panes (split, or the second window) see the same
+/// events, so typing, tool keys, the clipboard and the input method serve only the focused pane.
 fn keyboard_pane(app: &DesignApp) -> bool {
-    !app.split || app.pane == app.focus_pane
+    app.pane == app.focus_pane
 }
 
 /// One input method event for the text caret: marked text previews in the story, a commit types.
