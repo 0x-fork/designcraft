@@ -74,6 +74,9 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|d, sel| {
         let mut new_frame = || -> Result<ItemId> {
             let r = rect.ok_or_else(|| bad("text.thread", "give two of from, to and rect"))?;
+            if d.layer(layer).is_none_or(|l| l.locked || !l.visible) {
+                return Err(bad("text.thread", "the active layer is locked or hidden"));
+            }
             let para = ParaFormat { style: d.styles.default_paragraph.clone(), ..Default::default() };
             Ok(d.add_text_frame(sr, r, layer, "", para)?.0)
         };
@@ -92,7 +95,7 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
         d.check_thread(from, to)?;
         d.thread_keeping_story(from, to)?;
         let sid = d.item(from).and_then(|i| i.text_frame()).map(|t| t.story).ok_or_else(|| bad("text.thread", "threading lost the story"))?;
-        let pages = if autoflow { super::place_text_autoflow(d, sid, AUTOFLOW_MAX_PAGES)? } else { 0 };
+        let pages = if autoflow { super::place_text_autoflow(d, sid, AUTOFLOW_MAX_PAGES, "text.thread")? } else { 0 };
         *sel = Selection::items(vec![joined]);
         Ok(json!({"story": sid.0, "from": from.0, "to": to.0, "overset": overset(d, sid), "pagesAdded": pages}))
     })
@@ -242,6 +245,29 @@ mod tests {
     }
 
     #[test]
+    fn locked_frames_and_layers_refuse_threads() {
+        let mut s = session();
+        let (a, _) = text_frame(&mut s, [72.0, 72.0, 200.0, 120.0], &LONG.repeat(8));
+        let (b, _) = text_frame(&mut s, [72.0, 300.0, 200.0, 400.0], "");
+        let layer = s.doc().unwrap().active_layer.0;
+        let undo = s.doc().unwrap().history.undo.len();
+        s.execute("object.lock", &json!({"ids": [b]})).unwrap();
+        assert!(s.execute("text.thread", &json!({"from": a, "to": b})).is_err(), "locked frame");
+        assert!(s.execute("text.thread", &json!({"from": b, "to": a})).is_err(), "locked frame");
+        s.execute("edit.undo", &json!({})).unwrap();
+        for (set, rect) in [(json!({"locked": true}), false), (json!({"locked": true}), true), (json!({"visible": false}), true)] {
+            let mut p = json!({"id": layer});
+            p.as_object_mut().unwrap().extend(set.as_object().unwrap().clone());
+            s.execute("layer.set", &p).unwrap();
+            let t = if rect { json!({"from": a, "rect": [300, 300, 400, 400]}) } else { json!({"from": a, "to": b}) };
+            assert!(s.execute("text.thread", &t).is_err(), "{p} {t}");
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+        assert_eq!(frames(&mut s, a), [a]);
+    }
+
+    #[test]
     fn thread_a_new_frame_after_or_in_front() {
         let mut s = session();
         let (a, sa) = text_frame(&mut s, [72.0, 72.0, 200.0, 120.0], &LONG.repeat(8));
@@ -277,6 +303,24 @@ mod tests {
         // One undo removes the frames and the pages.
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(frames(&mut s, a), [a]);
+        assert_eq!(s.doc().unwrap().doc.page_count(), 2);
+    }
+
+    #[test]
+    fn autoflow_from_a_parent_frame_is_an_error() {
+        let mut s = session();
+        let parent = json!({"kind": "parent", "index": 0});
+        let r = s.execute(
+            "frame.create",
+            &json!({"rect": [72, 72, 300, 200], "content": "text", "text": LONG.repeat(300), "caret": false, "spread": parent}),
+        );
+        let a = r.unwrap()["id"].as_u64().unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        let doc = s.doc().unwrap().doc.clone();
+        let e = s.execute("text.thread", &json!({"from": a, "rect": [72, 300, 300, 700], "spread": parent, "autoflow": true})).unwrap_err();
+        assert!(e.to_string().contains("text.thread"), "{e}");
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+        assert_eq!(*s.doc().unwrap().doc, *doc);
         assert_eq!(s.doc().unwrap().doc.page_count(), 2);
     }
 

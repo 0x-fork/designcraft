@@ -497,7 +497,7 @@ impl Session {
         }
         let mut d = (*st.doc).clone();
         if overset {
-            let _ = cmd::place_text_autoflow(&mut d, sid, 500);
+            let _ = cmd::place_text_autoflow(&mut d, sid, 500, "Smart Text Reflow");
         } else {
             // Drop empty trailing frames on the last pages (one frame, nothing else there).
             while let Some(story) = d.story(sid) {
