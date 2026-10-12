@@ -1728,4 +1728,5 @@ pub(super) const TABLE: &[(&str, &str)] = &[
 ];
 
 /// Contexts whose Russian noun differs from the shared action/text-layout label.
-pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Columns", "table", "Столбцы"), ("Columns:", "grid", "Столбцы:"), ("Group", "selection", "Группа")];
+pub(super) const CONTEXT: &[(&str, &str, &str)] =
+    &[("Columns", "table", "Столбцы"), ("Columns:", "grid", "Столбцы:"), ("Group", "selection", "Группа")];
