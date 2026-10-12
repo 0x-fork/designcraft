@@ -59,6 +59,10 @@ impl Session {
             return;
         }
         self.tool = designcraft_tools::create(id);
+        // Any other tool unloads the place cursor.
+        if id != "placeGun" {
+            self.loaded = None;
+        }
         // Leaving the Type tool keeps the text frame selected.
         if id != "type"
             && let Some(st) = self.active_mut()

@@ -105,6 +105,16 @@ pub struct DocState {
 #[derive(Debug)]
 pub struct FontScope(pub u32);
 
+/// A graphic loaded in the place cursor (`place.load`, File › Place with no frame to fill).
+#[derive(Clone, Copy, Debug)]
+pub struct LoadedGraphic {
+    pub asset: designcraft_doc::AssetId,
+    /// Natural size in points.
+    pub size: (f64, f64),
+    /// Image Import Options › Crop to: the box of the graphic a new frame shows (x, y, w, h).
+    pub crop: Option<(f64, f64, f64, f64)>,
+}
+
 impl Drop for FontScope {
     fn drop(&mut self) {
         designcraft_fonts::FontDb::global().close_scope(self.0);
@@ -258,8 +268,8 @@ pub struct Session {
     pub text_clipboard: Option<(Arc<designcraft_doc::Story>, String)>,
     /// Requests for the UI (dialogs, view changes) produced by tools/commands.
     pub ui_requests: Vec<UiRequest>,
-    /// Graphic loaded in the place cursor: (asset, natural size in points).
-    pub loaded: Option<(designcraft_doc::AssetId, (f64, f64))>,
+    /// Graphic loaded in the place cursor.
+    pub loaded: Option<LoadedGraphic>,
     pub(crate) untitled: u32,
     /// Transforms applied to the current selection, oldest first (Transform Again / Sequence
     /// Again), with the selection they were applied to and whether the last one came from a
