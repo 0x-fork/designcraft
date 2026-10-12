@@ -79,7 +79,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("story.setText", "Set Story Text", [], None, "{story, text} — replace a story's whole text", has_doc, |s, p| {
             let sid = StoryId(p.get("story").and_then(Value::as_u64).ok_or_else(|| bad("story.setText", "missing story"))?);
-            let text = str_param(p, "text").unwrap_or("").to_string();
+            let text = super::text_param(p, "text");
             s.edit(|d, sel| {
                 d.set_story_text(sid, &text)?;
                 if let Some(t) = sel.text.as_mut().filter(|t| t.story == sid) {
@@ -100,7 +100,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let sid = StoryId(p.get("story").and_then(Value::as_u64).ok_or_else(|| bad("story.replaceRange", "missing story"))?);
                 let a = p.get("start").and_then(Value::as_u64).unwrap_or(0) as usize;
                 let b = p.get("end").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(a);
-                let text = str_param(p, "text").unwrap_or("").to_string();
+                let text = super::text_param(p, "text");
                 s.edit(|d, sel| {
                     let st = d.story_mut(sid).ok_or(designcraft_doc::DocError::NoStory(sid))?;
                     let (a, b) = (a.min(st.len()), b.min(st.len()).max(a.min(st.len())));

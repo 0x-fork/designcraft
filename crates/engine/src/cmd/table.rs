@@ -789,7 +789,7 @@ fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
         Some(o) => return Err(bad(ID, format!("unknown vj `{o}`"))),
         None => None,
     };
-    let text = str_param(p, "text").map(str::to_string);
+    let text = str_param(p, "text").map(|_| super::text_param(p, "text"));
     let stroke = match p.get("stroke").filter(|v| !v.is_null()) {
         Some(sv) => Some((StrokeEdit::parse(doc, sv, ID)?, EdgeSel::parse(sv.get("edges"), ID)?)),
         None => None,

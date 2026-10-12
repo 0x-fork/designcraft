@@ -2939,6 +2939,18 @@ mod line_end_tests {
         s.execute("text.insert", &json!({"text": "\rFour", "raw": true})).unwrap();
         assert_eq!(story(&s).text, "One\nTwo\nThree\nFour");
         assert_eq!(story(&s).paras.len(), 4);
+        // Editing a range or the whole story (scripts written for InDesign end paragraphs with \r).
+        s.execute("story.replaceRange", &json!({"story": sid.0, "start": 0, "end": 3, "text": "Zero\rOne"})).unwrap();
+        assert_eq!((story(&s).text.as_str(), story(&s).paras.len()), ("Zero\nOne\nTwo\nThree\nFour", 5));
+        s.execute("story.setText", &json!({"story": sid.0, "text": "A\r\nB\rC"})).unwrap();
+        assert_eq!((story(&s).text.as_str(), story(&s).paras.len()), ("A\nB\nC", 3));
+        // Notes, made and edited.
+        s.execute("text.select", &json!({"story": sid.0, "anchor": 1})).unwrap();
+        let n = s.execute("note.new", &json!({"text": "One\rTwo"})).unwrap();
+        let note = |s: &mut Session| s.execute("note.list", &json!({})).unwrap()[0]["text"].clone();
+        assert_eq!(note(&mut s), "One\nTwo");
+        s.execute("note.edit", &json!({"story": n["story"], "id": n["id"], "text": "Three\r\nFour"})).unwrap();
+        assert_eq!(note(&mut s), "Three\nFour");
     }
 }
 
