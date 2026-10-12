@@ -1051,12 +1051,25 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 let (asc, desc, lead) = line_metrics(line_glyphs, &glyphs, s, base_leading, base_chars.size, db, &base_chars);
                 let reference = cjk_line_reference(line_glyphs);
                 let (mut x0, mut x1) = (col.x0, col.x1);
-                let continues = !carry.is_empty();
-                let mut baseline;
-                if continues {
-                    // The next segment of a line already placed.
-                    baseline = carry_baseline;
-                    (x0, x1) = carry.remove(0);
+                // A wrap segment that can't hold the line's first word whole stays empty and the
+                // text goes on in the next segment or line (a word wider than the column is split
+                // wherever it lands).
+                let ind = pp.left_indent + pp.right_indent + if line_no == 0 { pp.first_line_indent } else { 0.0 };
+                let need = if f.exclusions.is_empty() {
+                    0.0
+                } else {
+                    let w = breaker::first_word_width(glyphs.get(s..).unwrap_or_default(), hyph_after.get(s..).unwrap_or_default(), &spacing);
+                    if w > col.width() - ind { 0.0 } else { w }
+                };
+                let holds = |&(a, b): &(f64, f64)| b - a - ind + 0.01 >= need;
+                // The line takes the next segment of a line already placed, the one the breaker
+                // set it for.
+                let mut continues = false;
+                let mut baseline = carry_baseline;
+                if let Some(i) = carry.iter().position(holds) {
+                    continues = i == 0;
+                    (x0, x1) = carry.get(i).copied().unwrap_or((x0, x1));
+                    carry.drain(..=i);
                 } else {
                     carry.clear();
                     baseline = cur.next_baseline(f, col, lead, asc, &pp);
@@ -1076,6 +1089,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                         let mut tries = 0;
                         loop {
                             let segs = free_slots(f, col, baseline - asc, baseline + desc, base_size, rtl);
+                            let segs: Vec<(f64, f64)> = segs.into_iter().skip_while(|seg| !holds(seg)).collect();
                             if let Some((&first, rest)) = segs.split_first() {
                                 (x0, x1) = first;
                                 carry = rest.to_vec();
