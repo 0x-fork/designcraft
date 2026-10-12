@@ -979,6 +979,28 @@ fn draw_text_selection(
         if range.is_empty() {
             continue;
         }
+        // Type on a path: the highlight bends with the text.
+        if let Some(map) = compose::PathTextMap::new(it, ft) {
+            for l in &ft.lines {
+                let (s, e) = (range.start.max(l.range.start), range.end.min(l.range.end));
+                if s >= e {
+                    continue;
+                }
+                for q in compose::highlight_quads(l, s, e, false) {
+                    let (x0, x1) = (q[0].x.min(q[1].x), q[0].x.max(q[1].x));
+                    let (y0, y1) = (q[0].y.min(q[2].y), q[0].y.max(q[2].y));
+                    // Short slices, each turned with the path.
+                    let n = ((x1 - x0) / 2.0).ceil().clamp(1.0, 2000.0) as usize;
+                    for k in 0..n {
+                        let (a, b) = (x0 + (x1 - x0) * k as f64 / n as f64, x0 + (x1 - x0) * (k + 1) as f64 / n as f64);
+                        let poly =
+                            [Point::new(a, y0), Point::new(b, y0), Point::new(b, y1), Point::new(a, y1)].map(|p| xf.to_screen(m * map.to_path(p)));
+                        painter.add(egui::Shape::convex_polygon(poly.to_vec(), Color32::from_rgba_unmultiplied(80, 140, 255, 110), Stroke::NONE));
+                    }
+                }
+            }
+            continue;
+        }
         let mut quads = Vec::new();
         let mut glyphs = Vec::new();
         for (li, l) in ft.lines.iter().enumerate() {
@@ -1010,8 +1032,10 @@ fn draw_text_selection(
         let m = a * doc.text_xf(it);
         let blink = (painter.ctx().input(|i| i.time) * 1.6) as i64 % 2 == 0;
         if blink {
-            let p0 = xf.to_screen(m * Point::new(x, bl - asc));
-            let p1 = xf.to_screen(m * Point::new(x, bl + desc));
+            // Type on a path: the caret stands across the path where it is along it.
+            let on = |p: Point| compose::PathTextMap::new(it, ft).map_or(p, |map| map.to_path(p));
+            let p0 = xf.to_screen(m * on(Point::new(x, bl - asc)));
+            let p1 = xf.to_screen(m * on(Point::new(x, bl + desc)));
             painter.line_segment([p0, p1], Stroke::new(1.0, Color32::BLACK));
         }
         painter.ctx().request_repaint_after(std::time::Duration::from_millis(330));
