@@ -27,8 +27,8 @@ The app is signed and notarized.
 
 Pick one file from the release. Replace `x86_64` with `aarch64` on ARM.
 
-| File                                      | Notes                                                    |
-|-------------------------------------------|----------------------------------------------------------|
+| File                                          | Notes                                                    |
+|-----------------------------------------------|----------------------------------------------------------|
 | `designcraft-<version>-linux-x86_64.AppImage` | Runs anywhere.                                           |
 | `designcraft-<version>-linux-x86_64.flatpak`  | Sandboxed. Install with `flatpak install --user <file>`. |
 | `designcraft-<version>-linux-x86_64.deb`      | Debian and Ubuntu.                                       |
