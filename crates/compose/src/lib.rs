@@ -370,6 +370,13 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                 let b = other.bounds();
                 let r = Rect::new(b.x0 - o[1], b.y0 - o[0], b.x1 + o[3], b.y1 + o[2]);
                 let inner = inv.transform_rect_bbox(r);
+                // Only objects that reach the frame wrap its text: one elsewhere on the spread
+                // leaves it alone (a small frame beside it would otherwise lose its gaps to the
+                // minimum gap width, see `free_slot`).
+                let reach = inner.intersect(item.inner_bounds());
+                if !(reach.width() > 0.0 && reach.height() > 0.0) {
+                    continue;
+                }
                 exclusions.push(Exclusion { rect: inner, mode: other.wrap.mode });
             }
         }
@@ -2071,9 +2078,13 @@ fn line_metrics(
     (asc, desc, lead)
 }
 
-/// Widest free horizontal interval of `col` in the band, or None if blocked.
+/// Widest free horizontal interval of `col` in the band, or None if blocked. A gap a wrap object
+/// cuts narrower than 1.5 em of `size` is skipped (a sliver beside the object); when no object
+/// reaches the band the whole column is free, however narrow (a one-character frame such as an
+/// article's closing tombstone).
 fn free_slot(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64) -> Option<(f64, f64)> {
     let mut free = vec![(col.x0, col.x1)];
+    let mut cut = false;
     for ex in &f.exclusions {
         let r = ex.rect;
         let overlaps_band = r.y0 < y1 && r.y1 > y0;
@@ -2081,6 +2092,7 @@ fn free_slot(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64) -> Option<(f
             WrapMode::JumpToNextColumn if y1 > r.y0 && r.x0 < col.x1 && r.x1 > col.x0 => return None,
             WrapMode::JumpObject if overlaps_band && r.x0 < col.x1 && r.x1 > col.x0 => return None,
             WrapMode::BoundingBox | WrapMode::Contour if overlaps_band => {
+                cut = true;
                 let mut next = Vec::new();
                 for (a, b) in free {
                     if r.x1 <= a || r.x0 >= b {
@@ -2098,6 +2110,9 @@ fn free_slot(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64) -> Option<(f
             }
             _ => {}
         }
+    }
+    if !cut {
+        return Some((col.x0, col.x1));
     }
     free.into_iter().filter(|(a, b)| b - a >= size * 1.5).max_by(|x, y| (x.1 - x.0).total_cmp(&(y.1 - y.0)))
 }
