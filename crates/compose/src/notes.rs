@@ -134,6 +134,7 @@ impl Notes {
             opts: TextFrameOptions { first_baseline: o.first_baseline, first_baseline_min: o.first_baseline_min, ..Default::default() },
             vertical: false,
             exclusions: vec![],
+            outline: None,
             page_name: f.page_name.clone(),
             section_marker: f.section_marker.clone(),
             page: f.page,

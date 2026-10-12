@@ -20,6 +20,7 @@ pub mod kenten;
 mod mojikumi;
 mod notes;
 pub mod optical;
+mod outline;
 mod overlay;
 mod parabox;
 mod ruby;
@@ -47,6 +48,7 @@ use crate::breaker::{Break, Spacing};
 pub use crate::cache::Cache;
 use crate::notes::Notes;
 pub use crate::notes::{find_note, hit_note, hit_note_with, note_caret};
+pub use crate::outline::FrameOutline;
 use crate::parabox::ParaBox;
 use crate::shape::{Glyph, StyleTable, SubstCtx};
 pub use crate::table::{BorderHit, PlacedCell, StrokeSeg, TableFrag, cell_caret, find_cell, hit_border, hit_cell, hit_cell_with};
@@ -555,6 +557,9 @@ pub struct FrameSpec {
     /// area is the turned box.
     pub vertical: bool,
     pub exclusions: Vec<Exclusion>,
+    /// The frame's outline when it isn't its rectangle (area space): each line's slot is the part
+    /// of its band the outline covers, minus the inset.
+    pub outline: Option<Arc<FrameOutline>>,
     pub page_name: Option<String>,
     /// Marker text of the section the frame's page is in (None on parent pages).
     pub section_marker: Option<String>,
@@ -715,18 +720,28 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
             }
             None => (item.text_area(), tf.options.clone()),
         };
+        // A non-rectangular frame keeps the top inset inward from its outline; its rectangular text
+        // area (all four insets) still bounds the lines.
+        let outline = match &tf.options.path {
+            Some(_) => None,
+            None => {
+                let bp = if item.corners.is_none() { item.path.to_bezpath() } else { designcraft_geom::corners::apply(&item.path, &item.corners) };
+                FrameOutline::new(&bp, tf.options.inset[0])
+            }
+        };
         // Vertical type: composed in the turned box; wraps and page rects turned with it.
         let vertical = doc.frame_vertical(item);
-        let (area, exclusions, grid, page_rect) = if vertical {
+        let (area, exclusions, grid, page_rect, outline) = if vertical {
             let v = designcraft_doc::vertical_text_xf(area).inverse();
             let ex = exclusions
                 .into_iter()
                 .map(|e| Exclusion { rect: v.transform_rect_bbox(e.rect), contour: e.contour.map(|c| c.transformed(v)), ..e })
                 .collect();
             let pr = page_rect.map(|(a, b)| (v.transform_rect_bbox(a), v.transform_rect_bbox(b)));
-            (Rect::new(0.0, 0.0, area.height(), area.width()), ex, None, pr)
+            let outline = outline.map(|o| o.transformed(v));
+            (Rect::new(0.0, 0.0, area.height(), area.width()), ex, None, pr, outline)
         } else {
-            (area, exclusions, grid, page_rect)
+            (area, exclusions, grid, page_rect, outline)
         };
         out.push(FrameSpec {
             id: fid,
@@ -734,6 +749,7 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
             opts,
             vertical,
             exclusions: if tf.options.path.is_some() { vec![] } else { exclusions },
+            outline: outline.map(Arc::new),
             page_name,
             section_marker,
             page,
@@ -1348,12 +1364,19 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             let col = if spanning { span_rect(&cols[cur.fi], Rect::new(col.x0, col.y0, col.x1, base.y1), pp.span_columns) } else { col };
             let col = cur.split_rect(col);
             // Estimate slots for the breaker with the paragraph's base leading.
-            let est_asc = base_chars.size * 0.75;
+            // A shaped frame's slots change from line to line, so they are estimated with the
+            // band the lines are placed with (or a taller one, so no line outgrows its slot).
+            let (est_asc, est_band) = if f.outline.is_some() {
+                let (a, _, d, _) = line_metrics(&[], &glyphs, g0, mark_leading, mark_chars.size, db, &mark_chars);
+                (a, (a.max(base_chars.size * 0.8), d.max(base_chars.size * 0.25)))
+            } else {
+                (base_chars.size * 0.75, (base_chars.size * 0.8, 0.0))
+            };
             let est_tops = Tops { typo_ascent: est_asc, cap: est_asc * 0.72, xh: est_asc * 0.5, em: base_chars.size * 0.88 };
             let est_first =
                 if carry.is_empty() { cur.next_baseline(f, col, base_leading, est_asc, est_tops, &pp) } else { carry_baseline + base_leading };
             let est_jump = cur.jump(f, base_leading, est_asc, est_tops);
-            let slots = estimate_slots(f, col, est_first, est_jump, base_leading, base_chars.size, &glyphs[g0..], rtl, &carry);
+            let slots = estimate_slots(f, col, est_first, est_jump, base_leading, base_chars.size, est_band, &glyphs[g0..], rtl, &carry);
             let width = |j: usize| -> f64 {
                 let (x0, x1) = slots.get(j).copied().unwrap_or((col.x0, col.x1));
                 // Beside the drop cap (in the column the paragraph starts in), its width; else the
@@ -1410,7 +1433,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 // text goes on in the next segment or line (a word wider than the column is split
                 // wherever it lands).
                 let ind = pp.left_indent + pp.right_indent + if line_no == 0 { pp.first_line_indent } else { 0.0 };
-                let need = if f.exclusions.is_empty() {
+                let need = if f.exclusions.is_empty() && f.outline.is_none() {
                     0.0
                 } else {
                     let w = breaker::first_word_width(glyphs.get(s..).unwrap_or_default(), hyph_after.get(s..).unwrap_or_default(), &spacing);
@@ -1486,12 +1509,12 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     let snap = |y: f64| grid.map_or(y, |(_, inc)| on_grid + ((y - on_grid) / inc - 1e-6).ceil().max(0.0) * inc);
                     // Wrap: push the line down to the first position with a slot (back on the grid).
                     // Segments after the first are carried to the next lines of the paragraph.
-                    if !f.exclusions.is_empty() {
+                    if !f.exclusions.is_empty() || f.outline.is_some() {
                         let jump = cur.jump(f, advance, asc, tops);
                         let line_start = glyphs.get(s).map_or(prange.start, |g| g.byte);
                         let mut tries = 0;
                         loop {
-                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, jump, base_size, rtl, line_start, &holds) else {
+                            let Some((nb, segs)) = wrap_slot(f, col, baseline, asc, desc, jump, base_size, rtl, line_start, &holds) else {
                                 // No room in this column.
                                 baseline = baseline.max(col.y1) + 1.0;
                                 carry.clear();
@@ -2904,13 +2927,15 @@ const JUMP_EPS: f64 = 1e-6;
 /// A line under a Jump Object wrap moves below it as `jump` says. Around a rectangular wrap the
 /// free space only grows where one in the line's band ends: the search jumps from one such bottom
 /// edge to the next, and a line that clears a wrap has its top exactly on the wrap's bottom. A
-/// contour's width changes within its box, so beside one the search moves down 1 pt at a time.
+/// contour's width changes within its box, and a shaped frame's along its outline, so beside one
+/// the search moves down 1 pt at a time.
 #[allow(clippy::too_many_arguments)]
 fn wrap_slot(
     f: &FrameSpec,
     col: Rect,
     baseline: f64,
     asc: f64,
+    desc: f64,
     jump: Jump,
     size: f64,
     rtl: bool,
@@ -2937,7 +2962,7 @@ fn wrap_slot(
             }
         } else {
             // Segments before the first that `holds` the line's first word stay empty.
-            let segs: Vec<(f64, f64)> = free_slots(f, col, b - asc, b, size, rtl, line_start).into_iter().skip_while(|seg| !holds(seg)).collect();
+            let segs: Vec<(f64, f64)> = free_slots(f, col, b - asc, b, desc, size, rtl, line_start).into_iter().skip_while(|seg| !holds(seg)).collect();
             if !segs.is_empty() {
                 return Some((b, segs));
             }
@@ -2949,7 +2974,13 @@ fn wrap_slot(
                     .filter(|e| e.rect.y0 < y1 && e.rect.y1 > y0)
             };
             let edge = in_band().fold(f64::INFINITY, |m, e| m.min(e.rect.y1)) + asc;
-            if in_band().any(|e| e.contour.is_some()) { edge.min(b + 1.0) } else { edge }
+            // A contour's or a shaped frame's width changes within the band: 1 pt at a time.
+            let next = if f.outline.is_some() || in_band().any(|e| e.contour.is_some()) { edge.min(b + 1.0) } else { edge };
+            // No progress (coordinates so large that a point no longer moves the line) or none left.
+            if !(next > b) || !next.is_finite() {
+                return None;
+            }
+            next
         };
         if b.is_nan() || b > col.y1 {
             return None;
@@ -2959,16 +2990,21 @@ fn wrap_slot(
 }
 
 /// Free segments of `col` in the band `y0..y1` (a line's top to its baseline: descenders may reach
-/// into the wrap), in the order text fills them (left to right, or
-/// right to left for right-to-left paragraphs); empty if the band is blocked. A line beside an
+/// into the wrap; a shaped frame's outline holds them too, `desc` below `y1`), in the order text
+/// fills them (left to right, or right to left for right-to-left paragraphs); empty if the band is blocked. A line beside an
 /// object that lets text through on both sides has a segment on each side. When an object cuts
 /// the column, segments narrower than 1.5 em of `size` are skipped (slivers beside it); a column
 /// no object reaches is free however narrow (a one-character frame such as an article's closing
 /// tombstone). `line_start` is the story byte the line starts at (see [`Exclusion::wraps_line`]).
 #[allow(clippy::too_many_arguments)]
-fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool, line_start: usize) -> Vec<(f64, f64)> {
-    let mut free = vec![(col.x0, col.x1)];
-    let mut cut = false;
+fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, desc: f64, size: f64, rtl: bool, line_start: usize) -> Vec<(f64, f64)> {
+    // A shaped frame: the parts of the band its outline covers (a concave one can give several),
+    // descenders included: they stay inside the frame.
+    let mut free = match &f.outline {
+        Some(o) => o.intervals(col.x0, col.x1, y0, y1 + desc.max(0.0)),
+        None => vec![(col.x0, col.x1)],
+    };
+    let mut cut = f.outline.is_some();
     for ex in f.exclusions.iter().filter(|e| e.wraps_line(line_start)) {
         let r = ex.rect;
         let overlaps_band = r.y0 < y1 && r.y1 > y0;
@@ -3019,7 +3055,8 @@ fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64, rtl: bool, 
 }
 
 /// Line slots for the breaker: the free segments of each line from baseline `first` down, `lead`
-/// apart; `carry` holds segments left on the line above (they come first).
+/// apart, for lines with `band` (ascent, descent); `carry` holds segments left on the line above
+/// (they come first).
 #[allow(clippy::too_many_arguments)]
 fn estimate_slots(
     f: &FrameSpec,
@@ -3028,11 +3065,12 @@ fn estimate_slots(
     jump: Jump,
     lead: f64,
     size: f64,
+    band: (f64, f64),
     glyphs: &[Glyph],
     rtl: bool,
     carry: &[(f64, f64)],
 ) -> Vec<(f64, f64)> {
-    if f.exclusions.is_empty() {
+    if f.exclusions.is_empty() && f.outline.is_none() {
         return vec![];
     }
     // Rough upper bound on lines: total advance / column width × 2.
@@ -3046,7 +3084,7 @@ fn estimate_slots(
     // rest is broken again once that line is set.
     let line_start = glyphs.first().map_or(0, |g| g.byte);
     while v.len() < n + carry.len() {
-        let slots = match wrap_slot(f, col, b, size * 0.8, jump, size, rtl, line_start, &|_| true) {
+        let slots = match wrap_slot(f, col, b, band.0, band.1, jump, size, rtl, line_start, &|_| true) {
             Some((nb, s)) => {
                 b = nb;
                 s

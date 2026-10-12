@@ -128,6 +128,7 @@ fn compose_cell(doc: &Document, cell: &Cell, w: f64, opts: &ComposeOptions, left
         opts: TextFrameOptions::default(),
         vertical: false,
         exclusions: vec![],
+        outline: None,
         page_name: opts.page_name.clone(),
         section_marker: opts.section_marker.clone(),
         page: opts.page,
