@@ -28,6 +28,7 @@ mod linked;
 mod links;
 mod liquid;
 mod lists;
+mod load_styles;
 mod mathexpr;
 mod media;
 mod notes;
@@ -198,6 +199,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(thread::specs());
         v.extend(tabs::specs());
         v.extend(style::specs());
+        v.extend(load_styles::specs());
         v.extend(table::specs());
         v.extend(layout::specs());
         v.extend(overrides::specs());

@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-12** · Load Styles: the Paragraph Styles and Character Styles panels load styles from another DesignCraft document or an IDML file, with the styles, swatches and lists they name; a dialog picks the styles and what happens to one the document defines differently (`style.load`). No readiness percentage change.
 - **2026-10-12** · On screen, blend modes blend with the objects below and not with the paper, as in InDesign and in PDF export: a Color Dodge or Screen object over blank paper shows as it is. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
