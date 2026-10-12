@@ -1479,6 +1479,14 @@ fn open_type(s: &mut Session, p: &Value) -> Result<Value> {
 /// How much of the selected text `type.selectionAttrs` reports.
 const SELECTED_TEXT_CHARS: usize = 60;
 
+fn selected_text_preview(chars: impl Iterator<Item = char>) -> String {
+    chars
+        .map(|c| if c.is_control() || c == designcraft_doc::OBJECT_MARK { ' ' } else { c })
+        .skip_while(|c| c.is_whitespace())
+        .take(SELECTED_TEXT_CHARS)
+        .collect()
+}
+
 fn selection_attrs(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let targets = format_targets(s);
@@ -1493,14 +1501,7 @@ fn selection_attrs(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let cp = st.doc.styles.resolve_char(&base, &cf);
     // The selected text (its start, on one line), for previews such as the font menu's.
-    let line: String = story
-        .text
-        .get(r.start..r.end)
-        .unwrap_or_default()
-        .chars()
-        .map(|c| if c.is_control() || c == designcraft_doc::OBJECT_MARK { ' ' } else { c })
-        .collect();
-    let selected: String = line.trim_start().chars().take(SELECTED_TEXT_CHARS).collect();
+    let selected = selected_text_preview(story.text.get(r.start..r.end).unwrap_or_default().chars());
     let mut out = json!({"story": sid.0, "paragraphStyle": pf.style, "characterStyle": cf.style, "para": pp, "chars": cp,
         "paraOverrides": pf.para.count(), "charOverrides": cf.over.count(), "selectedText": selected.trim()});
     if bool_or(p, "mixed", false) {
@@ -1757,6 +1758,17 @@ mod open_type_tests {
         assert_eq!(text, "字🙂x");
         assert!(text.is_char_boundary(t.anchor) && text.is_char_boundary(t.focus), "caret {t:?} in {text:?}");
         s.execute("text.move", &json!({"dir": "right"})).unwrap();
+    }
+
+    #[test]
+    fn selected_text_preview_stops_at_its_character_budget() {
+        let read = std::cell::Cell::new(0usize);
+        let prefix = ['\t', '\u{2003}', designcraft_doc::OBJECT_MARK];
+        let chars = prefix.into_iter().chain(std::iter::repeat_n('字', 100_000)).inspect(|_| read.set(read.get() + 1));
+        let preview = super::selected_text_preview(chars);
+        assert_eq!(preview, "字".repeat(super::SELECTED_TEXT_CHARS));
+        assert_eq!(read.get(), prefix.len() + super::SELECTED_TEXT_CHARS, "the rest of a large selection is never copied or scanned");
+        assert_eq!(super::selected_text_preview("A\nB".chars()), "A B");
     }
 
     #[test]
