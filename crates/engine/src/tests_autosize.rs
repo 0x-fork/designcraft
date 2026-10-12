@@ -43,7 +43,7 @@ fn clear(s: &mut Session, sid: StoryId) {
 #[test]
 fn height_only_grows_and_shrinks_from_the_top() {
     let mut s = session();
-    let (id, sid) = frame(&mut s, [36.0, 36.0, 186.0, 56.0], json!({"autoSize": "heightOnly"}));
+    let (id, sid) = frame(&mut s, [36.0, 36.0, 186.0, 56.0], json!({"autoSize": "heightOnly", "autoSizeReference": "topCenter"}));
     let empty = bounds(&s, id);
     assert!(empty.height() > 5.0 && empty.height() < 20.0, "an empty frame keeps one line: {empty:?}");
     s.execute("text.insert", &json!({"text": LONG})).unwrap();
@@ -151,6 +151,7 @@ fn idml_import_fits_height_only_frames() {
     s.edit(|d, _| {
         if let Some(tf) = d.item_mut(id).and_then(designcraft_doc::Item::text_frame_mut) {
             tf.options.auto_size = AutoSize::HeightOnly;
+            tf.options.auto_size_ref = 1;
         }
         Ok(())
     })
@@ -190,4 +191,15 @@ fn idml_keeps_the_auto_size_options() {
         ),
         (a.auto_size, a.auto_size_ref, true, 30.0, true, 40.0, true)
     );
+}
+
+#[test]
+fn fit_frame_to_content_leaves_an_auto_size_frame_as_auto_size_set_it() {
+    let mut s = session();
+    let (id, _) = frame(&mut s, [36.0, 36.0, 186.0, 56.0], json!({"autoSize": "heightOnly"}));
+    s.execute("text.insert", &json!({"text": LONG})).unwrap();
+    let fitted = bounds(&s, id);
+    s.execute("selection.set", &json!({"ids": [id.0]})).unwrap();
+    s.execute("object.fit", &json!({"ids": [id.0], "mode": "fitFrameToContent"})).unwrap();
+    assert_eq!(bounds(&s, id), fitted);
 }
