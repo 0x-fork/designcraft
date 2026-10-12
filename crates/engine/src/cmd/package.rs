@@ -74,6 +74,8 @@ struct OutputRoot {
 
 impl OutputRoot {
     fn new(path: PathBuf) -> Result<Self> {
+        // Before anything is created: the folder must be inside the automation write root.
+        crate::file_access::check_write(&path).map_err(EngineError::Other)?;
         ensure_real_directory(&path, false)?;
         let canonical = std::fs::canonicalize(&path).map_err(|e| path_error(&path, e))?;
         Ok(Self { path, canonical })

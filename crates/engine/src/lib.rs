@@ -11,7 +11,9 @@
 pub mod atomic;
 pub mod cmd;
 pub mod dtd;
+pub mod file_access;
 pub mod guard;
+pub mod io;
 pub mod links;
 pub mod math;
 pub mod recovery;
@@ -557,5 +559,7 @@ pub(crate) use push_undo as record_undo;
 mod tests;
 #[cfg(test)]
 mod tests_idml;
+#[cfg(test)]
+mod tests_roots;
 #[cfg(test)]
 mod tests_table;

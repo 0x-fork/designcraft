@@ -28,7 +28,7 @@ fn no_book() -> EngineError {
 #[cfg(not(target_arch = "wasm32"))]
 fn save(b: &Book) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(b).map_err(|e| EngineError::Other(e.to_string()))?;
-    crate::atomic::write_file(&b.path, &bytes)
+    crate::io::write_file(&b.path, &bytes).map_err(EngineError::Other)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -38,14 +38,14 @@ fn save(_: &Book) -> Result<()> {
 
 fn load(path: &str) -> Result<designcraft_doc::Document> {
     #[cfg(not(target_arch = "wasm32"))]
-    let bytes = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
     #[cfg(target_arch = "wasm32")]
     let bytes: Vec<u8> = {
         let _ = path;
         vec![]
     };
     if path.to_lowercase().ends_with(".idml") {
-        return designcraft_idml::import_idml(&bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")));
+        return super::interchange::import_idml_confined(&bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")));
     }
     super::file::from_bytes(&bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
@@ -248,7 +248,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "book.open", "Open Book", [], None, "{path} → {documents}", always, |s, p| {
             let path = str_param(p, "path").ok_or_else(|| bad("book.open", "`path` required"))?.to_string();
             #[cfg(not(target_arch = "wasm32"))]
-            let text = std::fs::read_to_string(&path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            let text = crate::io::read_to_string(&path).map_err(EngineError::Other)?;
             #[cfg(target_arch = "wasm32")]
             let text = String::new();
             let mut b: Book = serde_json::from_str(&text).map_err(|e| bad("book.open", format!("not a book: {e}")))?;
@@ -331,7 +331,7 @@ pub fn specs() -> Vec<CommandSpec> {
             match str_param(p, "path") {
                 Some(path) => {
                     #[cfg(not(target_arch = "wasm32"))]
-                    crate::atomic::write_file(path, &bytes)?;
+                    crate::io::write_file(path, &bytes).map_err(EngineError::Other)?;
                     Ok(json!({"path": path, "bytes": bytes.len(), "pages": pages}))
                 }
                 None => Ok(json!({"base64": super::file::base64_encode(&bytes), "bytes": bytes.len(), "pages": pages})),
