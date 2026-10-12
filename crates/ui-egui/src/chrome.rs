@@ -173,6 +173,13 @@ fn search_field(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Width of the app bar's right-hand slot: what is left of the row, minus a pixel of slack so
+/// that rounding at fractional scales (115%) never makes the row a hair wider than the scroll
+/// area and shows a needless scroll bar. Never narrower than the controls themselves.
+fn tools_slot_width(available: f32, tools_w: f32) -> f32 {
+    (available - 1.0).max(tools_w)
+}
+
 pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let mac = app.integrated_titlebar;
@@ -215,7 +222,7 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                         crate::menus::menu_bar(app, ui);
                     }
                     menus_end = ui.min_rect().max.x;
-                    let size = vec2(ui.available_width().max(tools_w), ui.available_height());
+                    let size = vec2(tools_slot_width(ui.available_width(), tools_w), ui.available_height());
                     let tools = ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(4.0);
                         search_field(app, ui);
@@ -1031,6 +1038,20 @@ mod tests {
         wheel(&mut h, before[2].center(), vec2(0.0, -3000.0));
         let after = [rect(&h, FIRST_CONTROL), rect(&h, LAST_CONTROL), rect(&h, "Help"), rect(&h, "Share")];
         assert_eq!(after, before);
+    }
+
+    /// At 115% the app bar fits a wide window exactly: it must not scroll sideways by a rounding error.
+    #[test]
+    fn the_app_bar_does_not_scroll_at_115_percent() {
+        let w = 1400.0;
+        let mut h = test_window::open_scaled(app(), vec2(w, 900.0), 1.15);
+        assert_eq!(h.ctx.pixels_per_point(), 1.15);
+        let before = [rect(&h, "Help"), rect(&h, "Share")];
+        assert!(before.iter().all(|r| r.max.x <= w), "{before:?}");
+        wheel(&mut h, before[0].center(), vec2(0.0, -3000.0));
+        wheel(&mut h, before[0].center(), vec2(-3000.0, 0.0));
+        let after = [rect(&h, "Help"), rect(&h, "Share")];
+        assert_eq!(after, before, "the app bar scrolled sideways although everything fits");
     }
 
     #[test]
