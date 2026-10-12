@@ -305,6 +305,39 @@ fn a_line_meets_the_wrap_from_its_top_to_its_baseline() {
 }
 
 #[test]
+fn an_image_contour_stops_at_its_frame() {
+    let (mut d, sid, _) = doc_with(&[LOREM; 2].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
+    let lid = d.default_layer();
+    // An L-shaped frame: its right edge is at x = 150 down to y = 150, then at 250 below.
+    let pts = [(0.0, 50.0), (150.0, 50.0), (150.0, 150.0), (250.0, 150.0), (250.0, 200.0), (0.0, 200.0)].map(|(x, y)| Point::new(x, y));
+    let frame = designcraft_geom::path::PathData::single(designcraft_geom::path::SubPath::polyline(&pts, true));
+    let mut it = designcraft_doc::Item::new(ItemId(d.alloc()), lid, designcraft_doc::Shape::Polygon, frame);
+    // The image overhangs the frame on every side.
+    it.content = designcraft_doc::Content::Graphic(designcraft_doc::Graphic {
+        asset: designcraft_doc::AssetId(d.alloc()),
+        size: (300.0, 250.0),
+        xf: designcraft_geom::Affine::IDENTITY,
+        auto_fit: designcraft_doc::Fitting::None,
+        fit_align: 4,
+        crop: [0.0; 4],
+    });
+    it.wrap.mode = WrapMode::Contour;
+    it.wrap.side = WrapSide::RightSide;
+    it.wrap.contour = designcraft_doc::ContourType::BoundingBox;
+    it.wrap.offsets = [4.0; 4];
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let beside: Vec<&Line> = cs.frames[0].lines.iter().filter(|l| l.baseline - l.ascent > 54.0 && l.baseline < 146.0).collect();
+    assert!(beside.len() >= 3, "{} lines beside the frame", beside.len());
+    for l in beside {
+        assert!((l.x0 - 154.0).abs() < 0.5, "line at {} starts at {}", l.baseline, l.x0);
+    }
+    // Below the step the frame is wider.
+    let low = cs.frames[0].lines.iter().find(|l| l.baseline - l.ascent > 154.0 && l.baseline < 196.0).unwrap();
+    assert!((low.x0 - 254.0).abs() < 0.5, "{}", low.x0);
+}
+
+#[test]
 fn paragraph_composer_is_no_worse_than_greedy() {
     // Sum of squared slack over lines (excluding last) should not exceed the greedy result.
     let measure = 180.0;
