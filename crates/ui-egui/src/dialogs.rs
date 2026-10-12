@@ -5741,6 +5741,38 @@ mod tests {
     }
 
     #[test]
+    fn enter_and_escape_close_the_style_menu_not_numbering_and_section_options() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 2})).unwrap();
+        crate::menus::activate(&mut app, "layout.section", &Value::Null);
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1178.0, 814.0));
+        for _ in 0..3 {
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        let key = |key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        for pressed in [egui::Key::Enter, egui::Key::Escape] {
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            // The section's Style menu (the first of the two).
+            let style = labels.iter().filter(|(t, r, c)| t.trim() == "1, 2, 3, 4…" && c.contains_rect(*r)).map(|(_, r, _)| *r).next().unwrap();
+            click_dialog(&mut app, &ctx, screen, style.center());
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+            assert!(egui::Popup::is_any_open(&ctx), "the Style menu opened");
+            dialog_frame(&mut app, &ctx, screen, vec![key(pressed)]);
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+            assert!(app.ui.dialog.is_some(), "{pressed:?} with the menu open leaves the dialog open");
+            assert!(app.session.active().unwrap().doc.sections.iter().all(|s| s.start_number != Some(0)));
+            if egui::Popup::is_any_open(&ctx) {
+                egui::Popup::close_all(&ctx);
+                dialog_frame(&mut app, &ctx, screen, vec![]);
+            }
+        }
+        // With no menu open, Escape closes the dialog.
+        dialog_frame(&mut app, &ctx, screen, vec![key(egui::Key::Escape)]);
+        assert!(app.ui.dialog.is_none());
+    }
+
+    #[test]
     fn numbering_and_section_options_keep_their_actions_in_view() {
         for language in ["en", "ar"] {
             for size in [egui::vec2(1178.0, 814.0), egui::vec2(392.0, 271.0)] {
