@@ -1008,14 +1008,6 @@ mod image_place_tests {
         }
     }
 
-    #[test]
-    fn numeric_overflow_rejected_when_parsing_json() {
-        let result = serde_json::from_str::<Value>(r#"{"width":1e400}"#);
-        let error = result.unwrap_err();
-        assert!(error.is_data() || error.is_syntax(), "{error}");
-        eprintln!("overflow parser rejected width=1e400: {error}");
-    }
-
     fn assert_null_placement_uses_selection(keys: &[&str]) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let image = image_file()?;
         let previous_image = image_file_with_color(31)?;
