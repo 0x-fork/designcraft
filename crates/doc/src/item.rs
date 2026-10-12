@@ -1301,6 +1301,29 @@ impl Item {
         self.path.bounds().unwrap_or(Rect::ZERO)
     }
 
+    /// The box a gradient feather spans, in item space: the path's bounds, or a group's visible
+    /// objects' (a group has no path of its own). Only the active states contribute, including in
+    /// nested groups. Walk iteratively so deeply nested documents don't exhaust the call stack.
+    pub fn feather_bounds(&self) -> Rect {
+        if !self.is_group() {
+            return self.inner_bounds();
+        }
+        let mut stack: Vec<_> = self.shown_children().map(|c| (c.as_ref(), c.xf)).collect();
+        let mut bounds: Option<Rect> = None;
+        while let Some((it, xf)) = stack.pop() {
+            if it.hidden {
+                continue;
+            }
+            if it.is_group() {
+                stack.extend(it.shown_children().map(|c| (c.as_ref(), xf * c.xf)));
+            } else {
+                let b = xf.transform_rect_bbox(it.inner_bounds());
+                bounds = Some(bounds.map_or(b, |have| have.union(b)));
+            }
+        }
+        bounds.unwrap_or(Rect::ZERO)
+    }
+
     /// Spread-space geometric bounds (axis-aligned box of the transformed path; groups: union).
     /// A group (its bounds are its children's). A frame holding pasted-into items is not.
     pub fn is_group(&self) -> bool {
@@ -1508,6 +1531,29 @@ mod tests {
         // The box of the children's rotated boxes is larger.
         let boxes = rects.iter().map(|r| g.xf.transform_rect_bbox(child_xf.transform_rect_bbox(*r))).reduce(|a, b| a.union(b)).unwrap();
         assert!(boxes.height() > got.height() + 1.0);
+    }
+
+    #[test]
+    fn feather_bounds_follow_visible_states_in_nested_groups() {
+        let a = Item::new(ItemId(1), LayerId(1), Shape::Rectangle, shapes::rectangle(Rect::new(10.0, 20.0, 30.0, 40.0)));
+        let mut b = a.clone();
+        b.id = ItemId(2);
+        b.xf = Affine::translate((500.0, 500.0));
+        let mut state = Item::new(ItemId(3), LayerId(1), Shape::Group, PathData::default());
+        state.content = Content::Group { items: vec![Arc::new(a), Arc::new(b)] };
+        state.states = vec!["Visible".into(), "Inactive".into()];
+        assert_eq!(state.feather_bounds(), Rect::new(10.0, 20.0, 30.0, 40.0));
+        state.active_state = 1;
+        assert_eq!(state.feather_bounds(), Rect::new(510.0, 520.0, 530.0, 540.0));
+        state.active_state = 0;
+        state.xf = Affine::translate((5.0, 10.0)) * Affine::scale(2.0);
+        let mut hidden = state.clone();
+        hidden.id = ItemId(4);
+        hidden.hidden = true;
+        hidden.xf = Affine::translate((-1000.0, -1000.0));
+        let mut outer = Item::new(ItemId(5), LayerId(1), Shape::Group, PathData::default());
+        outer.content = Content::Group { items: vec![Arc::new(state), Arc::new(hidden)] };
+        assert_eq!(outer.feather_bounds(), Rect::new(25.0, 50.0, 65.0, 90.0));
     }
 
     #[test]

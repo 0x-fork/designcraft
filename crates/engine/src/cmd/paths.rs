@@ -437,6 +437,89 @@ mod tests {
     }
 
     #[test]
+    fn a_groups_gradient_feather_fades_it_on_screen_and_in_pdf() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        let mut ids = vec![];
+        for rect in [[100, 100, 200, 200], [200, 100, 300, 200]] {
+            let id = s.execute("frame.create", &json!({"rect": rect})).unwrap()["id"].as_u64().unwrap();
+            s.execute("object.fill", &json!({"ids": [id], "swatch": "[Black]"})).unwrap();
+            ids.push(id);
+        }
+        let g = s.execute("object.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap();
+        s.execute("transform.move", &json!({"ids": [g], "dx": 20, "dy": 30})).unwrap();
+        // The Gradient Feather tool's drag, then by angle (a group has no path of its own: the
+        // gradient spans its objects). The gradient still follows the translated group even
+        // though the mask geometry covers the whole output.
+        for p in [json!({"ids": [g], "from": [120, 180], "to": [320, 180]}), json!({"ids": [g], "angle": 0})] {
+            s.execute("object.gradientFeather", &p).unwrap();
+            let d = s.doc().unwrap().doc.clone();
+            let mut rr = designcraft_render::Renderer::new();
+            rr.threads = 0;
+            let img = rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap();
+            let (l, m, r) = (img.pixel(125, 180)[0], img.pixel(220, 180)[0], img.pixel(315, 180)[0]);
+            assert!(l < 60 && m > l + 40 && r > 220, "{p}: fades left to right on screen: {l} {m} {r}");
+            let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+            let pm = designcraft_render::render_pdf_page(&pdf, 0, 400).unwrap();
+            // Over white paper.
+            let at = |x: usize, y: usize| {
+                let c = pm.data()[y * pm.width() as usize + x];
+                c.r as u32 + 255 - c.a as u32
+            };
+            let (l, m, r) = (at(125, 180), at(220, 180), at(315, 180));
+            assert!(l < 60 && m > l + 40 && r > 220, "{p}: fades left to right in PDF: {l} {m} {r}");
+        }
+    }
+
+    #[test]
+    fn group_gradient_feather_keeps_distant_shadows_and_thick_strokes() {
+        for shadow in [false, true] {
+            let mut s = Session::new();
+            s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
+            let mut ids = vec![];
+            for rect in [[120, 120, 170, 170], [175, 120, 225, 170]] {
+                let id = s.execute("frame.create", &json!({"rect": rect})).unwrap()["id"].as_u64().unwrap();
+                s.execute("object.fill", &json!({"ids": [id], "swatch": "[Black]"})).unwrap();
+                if shadow {
+                    s.execute("object.dropShadow", &json!({"ids": [id], "on": true, "distance": 180, "angle": 90, "size": 0, "opacity": 1})).unwrap();
+                } else {
+                    s.execute("object.stroke", &json!({"ids": [id], "swatch": "[Black]", "weight": 180})).unwrap();
+                }
+                ids.push(id);
+            }
+            let g = s.execute("object.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap();
+            // Translate the group so mask geometry and gradient paint exercise distinct spaces.
+            s.execute("transform.move", &json!({"ids": [g], "dx": 30, "dy": 20})).unwrap();
+            let point = if shadow { (175, 345) } else { (175, 60) };
+            let sample = |s: &Session| {
+                let d = &s.doc().unwrap().doc;
+                let mut rr = designcraft_render::Renderer::new();
+                rr.threads = 0;
+                // Zoomed viewport: the mask must extend over every device pixel.
+                let img = rr.render_page(d, &s.cache, 0, 2.0, false, &Default::default()).unwrap();
+                let screen = img.pixel(point.0 * 2, point.1 * 2)[0];
+                let pdf = designcraft_pdf::export_pdf(d, &s.cache, &Default::default()).unwrap();
+                let pm = designcraft_render::render_pdf_page(&pdf, 0, 400).unwrap();
+                let c = pm.data()[point.1 as usize * pm.width() as usize + point.0 as usize];
+                [f32::from(screen), c.r as f32 + 255.0 - c.a as f32]
+            };
+            let before = sample(&s);
+            // The sample lies past either end of the gradient, and outside the old fixed padding.
+            s.execute("object.gradientFeather", &json!({"ids": [g], "from": [130, 120], "to": [130, 220], "start": 40, "end": 80})).unwrap();
+            let after = sample(&s);
+            let opacity = if shadow { 0.8 } else { 0.4 };
+            for (kind, (before, after)) in ["screen", "PDF"].into_iter().zip(before.into_iter().zip(after)) {
+                assert!(before < 120.0, "{kind}, shadow={shadow}: sample contains the effect before feathering: {before}");
+                let expected = 255.0 - (255.0 - before) * opacity;
+                assert!(
+                    (after - expected).abs() < 16.0,
+                    "{kind}, shadow={shadow}: end opacity continues past geometry: {after}, expected {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn create_outlines_turns_text_into_paths() {
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();

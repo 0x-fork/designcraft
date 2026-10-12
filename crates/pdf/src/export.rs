@@ -768,7 +768,7 @@ impl Exporter<'_> {
         }
         // Gradient feather: a luminosity mask (white = opaque) over the object.
         let xf = parent * it.xf;
-        let (p0, p1) = gf.points(it.inner_bounds());
+        let (p0, p1) = gf.points(it.feather_bounds());
         let gray = |a: f32| -> krilla::color::Color { luma::Color::new((a.clamp(0.0, 1.0) * 255.0).round() as u8).into() };
         let stops = vec![
             Stop { offset: NormalizedF32::ZERO, color: gray(gf.start), opacity: NormalizedF32::ONE },
@@ -783,7 +783,7 @@ impl Exporter<'_> {
                 cx: p0.x as f32,
                 cy: p0.y as f32,
                 cr: r,
-                transform: Transform::identity(),
+                transform: tf(xf),
                 spread_method: SpreadMethod::Pad,
                 stops,
                 anti_alias: false,
@@ -795,22 +795,21 @@ impl Exporter<'_> {
                 y1: p0.y as f32,
                 x2: p1.x as f32,
                 y2: p1.y as f32,
-                transform: Transform::identity(),
+                transform: tf(xf),
                 spread_method: SpreadMethod::Pad,
                 stops,
                 anti_alias: false,
             }
             .into()
         };
-        let area = it.inner_bounds().inflate(it.stroke.extent() + 4.0, it.stroke.extent() + 4.0);
+        // The gradient keeps its item-space geometry, but its mask covers the complete exported
+        // area (including bleed), so distant child shadows and thick strokes are never cut off.
         let mut sb = s.stream_builder();
         let mut ms = sb.surface();
-        ms.push_transform(&tf(xf));
-        if let Some(p) = to_path(&area.to_path(0.1)) {
+        if let Some(p) = to_path(&self.clip.to_path(0.1)) {
             ms.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
             ms.draw_path(&p);
         }
-        ms.pop();
         ms.finish();
         let stream = sb.finish();
         s.push_mask(krilla::mask::Mask::new(stream, krilla::mask::MaskType::Luminosity));
