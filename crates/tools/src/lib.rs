@@ -63,11 +63,16 @@ pub struct PointerEvent {
     pub pos: Point,
     #[serde(default)]
     pub mods: Mods,
+    /// Presses in quick succession at about the same spot, this one included: 2 on a
+    /// `DoubleClick`, 3 or more on a `Down` (the Type tool selects a sentence, paragraph, story).
+    /// 0 or 1 is a single press.
+    #[serde(default)]
+    pub clicks: u8,
 }
 
 impl PointerEvent {
     pub fn new(kind: PointerKind, x: f64, y: f64) -> Self {
-        Self { kind, pos: Point::new(x, y), mods: Mods::default() }
+        Self { kind, pos: Point::new(x, y), mods: Mods::default(), clicks: 0 }
     }
     pub fn with_mods(mut self, m: Mods) -> Self {
         self.mods = m;
