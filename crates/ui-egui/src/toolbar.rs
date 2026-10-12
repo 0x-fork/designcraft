@@ -215,10 +215,7 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32) {
         })
         .clicked()
     {
-        // Text defaults to a black fill and no stroke; objects to no fill and a black stroke.
-        let (fill, stroke) = if crate::panels::colors_affect_text(app) { ("[Black]", "[None]") } else { ("[None]", "[Black]") };
-        let _ = crate::panels::apply_swatch(app, false, fill, None);
-        let _ = crate::panels::apply_swatch(app, true, stroke, None);
+        let _ = app.run("color.defaultFillStroke", json!({}));
     }
     let swap = egui::Rect::from_min_size(egui::pos2(x0 + 19.0, row.min.y), vec2(11.0, 11.0));
     icons::paint(ui.painter(), swap, "swap", t.icon);
@@ -229,8 +226,7 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32) {
         })
         .clicked()
     {
-        let _ = crate::panels::apply_swatch(app, false, &stroke_sw, None);
-        let _ = crate::panels::apply_swatch(app, true, &fill_sw, None);
+        let _ = app.run("color.swapFillStroke", json!({}));
     }
     ui.add_space(2.0);
     // Proxy: 19.5 pt squares, fill top-left, stroke bottom-right.
@@ -330,7 +326,7 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32) {
     crate::widgets::paint_chip(ui.painter(), chip, None, None);
     flyout_triangle(ui.painter(), well, t.icon);
     if resp.clicked() {
-        let _ = crate::panels::apply_swatch(app, stroke_front, "[None]", None);
+        let _ = app.run("color.applyNone", json!({}));
     }
     egui::Popup::context_menu(&resp).show(|ui| {
         for (label, sw) in [("Apply Color", "[Black]"), ("Apply None", "[None]")] {
@@ -423,13 +419,24 @@ fn tool_button(ui: &mut egui::Ui, icon: &str, active: bool, tip: &str) -> egui::
     })
 }
 
-/// Default Fill and Stroke (D): no fill, a black stroke.
+/// Default Fill and Stroke (D): text gets a black fill and no stroke, objects no fill and a black
+/// stroke. Colour keys act on what the proxy shows (see `panels::colors_affect_text`).
 pub(crate) fn default_fill_stroke(app: &mut DesignApp) -> Result<Value, String> {
+    if crate::panels::colors_affect_text(app) {
+        let attrs = json!({"fill": "[Black]", "fillTint": 1.0, "stroke": "[None]", "strokeTint": 1.0});
+        return app.run("type.char", json!({ "attrs": attrs }));
+    }
     app.run("object.defaultFillStroke", json!({}))
 }
 
-/// Swap Fill and Stroke (Shift+X): each selected object's fill and stroke trade places.
+/// Swap Fill and Stroke (Shift+X): the text's fill and stroke, or each selected object's, trade
+/// places, tints included.
 pub(crate) fn swap_fill_stroke(app: &mut DesignApp) -> Result<Value, String> {
+    if crate::panels::colors_affect_text(app) {
+        let (fill, fill_tint, stroke, stroke_tint) = crate::panels::color_target(app).ok_or("no text to color")?;
+        let attrs = json!({"fill": stroke, "fillTint": stroke_tint, "stroke": fill, "strokeTint": fill_tint});
+        return app.run("type.char", json!({ "attrs": attrs }));
+    }
     app.run("object.swapFillStroke", json!({}))
 }
 
@@ -439,10 +446,10 @@ pub(crate) fn toggle_fill_stroke(app: &mut DesignApp) -> Result<Value, String> {
     Ok(json!({"strokeFront": app.ui.stroke_front}))
 }
 
-/// Apply None (/): to the fill or the stroke, whichever is in front of the proxy.
+/// Apply None (/): to the fill or the stroke, whichever is in front of the proxy, of the text or
+/// the objects.
 pub(crate) fn apply_none(app: &mut DesignApp) -> Result<Value, String> {
-    let target = if app.ui.stroke_front { "object.stroke" } else { "object.fill" };
-    app.run(target, json!({"swatch": "[None]"}))
+    crate::panels::apply_swatch(app, app.ui.stroke_front, "[None]", None)
 }
 
 #[cfg(test)]
@@ -608,11 +615,28 @@ mod tests {
         press(&mut app, &ctx, Key::Slash, Modifiers::NONE);
         assert_eq!(colors(&app).2, "[None]", "/ applies None to the stroke in front");
 
+        // Formatting Affects Text (J) with the frame selected: the keys colour its text, as the
+        // proxy shows it, and leave the frame alone.
+        press(&mut app, &ctx, Key::X, Modifiers::NONE);
+        press(&mut app, &ctx, Key::J, Modifiers::NONE);
+        assert!(crate::panels::colors_affect_text(&app));
+        let frame = colors(&app);
+        app.run("type.char", json!({"attrs": {"fill": "[Paper]", "fillTint": 0.5, "stroke": "[Black]", "strokeTint": 1.0}})).unwrap();
+        let text = |app: &mut crate::DesignApp| crate::panels::color_target(app).unwrap();
+        press(&mut app, &ctx, Key::X, Modifiers::SHIFT);
+        assert_eq!(text(&mut app), ("[Black]".into(), 1.0, "[Paper]".into(), 0.5), "Shift+X swaps the text's colours");
+        press(&mut app, &ctx, Key::D, Modifiers::NONE);
+        assert_eq!(text(&mut app), ("[Black]".into(), 1.0, "[None]".into(), 1.0), "D: text gets a black fill and no stroke");
+        press(&mut app, &ctx, Key::Slash, Modifiers::NONE);
+        assert_eq!(text(&mut app).0, "[None]", "/ applies None to the text's fill in front");
+        assert_eq!(colors(&app), frame, "the frame keeps its colours");
+
         // Typing in a story: the keys are text, not shortcuts.
         app.session.execute("text.select", &json!({"story": f["story"], "anchor": 5})).unwrap();
         app.select_tool("type");
         assert!(app.session.wants_text());
+        let front = app.ui.stroke_front;
         press(&mut app, &ctx, Key::X, Modifiers::NONE);
-        assert!(app.ui.stroke_front, "X while typing leaves the proxy alone");
+        assert_eq!(app.ui.stroke_front, front, "X while typing leaves the proxy alone");
     }
 }
