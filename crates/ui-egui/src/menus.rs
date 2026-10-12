@@ -1816,7 +1816,13 @@ pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
     if ui_label(id).is_some() {
         return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.");
     }
-    enabled(app, id)
+    enabled(app, id) || pastes_from_system(app, id)
+}
+
+/// Edit › Paste with nothing copied in DesignCraft: the system clipboard may hold art copied in
+/// another app (pasted as paths), so the item stays available and asks for it.
+fn pastes_from_system(app: &DesignApp, id: &str) -> bool {
+    id == "edit.paste" && app.session.active().is_some_and(|d| d.selection.text.is_none()) && !enabled(app, id)
 }
 
 /// Close document `index` (the active one when `None`) the way the user asks for it: with the
@@ -1837,6 +1843,10 @@ pub fn close_document(app: &mut DesignApp, index: Option<usize>) {
 /// A menu item was chosen. An engine command whose label ends in "…" and that takes parameters
 /// opens a dialog built from its parameter documentation (see [`crate::dialogs::command_fields`]).
 pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
+    if params.is_null() && pastes_from_system(app, id) {
+        app.request_system_paste = true;
+        return;
+    }
     if params.is_null() && id == "file.close" {
         close_document(app, None);
         return;

@@ -55,6 +55,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Cut", ["Ausschneiden", "Couper", "Cortar", "カット", "剪切"]),
     ("Copy", ["Kopieren", "Copier", "Copiar", "コピー", "复制"]),
     ("Paste", ["Einfügen", "Coller", "Pegar", "ペースト", "粘贴"]),
+    (
+        "Paste Vector Art",
+        ["Vektorgrafik einfügen", "Coller l’illustration vectorielle", "Pegar ilustración vectorial", "ベクトルアートをペースト", "粘贴矢量图稿"],
+    ),
     ("Clear", ["Löschen", "Effacer", "Borrar", "消去", "清除"]),
     ("Duplicate", ["Duplizieren", "Dupliquer", "Duplicar", "複製", "重复"]),
     ("Select All", ["Alles auswählen", "Tout sélectionner", "Seleccionar todo", "すべてを選択", "全选"]),

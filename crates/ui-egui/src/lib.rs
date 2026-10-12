@@ -491,6 +491,9 @@ pub struct DesignApp {
     pub color_applied: bool,
     pub perf: Perf,
     pub synthetic: Vec<egui::Event>,
+    /// Edit › Paste with nothing copied here: ask the integration for the system clipboard, whose
+    /// contents come back as an `Event::Paste` (art from other apps pastes as paths).
+    pub request_system_paste: bool,
     /// Story open in the Story Editor.
     pub story_editor: Option<designcraft_doc::StoryId>,
     control_rx: Option<Receiver<ControlRequest>>,
@@ -545,6 +548,7 @@ impl DesignApp {
             color_applied: false,
             perf: Perf::default(),
             synthetic: vec![],
+            request_system_paste: false,
             story_editor: None,
             control_rx: None,
             pending_shots: vec![],
@@ -756,6 +760,9 @@ impl DesignApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.request_system_paste) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+        }
         if !self.color_applied {
             self.color_applied = true;
             if let Some(cs) = self.ui.color_settings.clone() {

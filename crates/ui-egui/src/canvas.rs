@@ -1341,6 +1341,14 @@ fn fmt_tick(v: f64) -> String {
     if (v - r).abs() < 1e-6 { format!("{}", r as i64) } else { format!("{v:.1}") }
 }
 
+/// The spread at the middle of the view, and that point in spread coordinates (where Paste puts
+/// art from other apps, as InDesign does).
+fn view_centre(app: &DesignApp, xf: &Xf, rect: Rect) -> Option<(SpreadRef, Point)> {
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    layout.spread_at(xf.to_canvas(rect.center()))
+}
+
 fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rect: Rect) {
     let Some(v) = app.view().copied() else { return };
     let xf = Xf::new(rect, &v);
@@ -1459,6 +1467,19 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
                 let plain = ui.input(|i| i.modifiers.shift);
                 let id = if plain { "edit.pasteWithoutFormatting" } else { "edit.paste" };
                 let _ = app.run(id, json!({"text": t}));
+            }
+            // Vector art copied in another app (Illustrator, VectorCraft, Figma) is SVG markup on
+            // the system clipboard: it pastes as editable paths in the middle of the view.
+            egui::Event::Paste(t) if !wants_text && designcraft_engine::cmd::is_svg_markup(&t) => {
+                let at = view_centre(app, &xf, rect);
+                let mut params = json!({"svg": t});
+                if let Some((sr, p)) = at {
+                    params["spread"] = serde_json::to_value(sr).unwrap_or(serde_json::Value::Null);
+                    params["at"] = json!([p.x, p.y]);
+                }
+                if let Err(e) = app.run("edit.pasteSvg", params) {
+                    app.status(e);
+                }
             }
             egui::Event::Copy | egui::Event::Cut if wants_text => {
                 let id = if matches!(e, egui::Event::Cut) { "edit.cut" } else { "edit.copy" };
@@ -1770,6 +1791,57 @@ mod tests {
     fn units(h: &Harness<'_, DesignApp>) -> (Unit, Unit) {
         let s = &h.state().session.doc().unwrap().doc.settings;
         (s.horizontal_units, s.vertical_units)
+    }
+
+    const ART: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50" width="100pt" height="50pt"><path d="M0,0 C30,0 70,50 100,50" fill="none" stroke="#000" stroke-width="2"/></svg>"##;
+
+    #[test]
+    fn pasting_svg_from_another_app_places_editable_paths_in_the_middle_of_the_view() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let mut h = harness(app);
+        let undo = h.state().session.doc().unwrap().history.undo.len();
+        h.event(egui::Event::Paste(ART.into()));
+        h.run_steps(2);
+        let app = h.state();
+        let st = app.session.doc().unwrap();
+        assert_eq!(st.history.undo.len(), undo + 1, "one undo step");
+        let id = *st.selection.items.first().expect("the pasted path is selected");
+        let it = st.doc.item(id).unwrap();
+        assert_eq!(it.shape, designcraft_doc::Shape::Path);
+        assert_eq!(it.path.subpaths[0].anchors.len(), 2);
+        assert!((it.stroke.weight - 2.0).abs() < 1e-9);
+        // Centred where the view's centre falls on the spread.
+        let rect = app.canvas_rect.unwrap();
+        let xf = Xf::new(rect, app.view().unwrap());
+        let (_, centre) = CanvasLayout::new(&st.doc, false).spread_at(xf.to_canvas(rect.center())).unwrap();
+        assert!((it.bounds().center() - centre).hypot() < 0.01, "{:?} vs {centre:?}", it.bounds());
+        // Plain text pasted with no text being edited changes nothing.
+        let before = st.doc.clone();
+        h.event(egui::Event::Paste("just words".into()));
+        h.run_steps(2);
+        assert!(std::sync::Arc::ptr_eq(&before, &h.state().session.doc().unwrap().doc));
+    }
+
+    #[test]
+    fn edit_paste_with_nothing_copied_here_asks_for_the_system_clipboard() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        assert!(!crate::menus::enabled(&app, "edit.paste"), "nothing copied in DesignCraft");
+        assert!(crate::menus::menu_enabled(&app, "edit.paste"), "the system clipboard may hold art");
+        crate::menus::activate(&mut app, "edit.paste", &Value::Null);
+        assert!(app.request_system_paste);
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx()));
+        out.textures_delta.clear();
+        assert!(out.viewport_output[&egui::ViewportId::ROOT].commands.contains(&egui::ViewportCommand::RequestPaste));
+        assert!(!app.request_system_paste);
+        // With objects copied here, Edit › Paste pastes them as before.
+        let r = app.run("frame.create", json!({"rect": [10, 10, 50, 50]})).unwrap();
+        app.run("selection.set", json!({"ids": [r["id"]]})).unwrap();
+        app.run("edit.copy", json!({})).unwrap();
+        crate::menus::activate(&mut app, "edit.paste", &Value::Null);
+        assert!(!app.request_system_paste);
     }
 
     #[test]
