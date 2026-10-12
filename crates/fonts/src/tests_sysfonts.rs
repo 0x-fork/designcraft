@@ -169,6 +169,25 @@ fn the_scan_reads_names_without_loading_the_font() {
 }
 
 #[test]
+fn faces_without_outlines_are_not_cataloged() {
+    // A face whose glyphs live in a table nothing draws from (`hvgl`, say) lists no face; in a
+    // collection, its drawable sibling is still listed.
+    let regular = renamed("SourceSans3-Regular.ttf");
+    let mut hvgl = renamed("SourceSans3-It.ttf");
+    let tables = u16::from_be_bytes([hvgl[4], hvgl[5]]) as usize;
+    let glyf = (0..tables).map(|r| 12 + r * 16).find(|&at| &hvgl[at..at + 4] == b"glyf").unwrap();
+    hvgl[glyf..glyf + 4].copy_from_slice(b"hvgl");
+    let dir = std::env::temp_dir().join(format!("dc-sysfonts-outlines-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hvgl.ttf"), &hvgl).unwrap();
+    std::fs::write(dir.join("mixed.ttc"), collection(&[hvgl, regular])).unwrap();
+    assert!(file_face_names(&dir.join("hvgl.ttf")).is_empty());
+    let names: Vec<String> = file_face_names(&dir.join("mixed.ttc")).into_iter().map(|f| f.style).collect();
+    assert_eq!(names, ["Regular"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn font_menus_group_installed_and_loaded_fonts_without_loading_them() {
     use crate::testing::{font_with, with_code_pages, with_names};
     use crate::{FamilyInfo, FontGroup};

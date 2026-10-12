@@ -319,7 +319,7 @@ fn copy_font(root: &OutputRoot, face: &FontFace, dir: &Path, copied: &mut Vec<Pa
         return String::new();
     }
     let name = safe_component(&from.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(), "font");
-    let to = dir.join(unique_name(name, taken));
+    let to = dir.join(unique_name(font_file_name(name, face.data()), taken));
     match root.validate_directory(dir).and_then(|_| root.copy(from, &to)) {
         Ok(()) => {
             copied.push(from.clone());
@@ -328,6 +328,24 @@ fn copy_font(root: &OutputRoot, face: &FontFace, dir: &Path, copied: &mut Vec<Pa
         }
         Err(e) => format!(" — not copied: {e}"),
     }
+}
+
+/// `name` with a font extension when it has none: font services name their files as they like,
+/// and a package's `Document Fonts` load only .ttf, .otf, .ttc and .otc files. The extension
+/// comes from the file's first four bytes; a leading dot (a hidden file) is dropped.
+fn font_file_name(name: String, data: &[u8]) -> String {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    if matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) {
+        return name;
+    }
+    let add = match data.get(..4) {
+        Some(b"OTTO") => "otf",
+        Some(b"ttcf") => "ttc",
+        Some([0, 1, 0, 0] | b"true") => "ttf",
+        _ => return name,
+    };
+    let stem = name.trim_start_matches('.');
+    format!("{}.{add}", if stem.is_empty() { "font" } else { stem })
 }
 
 /// Add the faces that draw the visible glyphs of `cs` (table cells and footnotes included) to
@@ -608,6 +626,40 @@ mod tests {
         // The packaged document draws the same text with its fonts.
         let doc = r["files"][0].as_str().unwrap().to_string();
         assert_eq!(Session::new().execute("file.open", &json!({"path": doc})).unwrap()["documentFonts"], 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn packaged_fonts_keep_a_font_extension() {
+        use designcraft_fonts::DOCUMENT_FONTS_FOLDER;
+        use designcraft_fonts::testing::{font_with, installed_face};
+        // A font service's file without an extension is copied under a name the reopened
+        // package loads.
+        let dir = std::env::temp_dir().join(format!("dc-package-font-ext-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let from = dir.join(".12345");
+        let bytes = font_with("DocFont Package Extensionless", &['E']).unwrap();
+        std::fs::write(&from, &bytes).unwrap();
+        let face = installed_face(bytes, from).unwrap();
+        let root = OutputRoot::new(dir.clone()).unwrap();
+        let fonts = dir.join("Pkg").join(DOCUMENT_FONTS_FOLDER);
+        std::fs::create_dir_all(&fonts).unwrap();
+        let (mut copied, mut taken, mut files) = (Vec::new(), Vec::new(), Vec::new());
+        assert_eq!(copy_font(&root, &face, &fonts, &mut copied, &mut taken, &mut files), "");
+        assert_eq!(files, [fonts.join("12345.ttf")]);
+        let db = designcraft_fonts::FontDb::global();
+        let loaded = db.load_document_fonts(&fonts);
+        assert_eq!((loaded.faces, loaded.skipped.len()), (1, 0), "{:?}", loaded.skipped);
+        db.close_scope(loaded.scope);
+        // The first four bytes name the kind; a font extension or an unknown kind stays.
+        assert_eq!(font_file_name("Face".into(), b"OTTO...."), "Face.otf");
+        assert_eq!(font_file_name("Faces".into(), b"ttcf...."), "Faces.ttc");
+        assert_eq!(font_file_name("Mac".into(), b"true...."), "Mac.ttf");
+        assert_eq!(font_file_name("..".into(), &[0, 1, 0, 0]), "font.ttf");
+        assert_eq!(font_file_name("Face.OTF".into(), b"ttcf"), "Face.OTF");
+        assert_eq!(font_file_name("Face.dfont".into(), b"\0\0\x01\0"), "Face.dfont");
+        assert_eq!(font_file_name("short".into(), b"OT"), "short");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

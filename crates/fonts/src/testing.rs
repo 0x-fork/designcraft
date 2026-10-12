@@ -262,3 +262,9 @@ pub fn with_meta(font: &[u8], dlng: Option<&str>, slng: Option<&str>) -> Option<
     maps.iter().for_each(|(_, v)| meta.extend_from_slice(v.as_bytes()));
     with_tables(font, vec![(*b"meta", meta)])
 }
+
+/// The first face of the font `bytes` as if installed from `path` (which isn't read).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn installed_face(bytes: Vec<u8>, path: std::path::PathBuf) -> Option<crate::FontFace> {
+    crate::FontDb::with_font_dirs(vec![]).new_faces(bytes, crate::FontSource::Installed(path)).into_iter().next()
+}

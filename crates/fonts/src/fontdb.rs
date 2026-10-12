@@ -513,11 +513,15 @@ fn face_names(f: &skrifa::FontRef<'_>) -> Option<(String, String)> {
     Some((family, style))
 }
 
+/// The tables glyph outlines are drawn from.
+#[cfg(not(target_arch = "wasm32"))]
+const OUTLINE_TABLES: [&[u8; 4]; 4] = [b"glyf", b"CFF ", b"CFF2", b"VARC"];
+
 /// The names and font menu group of every face in the font file at `path`, reading only its table
 /// directories and the tables that name and classify it (`name`, `OS/2`, `meta`; `cmap` only for a
 /// font that declares no language or code page): a scan opens hundreds of font files, many of them
 /// megabytes long. A variable font is cataloged under its default style; its named instances
-/// appear once it loads.
+/// appear once it loads. Faces without glyph outlines (none of [`OUTLINE_TABLES`]) are left out.
 #[cfg(not(target_arch = "wasm32"))]
 fn file_face_names(path: &std::path::Path) -> Vec<ScannedFace> {
     use std::io::{Read, Seek, SeekFrom};
@@ -548,6 +552,10 @@ fn file_face_names(path: &std::path::Path) -> Vec<ScannedFace> {
             let dir = read_at(start.into(), 12)?;
             let tables = u16::from_be_bytes(dir.get(4..6)?.try_into().ok()?) as usize;
             let records = read_at(u64::from(start) + 12, tables * 16)?;
+            // Faces drawn from other tables (Apple's `hvgl`, bitmaps) would draw nothing.
+            if !records.as_chunks::<16>().0.iter().any(|r| OUTLINE_TABLES.iter().any(|t| r.starts_with(*t))) {
+                return None;
+            }
             // Table `tag`, unless missing or over `max` bytes.
             let mut table = |tag: &[u8; 4], max: u32| -> Option<([u8; 4], Vec<u8>)> {
                 let rec = records.as_chunks::<16>().0.iter().find(|r| r.starts_with(tag))?;
@@ -878,7 +886,7 @@ impl FontDb {
     }
 
     /// The faces of a font file from `source` whose family and style aren't loaded yet.
-    fn new_faces(&self, bytes: Vec<u8>, source: FontSource) -> Vec<FontFace> {
+    pub(crate) fn new_faces(&self, bytes: Vec<u8>, source: FontSource) -> Vec<FontFace> {
         let data = Arc::new(bytes);
         enumerate_faces(&data)
             .into_iter()
