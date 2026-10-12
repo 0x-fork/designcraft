@@ -49,7 +49,7 @@ use crate::notes::Notes;
 pub use crate::notes::{find_note, hit_note, hit_note_with, note_caret};
 use crate::parabox::ParaBox;
 use crate::shape::{Glyph, StyleTable, SubstCtx};
-pub use crate::table::{PlacedCell, StrokeSeg, TableFrag, cell_caret, find_cell, hit_cell, hit_cell_with};
+pub use crate::table::{BorderHit, PlacedCell, StrokeSeg, TableFrag, cell_caret, find_cell, hit_border, hit_cell, hit_cell_with};
 
 /// Character appearance shared by many glyphs (indexed from [`PlacedGlyph::style`]).
 #[derive(Clone, Debug, PartialEq)]

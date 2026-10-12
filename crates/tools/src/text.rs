@@ -1,6 +1,7 @@
 //! Type tool (T): click in a frame to place the caret, drag in a frame to select text, drag on
 //! empty canvas to draw a new text frame. Keys move the caret / delete; typing goes through
-//! `text.insert` (sent by the UI as text input).
+//! `text.insert` (sent by the UI as text input). Dragging a table's row or column border resizes
+//! it (`table.resizeBorder`).
 //!
 //! IME: the marked text of a composition is a preview of `text.insert` at the caret (so it lays
 //! out in place like typed text), underlined, until the IME commits it (one `text.insert`, one
@@ -38,6 +39,86 @@ pub struct TypeTool {
     /// The press selected a word, line, paragraph or story (several clicks): drags keep it.
     unit_selected: bool,
     preedit: Option<Preedit>,
+    /// A press on a table row or column border: a drag resizes it.
+    border: Option<BorderDrag>,
+}
+
+/// A table border under the pointer, and the frame's canvas → inner-space mapping.
+#[derive(Clone, Copy)]
+struct BorderDrag {
+    frame: u64,
+    story: u64,
+    hit: compose::BorderHit,
+    /// Canvas → frame inner space (through rotations, scaling and turned spreads).
+    inv: Affine,
+    /// Press point in frame inner space.
+    start: Point,
+    begun: bool,
+    /// The border runs vertically on the canvas (column borders on an unrotated frame).
+    horizontal_drag: bool,
+}
+
+/// The row or column border of a table near canvas point `pos`, in an unlocked text frame.
+fn border_at(cx: &ToolContext, pos: Point) -> Option<BorderDrag> {
+    let (_, id) = cx.hit(pos)?;
+    let it = cx.doc.item(id)?;
+    if it.locked {
+        return None;
+    }
+    let sid = it.text_frame()?.story;
+    let story = cx.doc.story(sid)?;
+    if story.tables.is_empty() {
+        return None;
+    }
+    let xf = cx.item_canvas_xf(id)? * cx.doc.text_xf(it);
+    let det = xf.determinant().abs();
+    if !(det.is_finite() && det > 1e-12) {
+        return None;
+    }
+    let inv = xf.inverse();
+    let start = inv * pos;
+    let cs = cx.cache.get(cx.doc, sid, None);
+    let fi = cs.frames.iter().position(|f| f.frame == id)?;
+    let hit = compose::hit_border(&cs, fi, &story.tables, start, cx.tol(4.0) / det.sqrt())?;
+    let axis = if hit.column { Point::new(1.0, 0.0) } else { Point::new(0.0, 1.0) };
+    let v = (xf * axis) - (xf * Point::ORIGIN);
+    Some(BorderDrag { frame: id.0, story: sid.0, hit, inv, start, begun: false, horizontal_drag: v.x.abs() >= v.y.abs() })
+}
+
+impl BorderDrag {
+    fn cursor(&self) -> Cursor {
+        if self.horizontal_drag { Cursor::ResizeH } else { Cursor::ResizeV }
+    }
+
+    /// Begin (once) and preview the resize for the pointer at canvas `pos`.
+    fn drag(&mut self, pos: Point, keep: bool) -> Vec<Action> {
+        let d = (self.inv * pos) - self.start;
+        let mut delta = if self.hit.column { d.x } else { d.y };
+        if self.hit.mirrored {
+            delta = -delta;
+        }
+        if !delta.is_finite() {
+            return vec![];
+        }
+        let mut out = vec![];
+        if !self.begun {
+            self.begun = true;
+            out.push(Action::Begin(if self.hit.column { "Resize Column" } else { "Resize Row" }.into()));
+        }
+        out.push(Action::Preview(
+            "table.resizeBorder".into(),
+            json!({
+                "frame": self.frame,
+                "story": self.story,
+                "table": self.hit.table,
+                "axis": if self.hit.column { "column" } else { "row" },
+                "index": self.hit.index,
+                "delta": delta,
+                "keepTableSize": keep,
+            }),
+        ));
+        out
+    }
 }
 
 /// Are whole rows or whole columns of a table selected?
@@ -139,6 +220,13 @@ impl Tool for TypeTool {
                 self.selecting = None;
                 self.cell_drag = None;
                 self.unit_selected = false;
+                self.border = None;
+                if ev.kind == PointerKind::Down
+                    && let Some(b) = border_at(cx, ev.pos)
+                {
+                    self.border = Some(b);
+                    return vec![];
+                }
                 if let Some((_, id)) = cx.hit(ev.pos)
                     && let Some(it) = cx.doc.item(id)
                     && !matches!(it.content, designcraft_doc::Content::Graphic(_) | designcraft_doc::Content::Group { .. })
@@ -170,6 +258,13 @@ impl Tool for TypeTool {
             }
             PointerKind::Drag => {
                 let Some(a) = self.start else { return vec![] };
+                if let Some(b) = self.border.as_mut() {
+                    // A click with a little wobble must not resize.
+                    if !b.begun && (ev.pos - a).hypot() < cx.tol(3.0) {
+                        return vec![];
+                    }
+                    return b.drag(ev.pos, ev.mods.shift);
+                }
                 if self.cell_drag.is_some() || self.unit_selected {
                     return vec![];
                 }
@@ -199,6 +294,9 @@ impl Tool for TypeTool {
             PointerKind::Up => {
                 self.guides.clear();
                 let start = self.start.take();
+                if let Some(b) = self.border.take() {
+                    return if b.begun { vec![Action::Commit] } else { vec![] };
+                }
                 if let Some((fid, from)) = self.cell_drag.take() {
                     let sp = cx.layout.spread_at(ev.pos).map(|(_, p)| p).unwrap_or(ev.pos);
                     let moved = start.is_some_and(|a| (ev.pos - a).hypot() >= cx.tol(3.0));
@@ -228,6 +326,12 @@ impl Tool for TypeTool {
     }
 
     fn key(&mut self, cx: &ToolContext, key: ToolKey, mods: Mods) -> Vec<Action> {
+        if key == ToolKey::Escape
+            && let Some(b) = self.border.take()
+        {
+            self.start = None;
+            return if b.begun { vec![Action::Cancel] } else { vec![] };
+        }
         // The IME owns the keys while it composes (the UI holds them back; this is a guard).
         if cx.selection.text.is_none() || self.preedit.is_some() {
             return vec![];
@@ -277,14 +381,14 @@ impl Tool for TypeTool {
     }
 
     fn cursor(&self, cx: &ToolContext, p: Point, _m: Mods) -> Cursor {
-        match cx.hit(p) {
-            Some((_, id)) if cx.doc.item(id).is_some_and(|i| i.is_text_frame()) => Cursor::Text,
-            _ => Cursor::Text,
+        if let Some(b) = self.border.as_ref().copied().or_else(|| if self.start.is_none() { border_at(cx, p) } else { None }) {
+            return b.cursor();
         }
+        Cursor::Text
     }
 
     fn busy(&self) -> bool {
-        self.drawing
+        self.drawing || self.border.is_some()
     }
 
     fn wants_text(&self, cx: &ToolContext) -> bool {
