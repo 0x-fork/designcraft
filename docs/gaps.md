@@ -1,6 +1,6 @@
 # Where DesignCraft falls short of InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; Windows CI passes) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every known shortfall against InDesign 2026, one entry each, ranked by how much it stops an
 InDesign professional from doing real work. This is the work list: agents pick from the top.
@@ -124,8 +124,10 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 - **Estimate:** 40–70 h. **Doc:** [file-format-parity.md](file-format-parity.md)
 
 ### 10. Printing (H, F)
-- **Missing:** a real print path: `file.print` sends PDF to `lpr`, so Windows can't print; no
-  PostScript, printer PPDs, separations to device, print presets, or trapping.
+- **Missing:** PostScript, a printer-driver options UI, separations to device, print presets, or trapping.
+- **Have:** `file.print` exports selected pages/spreads with marks and bleed, then submits through
+  craft-print: CUPS on macOS/Linux and the Windows PDF raster spooler. Physical printer fidelity
+  remains a hardware check.
 - **Estimate:** 25–45 h. **Doc:** [hardware-parity.md](hardware-parity.md)
 
 ### 11. Paragraph and character style editing reliability (F)
