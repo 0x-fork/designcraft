@@ -3042,6 +3042,8 @@ fn hostile_custom_wrap_boundary_is_dropped() {
         assert_eq!(it.wrap.path, None);
         assert!(first_line_x(&d) >= 100.0 - 1e-6);
     }
+}
+
 /// A family name keeps its spaces ("Minion Pro " is a font of its own) and `FontStyle="Nothing"`
 /// leaves the style to the paragraph, also after an export.
 #[test]
