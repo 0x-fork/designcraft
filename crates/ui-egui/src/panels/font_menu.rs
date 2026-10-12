@@ -232,7 +232,7 @@ fn preview(
     }
     let img = designcraft_render::glyphs::text_line(fonts, family, style, text, px, color.to_array());
     let ci = egui::ColorImage::from_rgba_premultiplied([img.width as usize, img.height as usize], &img.pixels);
-    let t = ui.ctx().load_texture(format!("font_preview_{family}_{style}"), ci, egui::TextureOptions::LINEAR);
+    let t = crate::widgets::load_texture(ui.ctx(), format!("font_preview_{family}_{style}"), ci, egui::TextureOptions::LINEAR);
     ui.data_mut(|d| d.get_temp_mut_or_default::<Previews>(cache_id).insert(key, t.clone()));
     t
 }
