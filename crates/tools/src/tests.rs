@@ -823,6 +823,26 @@ fn loaded_drag_makes_a_frame_of_that_size_and_shift_autoflows() {
 }
 
 #[test]
+fn loaded_drag_snaps_like_frame_drawing() {
+    let td = thread_doc();
+    let cx = ToolContext { snap: SnapView::FACTORY, ..td.cx() };
+    let mut t = create("selection");
+    click(&mut t, &cx, td.port(td.a, true), Mods::default());
+    let col = td.d.spreads[0].pages[0].column_rects()[0];
+    // Press and release a point or two inside the column's edges: both sides snap to them.
+    let (p0, p1) = (td.at(col.x0 + 1.5, 560.0), td.at(col.x1 - 2.0, 650.0));
+    t.pointer(&cx, &PointerEvent::new(PointerKind::Down, p0.x, p0.y));
+    t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, p1.x, p1.y));
+    let Some(Overlay::Marquee(m)) = t.overlays(&cx).first().cloned() else { panic!("no marquee") };
+    assert!((m.x0 - td.at(col.x0, 0.0).x).abs() < 1e-9 && (m.x1 - td.at(col.x1, 0.0).x).abs() < 1e-9, "{m:?}");
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Up, p1.x, p1.y));
+    let [Action::Exec(id, p)] = a.as_slice() else { panic!("{a:?}") };
+    assert_eq!(id, "text.thread");
+    let r: Vec<f64> = p["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert_eq!((r[0], r[2]), (col.x0, col.x1), "{p}");
+}
+
+#[test]
 fn alt_click_stays_loaded() {
     let td = thread_doc();
     let cx = td.cx();

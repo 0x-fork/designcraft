@@ -800,9 +800,14 @@ impl Tool for SelectionTool {
         }
     }
 
-    fn overlays(&self, _cx: &ToolContext) -> Vec<Overlay> {
+    fn overlays(&self, cx: &ToolContext) -> Vec<Overlay> {
         match &self.drag {
-            Drag::Marquee { start, cur } | Drag::Place { start, cur } => vec![Overlay::Marquee(Rect::from_points(*start, *cur))],
+            Drag::Place { start, cur } if crate::thread::is_drag(cx, *start, *cur) => {
+                let Some((sr, r, guides)) = crate::thread::drag_frame(cx, *start, *cur) else { return vec![] };
+                let r = Rect::from_points(cx.layout.to_canvas(sr, Point::new(r.x0, r.y0)), cx.layout.to_canvas(sr, Point::new(r.x1, r.y1)));
+                std::iter::once(Overlay::Marquee(r)).chain(guides).collect()
+            }
+            Drag::Marquee { start, cur } => vec![Overlay::Marquee(Rect::from_points(*start, *cur))],
             Drag::Move { .. } | Drag::Resize { .. } | Drag::Rotate { .. } | Drag::Anchor { .. } => self.guides.clone(),
             _ => vec![],
         }

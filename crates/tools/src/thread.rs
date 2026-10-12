@@ -10,7 +10,7 @@ use designcraft_doc::{Document, Item, ItemId, SpreadRef};
 use designcraft_geom::{Point, Rect};
 use serde_json::{Value, json};
 
-use crate::{CanvasLayout, Cursor, Mods, ToolContext, rect_json, spread_json};
+use crate::{CanvasLayout, Cursor, Mods, Overlay, ToolContext, rect_json, spread_json};
 
 /// Port square size, in screen pixels.
 pub const PORT_SIZE_PX: f64 = 8.5;
@@ -87,6 +87,21 @@ pub fn click_frame_rect(doc: &Document, sr: SpreadRef, p: Point) -> Option<Rect>
     [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite()).then_some(r)
 }
 
+/// Is a press at `start` released at `p` (canvas) a drag rather than a click?
+pub(crate) fn is_drag(cx: &ToolContext, start: Point, p: Point) -> bool {
+    (p - start).hypot() >= cx.tol(3.0)
+}
+
+/// The frame a drag with the loaded cursor from `start` to `p` (canvas) makes, in spread
+/// coordinates, and the snap guides to draw. It is drawn like the frame tools (the press point
+/// and the moving edges snap) without their modifiers: Shift and Alt autoflow here.
+pub(crate) fn drag_frame(cx: &ToolContext, start: Point, p: Point) -> Option<(SpreadRef, Rect, Vec<Overlay>)> {
+    let (sr, sa) = cx.layout.spread_at(start)?;
+    let sa = if cx.snap.any() { crate::snap::snap_point(cx, sr, sa).0 } else { sa };
+    let (r, guides) = crate::frame::snapped_drag_rect(cx, sr, sa, cx.layout.to_spread(sr, p), Mods::default());
+    Some((sr, r, guides))
+}
+
 /// The loaded text cursor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Loaded {
@@ -156,10 +171,9 @@ impl Loaded {
 
     /// The command for a click at `p`, or a drag from `start` to `p` (canvas). None: nothing to do.
     pub fn click(self, cx: &ToolContext, start: Point, p: Point, mods: Mods) -> Option<(&'static str, Value)> {
-        let dragged = (p - start).hypot() >= cx.tol(3.0);
-        let (pair, new_rect) = if dragged {
-            let (sr, a) = cx.layout.spread_at(start)?;
-            (self.pair(cx.doc, None), Some((sr, Rect::from_points(a, cx.layout.to_spread(sr, p)))))
+        let (pair, new_rect) = if is_drag(cx, start, p) {
+            let (sr, r, _) = drag_frame(cx, start, p)?;
+            (self.pair(cx.doc, None), Some((sr, r)))
         } else {
             match self.target(cx, p) {
                 Target::Unthread => {
