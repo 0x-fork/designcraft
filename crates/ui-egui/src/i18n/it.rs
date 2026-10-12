@@ -30,6 +30,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Paste", "Incolla"),
     ("Reverse Path", "Inverti tracciato"),
     ("Set Anchor", "Imposta ancoraggio"),
+    ("Paste Vector Art", "Incolla grafica vettoriale"),
     ("Clear", "Cancella"),
     ("Duplicate", "Duplica"),
     ("Select All", "Seleziona tutto"),
