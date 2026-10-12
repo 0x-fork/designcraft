@@ -2962,7 +2962,8 @@ fn wrap_slot(
             }
         } else {
             // Segments before the first that `holds` the line's first word stay empty.
-            let segs: Vec<(f64, f64)> = free_slots(f, col, b - asc, b, desc, size, rtl, line_start).into_iter().skip_while(|seg| !holds(seg)).collect();
+            let segs: Vec<(f64, f64)> =
+                free_slots(f, col, b - asc, b, desc, size, rtl, line_start).into_iter().skip_while(|seg| !holds(seg)).collect();
             if !segs.is_empty() {
                 return Some((b, segs));
             }
