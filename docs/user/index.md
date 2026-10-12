@@ -10,7 +10,7 @@ It has spreads and parent pages, text frames that thread from one to the next, p
 
 ## Start here
 
-- [Get started](getting-started/index.md)
+- [Getting started](getting-started/index.md)
 - [Install DesignCraft](getting-started/install.md)
 - [Guides](guides/index.md)
 - [Troubleshooting](troubleshooting/index.md)

@@ -1,5 +1,5 @@
 ---
-title: Get started
+title: Getting started
 description: Install DesignCraft, then open the sample magazine or start a new document.
 order: 10
 verified: 0.6.0

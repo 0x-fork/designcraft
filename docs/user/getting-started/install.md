@@ -43,4 +43,4 @@ ArtCraft Launcher lists DesignCraft and can install and update it for you. See [
 
 ## First run
 
-Open DesignCraft. You land on the start screen. Continue with [Get started](index.md). If the window closes right away, see [DesignCraft closes right after it starts](../troubleshooting/app-closes-at-start.md).
+Open DesignCraft. You land on the start screen. Continue with [Getting started](index.md). If the window closes right away, see [DesignCraft closes right after it starts](../troubleshooting/app-closes-at-start.md).
