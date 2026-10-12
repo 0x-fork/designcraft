@@ -733,6 +733,10 @@ fn type_tool_drags_a_table_column_border() {
         let mut t = create("type");
         let expected = if degrees == 0.0 { Cursor::ResizeH } else { Cursor::ResizeV };
         assert_eq!(t.cursor(&cx, on_border, Mods::default()), expected);
+        // A click with a 1 px wobble on the border changes nothing.
+        assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, on_border.x, on_border.y)).is_empty());
+        assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, on_border.x + 1.0, on_border.y)).is_empty());
+        assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, on_border.x + 1.0, on_border.y)).is_empty());
         // A press on the border starts a resize, not a text selection.
         assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, on_border.x, on_border.y)).is_empty());
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, dragged.x, dragged.y));

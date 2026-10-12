@@ -159,6 +159,10 @@ impl Tool for TypeTool {
             PointerKind::Drag => {
                 let Some(a) = self.start else { return vec![] };
                 if let Some(b) = self.border.as_mut() {
+                    // A click with a little wobble must not resize.
+                    if !b.begun && (ev.pos - a).hypot() < cx.tol(3.0) {
+                        return vec![];
+                    }
                     return b.drag(ev.pos, ev.mods.shift);
                 }
                 if self.cell_drag.is_some() {
