@@ -346,22 +346,36 @@ fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
     Ok(json!({"story": sid.0, "anchor": a, "focus": e}))
 }
 
-/// The word at byte `i`; on spaces the run of spaces; on anything else that one character. At
-/// the end of a paragraph, what ends it.
+/// The word at byte `i`; on spaces the run of spaces; on anything else that one character
+/// (grapheme cluster). At the end of a paragraph, what ends it. Grapheme clusters are never split:
+/// combining marks, viramas, variation selectors and emoji ZWJ sequences stay with their base.
 fn word_or_spaces_at(s: &str, i: usize) -> (usize, usize) {
-    let at = |i: usize| s.get(i..).and_then(|r| r.chars().next()).filter(|c| *c != '\n');
-    let i = if at(i).is_none() && i > 0 { prev_char(s, i) } else { i };
-    let Some(c) = at(i) else { return (i, i) };
-    let space = |c: char| c.is_whitespace() && c != '\n';
-    if is_word(c) {
-        word_bounds(s, i)
-    } else if space(c) {
-        let a = s[..i].char_indices().rev().take_while(|(_, c)| space(*c)).last().map_or(i, |(k, _)| k);
-        let e = s[i..].char_indices().find(|(_, c)| !space(*c)).map_or(s.len(), |(k, _)| i + k);
-        (a, e)
-    } else {
-        (i, i + c.len_utf8())
+    use unicode_segmentation::UnicodeSegmentation;
+    let i = floor_char_boundary(s, i.min(s.len()));
+    // Clusters never span a paragraph return, so the paragraph is enough.
+    let ps = s[..i].rfind('\n').map_or(0, |k| k + 1);
+    let pe = s[i..].find('\n').map_or(s.len(), |k| i + k);
+    let g: Vec<(usize, &str)> = s[ps..pe].grapheme_indices(true).collect();
+    let Some(k) = g.iter().rposition(|(o, _)| ps + o <= i) else { return (i, i) };
+    let kind = |c: &str| match c.chars().next() {
+        Some(c) if is_word(c) => 1,
+        Some(c) if c.is_whitespace() => 2,
+        _ => 0,
+    };
+    let span = |a: usize, e: usize| g.get(a).zip(g.get(e)).map_or((i, i), |((oa, _), (oe, ge))| (ps + oa, ps + oe + ge.len()));
+    let kd = g.get(k).map_or(0, |(_, c)| kind(c));
+    if kd == 0 {
+        return span(k, k);
     }
+    let mut a = k;
+    while a > 0 && g.get(a - 1).is_some_and(|(_, c)| kind(c) == kd) {
+        a -= 1;
+    }
+    let mut e = k;
+    while g.get(e + 1).is_some_and(|(_, c)| kind(c) == kd) {
+        e += 1;
+    }
+    span(a, e)
 }
 
 /// The composition whose lines hold a story's text: the story's own, a table cell's or a footnote's.
@@ -721,12 +735,6 @@ pub fn prev_word(s: &str, i: usize) -> usize {
     }
     0
 }
-fn word_bounds(s: &str, i: usize) -> (usize, usize) {
-    let a = s[..i.min(s.len())].char_indices().rev().take_while(|(_, c)| is_word(*c)).last().map(|(k, _)| k).unwrap_or(i);
-    let b = s[i.min(s.len())..].char_indices().find(|(_, c)| !is_word(*c)).map(|(k, _)| i + k).unwrap_or(s.len());
-    (a, b)
-}
-
 /// Type ▸ Story Direction.
 fn story_direction(s: &mut Session, p: &Value) -> Result<Value> {
     let vertical = p.get("vertical").and_then(Value::as_bool).ok_or_else(|| bad("type.storyDirection", "missing vertical"))?;
@@ -1434,6 +1442,29 @@ mod multi_click_tests {
     use serde_json::{Value, json};
 
     use crate::Session;
+
+    #[test]
+    fn word_selection_keeps_grapheme_clusters_whole() {
+        use super::word_or_spaces_at as word;
+        // Decomposed "café": the combining acute belongs to the word, wherever the click lands.
+        let s = "un cafe\u{301} noir";
+        let cafe = (3, 3 + "cafe\u{301}".len());
+        assert_eq!(word(s, 4), cafe);
+        assert_eq!(word(s, 7), cafe, "on the combining mark");
+        // Devanagari with a virama (U+094D) and a dependent vowel sign.
+        let s = "\u{928}\u{92E}\u{938}\u{94D}\u{924}\u{947} x";
+        let w = "\u{928}\u{92E}\u{938}\u{94D}\u{924}\u{947}".len();
+        assert_eq!(word(s, 0), (0, w));
+        assert_eq!(word(s, 9), (0, w), "on the virama");
+        // An emoji ZWJ sequence and a variation selector stay one character.
+        let s = "a \u{1F469}\u{200D}\u{1F4BB} b \u{263A}\u{FE0F}";
+        let e = (2, 2 + "\u{1F469}\u{200D}\u{1F4BB}".len());
+        assert_eq!(word(s, 2), e);
+        assert_eq!(word(s, 6), e, "on the joiner");
+        assert_eq!(word(s, s.len() - 1), (s.len() - 6, s.len()), "at the end: the last character whole");
+        // Empty paragraphs select nothing.
+        assert_eq!(word("a\n\nb", 2), (2, 2));
+    }
 
     #[test]
     fn clicks_select_words_spaces_lines_paragraphs_and_the_story() {
