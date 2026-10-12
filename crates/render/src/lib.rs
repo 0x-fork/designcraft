@@ -23,6 +23,7 @@ use vello_cpu::{Pixmap, RenderContext, Resources};
 
 pub use vello_cpu;
 
+mod blendspace;
 pub mod damage;
 mod fx;
 
@@ -143,6 +144,7 @@ pub struct RenderOptions {
     pub tag_markers: bool,
     /// Separations Preview: draw one process plate (0 = cyan … 3 = black) as grey ink coverage,
     /// from each object's own colour (CMYK as authored, others through the colour settings).
+    /// 4 (internal, the CMYK blend space): cyan, magenta and yellow coverage in red, green, blue.
     pub plate: Option<u8>,
     /// View › Display Performance.
     pub quality: DisplayQuality,
@@ -329,6 +331,14 @@ impl Renderer {
         let mut pixels = vec![0u8; w as usize * h as usize * 4];
         if let Some(pm) = vello_cpu::PixmapMut::new(w, h, &mut pixels) {
             ctx.render(pm, &mut self.resources);
+        }
+        // A CMYK blend space blends the spreads' blend modes in CMYK (blendspace.rs).
+        if opts.blend_space_view && doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk && opts.plate.is_none() {
+            let stats = self.stats;
+            for pl in spreads {
+                self.cmyk_blend_spread(doc, cache, pl, w as u32, h as u32, view, opts, &mut pixels);
+            }
+            self.stats = stats;
         }
         if opts.blend_space_view && doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk && opts.plate.is_none() {
             let mut img = Rendered { width: w as u32, height: h as u32, pixels };
@@ -827,7 +837,11 @@ fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync:
             let k = 255.0 / p.a as f32;
             let rgb = [p.r, p.g, p.b].map(|v| (v as f32 * k / 255.0).min(1.0));
             let cmyk = cmyk_lut(rgb);
-            let v = ((1.0 - cmyk[plate.min(3) as usize].clamp(0.0, 1.0)) * p.a as f32).round() as u8;
+            let ink = |i: usize| ((1.0 - cmyk[i].clamp(0.0, 1.0)) * p.a as f32).round() as u8;
+            if plate == 4 {
+                return vello_cpu::color::PremulRgba8 { r: ink(0), g: ink(1), b: ink(2), a: p.a };
+            }
+            let v = ink(plate.min(3) as usize);
             vello_cpu::color::PremulRgba8 { r: v, g: v, b: v, a: p.a }
         })
         .collect();
@@ -860,8 +874,13 @@ pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
             designcraft_color::Color::Cmyk { c, m, y, k } => [c, m, y, k],
             _ => c.to_cmyk_managed(designcraft_color::cms::Intent::RelativeColorimetric),
         };
-        let v = ((1.0 - cmyk[p.min(3) as usize].clamp(0.0, 1.0)) * 255.0).round() as u8;
-        return peniko::Color::from_rgba8(v, v, v, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let ink = |i: usize| ((1.0 - cmyk[i].clamp(0.0, 1.0)) * 255.0).round() as u8;
+        if p == 4 {
+            return peniko::Color::from_rgba8(ink(0), ink(1), ink(2), a);
+        }
+        let v = ink(p.min(3) as usize);
+        return peniko::Color::from_rgba8(v, v, v, a);
     }
     if RICH_BLACK.with(|r| r.get())
         && let designcraft_color::Color::Cmyk { c: cc, m, y, k } = *c
@@ -1334,6 +1353,54 @@ mod tests {
         d.settings.blend_space = designcraft_doc::BlendSpace::Rgb;
         let rgb = px(&d, &mut r);
         assert!(rgb[1] > 245 && rgb[0] < 10, "{rgb:?}");
+    }
+
+    #[test]
+    fn blend_modes_blend_in_cmyk_on_screen_in_a_cmyk_blend_space() {
+        // A lilac (RGB) rectangle, and a 100% K one over its lower half and the paper below it,
+        // in Color Dodge: in CMYK the black clears the lilac's inks (white), over the paper it
+        // shows as it is; in RGB, dodging with black changes nothing.
+        let mut d = Document::new(&NewDocument::default());
+        d.swatches.push(designcraft_color::swatch::Swatch::color("Lilac", designcraft_color::Color::rgb8(171, 154, 227)));
+        let lid = d.default_layer();
+        let rect = |d: &mut Document, r: Rect, fill: &str| {
+            let id = designcraft_doc::ItemId(d.alloc());
+            let mut it = Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(r));
+            it.fill = Fill::swatch(fill);
+            d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+            id
+        };
+        rect(&mut d, Rect::new(100.0, 100.0, 300.0, 200.0), "Lilac");
+        let black = rect(&mut d, Rect::new(150.0, 150.0, 250.0, 250.0), designcraft_color::swatch::BLACK);
+        d.item_mut(black).unwrap().blend = DcBlend::ColorDodge;
+        let cache = Cache::new();
+        let mut r = Renderer::new();
+        r.threads = 0;
+        let px = |d: &Document, r: &mut Renderer, x: u32, y: u32| {
+            r.render_page(d, &cache, 0, 1.0, false, &RenderOptions { blend_space_view: true, ..Default::default() }).unwrap().pixel(x, y)
+        };
+        let over_lilac = px(&d, &mut r, 200, 175);
+        assert!(over_lilac[..3].iter().all(|v| *v > 235), "dodged to white: {over_lilac:?}");
+        let over_paper = px(&d, &mut r, 200, 225);
+        assert!(over_paper[..3].iter().all(|v| *v < 90), "black as it is: {over_paper:?}");
+        let lilac = px(&d, &mut r, 120, 150);
+        assert!(lilac[2] > lilac[1] + 25, "the lilac beside it: {lilac:?}");
+        // Inside a group, the group's blend mode.
+        let g = designcraft_doc::ItemId(d.alloc());
+        let it = d.remove_item(black).unwrap();
+        let mut grp = Item::new(g, lid, designcraft_doc::Shape::Group, Default::default());
+        let mut inner = (*it).clone();
+        inner.blend = DcBlend::Normal;
+        grp.content = Content::Group { items: vec![Arc::new(inner)] };
+        grp.blend = DcBlend::ColorDodge;
+        d.insert_item(SpreadRef::Doc(0), grp, None).unwrap();
+        let grouped = px(&d, &mut r, 200, 175);
+        assert!(grouped[..3].iter().all(|v| *v > 235), "{grouped:?}");
+        // An RGB blend space: still lilac under the black (lightened a little: [Black] shows as a
+        // dark grey in RGB).
+        d.settings.blend_space = designcraft_doc::BlendSpace::Rgb;
+        let rgb = px(&d, &mut r, 200, 175);
+        assert!(rgb[2] > rgb[1] + 25 && rgb[1] < 220, "{rgb:?}");
     }
 
     #[test]
