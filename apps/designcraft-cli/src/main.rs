@@ -320,7 +320,7 @@ fn export(s: &mut Session, out: &str, page: usize, scale: f64) -> Result<(), Str
         .ok_or("no such page")?;
     let lower = out.to_lowercase();
     let bytes = if lower.ends_with(".jpg") || lower.ends_with(".jpeg") { img.to_jpeg(90) } else { img.to_png() };
-    std::fs::write(out, bytes).map_err(|e| format!("{out}: {e}"))?;
+    designcraft_engine::atomic::write_atomic(std::path::Path::new(out), &bytes).map_err(|e| format!("{out}: {e}"))?;
     eprintln!("wrote {out} ({}×{}, {:.1} ms, {} glyphs)", img.width, img.height, t.elapsed().as_secs_f64() * 1000.0, r.stats.glyphs);
     Ok(())
 }
