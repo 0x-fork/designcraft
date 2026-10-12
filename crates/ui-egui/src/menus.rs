@@ -14,6 +14,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.quit", "Quit DesignCraft", Some("Cmd+Q"), "{} — close the window; each document with unsaved changes asks first"),
     ("app.saveCopyDialog", "Save a Copy…", Some("Cmd+Alt+S"), "{} — choose where to write a copy (the document stays as it is)"),
     ("app.loadSwatches", "Load Swatches…", None, "{} — pick a swatch exchange (.ase) file"),
+    (
+        "effects.dialog",
+        "Effects…",
+        None,
+        "{page?: transparency|dropShadow|innerShadow|outerGlow|innerGlow|bevel|satin|feather|directionalFeather|gradientFeather} — the Effects dialog for the selected objects",
+    ),
     ("app.packageDialog", "Package…", Some("Cmd+Alt+Shift+P"), "{} — choose the package folder to create (file.package)"),
     ("app.saveSwatches", "Save Swatches for Exchange…", None, "{path?} — write the colour swatches as .ase"),
     ("app.exportPng", "Export Page as PNG…", Some("Cmd+E"), "{}"),
@@ -503,6 +509,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:object.cornerOptions",
             "-",
             ">Effects",
+            "ui:effects.dialog|Transparency…|{\"page\": \"transparency\"}",
             "cmd:object.dropShadow",
             "cmd:object.innerShadow",
             "cmd:object.outerGlow",
@@ -913,6 +920,10 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                 Some(path) => app.run("table.placeGraphic", json!({"path": path})),
                 None => Ok(Value::Null),
             }
+        }
+        "effects.dialog" => {
+            crate::effects_dialog::open(app, p.get("page").and_then(Value::as_str).unwrap_or("transparency"));
+            Ok(Value::Null)
         }
         "app.loadSwatches" => {
             if let Some(pick) = app.services.pick_open.as_mut() {
@@ -1880,6 +1891,13 @@ pub fn close_document(app: &mut DesignApp, index: Option<usize>) {
 /// A menu item was chosen. An engine command whose label ends in "…" and that takes parameters
 /// opens a dialog built from its parameter documentation (see [`crate::dialogs::command_fields`]).
 pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
+    // Object › Effects › Drop Shadow… (and its shortcut): the Effects dialog on that page.
+    if params.is_null()
+        && let Some(page) = crate::effects_dialog::page_of_command(id)
+    {
+        crate::effects_dialog::open(app, page);
+        return;
+    }
     if params.is_null() && id == "file.close" {
         close_document(app, None);
         return;
