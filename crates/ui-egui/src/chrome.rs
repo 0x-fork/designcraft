@@ -710,6 +710,7 @@ pub fn start_screen(app: &mut DesignApp, ui: &mut egui::Ui) {
                     let _ = app.run("file.newSample", json!({}));
                 }
             });
+            recent_files(app, ui);
             ui.add_space(20.0);
             community_card(app, ui);
             ui.add_space(24.0);
@@ -742,6 +743,38 @@ pub fn start_screen(app: &mut DesignApp, ui: &mut egui::Ui) {
         },
     );
     let _ = Content::Unassigned;
+}
+
+/// Recent files shown on the start screen (File › Open Recent has them all).
+const START_SCREEN_RECENT: usize = 8;
+
+/// Start screen: the most recent files (name, then folder); a file that is gone is dimmed and says
+/// so when clicked. Nothing when the list is empty.
+fn recent_files(app: &mut DesignApp, ui: &mut egui::Ui) {
+    if app.session.prefs.recent_files.is_empty() {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.add_space(24.0);
+    ui.label(crate::rtl::widget(
+        ui,
+        egui::RichText::new(crate::i18n::tr(&app.ui.language, "Recent files")).font(semibold(15.0)).color(t.text_strong),
+    ));
+    ui.add_space(6.0);
+    let rows: Vec<(usize, String)> = app.session.prefs.recent_files.iter().take(START_SCREEN_RECENT).cloned().enumerate().collect();
+    for (i, path) in rows {
+        let p = std::path::Path::new(&path);
+        let there = p.is_file();
+        let folder = p.parent().map(|d| d.display().to_string()).unwrap_or_default();
+        let mut job = egui::text::LayoutJob::default();
+        let name_color = if there { t.text_strong } else { t.text_dim };
+        job.append(&crate::menus::recent_label(&path), 0.0, egui::TextFormat { font_id: semibold(13.0), color: name_color, ..Default::default() });
+        job.append(&folder, 10.0, egui::TextFormat { font_id: egui::FontId::proportional(12.0), color: t.text_dim, ..Default::default() });
+        let r = ui.add(egui::Button::new(job).frame(false).min_size(vec2(0.0, 24.0))).on_hover_text(&path);
+        if r.clicked() {
+            let _ = app.run("app.openRecent", json!({"index": i}));
+        }
+    }
 }
 
 /// Start screen: the ArtCraft community (Discord first) and project links.
