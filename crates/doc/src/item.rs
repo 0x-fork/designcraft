@@ -32,6 +32,22 @@ impl Default for Fill {
 }
 
 impl Fill {
+    /// A radial gradient's ellipse on an object whose bounds (in its own space) are `b`: centre and
+    /// horizontal and vertical radii. As in InDesign, a radial gradient stretches with the object's
+    /// box: by default it's centred and reaches the box's sides (an ellipse in a non-square box);
+    /// with a Gradient Swatch tool vector it's centred at the vector's start, and the vector's
+    /// length, measured with the box made square, sets its size.
+    pub fn radial_ellipse(&self, b: designcraft_geom::Rect) -> (designcraft_geom::Point, f64, f64) {
+        let k = if b.width() > 1e-9 && b.height() > 1e-9 { b.height() / b.width() } else { 1.0 };
+        match self.gradient_vector {
+            Some([x0, y0, x1, y1]) => {
+                let r = designcraft_geom::Vec2::new(x1 - x0, (y1 - y0) / k).hypot();
+                (designcraft_geom::Point::new(x0, y0), r, r * k)
+            }
+            None => (b.center(), b.width().max(1e-9) / 2.0, b.height().max(1e-9) / 2.0),
+        }
+    }
+
     pub fn none() -> Self {
         Fill { swatch: designcraft_color::swatch::NONE.into(), tint: 1.0, gradient_angle: None, gradient_vector: None, overprint: false }
     }
