@@ -30,6 +30,9 @@ pub struct PenTool {
     editing_end: bool,
     /// The press on the end point has been dragged.
     end_moved: bool,
+    /// Continuing from the subpath's first anchor: `anchors` run in drawing order, the reverse
+    /// of the path's, and new anchors go before its first one.
+    from_start: bool,
 }
 
 /// An end point of an open path under canvas point `p`: (item, subpath, whether it is the last
@@ -116,6 +119,7 @@ impl PenTool {
         self.subpath = None;
         self.editing_end = false;
         self.end_moved = false;
+        self.from_start = false;
         vec![]
     }
 
@@ -130,7 +134,8 @@ impl PenTool {
             let (i, o) = if flip { (a.h_out, a.h_in) } else { (a.h_in, a.h_out) };
             (xf * a.p, xf * i, xf * o)
         };
-        // From the first anchor the path is reversed first, so the new anchors follow on.
+        // From the first anchor the anchors run backwards (handles swapped); new ones are added
+        // before the first, so the path keeps its direction (and its arrowheads their ends).
         let (other, end) = if at_end { (at(first, false), at(last, false)) } else { (at(last, true), at(first, true)) };
         self.path = Some(id.0);
         self.subpath = Some(si);
@@ -139,7 +144,13 @@ impl PenTool {
         self.editing_end = true;
         self.end_moved = false;
         self.dragging = true;
-        if at_end { vec![] } else { vec![Action::Exec("path.reverse".into(), json!({"ids": [id.0], "subpath": si}))] }
+        self.from_start = !at_end;
+        vec![]
+    }
+
+    /// Anchor `a` (drawing order) in the path's order.
+    fn path_anchor(&self, a: &(Point, Point, Point)) -> (Point, Point, Point) {
+        if self.from_start { (a.0, a.2, a.1) } else { *a }
     }
 
     /// Shift constrains first. The stored point is the snapped spread point. Guides are already canvas.
@@ -161,9 +172,12 @@ impl PenTool {
                 vec![Action::Exec("path.create".into(), json!({"spread": spread_json(sr), "anchors": anchors, "closed": false, "notifyPen": true}))]
             }
             Some(id) => {
-                let mut p = json!({"id": id, "anchor": anchor_json(last)});
+                let mut p = json!({"id": id, "anchor": anchor_json(&self.path_anchor(last))});
                 if let Some(si) = self.subpath {
                     p["subpath"] = json!(si);
+                }
+                if self.from_start {
+                    p["at"] = json!("start");
                 }
                 vec![Action::Exec("path.appendAnchor".into(), p)]
             }
@@ -248,13 +262,17 @@ impl Tool for PenTool {
                 self.dragging = false;
                 // The continued path's end point: a drag set its direction lines.
                 if std::mem::take(&mut self.editing_end) {
-                    let (Some(id), Some(si), Some(&(p, h_in, h_out))) = (self.path, self.subpath, self.anchors.last()) else { return vec![] };
-                    if !std::mem::take(&mut self.end_moved) || (h_out - p).hypot() < 1e-9 {
+                    let (Some(id), Some(si), Some(&(p, drawn_in, drawn_out))) = (self.path, self.subpath, self.anchors.last()) else {
+                        return vec![];
+                    };
+                    if !std::mem::take(&mut self.end_moved) || (drawn_out - p).hypot() < 1e-9 {
                         return vec![];
                     }
+                    let (_, h_in, h_out) = self.path_anchor(&(p, drawn_in, drawn_out));
+                    let anchor = if self.from_start { "first" } else { "last" };
                     return vec![Action::Exec(
                         "path.setAnchor".into(),
-                        json!({"id": id, "subpath": si, "anchor": "last", "in": [h_in.x, h_in.y], "out": [h_out.x, h_out.y]}),
+                        json!({"id": id, "subpath": si, "anchor": anchor, "in": [h_in.x, h_in.y], "out": [h_out.x, h_out.y]}),
                     )];
                 }
                 self.commit_anchor()

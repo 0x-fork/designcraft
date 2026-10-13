@@ -1559,19 +1559,30 @@ fn pen_continues_an_open_path_from_either_end_point() {
     let a = t.pointer(&cx, &ev(PointerKind::Down, at(100.0, 100.0)));
     assert_eq!(a, vec![Action::Exec("path.close".into(), serde_json::json!({"id": id.0, "subpath": 0}))]);
     assert!(t.pointer(&cx, &ev(PointerKind::Up, at(100.0, 100.0))).is_empty());
-    // From the first anchor, the path is reversed first; a drag there sets its direction lines.
+    // From the first anchor the path keeps its direction (arrowheads stay on their ends, and a
+    // press then Esc leaves nothing to undo): a drag there sets the first anchor's direction
+    // lines, and new anchors go before it.
     let mut t = create("pen");
-    let a = t.pointer(&cx, &ev(PointerKind::Down, at(100.0, 100.0)));
-    assert_eq!(a, vec![Action::Exec("path.reverse".into(), serde_json::json!({"ids": [id.0], "subpath": 0}))]);
+    assert!(t.pointer(&cx, &ev(PointerKind::Down, at(100.0, 100.0))).is_empty());
     t.pointer(&cx, &ev(PointerKind::Drag, at(80.0, 140.0)));
     let a = t.pointer(&cx, &ev(PointerKind::Up, at(80.0, 140.0)));
     assert_eq!(
         a,
         vec![Action::Exec(
             "path.setAnchor".into(),
-            serde_json::json!({"id": id.0, "subpath": 0, "anchor": "last", "in": [120.0, 60.0], "out": [80.0, 140.0]})
+            serde_json::json!({"id": id.0, "subpath": 0, "anchor": "first", "in": [80.0, 140.0], "out": [120.0, 60.0]})
         )]
     );
+    t.pointer(&cx, &ev(PointerKind::Down, at(20.0, 200.0)));
+    t.pointer(&cx, &ev(PointerKind::Drag, at(40.0, 220.0)));
+    let a = t.pointer(&cx, &ev(PointerKind::Up, at(40.0, 220.0)));
+    let [Action::Exec(cmd, p)] = a.as_slice() else { panic!("{a:?}") };
+    assert_eq!((cmd.as_str(), p["at"].as_str(), p["subpath"].as_u64()), ("path.appendAnchor", Some("start"), Some(0)));
+    assert_eq!(p["anchor"], serde_json::json!({"p": [20.0, 200.0], "in": [40.0, 220.0], "out": [0.0, 180.0]}));
+    let mut t = create("pen");
+    assert!(t.pointer(&cx, &ev(PointerKind::Down, at(100.0, 100.0))).is_empty());
+    assert!(t.pointer(&cx, &ev(PointerKind::Up, at(100.0, 100.0))).is_empty());
+    assert!(t.key(&cx, ToolKey::Escape, Mods::default()).iter().all(|a| !matches!(a, Action::Exec(c, _) if c.starts_with("path."))));
     // Closed paths and locked paths aren't continued.
     let mut d2 = d.clone();
     d2.item_mut(id).unwrap().locked = true;

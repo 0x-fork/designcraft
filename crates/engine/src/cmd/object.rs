@@ -600,7 +600,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Anchor",
             [],
             None,
-            "{id, anchor: {p, in?, out?} (spread coords), subpath?: index (default the last)} — after the subpath's last anchor",
+            "{id, anchor: {p, in?, out?} (spread coords), subpath?: index (default the last), at?: end|start (default end)} — after the subpath's last anchor, or before its first with `at: start`",
             has_doc,
             path_append
         ),
@@ -2714,6 +2714,12 @@ fn path_append(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("path.appendAnchor", "missing id"))?;
     let a = p.get("anchor").and_then(anchor_from).ok_or_else(|| bad("path.appendAnchor", "missing anchor"))?;
     let subpath = p.get("subpath").and_then(Value::as_u64);
+    let at_start = match p.get("at") {
+        None => false,
+        Some(v) if v.as_str() == Some("end") => false,
+        Some(v) if v.as_str() == Some("start") => true,
+        Some(_) => return Err(bad("path.appendAnchor", "`at` must be `start` or `end`")),
+    };
     s.edit(|d, _| {
         let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         let inv = (d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default()).inverse();
@@ -2727,7 +2733,11 @@ fn path_append(s: &mut Session, p: &Value) -> Result<Value> {
         if sp.closed {
             return Err(bad("path.appendAnchor", "the subpath is closed"));
         }
-        sp.anchors.push(a.transform(inv));
+        if at_start {
+            sp.anchors.insert(0, a.transform(inv));
+        } else {
+            sp.anchors.push(a.transform(inv));
+        }
         if it.shape == Shape::GraphicLine {
             it.shape = Shape::Path;
         }
@@ -4383,6 +4393,10 @@ mod path_edit_tests {
         s.execute("path.appendAnchor", &json!({"id": id, "subpath": 0, "anchor": {"p": [400, 250]}})).unwrap();
         assert_eq!(anchors(&s, id).last().unwrap().p, Point::new(400.0, 250.0));
         assert!(s.execute("path.appendAnchor", &json!({"id": id, "subpath": 1, "anchor": {"p": [0, 0]}})).is_err());
+        // `at: start` goes before the first anchor (the Pen continuing from a path's start).
+        s.execute("path.appendAnchor", &json!({"id": id, "anchor": {"p": [50, 60]}, "at": "start"})).unwrap();
+        assert_eq!((anchors(&s, id)[0].p, anchors(&s, id).len()), (Point::new(50.0, 60.0), 5));
+        assert!(s.execute("path.appendAnchor", &json!({"id": id, "anchor": {"p": [0, 0]}, "at": "middle"})).is_err());
         // Direction lines on the last anchor: collinear and opposite make it smooth.
         s.execute("path.setAnchor", &json!({"id": id, "anchor": "last", "in": [380, 230], "out": [420, 270]})).unwrap();
         let last = *anchors(&s, id).last().unwrap();
