@@ -307,6 +307,10 @@ impl Tool for EyedropperTool {
             if let Some(id) = hit {
                 p["matchFrom"] = json!(id.0);
             }
+            // To the fill or stroke in front in the toolbox, as in InDesign.
+            if cx.stroke_in_front {
+                p["target"] = json!("stroke");
+            }
             return vec![Action::Exec("color.sample".into(), p)];
         }
         let Some(id) = hit else { return vec![] };

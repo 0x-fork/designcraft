@@ -100,7 +100,7 @@ fn outside_text(text: &str) -> Result<String> {
 fn paste_text_frame(s: &mut Session, p: &Value, text: &str, slice: Option<&designcraft_doc::Story>) -> Result<Value> {
     use designcraft_geom::{Point, Rect, shapes};
     const LIMIT: f64 = 1.0e5;
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, "edit.paste")?;
     let at = super::point_param(p, "at")
         .filter(|a| a.x.is_finite() && a.y.is_finite())
         .map(|a| Point::new(a.x.clamp(-LIMIT, LIMIT), a.y.clamp(-LIMIT, LIMIT)));
@@ -313,7 +313,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(super::bad("edit.paste", "clipboard is empty"));
                 };
                 let off = if bool_or(p, "inPlace", false) { 0.0 } else { 12.0 };
-                let to = super::spread_param(p, "spread");
+                let to = super::spread_param(p, "edit.paste")?;
                 let from = s.clipboard_origin;
                 let ids: Vec<ItemId> = clip.spreads.first().map(|sp| sp.items.iter().map(|i| i.id).collect()).unwrap_or_default();
                 s.edit(|d, sel| {

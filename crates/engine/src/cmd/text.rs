@@ -362,6 +362,8 @@ fn hit_byte_with(
     let inner = xf.inverse() * pt;
     let cs = s.cache.get(&st.doc, sid, None);
     let fi = cs.frames.iter().position(|f| f.frame == frame)?;
+    // Type on a path: the click lands on the line where it is along the path.
+    let inner = cs.frames.get(fi).and_then(|ft| compose::PathTextMap::new(it, ft)).map_or(inner, |m| m.to_line(inner));
     if let Some((table, row, col, b)) = compose::hit_cell_with(&cs, fi, inner, hit) {
         return Some((sid, b, Some(CellAddr { table, row, col })));
     }
@@ -1589,6 +1591,13 @@ fn mixed_para_attrs(doc: &designcraft_doc::Document, targets: &[Target]) -> Vec<
         }
     }
     mixed.into_iter().collect()
+}
+
+/// `cf` with the typing format chosen at the active document's caret, if any.
+pub(crate) fn with_typing_format(s: &Session, cf: &mut designcraft_doc::CharFormat) {
+    if let Some(f) = typing_format(s) {
+        apply_typing_format(cf, f);
+    }
 }
 
 fn apply_typing_format(cf: &mut designcraft_doc::CharFormat, f: &TypingFormat) {

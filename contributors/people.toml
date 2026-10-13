@@ -37,3 +37,6 @@ real_name = "Jeffrey Thayne"
 
 [people.Losminek]
 sync_github_name = true
+
+[people.webdevtodayjason]
+display_name = "Jason Brashear"

@@ -14,6 +14,7 @@ pub mod credits;
 pub mod cursors;
 pub mod dialogs;
 pub mod dock;
+pub mod effects_dialog;
 pub mod i18n;
 pub mod icons;
 pub mod menus;
@@ -660,7 +661,12 @@ impl DesignApp {
         self.pane = pane;
     }
     pub fn view_info(&self) -> ViewInfo {
-        ViewInfo { zoom: self.view().map(|v| v.zoom).unwrap_or(1.0), snap: self.ui.snap_view(), unit: self.ui.units }
+        ViewInfo {
+            zoom: self.view().map(|v| v.zoom).unwrap_or(1.0),
+            snap: self.ui.snap_view(),
+            unit: self.ui.units,
+            stroke_in_front: self.ui.stroke_front,
+        }
     }
 
     pub fn status(&mut self, s: impl Into<String>) {

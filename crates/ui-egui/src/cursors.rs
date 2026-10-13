@@ -96,6 +96,7 @@ enum Badge {
     Delete,
     Close,
     Convert,
+    Continue,
 }
 
 /// The pen nib, tip at `o` (top left), with a badge below right.
@@ -121,6 +122,7 @@ fn pen(ink: &mut Ink, o: Pos2, badge: Badge) {
             ink.line(b + vec2(0.0, 6.0), b + vec2(3.0, 0.0));
             ink.line(b + vec2(3.0, 0.0), b + vec2(6.0, 6.0));
         }
+        Badge::Continue => ink.line(b + vec2(1.0, 6.0), b + vec2(5.0, 0.0)),
     }
 }
 
@@ -152,6 +154,7 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::PenDelete => pen(&mut ink, p, Badge::Delete),
         Cursor::PenClose => pen(&mut ink, p, Badge::Close),
         Cursor::PenConvert => pen(&mut ink, p, Badge::Convert),
+        Cursor::PenContinue => pen(&mut ink, p, Badge::Continue),
         Cursor::Rotate => rotate(&mut ink, p),
         _ => return None,
     }
@@ -270,7 +273,8 @@ pub fn system(c: Cursor) -> egui::CursorIcon {
         Cursor::ResizeNwSe => C::ResizeNwSe,
         Cursor::ResizeNeSw => C::ResizeNeSw,
         Cursor::Rotate => C::Alias,
-        Cursor::Pen | Cursor::PenAdd | Cursor::PenDelete | Cursor::PenClose | Cursor::PenConvert => C::Crosshair,
+        Cursor::Pen | Cursor::PenAdd | Cursor::PenDelete | Cursor::PenClose | Cursor::PenConvert | Cursor::PenContinue => C::Crosshair,
+        Cursor::PathBracket => C::ResizeColumn,
         Cursor::Text => C::Text,
         Cursor::Hand => C::Grab,
         Cursor::HandGrab => C::Grabbing,
@@ -320,8 +324,17 @@ mod tests {
     use super::*;
 
     /// Every cursor with a glyph.
-    const GLYPHS: [Cursor; 8] =
-        [Cursor::Arrow, Cursor::ArrowHollow, Cursor::Pen, Cursor::PenAdd, Cursor::PenDelete, Cursor::PenClose, Cursor::PenConvert, Cursor::Rotate];
+    const GLYPHS: [Cursor; 9] = [
+        Cursor::Arrow,
+        Cursor::ArrowHollow,
+        Cursor::Pen,
+        Cursor::PenAdd,
+        Cursor::PenDelete,
+        Cursor::PenClose,
+        Cursor::PenConvert,
+        Cursor::PenContinue,
+        Cursor::Rotate,
+    ];
 
     fn alpha(img: &CustomCursorImage, x: usize, y: usize) -> u8 {
         img.rgba.get((y * img.size[0] as usize + x) * 4 + 3).copied().unwrap_or(0)

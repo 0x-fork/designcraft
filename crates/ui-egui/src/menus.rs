@@ -32,6 +32,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("app.loadCharacterStyles", "Load Character Styles…", None, "{} — the same for its character styles"),
     ("app.loadTextStyles", "Load All Text Styles…", None, "{} — the same for its paragraph and character styles"),
+    (
+        "effects.dialog",
+        "Effects…",
+        None,
+        "{page?: transparency|dropShadow|innerShadow|outerGlow|innerGlow|bevel|satin|feather|directionalFeather|gradientFeather} — the Effects dialog for the selected objects",
+    ),
     ("app.packageDialog", "Package…", Some("Cmd+Alt+Shift+P"), "{} — choose the package folder to create (file.package)"),
     ("app.saveSwatches", "Save Swatches for Exchange…", None, "{path?} — write the colour swatches as .ase"),
     ("app.exportPng", "Export Page as PNG…", Some("Cmd+E"), "{}"),
@@ -530,6 +536,8 @@ pub const MENUS: &[(&str, &[&str])] = &[
             ">Paths",
             "cmd:object.makeCompoundPath",
             "cmd:object.releaseCompoundPath",
+            "-",
+            "cmd:path.reverse",
             "<",
             ">Pathfinder",
             "cmd:object.pathfinder|Add|{\"op\": \"add\"}",
@@ -559,6 +567,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:object.cornerOptions",
             "-",
             ">Effects",
+            "ui:effects.dialog|Transparency…|{\"page\": \"transparency\"}",
             "cmd:object.dropShadow",
             "cmd:object.innerShadow",
             "cmd:object.outerGlow",
@@ -987,6 +996,10 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                 Some(path) => app.run("table.placeGraphic", json!({"path": path})),
                 None => Ok(Value::Null),
             }
+        }
+        "effects.dialog" => {
+            crate::effects_dialog::open(app, p.get("page").and_then(Value::as_str).unwrap_or("transparency"));
+            Ok(Value::Null)
         }
         "app.loadSwatches" => {
             if let Some(pick) = app.services.pick_open.as_mut() {
@@ -2142,6 +2155,13 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
     if waits_for_ime(app, id) {
         return;
     }
+    // Object › Effects › Drop Shadow… (and its shortcut): the Effects dialog on that page.
+    if params.is_null()
+        && let Some(page) = crate::effects_dialog::page_of_command(id)
+    {
+        crate::effects_dialog::open(app, page);
+        return;
+    }
     if params.is_null() && id == "file.close" {
         close_document(app, None);
         return;
@@ -2186,6 +2206,11 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
         return;
     }
     let p = if params.is_null() { json!({}) } else { params.clone() };
+    // Update Link asks before replacing edits made to linked text in the layout.
+    if id == "links.update" {
+        crate::panels::properties::update_links(app, p);
+        return;
+    }
     let _ = app.run(id, p);
 }
 

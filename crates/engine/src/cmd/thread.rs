@@ -68,7 +68,7 @@ fn frame_rect(p: &Value) -> Result<Option<Rect>> {
 
 fn thread(s: &mut Session, p: &Value) -> Result<Value> {
     let (from, to, rect) = (id_param(p, "from"), id_param(p, "to"), frame_rect(p)?);
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "text.thread")?;
     let autoflow = bool_or(p, "autoflow", false);
     let layer = s.doc()?.active_layer;
     s.edit(|d, sel| {

@@ -1141,6 +1141,9 @@ fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog, max_he
                             d.fields.insert("recoveryMinutes".into(), json!(v));
                         }
                     });
+                    ui.add_space(6.0);
+                    ui.label(crate::rtl::widget(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Links")).font(semibold(12.0))));
+                    check(ui, d, "linkTextFiles", crate::i18n::tr(&app.ui.language, "Create Links When Placing Text Files"));
                 }
                 "type" => {
                     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Type Options")).font(semibold(12.0)));
@@ -1503,6 +1506,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "userDictionary" => crate::i18n::tr(&app.ui.language, "User Dictionary"),
         "newWorkspace" => crate::i18n::tr(&app.ui.language, "New Workspace"),
         "closeDocument" => crate::i18n::tr(&app.ui.language, "Unsaved Changes"),
+        "updateLink" => crate::i18n::tr(&app.ui.language, "Update Link"),
         "menus" => crate::i18n::tr(&app.ui.language, "Menu Customization"),
         "importOptions" => crate::i18n::tr(&app.ui.language, "Import Options"),
         "loadStyles" => crate::i18n::tr(&app.ui.language, "Load Styles"),
@@ -1519,6 +1523,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "swatchOptions" => crate::i18n::tr(&app.ui.language, "Swatch Options"),
         "colorGroupOptions" => crate::i18n::tr(&app.ui.language, "Color Group Options"),
         "layerSettings" => crate::i18n::tr(&app.ui.language, "Layer Options"),
+        crate::effects_dialog::ID => crate::i18n::tr(&app.ui.language, "Effects"),
         id => match id.strip_prefix("cmd:").and_then(designcraft_engine::find_command) {
             Some(c) => crate::i18n::tr(&app.ui.language, c.label.trim_end_matches('…')),
             None => crate::i18n::tr(&app.ui.language, "Dialog"),
@@ -1530,9 +1535,10 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let available = (ctx.content_rect().size() - frame_margin - egui::vec2(16.0, 16.0)).max(egui::Vec2::splat(1.0));
         let preferred_width: f32 = match d.id.as_str() {
             "alert" => 440.0,
-            "closeDocument" => 380.0,
+            "closeDocument" | "updateLink" => 380.0,
             "newDocument" => 960.0,
             "numberingSection" => 560.0,
+            crate::effects_dialog::ID => 720.0,
             _ => 640.0,
         };
         let width = preferred_width.min(available.x);
@@ -1737,6 +1743,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             "swatchOptions" => options::swatch_options(app, ui, &mut d),
             "colorGroupOptions" => options::color_group_options(app, ui, &mut d),
             "layerSettings" => options::layer_options(app, ui, &mut d),
+            crate::effects_dialog::ID => crate::effects_dialog::show(app, ui, &mut d),
             "preferences" => preferences(app, ui, &mut d, body_height),
             "print" => print_dialog(app, ui, &mut d),
             "pdfImport" => {
@@ -1885,6 +1892,11 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             "loadStyles" => load_styles(app, ui, &mut d),
             "closeDocument" => {
                 let text = crate::i18n::tr(&app.ui.language, "“{}” has changes that are not saved. Save them before closing?").replace("{}", &d.s("title"));
+                crate::rtl::label(ui, text);
+            }
+            "updateLink" => {
+                let text = crate::i18n::tr(&app.ui.language, "“{}” has been edited in this layout. Updating replaces those edits with the text from the file.")
+                    .replace("{}", &d.s("files"));
                 crate::rtl::label(ui, text);
             }
             "newWorkspace" => {
@@ -2057,6 +2069,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         ui.add_space(12.0);
         let ok_label = match d.id.as_str() {
             "closeDocument" => crate::i18n::tr(&app.ui.language, "  Save  ").to_string(),
+            "updateLink" => crate::i18n::tr(&app.ui.language, "  Update  ").to_string(),
             "findFont" => crate::i18n::tr(&app.ui.language, "Replace All").to_string(),
             "newDocument" => format!("  {}  ", crate::i18n::tr(&app.ui.language, "Create")),
             _ => crate::i18n::tr(&app.ui.language, "  OK  ").to_string(),
@@ -2519,7 +2532,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         "preferences" => {
             let mut prefs = json!({"scaleStrokes": d.b("scaleStrokes"), "dimensionsIncludeStroke": d.b("dimensionsIncludeStroke"), "transformationsAreTotals": d.b("transformationsAreTotals"), "absolutePageNumbers": d.b("absolutePageNumbers"), "highlightHj": d.b("highlightHj"), "highlightKeeps": d.b("highlightKeeps"), "highlightCustomTracking": d.b("highlightCustomTracking"), "highlightSubstitutedFonts": d.b("highlightSubstitutedFonts"), "richBlackOutput": d.b("richBlackOutput"), "typographersQuotes": d.b("typographersQuotes"), "showFontNamesInEnglish": d.b("showFontNamesInEnglish"), "smartTextReflow": d.b("smartTextReflow"),
                     "autocorrect": d.b("autocorrect"), "showAddedText": d.b("showAddedText"), "showNoteAnchors": d.b("showNoteAnchors"),
-                    "recoveryMinutes": d.n("recoveryMinutes").unwrap_or(0.5),
+                    "recoveryMinutes": d.n("recoveryMinutes").unwrap_or(0.5), "linkTextFiles": d.b("linkTextFiles"),
                     "autocorrectList": d.s("autocorrectText").lines().filter_map(|l| {
                         let (a, b) = l.split_once('→').or_else(|| l.split_once("->"))?;
                         let (a, b) = (a.trim().to_lowercase(), b.trim().to_string());
@@ -2613,6 +2626,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.run("document.preferences", doc)
         }
         "newWorkspace" => app.run("window.newWorkspace", json!({"name": d.s("name")})),
+        "updateLink" => crate::panels::properties::run_update_links(app, d.fields.get("target").cloned().unwrap_or_else(|| json!({}))),
         "closeDocument" => {
             // The document may have moved in the tab row (or gone) while the dialog was open.
             let uid = d.fields.get("uid").and_then(Value::as_u64);
@@ -2721,6 +2735,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.run("footnote.options", p)
         }
         "alert" => Ok(Value::Null),
+        crate::effects_dialog::ID => crate::effects_dialog::confirm(app, &d),
         "findChange" if d.b("objectMode") => Ok(Value::Null),
         "findChange" => app.run("find.change", json!({"find": d.s("find"), "change": d.s("change"), "grep": d.b("grep"), "caseSensitive": d.b("caseSensitive"), "wholeWord": d.b("wholeWord"), "scope": d.s("scope")})),
         STEP_AND_REPEAT => {
@@ -7125,6 +7140,43 @@ mod tests {
         assert!(!app.ui.pdf_export.bleed);
         assert!(app.ui.pdf_export.marks_crop);
         assert!(!app.ui.pdf_export.tagged);
+    }
+
+    #[test]
+    fn update_link_asks_before_replacing_edits_made_in_the_layout() {
+        let dir = std::env::temp_dir().join(format!("dc-update-link-dialog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("note.txt");
+        std::fs::write(&path, "One").unwrap();
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let r = app.session.execute("file.place", &json!({"path": path.to_string_lossy(), "link": true, "rect": [72, 72, 300, 200]})).unwrap();
+        let sid = r["story"].as_u64().unwrap();
+        let text = |app: &crate::DesignApp| app.session.doc().unwrap().doc.story(designcraft_doc::StoryId(sid)).unwrap().text.clone();
+
+        // Not edited in the layout: updates without asking.
+        std::fs::write(&path, "Two").unwrap();
+        crate::panels::properties::update_links(&mut app, json!({"story": sid}));
+        assert!(app.ui.dialog.is_none());
+        assert_eq!(text(&app), "Two");
+
+        // Edited in the layout: asks first; Cancel changes nothing.
+        app.session.execute("story.setText", &json!({"story": sid, "text": "Mine"})).unwrap();
+        std::fs::write(&path, "Three").unwrap();
+        crate::panels::properties::update_links(&mut app, json!({"story": sid}));
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!((d.id.as_str(), d.s("files").as_str()), ("updateLink", "note.txt"));
+        app.ui.dialog = None;
+        assert_eq!(text(&app), "Mine");
+
+        // Window › Links › Update Link (all links) asks too; confirming updates.
+        crate::menus::activate(&mut app, "links.update", &Value::Null);
+        assert_eq!(app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some("updateLink"));
+        confirm(&mut app).unwrap();
+        assert!(app.ui.dialog.is_none());
+        assert_eq!(text(&app), "Three");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -33,10 +33,17 @@ impl Default for ExportOptions {
 }
 
 /// Export a document as an IDML package (ZIP bytes).
+///
+/// IDML has one sort key per index topic path. If native references disagree, the first
+/// reference serialized for that path supplies its key, including an empty/default key.
+/// Later references cannot overwrite it; no synthetic topic names or sort keys are created.
+/// Consistent references retain their keys. Conflicting per-reference keys cannot all survive
+/// this topic-level representation. This policy also applies to [`export_idml_with`].
 pub fn export_idml(doc: &Document) -> Vec<u8> {
     export_idml_with(doc, &ExportOptions::default())
 }
 
+/// Export with options, using the index sort-key conflict policy of [`export_idml`].
 pub fn export_idml_with(doc: &Document, opts: &ExportOptions) -> Vec<u8> {
     let mut ex = Ex::new(doc, opts);
     let parts = ex.build();
@@ -133,8 +140,8 @@ struct Ex<'a> {
     threads: HashMap<u64, (Option<u64>, Option<u64>)>,
     /// Cross-reference sources written so far: (Self, target anchor).
     xref_sources: Vec<(String, u64)>,
-    /// Index topics (paths) and their See / See also cross-references.
-    index_topics: BTreeSet<Vec<String>>,
+    /// Index topic path → first serialized sort key; See / See also cross-references.
+    index_topics: BTreeMap<Vec<String>, String>,
     index_xrefs: Vec<(Vec<String>, &'static str, String)>,
 }
 
@@ -148,7 +155,7 @@ impl<'a> Ex<'a> {
             fonts: BTreeMap::new(),
             threads: HashMap::new(),
             xref_sources: Vec::new(),
-            index_topics: BTreeSet::new(),
+            index_topics: BTreeMap::new(),
             index_xrefs: Vec::new(),
         };
         ex.assign_swatch_ids();
@@ -1054,9 +1061,31 @@ impl<'a> Ex<'a> {
                 el.set("AppliedParagraphStyle", names::style_self("ParagraphStyle", PARA_BUILTINS, ps));
             }
             let mut el = with_props(el, props);
+            if let Some(e) = &os.effects {
+                let mut t = El::new("TransparencySetting");
+                for c in self.effect_els(e, true) {
+                    t.push(c);
+                }
+                el.push(t);
+            }
             if let Some(tf) = &os.text_frame {
                 el.push(text_frame_pref(tf, &self.sw(&tf.column_rule_color)));
             }
+            // Effects: a style with effects sets the drop shadow and feather, never blending.
+            let on = bool_s(os.effects.is_some());
+            el.push(
+                El::new("ObjectStyleObjectEffectsCategorySettings")
+                    .attr("EnableTransparency", "false")
+                    .attr("EnableDropShadow", on)
+                    .attr("EnableFeather", on)
+                    .attr("EnableInnerShadow", "false")
+                    .attr("EnableOuterGlow", "false")
+                    .attr("EnableInnerGlow", "false")
+                    .attr("EnableBevelEmboss", "false")
+                    .attr("EnableSatin", "false")
+                    .attr("EnableDirectionalFeather", "false")
+                    .attr("EnableGradientFeather", "false"),
+            );
             og.insert(&os.name, el);
         }
         let mut ro = El::new("RootObjectStyleGroup").attr("Self", self.fresh());
@@ -1792,7 +1821,7 @@ impl<'a> Ex<'a> {
                     .attr("TextAlignment", names::path_align_out(pt.align))
                     .attr("FlipPathEffect", if pt.flip { "Flipped" } else { "NotFlipped" })
                     .attr("StartBracket", num(pt.start))
-                    .attr("EndBracket", num(len)),
+                    .attr("EndBracket", num(pt.end.map_or(len, |e| e.min(len)))),
             );
         } else if let Content::Text(t) = &it.content {
             let (prev, next) = self.threads.get(&it.id.0).copied().unwrap_or((None, None));
@@ -1845,26 +1874,16 @@ impl<'a> Ex<'a> {
         }
         let mut el = with_props(el, props);
         // Transparency.
+        // An item whose style sets effects writes the effects it has turned off too, so that on
+        // import it doesn't take the style's.
+        let styled = self.d.styles.object_effects(os).is_some();
         let ds = &it.effects.drop_shadow;
         let (gf, df) = (&it.effects.gradient_feather, &it.effects.directional_feather);
-        if it.opacity < 1.0 || it.blend != designcraft_color::BlendMode::Normal || ds.on || it.effects.feather > 0.0 || gf.on || df.on {
+        if it.opacity < 1.0 || it.blend != designcraft_color::BlendMode::Normal || ds.on || it.effects.feather > 0.0 || gf.on || df.on || styled {
             let mut t = El::new("TransparencySetting");
             t.push(El::new("BlendingSetting").attr("BlendMode", names::blend_out(it.blend)).attr("Opacity", pct(it.opacity as f64)));
-            if ds.on {
-                let a = self.d.light_angle(ds.angle, ds.global_light).to_radians();
-                t.push(
-                    El::new("DropShadowSetting")
-                        .attr("Mode", "Drop")
-                        .attr("XOffset", num(-ds.distance * a.cos()))
-                        .attr("YOffset", num(ds.distance * a.sin()))
-                        .attr("Size", num(ds.size))
-                        .attr("Spread", num(ds.spread))
-                        .attr("Opacity", pct(ds.opacity as f64))
-                        .attr("EffectColor", self.sw(&ds.color)),
-                );
-            }
-            if it.effects.feather > 0.0 {
-                t.push(El::new("FeatherSetting").attr("Mode", "Standard").attr("Width", num(it.effects.feather)));
+            for c in self.effect_els(&it.effects, styled) {
+                t.push(c);
             }
             if df.on {
                 let [top, left, bottom, right] = df.widths;
@@ -1944,6 +1963,30 @@ impl<'a> Ex<'a> {
         el
     }
 
+    /// The `TransparencySetting` children for `e`'s drop shadow and feather; `all` also writes the
+    /// effects that are off (`Mode="None"`), as an object style that sets effects does.
+    fn effect_els(&self, e: &designcraft_doc::Effects, all: bool) -> Vec<El> {
+        let mut out = Vec::new();
+        let ds = &e.drop_shadow;
+        if ds.on || all {
+            let a = self.d.light_angle(ds.angle, ds.global_light).to_radians();
+            out.push(
+                El::new("DropShadowSetting")
+                    .attr("Mode", if ds.on { "Drop" } else { "None" })
+                    .attr("XOffset", num(-ds.distance * a.cos()))
+                    .attr("YOffset", num(ds.distance * a.sin()))
+                    .attr("Size", num(ds.size))
+                    .attr("Spread", num(ds.spread))
+                    .attr("Opacity", pct(ds.opacity as f64))
+                    .attr("EffectColor", self.sw(&ds.color)),
+            );
+        }
+        if e.feather > 0.0 || all {
+            out.push(El::new("FeatherSetting").attr("Mode", if e.feather > 0.0 { "Standard" } else { "None" }).attr("Width", num(e.feather)));
+        }
+        out
+    }
+
     fn image_el(&mut self, asset: &designcraft_doc::Asset, g: &designcraft_doc::Graphic) -> El {
         let is_pdf = asset.mime == "application/pdf";
         let mut el = El::new(if is_pdf { "PDF" } else { "Image" }).attr("Self", self.fresh());
@@ -2012,12 +2055,12 @@ impl<'a> Ex<'a> {
     fn index_el(&mut self) -> El {
         let mut topics = self.index_topics.clone();
         for (_, _, target) in &self.index_xrefs {
-            topics.insert(vec![target.clone()]);
+            topics.entry(vec![target.clone()]).or_default();
         }
-        fn build(ex: &mut Ex, topics: &BTreeSet<Vec<String>>, prefix: &[String]) -> Vec<El> {
+        fn build(ex: &mut Ex, topics: &BTreeMap<Vec<String>, String>, prefix: &[String]) -> Vec<El> {
             let mut out = Vec::new();
-            for t in topics.iter().filter(|t| t.len() == prefix.len() + 1 && t.starts_with(prefix)) {
-                let mut el = El::new("Topic").attr("Self", topic_self(t)).attr("SortOrder", "").attr("Name", t.last().map_or("", String::as_str));
+            for (t, sort) in topics.iter().filter(|(t, _)| t.len() == prefix.len() + 1 && t.starts_with(prefix)) {
+                let mut el = El::new("Topic").attr("Self", topic_self(t)).attr("SortOrder", sort).attr("Name", t.last().map_or("", String::as_str));
                 for (from, kind, target) in ex.index_xrefs.clone() {
                     if from == *t {
                         el.push(
@@ -2273,7 +2316,9 @@ impl<'a> Ex<'a> {
                         if let Some(r) = s.index_refs.get(k).filter(|r| !r.topics.is_empty()) {
                             use designcraft_doc::index::IndexRange as R;
                             for n in 1..=r.topics.len() {
-                                self.index_topics.insert(r.topics[..n].to_vec());
+                                // A shared topic has one key: keep the first reference's
+                                // value (even empty), rather than inventing a merged key.
+                                self.index_topics.entry(r.topics[..n].to_vec()).or_insert_with(|| r.sort.get(n - 1).cloned().unwrap_or_default());
                             }
                             let (kind, limit) = match &r.range {
                                 R::CurrentPage => (Some("CurrentPage"), None),

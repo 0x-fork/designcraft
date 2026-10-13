@@ -10,6 +10,7 @@ use super::*;
 mod assets;
 mod clipping;
 mod decorations;
+mod index_sort;
 mod object_styles;
 mod rtl_binding;
 mod spread_rotation;
@@ -3431,4 +3432,132 @@ fn vertical_balance_columns_balances_the_imported_frame() {
     d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.balance_columns = false;
     let off = per_column(&d);
     assert!(off[0] > off[1] + 1, "unbalanced: {off:?}");
+}
+
+#[test]
+fn type_on_a_path_keeps_its_start_and_end_brackets() {
+    use designcraft_geom::{Anchor, PathData, Point, SubPath};
+    for end in [Some(250.0), None] {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let id = designcraft_doc::ItemId(d.alloc());
+        let line = PathData::single(SubPath::new(vec![Anchor::corner(Point::new(100.0, 300.0)), Anchor::corner(Point::new(500.0, 300.0))], false));
+        let mut it = designcraft_doc::Item::new(id, lid, Shape::GraphicLine, line);
+        let sid = designcraft_doc::StoryId(d.alloc());
+        let mut tf = designcraft_doc::TextFrame { story: sid, options: Default::default() };
+        tf.options.path = Some(designcraft_doc::PathType { start: 30.0, end, ..Default::default() });
+        it.content = designcraft_doc::Content::Text(tf);
+        let mut story = designcraft_doc::Story::with_text(sid, "Along", Default::default());
+        story.frames = vec![id];
+        d.stories.insert(sid, std::sync::Arc::new(story));
+        d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+        let back = import_idml(&export_idml(&d)).unwrap();
+        let pt = back.spreads[0].items[0].text_frame().unwrap().options.path.clone().unwrap();
+        assert!((pt.start - 30.0).abs() < 1e-6, "{pt:?}");
+        assert_eq!(pt.end.map(|e| e.round()), end, "an end bracket at the path's end is no end bracket");
+    }
+}
+
+/// Based on Parent travels as the parent pages' `AppliedMaster`; a cycle in a file is broken on
+/// import with a warning.
+#[test]
+fn parent_based_on_round_trips_and_cycles_are_broken() {
+    let mut d = Document::new(&NewDocument { pages: 2, ..Default::default() });
+    let a = d.parents[0].id;
+    let b = d.add_parent("B", "Opening", 2, 12.0, designcraft_doc::Margins::uniform(36.0));
+    d.add_parent("C", "Closing", 2, 12.0, designcraft_doc::Margins::uniform(36.0));
+    let set = |d: &mut Document, pi: usize, on| std::sync::Arc::make_mut(&mut d.parents[pi]).parent.as_mut().unwrap().based_on = on;
+    set(&mut d, 1, Some(a));
+    set(&mut d, 2, Some(b));
+    let back = import_idml(&export_idml(&d)).unwrap();
+    let base_of = |d: &Document, pi: usize| {
+        let b = d.parents[pi].parent.as_ref().unwrap().based_on?;
+        d.parents.iter().find(|p| p.id == b).and_then(|p| p.parent.as_ref()).map(|i| i.prefix.clone())
+    };
+    assert_eq!((base_of(&back, 0), base_of(&back, 1), base_of(&back, 2)), (None, Some("A".into()), Some("B".into())));
+
+    set(&mut d, 0, Some(b));
+    let r = import_idml_report(&export_idml(&d), &|_| None).unwrap();
+    assert!(r.warnings.iter().any(|w| w.contains("A-Parent") && w.contains("cycle")), "{:?}", r.warnings);
+    assert_eq!((base_of(&r.document, 0), base_of(&r.document, 1)), (None, Some("A".into())));
+}
+
+#[test]
+fn object_style_effects_round_trip() {
+    use designcraft_doc::{DropShadow, Effects, ObjectStyle};
+    let mut d = Document::new(&NewDocument::default());
+    let fx = Effects {
+        drop_shadow: DropShadow { on: true, distance: 5.0, size: 12.0, opacity: 0.28, ..Default::default() },
+        feather: 3.0,
+        ..Default::default()
+    };
+    d.styles_mut().object.push(ObjectStyle { name: "Photo".into(), effects: Some(fx.clone()), ..Default::default() });
+    d.styles_mut().object.push(ObjectStyle { name: "Plain".into(), fill: Some(Fill::swatch("Black")), ..Default::default() });
+    let lid = d.default_layer();
+    let id = designcraft_doc::ItemId(d.alloc());
+    let mut it = designcraft_doc::Item::new(id, lid, Shape::Rectangle, shapes::rectangle(Rect::new(40.0, 40.0, 140.0, 140.0)));
+    it.object_style = "Photo".into();
+    it.effects = fx.clone();
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    // A frame that turned the style's effects off writes them off, so it doesn't take the style's.
+    let id = designcraft_doc::ItemId(d.alloc());
+    let mut off = designcraft_doc::Item::new(id, lid, Shape::Rectangle, shapes::rectangle(Rect::new(200.0, 40.0, 300.0, 140.0)));
+    off.object_style = "Photo".into();
+    d.insert_item(SpreadRef::Doc(0), off, None).unwrap();
+
+    let bytes = export_idml(&d);
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).unwrap();
+    let mut spreads = String::new();
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).unwrap();
+        if f.name().starts_with("Spreads/") {
+            std::io::Read::read_to_string(&mut f, &mut spreads).unwrap();
+        }
+    }
+    assert!(spreads.contains(r#"<DropShadowSetting Mode="None""#) && spreads.contains(r#"<FeatherSetting Mode="None""#), "{spreads}");
+    let back = import_idml(&bytes).unwrap();
+    let style = |n: &str| back.styles.object.iter().find(|s| s.name == n).unwrap();
+    let got = style("Photo").effects.clone().unwrap();
+    let ds = &got.drop_shadow;
+    assert!(ds.on && ds.size == 12.0 && (ds.opacity - 0.28).abs() < 1e-6, "{ds:?}");
+    assert!((ds.distance - 5.0).abs() < 1e-6 && (ds.angle - DropShadow::default().angle).abs() < 1e-6, "{ds:?}");
+    assert_eq!(got.feather, 3.0);
+    assert!(style("Plain").effects.is_none());
+    // The frame's effects are the style's, so it follows later edits of the style.
+    let frames: Vec<_> = back.spreads[0].items.iter().filter(|i| i.object_style == "Photo").collect();
+    assert_eq!(frames[0].effects, got);
+    assert_eq!(frames[1].effects, Effects::default());
+}
+
+#[test]
+fn object_style_effects_import_by_category_and_based_on() {
+    let styles = r#"
+      <ObjectStyle Self="ObjectStyle/Base" Name="Base">
+        <TransparencySetting>
+          <DropShadowSetting Mode="Drop" XOffset="3" YOffset="4" Size="9" Opacity="50"/>
+          <FeatherSetting Mode="Standard" Width="6"/>
+        </TransparencySetting>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="true" EnableFeather="false"/>
+      </ObjectStyle>
+      <ObjectStyle Self="ObjectStyle/Child" Name="Child">
+        <Properties><BasedOn type="object">ObjectStyle/Base</BasedOn></Properties>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="true" EnableFeather="true"/>
+      </ObjectStyle>
+      <ObjectStyle Self="ObjectStyle/Off" Name="Off">
+        <TransparencySetting><DropShadowSetting Mode="Drop" Size="9"/></TransparencySetting>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="false" EnableFeather="false"/>
+      </ObjectStyle>
+      <ObjectStyle Self="ObjectStyle/Loop" Name="Loop">
+        <Properties><BasedOn type="object">ObjectStyle/Loop</BasedOn></Properties>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="true"/>
+      </ObjectStyle>"#;
+    let d = inset_fixture("", styles);
+    let fx = |n: &str| d.styles.object.iter().find(|s| s.name == n).unwrap().effects.clone();
+    let base = fx("Base").unwrap();
+    assert!(base.drop_shadow.on && base.drop_shadow.size == 9.0 && (base.drop_shadow.distance - 5.0).abs() < 1e-9);
+    assert_eq!(base.feather, 0.0, "EnableFeather=false");
+    let child = fx("Child").unwrap();
+    assert_eq!((child.drop_shadow.size, child.feather), (9.0, 6.0), "settings from the BasedOn style");
+    assert!(fx("Off").is_none());
+    assert!(!fx("Loop").unwrap().drop_shadow.on);
 }

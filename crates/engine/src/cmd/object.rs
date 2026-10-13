@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use designcraft_color::BlendMode;
 use designcraft_doc::{
-    Content, Document, Fill, Item, ItemId, ItemLoc, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke, TextFrame, TextFrameOptions,
-    TextSel,
+    Content, Document, Effects, Fill, Item, ItemId, ItemLoc, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke, TextFrame,
+    TextFrameOptions, TextSel,
 };
 use designcraft_geom::{Affine, Point, Rect, Vec2, shapes};
 use serde_json::{Value, json};
@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create Frame",
             [],
             None,
-            "{spread?, rect: [x0,y0,x1,y1] (spread coords), shape?: rectangle|ellipse|polygon, content?: graphic|text|unassigned, sides?: 6, text?: string, caret?: bool, vertical?: bool (text: a new vertical story)}",
+            "{spread?: index | {kind: doc|parent, index} (a parent spread: index into `parents` of document.inspect), rect: [x0,y0,x1,y1] (spread coords), shape?: rectangle|ellipse|polygon, content?: graphic|text|unassigned, sides?: 6, text?: string, caret?: bool, vertical?: bool (text: a new vertical story)}",
             has_doc,
             frame_create
         ),
@@ -303,24 +303,19 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             |s, p| {
                 let p2 = p.clone();
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        let ds = &mut i.effects.drop_shadow;
-                        ds.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!ds.on);
-                        ds.distance = f64_or(&p2, "distance", ds.distance);
-                        ds.angle = f64_or(&p2, "angle", ds.angle);
-                        ds.global_light = p2.get("globalLight").and_then(Value::as_bool).unwrap_or(ds.global_light);
-                        ds.opacity = f64_or(&p2, "opacity", ds.opacity as f64) as f32;
-                        ds.size = f64_or(&p2, "size", ds.size);
-                        ds.spread = f64_or(&p2, "spread", ds.spread);
-                        if let Some(c) = str_param(&p2, "color") {
-                            ds.color = c.into();
-                        }
-                    },
-                    false,
-                )
+                set_effects(s, p, "object.dropShadow", move |fx| {
+                    let ds = &mut fx.drop_shadow;
+                    ds.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!ds.on);
+                    ds.distance = f64_or(&p2, "distance", ds.distance);
+                    ds.angle = f64_or(&p2, "angle", ds.angle);
+                    ds.global_light = p2.get("globalLight").and_then(Value::as_bool).unwrap_or(ds.global_light);
+                    ds.opacity = f64_or(&p2, "opacity", ds.opacity as f64) as f32;
+                    ds.size = f64_or(&p2, "size", ds.size);
+                    ds.spread = f64_or(&p2, "spread", ds.spread);
+                    if let Some(c) = str_param(&p2, "color") {
+                        ds.color = c.into();
+                    }
+                })
             }
         ),
         cmd!(
@@ -332,24 +327,19 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             |s, p| {
                 let p2 = p.clone();
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        let e = &mut i.effects.inner_shadow;
-                        e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
-                        e.distance = f64_or(&p2, "distance", e.distance);
-                        e.angle = f64_or(&p2, "angle", e.angle);
-                        e.global_light = p2.get("globalLight").and_then(Value::as_bool).unwrap_or(e.global_light);
-                        e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
-                        e.size = f64_or(&p2, "size", e.size);
-                        e.choke = f64_or(&p2, "choke", e.choke);
-                        if let Some(c) = str_param(&p2, "color") {
-                            e.color = c.into();
-                        }
-                    },
-                    false,
-                )
+                set_effects(s, p, "object.innerShadow", move |fx| {
+                    let e = &mut fx.inner_shadow;
+                    e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
+                    e.distance = f64_or(&p2, "distance", e.distance);
+                    e.angle = f64_or(&p2, "angle", e.angle);
+                    e.global_light = p2.get("globalLight").and_then(Value::as_bool).unwrap_or(e.global_light);
+                    e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
+                    e.size = f64_or(&p2, "size", e.size);
+                    e.choke = f64_or(&p2, "choke", e.choke);
+                    if let Some(c) = str_param(&p2, "color") {
+                        e.color = c.into();
+                    }
+                })
             }
         ),
         cmd!(
@@ -361,21 +351,16 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             |s, p| {
                 let p2 = p.clone();
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        let e = &mut i.effects.outer_glow;
-                        e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
-                        e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
-                        e.size = f64_or(&p2, "size", e.size);
-                        e.spread = f64_or(&p2, "spread", e.spread);
-                        if let Some(c) = str_param(&p2, "color") {
-                            e.color = c.into();
-                        }
-                    },
-                    false,
-                )
+                set_effects(s, p, "object.outerGlow", move |fx| {
+                    let e = &mut fx.outer_glow;
+                    e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
+                    e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
+                    e.size = f64_or(&p2, "size", e.size);
+                    e.spread = f64_or(&p2, "spread", e.spread);
+                    if let Some(c) = str_param(&p2, "color") {
+                        e.color = c.into();
+                    }
+                })
             }
         ),
         cmd!(
@@ -421,22 +406,17 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             |s, p| {
                 let p2 = p.clone();
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        let e = &mut i.effects.inner_glow;
-                        e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
-                        e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
-                        e.size = f64_or(&p2, "size", e.size);
-                        e.choke = f64_or(&p2, "choke", e.choke);
-                        e.center = p2.get("center").and_then(Value::as_bool).unwrap_or(e.center);
-                        if let Some(c) = str_param(&p2, "color") {
-                            e.color = c.into();
-                        }
-                    },
-                    false,
-                )
+                set_effects(s, p, "object.innerGlow", move |fx| {
+                    let e = &mut fx.inner_glow;
+                    e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
+                    e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
+                    e.size = f64_or(&p2, "size", e.size);
+                    e.choke = f64_or(&p2, "choke", e.choke);
+                    e.center = p2.get("center").and_then(Value::as_bool).unwrap_or(e.center);
+                    if let Some(c) = str_param(&p2, "color") {
+                        e.color = c.into();
+                    }
+                })
             }
         ),
         cmd!(
@@ -448,27 +428,22 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             |s, p| {
                 let p2 = p.clone();
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        let e = &mut i.effects.bevel;
-                        e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
-                        e.size = f64_or(&p2, "size", e.size);
-                        e.depth = f64_or(&p2, "depth", e.depth);
-                        e.angle = f64_or(&p2, "angle", e.angle);
-                        e.global_light = p2.get("globalLight").and_then(Value::as_bool).unwrap_or(e.global_light);
-                        e.highlight_opacity = f64_or(&p2, "highlightOpacity", e.highlight_opacity as f64) as f32;
-                        e.shadow_opacity = f64_or(&p2, "shadowOpacity", e.shadow_opacity as f64) as f32;
-                        if let Some(c) = str_param(&p2, "highlight") {
-                            e.highlight = c.into();
-                        }
-                        if let Some(c) = str_param(&p2, "shadow") {
-                            e.shadow = c.into();
-                        }
-                    },
-                    false,
-                )
+                set_effects(s, p, "object.bevel", move |fx| {
+                    let e = &mut fx.bevel;
+                    e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
+                    e.size = f64_or(&p2, "size", e.size);
+                    e.depth = f64_or(&p2, "depth", e.depth);
+                    e.angle = f64_or(&p2, "angle", e.angle);
+                    e.global_light = p2.get("globalLight").and_then(Value::as_bool).unwrap_or(e.global_light);
+                    e.highlight_opacity = f64_or(&p2, "highlightOpacity", e.highlight_opacity as f64) as f32;
+                    e.shadow_opacity = f64_or(&p2, "shadowOpacity", e.shadow_opacity as f64) as f32;
+                    if let Some(c) = str_param(&p2, "highlight") {
+                        e.highlight = c.into();
+                    }
+                    if let Some(c) = str_param(&p2, "shadow") {
+                        e.shadow = c.into();
+                    }
+                })
             }
         ),
         cmd!(
@@ -480,23 +455,18 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             |s, p| {
                 let p2 = p.clone();
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        let e = &mut i.effects.satin;
-                        e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
-                        e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
-                        e.angle = f64_or(&p2, "angle", e.angle);
-                        e.distance = f64_or(&p2, "distance", e.distance);
-                        e.size = f64_or(&p2, "size", e.size);
-                        e.invert = p2.get("invert").and_then(Value::as_bool).unwrap_or(e.invert);
-                        if let Some(c) = str_param(&p2, "color") {
-                            e.color = c.into();
-                        }
-                    },
-                    false,
-                )
+                set_effects(s, p, "object.satin", move |fx| {
+                    let e = &mut fx.satin;
+                    e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
+                    e.opacity = f64_or(&p2, "opacity", e.opacity as f64) as f32;
+                    e.angle = f64_or(&p2, "angle", e.angle);
+                    e.distance = f64_or(&p2, "distance", e.distance);
+                    e.size = f64_or(&p2, "size", e.size);
+                    e.invert = p2.get("invert").and_then(Value::as_bool).unwrap_or(e.invert);
+                    if let Some(c) = str_param(&p2, "color") {
+                        e.color = c.into();
+                    }
+                })
             }
         ),
         cmd!(
@@ -508,32 +478,36 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             |s, p| {
                 let p2 = p.clone();
-                set_flag(
-                    s,
-                    p,
-                    move |i| {
-                        let e = &mut i.effects.directional_feather;
-                        e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
-                        match p2.get("widths") {
-                            Some(Value::Number(n)) => e.widths = [n.as_f64().unwrap_or(0.0).max(0.0); 4],
-                            Some(v @ Value::Array(_)) => {
-                                if let Ok(w) = serde_json::from_value::<[f64; 4]>(v.clone()) {
-                                    e.widths = w.map(|x| x.max(0.0));
-                                }
+                set_effects(s, p, "object.directionalFeather", move |fx| {
+                    let e = &mut fx.directional_feather;
+                    e.on = p2.get("on").and_then(Value::as_bool).unwrap_or(!e.on);
+                    match p2.get("widths") {
+                        Some(Value::Number(n)) => e.widths = [n.as_f64().unwrap_or(0.0).max(0.0); 4],
+                        Some(v @ Value::Array(_)) => {
+                            if let Ok(w) = serde_json::from_value::<[f64; 4]>(v.clone()) {
+                                e.widths = w.map(|x| x.max(0.0));
                             }
-                            _ => {}
                         }
-                        if e.on && e.widths.iter().all(|w| *w <= 0.0) {
-                            e.widths = [9.0; 4];
-                        }
-                    },
-                    false,
-                )
+                        _ => {}
+                    }
+                    if e.on && e.widths.iter().all(|w| *w <= 0.0) {
+                        e.widths = [9.0; 4];
+                    }
+                })
             }
+        ),
+        cmd!(
+            "object.effects",
+            "Effects",
+            [],
+            None,
+            "{effects?: {dropShadow?: {on?, color?, opacity?, angle?, globalLight?, distance?, size?, spread?}, innerShadow?, outerGlow?, innerGlow?, bevel?, satin?, feather? (width), directionalFeather?, gradientFeather?} (the fields given replace the object's, as the Effects dialog sets them), opacity?: 0..1, blend?, ids?} — every effect at once, one undo step",
+            has_selection,
+            effects_all
         ),
         cmd!("object.feather", "Basic Feather", ["Object", "Effects"], None, "{width (0 = off), ids?}", has_selection, |s, p| {
             let w = f64_or(p, "width", 9.0).max(0.0);
-            set_flag(s, p, move |i| i.effects.feather = w, false)
+            set_effects(s, p, "object.feather", move |fx| fx.feather = w)
         }),
         cmd!("object.content", "Content", ["Object", "Content"], None, "{type: graphic|text|unassigned, ids?}", has_selection, content_type),
         cmd!(
@@ -595,8 +569,34 @@ pub fn specs() -> Vec<CommandSpec> {
             step_and_repeat
         ),
         cmd!("path.create", "Create Path", [], None, "{spread?, anchors: [{p:[x,y], in?:[x,y], out?:[x,y]}], closed?: bool}", has_doc, path_create),
-        cmd!("path.appendAnchor", "Add Anchor", [], None, "{id, anchor: {p, in?, out?}} (spread coords)", has_doc, path_append),
-        cmd!("path.close", "Close Path", ["Object", "Paths"], None, "{id}", has_doc, path_close),
+        cmd!(
+            "path.appendAnchor",
+            "Add Anchor",
+            [],
+            None,
+            "{id, anchor: {p, in?, out?} (spread coords), subpath?: index (default the last), at?: end|start (default end)} — after the subpath's last anchor, or before its first with `at: start`",
+            has_doc,
+            path_append
+        ),
+        cmd!(
+            "path.setAnchor",
+            "Set Anchor",
+            [],
+            None,
+            "{id, subpath?: index (default the last), anchor: index|\"first\"|\"last\", p?, in?, out? (spread coords)} — moves an anchor or its direction lines; with both lines given and collinear it becomes smooth",
+            has_doc,
+            path_set_anchor
+        ),
+        cmd!(
+            "path.reverse",
+            "Reverse Path",
+            ["Object", "Paths"],
+            None,
+            "{ids?, subpath?: index (only that subpath of the first target)} — the anchors run the other way (the end point becomes the start)",
+            has_selection,
+            path_reverse
+        ),
+        cmd!("path.close", "Close Path", ["Object", "Paths"], None, "{id, subpath?: index (default every subpath)}", has_doc, path_close),
         cmd!("path.moveAnchors", "Move Anchors", [], None, "{id, anchors: [[subpath, index]], dx, dy, handle?: in|out}", has_doc, path_move_anchors),
         cmd!(
             "object.align",
@@ -851,7 +851,7 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
     let rect = rect_param(p, "rect").ok_or_else(|| bad("frame.create", "missing rect"))?;
     let shape = str_param(p, "shape").unwrap_or("rectangle");
     let content = str_param(p, "content").unwrap_or("graphic");
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "frame.create")?;
     let lid = s.doc()?.active_layer;
     let text = super::text_param(p, "text");
     let caret = bool_or(p, "caret", content == "text");
@@ -886,6 +886,9 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
         let mut it = Item::new(id, lid, sh, path);
         if content == "graphic" {
             it.object_style = d.styles.default_graphic_frame.clone();
+            if let Some(e) = d.styles.object_effects(&it.object_style) {
+                it.effects = e.clone();
+            }
         } else {
             // Shapes drawn with Rectangle/Ellipse/Polygon get the default 1 pt black stroke.
             it.stroke = Stroke::default();
@@ -914,7 +917,7 @@ pub(crate) fn polygon_in(r: Rect, sides: u32, inset: f64) -> designcraft_geom::P
 fn line_create(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point_param(p, "a").ok_or_else(|| bad("line.create", "missing a"))?;
     let b = point_param(p, "b").ok_or_else(|| bad("line.create", "missing b"))?;
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "line.create")?;
     let lid = s.doc()?.active_layer;
     s.edit(|d, sel| {
         let id = ItemId(d.alloc());
@@ -1489,6 +1492,43 @@ fn arrange(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let to = str_param(p, "to").unwrap_or("front").to_string();
     s.edit(|d, _| {
+        if matches!(to.as_str(), "forward" | "backward") {
+            let selected: HashSet<ItemId> = ids.iter().copied().collect();
+            let mut positions: Vec<_> = selected
+                .iter()
+                .filter_map(|id| {
+                    let loc = d.find(*id)?;
+                    match loc.path.as_slice() {
+                        [i] => Some((loc.spread, *i)),
+                        _ => None,
+                    }
+                })
+                .collect();
+            // Move the leading selected items first, independently of selection/click order.
+            // Swapping only with unselected siblings leaves the other selected indices valid.
+            positions.sort_by_key(|(_, i)| *i);
+            let forward = to == "forward";
+            if forward {
+                positions.reverse();
+            }
+            for (spread, i) in positions {
+                let Some(sp) = d.spread_mut(spread) else { continue };
+                let Some(it) = sp.items.get(i) else { continue };
+                let layer = it.layer;
+                let sibling = if forward {
+                    sp.items.iter().enumerate().skip(i.saturating_add(1)).find(|(_, it)| it.layer == layer)
+                } else {
+                    sp.items.iter().enumerate().take(i).rev().find(|(_, it)| it.layer == layer)
+                };
+                if let Some((j, it)) = sibling
+                    && !selected.contains(&it.id)
+                {
+                    // Keep every other layer's slots and relative stacking order untouched.
+                    sp.items.swap(i, j);
+                }
+            }
+            return ok();
+        }
         for id in &ids {
             let Some(loc) = d.find(*id) else { continue };
             if loc.path.len() != 1 {
@@ -1501,7 +1541,6 @@ fn arrange(s: &mut Session, p: &Value) -> Result<Value> {
             let j = match to.as_str() {
                 "front" => n - 1,
                 "back" => 0,
-                "forward" => (i + 1).min(n - 1),
                 _ => i.saturating_sub(1),
             };
             sp.items.insert(j, it);
@@ -1879,6 +1918,136 @@ pub(super) fn match_attributes(s: &mut Session, p: &Value) -> Result<Value> {
     )
 }
 
+/// `patch` merged into `base`: objects field by field (recursively), anything else replaced.
+fn merge_json(base: &mut Value, patch: &Value) {
+    match (base, patch) {
+        (Value::Object(b), Value::Object(p)) => {
+            for (k, v) in p {
+                merge_json(b.entry(k.clone()).or_insert(Value::Null), v);
+            }
+        }
+        (b, p) => *b = p.clone(),
+    }
+}
+
+/// Keep effect values in their ranges: opacities 0–1, sizes and distances ≥ 0, percentages 0–100.
+fn sanitize_effects(e: &mut designcraft_doc::Effects) -> Result<()> {
+    const ID: &str = "object.effects";
+    let len = |v: &mut f64| -> Result<()> {
+        if !v.is_finite() {
+            return Err(bad(ID, "values must be finite"));
+        }
+        *v = v.clamp(0.0, 10_000.0);
+        Ok(())
+    };
+    let pct = |v: &mut f64| -> Result<()> {
+        if !v.is_finite() {
+            return Err(bad(ID, "values must be finite"));
+        }
+        *v = v.clamp(0.0, 100.0);
+        Ok(())
+    };
+    let ang = |v: &mut f64| -> Result<()> {
+        if !v.is_finite() {
+            return Err(bad(ID, "values must be finite"));
+        }
+        *v = (*v + 180.0).rem_euclid(360.0) - 180.0;
+        Ok(())
+    };
+    let op = |v: &mut f32| -> Result<()> {
+        if !v.is_finite() {
+            return Err(bad(ID, "values must be finite"));
+        }
+        *v = v.clamp(0.0, 1.0);
+        Ok(())
+    };
+    let ds = &mut e.drop_shadow;
+    op(&mut ds.opacity)?;
+    ang(&mut ds.angle)?;
+    len(&mut ds.distance)?;
+    len(&mut ds.size)?;
+    pct(&mut ds.spread)?;
+    let is = &mut e.inner_shadow;
+    op(&mut is.opacity)?;
+    ang(&mut is.angle)?;
+    len(&mut is.distance)?;
+    len(&mut is.size)?;
+    pct(&mut is.choke)?;
+    let og = &mut e.outer_glow;
+    op(&mut og.opacity)?;
+    len(&mut og.size)?;
+    pct(&mut og.spread)?;
+    let ig = &mut e.inner_glow;
+    op(&mut ig.opacity)?;
+    len(&mut ig.size)?;
+    pct(&mut ig.choke)?;
+    let bv = &mut e.bevel;
+    len(&mut bv.size)?;
+    len(&mut bv.depth)?;
+    ang(&mut bv.angle)?;
+    op(&mut bv.highlight_opacity)?;
+    op(&mut bv.shadow_opacity)?;
+    let sa = &mut e.satin;
+    op(&mut sa.opacity)?;
+    ang(&mut sa.angle)?;
+    len(&mut sa.distance)?;
+    len(&mut sa.size)?;
+    len(&mut e.feather)?;
+    for w in &mut e.directional_feather.widths {
+        len(w)?;
+    }
+    let gf = &mut e.gradient_feather;
+    ang(&mut gf.angle)?;
+    op(&mut gf.start)?;
+    op(&mut gf.end)?;
+    Ok(())
+}
+
+fn effects_all(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "object.effects";
+    let patch = match p.get("effects") {
+        None | Some(Value::Null) => None,
+        Some(v @ Value::Object(_)) => Some(v.clone()),
+        Some(_) => return Err(bad(ID, "effects must be an object")),
+    };
+    let opacity = match p.get("opacity") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_f64().filter(|o| o.is_finite()).ok_or_else(|| bad(ID, "opacity must be a number"))?.clamp(0.0, 1.0) as f32),
+    };
+    let blend = match p.get("blend") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let raw = v.as_str().ok_or_else(|| bad(ID, "blend must be a string"))?;
+            Some(BlendMode::parse(raw).ok_or_else(|| bad(ID, format!("unknown blend mode `{raw}`")))?)
+        }
+    };
+    let ids = targets(s, p)?;
+    s.edit(|d, _| {
+        let mut changed = 0;
+        for id in &ids {
+            let Some(it) = d.item_mut(*id) else { continue };
+            if it.locked {
+                continue;
+            }
+            if let Some(patch) = &patch {
+                let mut cur = serde_json::to_value(&it.effects).map_err(|e| bad(ID, e.to_string()))?;
+                merge_json(&mut cur, patch);
+                let mut fx: designcraft_doc::Effects = serde_json::from_value(cur).map_err(|e| bad(ID, format!("effects: {e}")))?;
+                sanitize_effects(&mut fx)?;
+                it.effects = fx;
+            }
+            if let Some(o) = opacity {
+                it.opacity = o;
+            }
+            if let Some(b) = blend {
+                it.blend = b;
+            }
+            changed += 1;
+        }
+        Ok(json!({"changed": changed}))
+    })
+}
+
 fn set_flag(s: &mut Session, p: &Value, f: impl Fn(&mut Item), deselect: bool) -> Result<Value> {
     let ids = targets(s, p)?;
     s.edit(|d, sel| {
@@ -1946,6 +2115,22 @@ fn default_fill_stroke(it: &mut Item) {
     it.stroke.swatch = designcraft_color::swatch::BLACK.into();
     it.stroke.tint = 1.0;
     visible_weight(&mut it.stroke);
+}
+
+/// Edits the targets' effects. A value that isn't a finite number is refused; the others are
+/// clamped to their ranges.
+fn set_effects(s: &mut Session, p: &Value, cmd: &'static str, f: impl Fn(&mut Effects)) -> Result<Value> {
+    let ids = targets(s, p)?;
+    s.edit(|d, _| {
+        for id in &ids {
+            if let Some(it) = d.item_mut(*id) {
+                let mut fx = it.effects.clone();
+                f(&mut fx);
+                it.effects = fx.sanitized().map_err(|m| bad(cmd, m))?;
+            }
+        }
+        Ok(json!({"changed": ids.len()}))
+    })
 }
 
 fn all_flag(s: &mut Session, f: impl Fn(&mut Item)) -> Result<Value> {
@@ -2165,7 +2350,7 @@ fn gap_move(s: &mut Session, p: &Value) -> Result<Value> {
         .and_then(Value::as_array)
         .and_then(|a| Some(Point::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?)))
         .ok_or_else(|| bad(ID, "missing at"))?;
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, ID)?;
     let (vertical, a, z, before, after) = find_gap(&s.doc()?.doc, sr, at).ok_or_else(|| bad(ID, "no gap there"))?;
     // `delta` along the gap's axis, or a drag (dx, dy) of which the axis part counts.
     let delta =
@@ -2671,7 +2856,7 @@ fn path_create(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("path.create", "a path needs at least two anchors"));
     }
     let closed = bool_or(p, "closed", false);
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "path.create")?;
     let lid = s.doc()?.active_layer;
     s.edit(|d, sel| {
         let id = ItemId(d.alloc());
@@ -2687,12 +2872,31 @@ fn path_create(s: &mut Session, p: &Value) -> Result<Value> {
 fn path_append(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("path.appendAnchor", "missing id"))?;
     let a = p.get("anchor").and_then(anchor_from).ok_or_else(|| bad("path.appendAnchor", "missing anchor"))?;
+    let subpath = p.get("subpath").and_then(Value::as_u64);
+    let at_start = match p.get("at") {
+        None => false,
+        Some(v) if v.as_str() == Some("end") => false,
+        Some(v) if v.as_str() == Some("start") => true,
+        Some(_) => return Err(bad("path.appendAnchor", "`at` must be `start` or `end`")),
+    };
     s.edit(|d, _| {
         let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         let inv = (d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default()).inverse();
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
-        let sp = it.path.subpaths.last_mut().ok_or_else(|| bad("path.appendAnchor", "empty path"))?;
-        sp.anchors.push(a.transform(inv));
+        let sp = match subpath {
+            Some(i) => {
+                usize::try_from(i).ok().and_then(|i| it.path.subpaths.get_mut(i)).ok_or_else(|| bad("path.appendAnchor", "no such subpath"))?
+            }
+            None => it.path.subpaths.last_mut().ok_or_else(|| bad("path.appendAnchor", "empty path"))?,
+        };
+        if sp.closed {
+            return Err(bad("path.appendAnchor", "the subpath is closed"));
+        }
+        if at_start {
+            sp.anchors.insert(0, a.transform(inv));
+        } else {
+            sp.anchors.push(a.transform(inv));
+        }
         if it.shape == Shape::GraphicLine {
             it.shape = Shape::Path;
         }
@@ -2700,12 +2904,103 @@ fn path_append(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+fn path_set_anchor(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "path.setAnchor";
+    let id = super::id_param(p, "id").ok_or_else(|| bad(ID, "missing id"))?;
+    let pt = |k: &str| -> Option<Point> {
+        let a = p.get(k)?.as_array()?;
+        let q = Point::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?);
+        (q.x.is_finite() && q.y.is_finite()).then_some(q)
+    };
+    let (new_p, new_in, new_out) = (pt("p"), pt("in"), pt("out"));
+    if new_p.is_none() && new_in.is_none() && new_out.is_none() {
+        return Err(bad(ID, "give p, in or out"));
+    }
+    let subpath = p.get("subpath").and_then(Value::as_u64);
+    let which = p.get("anchor").cloned().unwrap_or(Value::Null);
+    s.edit(|d, _| {
+        let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
+        let inv = (d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default()).inverse();
+        let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
+        if it.locked {
+            return Err(bad(ID, "the path is locked"));
+        }
+        let sp = match subpath {
+            Some(i) => usize::try_from(i).ok().and_then(|i| it.path.subpaths.get_mut(i)),
+            None => it.path.subpaths.last_mut(),
+        }
+        .ok_or_else(|| bad(ID, "no such subpath"))?;
+        let n = sp.anchors.len();
+        let ai = match &which {
+            Value::String(w) if w == "first" => 0,
+            Value::String(w) if w == "last" => n.saturating_sub(1),
+            v => v.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(ID, "anchor: an index, \"first\" or \"last\""))?,
+        };
+        let a = sp.anchors.get_mut(ai).ok_or_else(|| bad(ID, "no such anchor"))?;
+        if let Some(q) = new_p {
+            let v = inv * q - a.p;
+            a.p += v;
+            a.h_in += v;
+            a.h_out += v;
+        }
+        if let Some(q) = new_in {
+            a.h_in = inv * q;
+        }
+        if let Some(q) = new_out {
+            a.h_out = inv * q;
+        }
+        if new_in.is_some() && new_out.is_some() {
+            let (i, o) = (a.h_in - a.p, a.h_out - a.p);
+            let collinear = (i.x * o.y - i.y * o.x).abs() <= 1e-6 * i.hypot().max(1.0) * o.hypot().max(1.0) && i.dot(o) <= 0.0;
+            a.kind = if collinear { designcraft_geom::AnchorKind::Smooth } else { designcraft_geom::AnchorKind::Corner };
+        }
+        ok()
+    })
+}
+
+fn path_reverse(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = targets(s, p)?;
+    let only = p.get("subpath").and_then(Value::as_u64).map(|i| usize::try_from(i).unwrap_or(usize::MAX));
+    if let (Some(i), Some(id)) = (only, ids.first())
+        && s.doc()?.doc.item(*id).is_none_or(|it| it.path.subpaths.get(i).is_none())
+    {
+        return Err(bad("path.reverse", "no such subpath"));
+    }
+    let ids = if only.is_some() { ids.into_iter().take(1).collect() } else { ids };
+    s.edit(|d, _| {
+        let mut reversed = 0;
+        for id in &ids {
+            let Some(it) = d.item_mut(*id) else { continue };
+            if it.locked || it.is_group() {
+                continue;
+            }
+            for (i, sp) in it.path.subpaths.iter_mut().enumerate() {
+                if only.is_some_and(|o| o != i) {
+                    continue;
+                }
+                sp.anchors.reverse();
+                for a in &mut sp.anchors {
+                    std::mem::swap(&mut a.h_in, &mut a.h_out);
+                }
+            }
+            reversed += 1;
+        }
+        Ok(json!({"reversed": reversed}))
+    })
+}
+
 fn path_close(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("path.close", "missing id"))?;
+    let only = p.get("subpath").and_then(Value::as_u64).map(|i| usize::try_from(i).unwrap_or(usize::MAX));
     s.edit(|d, _| {
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
-        for sp in &mut it.path.subpaths {
-            sp.closed = true;
+        if only.is_some_and(|i| i >= it.path.subpaths.len()) {
+            return Err(bad("path.close", "no such subpath"));
+        }
+        for (i, sp) in it.path.subpaths.iter_mut().enumerate() {
+            if only.is_none_or(|o| o == i) {
+                sp.closed = true;
+            }
         }
         if it.shape == Shape::GraphicLine {
             it.shape = Shape::Path;
@@ -2871,6 +3166,148 @@ fn step_and_repeat(s: &mut Session, p: &Value) -> Result<Value> {
         let copies: Vec<u64> = all.iter().skip(ids.len()).map(|i| i.0).collect();
         Ok(json!({"created": copies.len(), "ids": copies}))
     })
+}
+
+#[cfg(test)]
+mod arrange_tests {
+    use super::*;
+
+    fn fixture<const N: usize>(layers: [usize; N]) -> (Session, [ItemId; N]) {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1, "facingPages": false})).unwrap();
+        let first = s.doc().unwrap().doc.default_layer().0;
+        let second = s.execute("layer.new", &json!({"name": "Other layer"})).unwrap()["id"].as_u64().unwrap();
+        let layer_ids = [first, second];
+        let mut ids = [ItemId(0); N];
+        for (id, layer) in ids.iter_mut().zip(layers) {
+            // Overlap objects within each layer; separate layers spatially for hit testing.
+            let x = if layer == 0 { 0 } else { 200 };
+            *id = ItemId(s.execute("frame.create", &json!({"rect": [x, 0, x + 100, 100]})).unwrap()["id"].as_u64().unwrap());
+            s.execute("object.setLayer", &json!({"ids": [id.0], "layer": layer_ids[layer]})).unwrap();
+        }
+        (s, ids)
+    }
+
+    fn stack(s: &Session) -> Vec<ItemId> {
+        s.doc().unwrap().doc.spreads[0].items.iter().map(|it| it.id).collect()
+    }
+
+    fn snapshot(s: &Session) -> Value {
+        let st = s.doc().unwrap();
+        json!({"document": &*st.doc, "selection": &st.selection})
+    }
+
+    fn assert_items_unchanged(before: &Document, after: &Document) {
+        assert_eq!(serde_json::to_value(&before.layers).unwrap(), serde_json::to_value(&after.layers).unwrap());
+        for it in &before.spreads[0].items {
+            assert_eq!(serde_json::to_value(it).unwrap(), serde_json::to_value(after.item(it.id).unwrap()).unwrap());
+        }
+    }
+
+    #[test]
+    fn arrange_steps_past_other_layers_change_hit_order_and_undo() {
+        for direction in ["forward", "backward"] {
+            let (mut s, [a, x, y, b]) = fixture([0, 1, 1, 0]);
+            let selected = if direction == "forward" { a } else { b };
+            s.execute("selection.set", &json!({"ids": [selected.0]})).unwrap();
+            let before = snapshot(&s);
+            let doc = s.doc().unwrap().doc.clone();
+            let undo_len = s.doc().unwrap().history.undo.len();
+            let hit = |s: &Session| s.doc().unwrap().doc.hit_item(0, Point::new(50.0, 50.0), 0.0);
+            assert_eq!(hit(&s), Some(b));
+
+            s.execute("object.arrange", &json!({"to": direction})).unwrap();
+            assert_eq!(stack(&s), [b, x, y, a], "{direction}");
+            assert_eq!(hit(&s), Some(a), "the visible topmost object must change");
+            assert_items_unchanged(&doc, &s.doc().unwrap().doc);
+            assert_eq!(s.doc().unwrap().history.undo.len(), undo_len + 1);
+            assert_eq!(s.doc().unwrap().selection.items, [selected]);
+            let after = snapshot(&s);
+
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(snapshot(&s), before);
+            assert_eq!(hit(&s), Some(b));
+            s.execute("edit.redo", &json!({})).unwrap();
+            assert_eq!(snapshot(&s), after);
+            assert_eq!(hit(&s), Some(a));
+        }
+    }
+
+    #[test]
+    fn arrange_multiple_selection_preserves_order_independent_of_input_order() {
+        // Layer 0: a, b, c, d. Layer 1: x, y. Arrays name the original stack indices.
+        let cases = [
+            ("forward", [0, 2], [4, 1, 0, 3, 2, 5]),  // a,b cross c as a block
+            ("backward", [2, 4], [2, 1, 4, 3, 0, 5]), // b,c cross a as a block
+            ("forward", [0, 4], [2, 1, 0, 3, 5, 4]),  // separate selected blocks
+            ("backward", [2, 5], [2, 1, 0, 3, 5, 4]),
+            ("forward", [4, 5], [0, 1, 2, 3, 4, 5]),  // front block is already at its endpoint
+            ("backward", [0, 2], [0, 1, 2, 3, 4, 5]), // back block is already at its endpoint
+        ];
+        for (direction, selected, expected) in cases {
+            for reverse in [false, true] {
+                let (mut s, ids) = fixture([0, 1, 0, 1, 0, 0]);
+                let doc = s.doc().unwrap().doc.clone();
+                let mut selected = selected.map(|i| ids[i].0).to_vec();
+                if reverse {
+                    selected.reverse();
+                }
+                // Explicit command targets may contain duplicates: an item still moves once.
+                selected.push(selected[0]);
+                s.execute("object.arrange", &json!({"to": direction, "ids": selected})).unwrap();
+                assert_eq!(stack(&s), expected.map(|i| ids[i]), "{direction}, reverse={reverse}");
+                assert_items_unchanged(&doc, &s.doc().unwrap().doc);
+            }
+        }
+    }
+
+    #[test]
+    fn arrange_same_layer_steps_stop_at_layer_endpoints() {
+        let cases = [
+            ("forward", vec![1], [0, 2, 1, 3, 4]),
+            ("backward", vec![3], [0, 1, 3, 2, 4]),
+            ("forward", vec![3], [0, 1, 2, 3, 4]),
+            ("backward", vec![1], [0, 1, 2, 3, 4]),
+            ("forward", vec![3, 1, 2], [0, 1, 2, 3, 4]),
+            ("backward", vec![3, 1, 2], [0, 1, 2, 3, 4]),
+        ];
+        for (direction, selected, expected) in cases {
+            let (mut s, ids) = fixture([1, 0, 0, 0, 1]);
+            let selected: Vec<_> = selected.into_iter().map(|i| ids[i].0).collect();
+            s.execute("object.arrange", &json!({"to": direction, "ids": selected})).unwrap();
+            assert_eq!(stack(&s), expected.map(|i| ids[i]));
+        }
+        for direction in ["forward", "backward"] {
+            let (mut s, [x, a, y]) = fixture([1, 0, 1]);
+            s.execute("object.arrange", &json!({"to": direction, "ids": [a.0]})).unwrap();
+            assert_eq!(stack(&s), [x, a, y], "only object on its layer");
+        }
+    }
+
+    #[test]
+    fn arrange_selection_on_two_layers_moves_each_layer_independently() {
+        for direction in ["forward", "backward"] {
+            let (mut s, [a, x, b, y]) = fixture([0, 1, 0, 1]);
+            let selected = if direction == "forward" { [x.0, a.0] } else { [b.0, y.0] };
+            s.execute("object.arrange", &json!({"to": direction, "ids": selected})).unwrap();
+            assert_eq!(stack(&s), [b, y, a, x]);
+            let doc = &s.doc().unwrap().doc;
+            assert_eq!(doc.hit_item(0, Point::new(50.0, 50.0), 0.0), Some(a));
+            assert_eq!(doc.hit_item(0, Point::new(250.0, 50.0), 0.0), Some(x));
+        }
+    }
+
+    #[test]
+    fn arrange_menu_steps_use_same_layer_order() {
+        for command in ["object.bringForward", "object.sendBackward"] {
+            let (mut s, [a, x, b]) = fixture([0, 1, 0]);
+            let selected = if command == "object.bringForward" { a } else { b };
+            s.execute("selection.set", &json!({"ids": [selected.0]})).unwrap();
+            s.execute(command, &json!({})).unwrap();
+            assert_eq!(stack(&s), [b, x, a]);
+            assert_eq!(s.doc().unwrap().doc.hit_item(0, Point::new(50.0, 50.0), 0.0), Some(a));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4185,5 +4622,141 @@ mod fit_text_frame_tests {
         let before = [bounds(&s, a), bounds(&s, b)];
         assert!(s.execute("object.fit", &json!({"mode": "fitFrameToContent", "ids": [a.0, b.0]})).is_err());
         assert_eq!([bounds(&s, a), bounds(&s, b)], before);
+    }
+}
+
+#[cfg(test)]
+mod spread_target_tests {
+    use super::*;
+
+    #[test]
+    fn creating_on_a_parent_spread_and_rejecting_unknown_spreads() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1, "facingPages": false})).unwrap();
+        let parent = json!({"kind": "parent", "index": 0});
+        let r = s.execute("frame.create", &json!({"spread": parent, "rect": [0, 0, 100, 100]})).unwrap();
+        let id = ItemId(r["id"].as_u64().unwrap());
+        assert_eq!(s.doc().unwrap().doc.find(id).unwrap().spread, SpreadRef::Parent(0));
+        s.execute("line.create", &json!({"spread": parent, "a": [0, 0], "b": [50, 50]})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.parents[0].items.len(), 2);
+
+        // Each of these used to land on the first body page.
+        for bad in
+            [json!("A-Parent"), json!("0"), json!(-1), json!(1.5), json!({"kind": "master", "index": 0}), json!({"kind": "parent"}), json!([0])]
+        {
+            assert!(s.execute("frame.create", &json!({"spread": bad, "rect": [0, 0, 100, 100]})).is_err(), "frame.create spread {bad}");
+            assert!(s.execute("line.create", &json!({"spread": bad, "a": [0, 0], "b": [50, 50]})).is_err(), "line.create spread {bad}");
+        }
+        assert!(s.doc().unwrap().doc.spreads[0].items.is_empty());
+        // Null is absent: spread 0 (Paste in Place forwards its optional `spread`).
+        let r = s.execute("frame.create", &json!({"spread": null, "rect": [0, 0, 100, 100]})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.find(ItemId(r["id"].as_u64().unwrap())).unwrap().spread, SpreadRef::Doc(0));
+        s.execute("frame.create", &json!({"rect": [0, 0, 100, 100]})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.pasteInPlace", &json!({})).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod path_edit_tests {
+    use designcraft_doc::ItemId;
+    use designcraft_geom::Point;
+    use serde_json::json;
+
+    fn session_with_path() -> (crate::Session, u64) {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s
+            .execute(
+                "path.create",
+                &json!({"anchors": [{"p": [100, 100]}, {"p": [200, 100], "in": [170, 80], "out": [230, 120]}, {"p": [300, 200]}]}),
+            )
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        (s, id)
+    }
+
+    fn anchors(s: &crate::Session, id: u64) -> Vec<designcraft_geom::Anchor> {
+        let d = &s.doc().unwrap().doc;
+        let it = d.item(ItemId(id)).unwrap();
+        let xf = d.parent_xf(&d.find(ItemId(id)).unwrap()) * it.xf;
+        it.path.subpaths[0].anchors.iter().map(|a| a.transform(xf)).collect()
+    }
+
+    #[test]
+    fn reverse_path_swaps_ends_and_direction_lines() {
+        let (mut s, id) = session_with_path();
+        s.execute("path.reverse", &json!({"ids": [id]})).unwrap();
+        let a = anchors(&s, id);
+        assert_eq!(a.iter().map(|a| a.p).collect::<Vec<_>>(), [Point::new(300.0, 200.0), Point::new(200.0, 100.0), Point::new(100.0, 100.0)]);
+        assert_eq!((a[1].h_in, a[1].h_out), (Point::new(230.0, 120.0), Point::new(170.0, 80.0)));
+        assert!(s.execute("path.reverse", &json!({"ids": [id], "subpath": 3})).is_err());
+    }
+
+    #[test]
+    fn anchors_go_on_the_named_open_subpath_and_set_anchor_reshapes_one() {
+        let (mut s, id) = session_with_path();
+        s.execute("path.appendAnchor", &json!({"id": id, "subpath": 0, "anchor": {"p": [400, 250]}})).unwrap();
+        assert_eq!(anchors(&s, id).last().unwrap().p, Point::new(400.0, 250.0));
+        assert!(s.execute("path.appendAnchor", &json!({"id": id, "subpath": 1, "anchor": {"p": [0, 0]}})).is_err());
+        // `at: start` goes before the first anchor (the Pen continuing from a path's start).
+        s.execute("path.appendAnchor", &json!({"id": id, "anchor": {"p": [50, 60]}, "at": "start"})).unwrap();
+        assert_eq!((anchors(&s, id)[0].p, anchors(&s, id).len()), (Point::new(50.0, 60.0), 5));
+        assert!(s.execute("path.appendAnchor", &json!({"id": id, "anchor": {"p": [0, 0]}, "at": "middle"})).is_err());
+        // Direction lines on the last anchor: collinear and opposite make it smooth.
+        s.execute("path.setAnchor", &json!({"id": id, "anchor": "last", "in": [380, 230], "out": [420, 270]})).unwrap();
+        let last = *anchors(&s, id).last().unwrap();
+        assert_eq!((last.h_in, last.h_out, last.kind), (Point::new(380.0, 230.0), Point::new(420.0, 270.0), designcraft_geom::AnchorKind::Smooth));
+        s.execute("path.setAnchor", &json!({"id": id, "anchor": 0, "p": [90, 110]})).unwrap();
+        assert_eq!(anchors(&s, id)[0].p, Point::new(90.0, 110.0));
+        assert!(s.execute("path.setAnchor", &json!({"id": id, "anchor": 9, "p": [0, 0]})).is_err());
+        assert!(s.execute("path.setAnchor", &json!({"id": id, "anchor": "last"})).is_err(), "nothing to set");
+        // Closing one subpath; then it takes no more anchors.
+        s.execute("path.close", &json!({"id": id, "subpath": 0})).unwrap();
+        assert!(s.execute("path.appendAnchor", &json!({"id": id, "anchor": {"p": [0, 0]}})).is_err());
+        assert!(s.execute("path.close", &json!({"id": id, "subpath": 4})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod effects_command_tests {
+    use designcraft_doc::ItemId;
+    use serde_json::json;
+
+    #[test]
+    fn effects_set_together_in_one_undo_step_and_keep_what_is_not_given() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [100, 100, 300, 300]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.dropShadow", &json!({"on": true, "distance": 10, "ids": [id]})).unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        let r = s
+            .execute(
+                "object.effects",
+                &json!({"ids": [id], "opacity": 0.5, "blend": "multiply",
+                    "effects": {"innerShadow": {"on": true, "angle": 120, "distance": 7, "size": 7}, "dropShadow": {"size": 9}, "feather": 4}}),
+            )
+            .unwrap();
+        assert_eq!(r["changed"], 1);
+        let st = s.doc().unwrap();
+        assert_eq!(st.history.undo.len(), undo + 1, "one undo step");
+        let it = st.doc.item(ItemId(id)).unwrap();
+        let e = &it.effects;
+        assert!(e.inner_shadow.on && e.inner_shadow.angle == 120.0 && e.inner_shadow.size == 7.0);
+        assert!(e.drop_shadow.on && e.drop_shadow.distance == 10.0 && e.drop_shadow.size == 9.0, "untouched fields stay");
+        assert_eq!((e.feather, it.opacity, it.blend), (4.0, 0.5, designcraft_color::BlendMode::Multiply));
+        // Out of range values are kept in range; garbage changes nothing.
+        s.execute("object.effects", &json!({"ids": [id], "effects": {"outerGlow": {"on": true, "opacity": 3, "spread": 400, "size": -5}}})).unwrap();
+        let og = s.doc().unwrap().doc.item(ItemId(id)).unwrap().effects.outer_glow.clone();
+        assert_eq!((og.opacity, og.spread, og.size), (1.0, 100.0, 0.0));
+        let before = s.doc().unwrap().doc.clone();
+        for bad in [json!({"effects": {"dropShadow": {"distance": "far"}}}), json!({"effects": 5}), json!({"blend": "loud"}), json!({"opacity": "x"})]
+        {
+            let mut p = bad.clone();
+            p["ids"] = json!([id]);
+            assert!(s.execute("object.effects", &p).is_err(), "{bad}");
+        }
+        assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc));
     }
 }

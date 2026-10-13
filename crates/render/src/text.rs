@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-use designcraft_compose::{ComposedStory, FrameText, Line};
+use designcraft_compose::{ComposedStory, FrameText, Line, ShownOn};
 use designcraft_doc::ItemId;
 use designcraft_fonts::FontDb;
 use designcraft_geom::{Affine, BezPath, Rect, Shape};
@@ -408,7 +408,7 @@ impl Renderer {
         }
         // Anchored objects ride on their lines.
         for o in &ft.objects {
-            self.draw_item(ctx, f, &o.object.item, xf * Affine::translate(o.origin.to_vec2()), None);
+            self.draw_item(ctx, f, &o.object.item, xf * Affine::translate(o.origin.to_vec2()), ShownOn::Own);
         }
     }
 }

@@ -39,9 +39,9 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"),
-            "{path} — a DesignCraft or IDML file (recognised by its content, so the extension may be missing), or an InDesign .indd/.indt (recognised by its signature or extension, converted to IDML; its conversion warnings join `warnings`); the fonts in a `Document Fonts` folder beside it load first → {index, documentFonts: faces loaded, warnings: font files skipped, GREP styles whose pattern can't compile and, for IDML and InDesign files, package parts missing}",
+            "{path} — a DesignCraft or IDML file (recognised by its content, so the extension may be missing), or an InDesign .indd/.indt (recognised by its signature or extension, converted to IDML; its conversion warnings join `warnings`); the fonts in a `Document Fonts` folder beside it load first → {index, documentFonts: faces loaded, warnings: font files skipped, GREP styles whose pattern can't compile, Based on Parent links cleared and, for IDML and InDesign files, package parts missing}",
             always, file_open),
-        cmd!(noundo "file.openBytes", "Open Bytes", [], None, "{name, base64} — DesignCraft JSON, an IDML package or an InDesign .indd/.indt", always, file_open_bytes),
+        cmd!(noundo "file.openBytes", "Open Bytes", [], None, "{name, base64} — DesignCraft JSON, an IDML package or an InDesign .indd/.indt → {index, warnings}", always, file_open_bytes),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} — a `path` without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} — a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
         cmd!(noundo "file.saveACopy", "Save a Copy…", ["File"], None, "{path} — writes the document without changing which file it is or its unsaved state; a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, |s, p| {
@@ -124,7 +124,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Place…",
             ["File"],
             Some("Cmd+D"),
-            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?: finite number > 0 (null: absent), pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), loadCursor?: with no frame to fill and no x/y, an image loads into the place cursor (File › Place), layoutPage?: n (IDML / .designcraft: that page's objects as a group)} — places an image into `frame` when given; otherwise any explicit x/y/spread/width creates a new frame; otherwise uses the selected empty or graphic frame, or creates a new frame; text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect` — {autoflow?: threads one frame per page column (from the first frame on), adding pages until the text fits, removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename}",
+            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?: finite number > 0 (null: absent), pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), loadCursor?: with no frame to fill and no x/y, an image loads into the place cursor (File › Place), layoutPage?: n (IDML / .designcraft: that page's objects as a group)} — places an image into `frame` when given; otherwise any explicit x/y/spread/width creates a new frame; otherwise uses the selected empty or graphic frame, or creates a new frame; text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect` — {autoflow?: threads one frame per page column (from the first frame on), adding pages until the text fits, removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename, link?: keep the file linked (Links panel; default: the linkTextFiles preference)}",
             has_doc,
             file_place
         ),
@@ -152,7 +152,15 @@ pub fn is_document(bytes: &[u8]) -> bool {
 }
 
 pub fn from_bytes(b: &[u8]) -> Result<Document> {
-    designcraft_format::load(b).map_err(|e| EngineError::Other(e.to_string()))
+    load_bytes(b).map(|(d, _)| d)
+}
+
+/// Read `.designcraft` bytes and repair what a hand-edited file can get wrong without failing the
+/// open, with a warning for each repair.
+fn load_bytes(b: &[u8]) -> Result<(Document, Vec<String>)> {
+    let mut d = designcraft_format::load(b).map_err(|e| EngineError::Other(e.to_string()))?;
+    let warnings = d.fix_parent_bases();
+    Ok((d, warnings))
 }
 
 /// The longest saved preset name, and how many presets are kept.
@@ -272,10 +280,11 @@ fn file_open(s: &mut Session, p: &Value) -> Result<Value> {
         if !native && ext != designcraft_format::EXTENSION {
             return Err(bad("file.open", format!("{path}: not a DesignCraft or IDML file")));
         }
-        let mut d = from_bytes(&bytes)?;
+        let (mut d, mut warnings) = load_bytes(&bytes)?;
         super::interchange::resolve_packaged_links(&mut d, std::path::Path::new(path).parent());
         super::datamerge::resolve_sources_on_open(&mut d, Some(std::path::Path::new(path)));
-        let (fonts, faces, mut warnings) = load_document_fonts(&mut d, path);
+        let (fonts, faces, font_warnings) = load_document_fonts(&mut d, path);
+        warnings.extend(font_warnings);
         warnings.extend(super::style::grep_style_warnings(&d));
         let mut st = DocState::new(d, Some(path.to_string()));
         st.fonts = fonts;
@@ -333,13 +342,13 @@ fn file_open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     if designcraft_idml::is_idml(&b) || super::interchange::is_indd(str_param(p, "name").unwrap_or_default(), &b) {
         return super::interchange::open_idml(s, p);
     }
-    let mut d = from_bytes(&b)?;
+    let (mut d, warnings) = load_bytes(&b)?;
     super::datamerge::resolve_sources_on_open(&mut d, None);
     if let Some(n) = str_param(p, "name") {
         d.title = n.to_string();
     }
     let i = s.add_document(DocState::new(d, None));
-    Ok(json!({"index": i}))
+    Ok(json!({"index": i, "warnings": warnings}))
 }
 
 fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
@@ -405,7 +414,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Text files (plain, Word, RTF) flow into frames.
     if designcraft_textimport::is_text_file(&name) {
-        return super::place_text::place_text(s, p, &name, &bytes);
+        return super::place_text::place_text(s, p, &name, &bytes, link);
     }
     let want_w = p
         .get("width")
@@ -465,7 +474,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
         let st = s.active()?;
         st.selection.items.iter().copied().find(|i| st.doc.item(*i).is_some_and(|it| matches!(it.content, Content::Unassigned | Content::Graphic(_))))
     });
-    let spread = super::spread_param(p, "spread");
+    let spread = super::spread_param(p, "file.place")?;
     let lid = s.doc()?.active_layer;
     let px = p.get("x").and_then(Value::as_f64);
     let py = p.get("y").and_then(Value::as_f64);
@@ -508,6 +517,9 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
             let k = w / nw;
             let mut it = Item::new(id, lid, Shape::Rectangle, shapes::rectangle(Rect::new(x, y, x + bw * k, y + bh * k)));
             it.object_style = d.styles.default_graphic_frame.clone();
+            if let Some(e) = d.styles.object_effects(&it.object_style) {
+                it.effects = e.clone();
+            }
             it.content = Content::Graphic(Graphic {
                 asset: aid,
                 size: (bw, bh),
@@ -618,7 +630,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
         s.loaded = None;
         return Err(bad("place.drop", "the loaded graphic is no longer in the document"));
     }
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, "place.drop")?;
     let lid = s.doc()?.active_layer;
     let frame = super::id_param(p, "frame");
     let rect = super::rect_param(p, "rect");
@@ -653,6 +665,9 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                 let id = ItemId(d.alloc());
                 let mut it = Item::new(id, lid, Shape::Rectangle, shapes::rectangle(frame_r));
                 it.object_style = d.styles.default_graphic_frame.clone();
+                if let Some(e) = d.styles.object_effects(&it.object_style) {
+                    it.effects = e.clone();
+                }
                 it.content = Content::Graphic(Graphic {
                     asset: aid,
                     size: (nw, nh),
@@ -716,7 +731,7 @@ fn place_layout_page(s: &mut Session, p: &Value, name: &str, bytes: &[u8]) -> Re
     if ids.is_empty() {
         return Err(bad(ID, format!("page {page} has no objects")));
     }
-    let to = super::spread_param(p, "spread");
+    let to = super::spread_param(p, ID)?;
     let off = match (p.get("x").and_then(Value::as_f64), p.get("y").and_then(Value::as_f64)) {
         (Some(x), Some(y)) => designcraft_geom::Vec2::new(x - pr.x0, y - pr.y0),
         _ => designcraft_geom::Vec2::new(-pr.x0, -pr.y0),
@@ -752,7 +767,7 @@ pub(crate) fn snippet_place(s: &mut Session, p: &Value) -> Result<Value> {
     if ids.is_empty() {
         return Err(bad("snippet.place", "the snippet is empty"));
     }
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, "snippet.place")?;
     let bounds = ids.iter().filter_map(|i| src.item(*i).map(|it| it.bounds())).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO);
     let off = match (p.get("x").and_then(Value::as_f64), p.get("y").and_then(Value::as_f64)) {
         (Some(x), Some(y)) => designcraft_geom::Vec2::new(x - bounds.x0, y - bounds.y0),

@@ -129,11 +129,13 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
             im.repaired_tab_lists,
         ));
     }
-    let document = im.finish(&root).map_err(|e| match e {
+    warnings.append(&mut im.warnings);
+    let mut document = im.finish(&root).map_err(|e| match e {
         // Without its spread parts there is nothing to open: say which parts were missing.
         IdmlError::Invalid(msg) if !warnings.is_empty() => IdmlError::Invalid(format!("{msg} ({})", warnings.join("; "))),
         e => e,
     })?;
+    warnings.extend(document.fix_parent_bases());
     document.check().map_err(|e| IdmlError::Invalid(e.to_string()))?;
     Ok(Imported { document, warnings })
 }
@@ -239,6 +241,8 @@ struct Importer<'r> {
     stories: BTreeMap<StoryId, Story>,
     story_ids: HashMap<String, StoryId>,
     parents: Vec<Spread>,
+    /// Things read but not kept as they were, for the import report.
+    warnings: Vec<String>,
     parent_ids: HashMap<String, SpreadId>,
     spreads: Vec<Spread>,
     page_index: HashMap<String, usize>,
@@ -257,8 +261,8 @@ struct Importer<'r> {
     /// Cross-reference format Self → name.
     xref_format_names: HashMap<String, String>,
     xref_formats: Vec<designcraft_doc::XrefFormat>,
-    /// Index topic Self → topic path; topic See / See also cross-references.
-    index_topics: HashMap<String, Vec<String>>,
+    /// Index topic Self → topic path and per-level sort keys; topic cross-references.
+    index_topics: HashMap<String, IndexTopic>,
     index_xrefs: Vec<designcraft_doc::IndexRef>,
     /// The file's text variables (`None`: it defines none) and their Self → index.
     text_vars: Option<Vec<designcraft_doc::vars::TextVariable>>,
@@ -268,6 +272,27 @@ struct Importer<'r> {
     modified: Option<i64>,
     /// Tab lists [`TabStop::sanitized_list`] had to repair (an import warning).
     repaired_tab_lists: usize,
+}
+
+/// IDML stores a sort key on each topic, rather than on its page references.
+#[derive(Clone, Default)]
+struct IndexTopic {
+    path: Vec<String>,
+    sort: Vec<String>,
+}
+
+impl IndexTopic {
+    fn child(&self, topic: &El) -> Self {
+        let mut path = self.path.clone();
+        path.push(topic.get("Name").unwrap_or("").to_string());
+        let mut sort = self.sort.clone();
+        if let Some(key) = topic.get("SortOrder").filter(|key| !key.is_empty()) {
+            // Keep empty positions before a child's key, but omit trailing defaults.
+            sort.resize(self.path.len(), String::new());
+            sort.push(key.to_string());
+        }
+        Self { path, sort }
+    }
 }
 
 fn lab_to_color(l: f32, a: f32, b: f32) -> Color {
@@ -411,6 +436,7 @@ impl<'r> Importer<'r> {
             stories: BTreeMap::new(),
             story_ids: HashMap::new(),
             parents: Vec::new(),
+            warnings: Vec::new(),
             parent_ids: HashMap::new(),
             spreads: Vec::new(),
             page_index: HashMap::new(),
@@ -595,7 +621,7 @@ impl<'r> Importer<'r> {
             self.xref_format(e);
         }
         if let Some(ix) = top.iter().find(|e| e.local() == "Index") {
-            self.index_topics_of(ix, &[]);
+            self.index_topics_of(ix, &IndexTopic::default());
         }
         for e in top.iter().filter(|e| e.local() == "TextVariable") {
             self.text_variable(e);
@@ -1132,7 +1158,8 @@ impl<'r> Importer<'r> {
             } else {
                 None
             };
-            let s = ObjectStyle { name: name.clone(), based_on, fill, stroke, paragraph_style, text_frame };
+            let effects = self.style_effects(e);
+            let s = ObjectStyle { name: name.clone(), based_on, fill, stroke, paragraph_style, text_frame, effects };
             match self.styles.object.iter_mut().find(|o| o.name == name) {
                 Some(slot) => *slot = s,
                 None => self.styles.object.push(s),
@@ -1159,33 +1186,31 @@ impl<'r> Importer<'r> {
     }
 
     /// Index topics (recursively); at the root, their See / See also cross-references too.
-    fn index_topics_of(&mut self, e: &El, prefix: &[String]) {
+    fn index_topics_of(&mut self, e: &El, prefix: &IndexTopic) {
         for t in e.find_all("Topic") {
-            let mut path = prefix.to_vec();
-            path.push(t.get("Name").unwrap_or("").to_string());
+            let topic = prefix.child(t);
             if let Some(me) = t.get("Self") {
-                self.index_topics.insert(me.to_string(), path.clone());
+                self.index_topics.insert(me.to_string(), topic.clone());
             }
-            self.index_topics_of(t, &path);
+            self.index_topics_of(t, &topic);
         }
-        if !prefix.is_empty() {
+        if !prefix.path.is_empty() {
             return;
         }
-        let mut stack = vec![(e, Vec::<String>::new())];
-        while let Some((el, path)) = stack.pop() {
+        let mut stack = vec![(e, IndexTopic::default())];
+        while let Some((el, prefix)) = stack.pop() {
             for t in el.find_all("Topic") {
-                let mut p = path.clone();
-                p.push(t.get("Name").unwrap_or("").to_string());
+                let topic = prefix.child(t);
                 for x in t.find_all("CrossReference") {
-                    let target = x.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).map(|p| p.join(": ")).unwrap_or_default();
+                    let target = x.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).map(|t| t.path.join(": ")).unwrap_or_default();
                     use designcraft_doc::index::IndexRange as R;
                     let range = match x.get("CrossReferenceType") {
                         Some("SeeAlso") | Some("SeeAlsoHerein") => R::SeeAlso(target),
                         _ => R::See(target),
                     };
-                    self.index_xrefs.push(designcraft_doc::IndexRef { topics: p.clone(), sort: vec![], range });
+                    self.index_xrefs.push(designcraft_doc::IndexRef { topics: topic.path.clone(), sort: topic.sort.clone(), range });
                 }
-                stack.push((t, p));
+                stack.push((t, topic));
             }
         }
     }
@@ -1900,6 +1925,7 @@ impl<'r> Importer<'r> {
             objects: objects.into_iter().map(Arc::new).collect(),
             editorial: Vec::new(),
             link: None,
+            file_link: None,
         };
         st.fix_notes();
         st.fix_marks();
@@ -2112,14 +2138,14 @@ impl<'r> Importer<'r> {
                     }
                     "PageReference" => {
                         use designcraft_doc::index::IndexRange as R;
-                        let topics = c.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).cloned().unwrap_or_default();
+                        let topic = c.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).cloned().unwrap_or_default();
                         let range = match c.get("PageReferenceType") {
                             Some("ToEndOfStory") | Some("ToEndOfDocument") | Some("ToEndOfSection") => R::ToEndOfStory,
                             Some("ForNextNParagraphs") => R::NextParagraphs(c.num("PageReferenceLimit").unwrap_or(1.0).max(1.0) as u32),
                             Some("SuppressPageNumbers") => R::SuppressPageRange,
                             _ => R::CurrentPage,
                         };
-                        b.index_refs.push(designcraft_doc::IndexRef { topics, sort: vec![], range });
+                        b.index_refs.push(designcraft_doc::IndexRef { topics: topic.path, sort: topic.sort, range });
                         b.push(&designcraft_doc::INDEX_MARK.to_string(), cf);
                     }
                     "CrossReferenceSource" => {
@@ -2320,7 +2346,18 @@ impl<'r> Importer<'r> {
                 let n = e.get("Name").unwrap_or("Parent");
                 n.split_once('-').map(|(_, b)| b.to_string()).unwrap_or_else(|| n.to_string())
             });
-            let based_on = pages.first().and_then(|(_, p)| p.get("AppliedMaster")).and_then(|m| self.parent_ids.get(m)).copied().filter(|b| *b != id);
+            // A parent spread has one base: its first page's. Pages that disagree lose theirs.
+            let applied: Vec<Option<SpreadId>> =
+                pages.iter().map(|(_, p)| p.get("AppliedMaster").and_then(|m| self.parent_ids.get(m)).copied()).collect();
+            let label = format!("{prefix}-{name}");
+            if applied.windows(2).any(|w| w[0] != w[1]) {
+                self.warnings.push(format!("parent {label}: its pages are based on different parents; only the first page's is kept"));
+            }
+            let based_on = applied.first().copied().flatten();
+            if applied.contains(&Some(id)) {
+                self.warnings.push(format!("parent {label}: a page names its own parent as its base, which is ignored"));
+            }
+            let based_on = based_on.filter(|b| *b != id);
             Some(ParentInfo { prefix, name, based_on })
         } else {
             None
@@ -2346,8 +2383,19 @@ impl<'r> Importer<'r> {
     /// An item's object style chain: its applied style, the styles that one is based on, then
     /// `[None]` (cycle-safe).
     fn object_style_chain(&self, e: &El) -> Vec<&El> {
+        let mut chain = self.object_style_bases(e.get("AppliedObjectStyle").map(str::to_string));
+        if let Some(none) = self.object_els.get("ObjectStyle/$ID/[None]")
+            && !chain.iter().any(|c| std::ptr::eq(*c, none))
+        {
+            chain.push(none);
+        }
+        chain
+    }
+
+    /// Object style `id` and the styles it is based on, nearest first (cycle-safe, at most 16).
+    fn object_style_bases(&self, id: Option<String>) -> Vec<&El> {
         let mut chain: Vec<&El> = Vec::new();
-        let mut os = e.get("AppliedObjectStyle").map(str::to_string);
+        let mut os = id;
         while let Some(id) = os {
             let Some(s) = self.object_els.get(&id) else { break };
             if chain.len() >= 16 || chain.iter().any(|c| std::ptr::eq(*c, s)) {
@@ -2358,11 +2406,6 @@ impl<'r> Importer<'r> {
                 let b = b.trim();
                 if b.starts_with("ObjectStyle/") { b.to_string() } else { format!("ObjectStyle/{}", names::escape_id(b)) }
             });
-        }
-        if let Some(none) = self.object_els.get("ObjectStyle/$ID/[None]")
-            && !chain.iter().any(|c| std::ptr::eq(*c, none))
-        {
-            chain.push(none);
         }
         chain
     }
@@ -2406,6 +2449,75 @@ impl<'r> Importer<'r> {
             }
         }
         out
+    }
+
+    /// Reads the drop shadow, feather, gradient feather and directional feather of a
+    /// `TransparencySetting` into `fx`.
+    fn effects_in(&mut self, t: &El, fx: &mut Effects) {
+        if let Some(ds) = t.find("DropShadowSetting")
+            && ds.get("Mode") == Some("Drop")
+        {
+            let x = ds.num("XOffset").unwrap_or(4.95);
+            let y = ds.num("YOffset").unwrap_or(4.95);
+            let def = DropShadow::default();
+            fx.drop_shadow = DropShadow {
+                on: true,
+                color: ds.get("EffectColor").map(|c| self.swatch_ref(c)).unwrap_or(def.color),
+                opacity: ds.num("Opacity").map(|o| (o / 100.0) as f32).unwrap_or(def.opacity),
+                angle: names_angle(x, y),
+                distance: x.hypot(y),
+                size: ds.num("Size").unwrap_or(def.size),
+                spread: ds.num("Spread").unwrap_or(def.spread),
+                global_light: false,
+            };
+        }
+        if let Some(f) = t.find("FeatherSetting")
+            && f.get("Mode").is_some_and(|m| m != "None")
+        {
+            fx.feather = f.num("Width").unwrap_or(9.0);
+        }
+        if let Some(g) = t.find("GradientFeatherSetting")
+            && g.boolean("Applied") == Some(true)
+        {
+            fx.gradient_feather = gradient_feather_in(g);
+        }
+        if let Some(df) = t.find("DirectionalFeatherSetting")
+            && df.boolean("Applied") == Some(true)
+        {
+            let w = |k: &str| finite(df.num(k)).unwrap_or(0.0).max(0.0);
+            fx.directional_feather = DirectionalFeather { on: true, widths: [w("TopWidth"), w("LeftWidth"), w("BottomWidth"), w("RightWidth")] };
+        }
+    }
+
+    /// An object style's drop shadow and feather. Each is read when the effects category turns it
+    /// on (without category settings: when its setting is on), from the nearest style in the
+    /// BasedOn chain that has the setting. `None` when the style sets neither.
+    fn style_effects(&mut self, e: &El) -> Option<Effects> {
+        let mut chain = self.object_style_bases(e.get("Self").map(str::to_string));
+        if chain.is_empty() {
+            chain.push(e);
+        }
+        let category = chain.iter().find_map(|s| s.find("ObjectStyleObjectEffectsCategorySettings")).cloned();
+        let setting = |name: &str| chain.iter().find_map(|s| s.find("TransparencySetting")?.find(name)).cloned();
+        let mut t = El::new("TransparencySetting");
+        let mut any = false;
+        for (name, flag) in [("DropShadowSetting", "EnableDropShadow"), ("FeatherSetting", "EnableFeather")] {
+            let el = setting(name);
+            let on = match &category {
+                Some(c) => c.get(flag) == Some("true"),
+                None => el.as_ref().and_then(|x| x.get("Mode")).is_some_and(|m| m != "None"),
+            };
+            any |= on;
+            if let (true, Some(el)) = (on, el) {
+                t.push(el);
+            }
+        }
+        if !any {
+            return None;
+        }
+        let mut fx = Effects::default();
+        self.effects_in(&t, &mut fx);
+        Some(fx)
     }
 
     fn stroke_from(&mut self, e: &El, item: Option<&El>) -> Stroke {
@@ -2537,40 +2649,7 @@ impl<'r> Importer<'r> {
                     it.blend = names::blend_in(m);
                 }
             }
-            if let Some(ds) = t.find("DropShadowSetting")
-                && ds.get("Mode") == Some("Drop")
-            {
-                let x = ds.num("XOffset").unwrap_or(4.95);
-                let y = ds.num("YOffset").unwrap_or(4.95);
-                let def = DropShadow::default();
-                it.effects.drop_shadow = DropShadow {
-                    on: true,
-                    color: ds.get("EffectColor").map(|c| self.swatch_ref(c)).unwrap_or(def.color),
-                    opacity: ds.num("Opacity").map(|o| (o / 100.0) as f32).unwrap_or(def.opacity),
-                    angle: names_angle(x, y),
-                    distance: x.hypot(y),
-                    size: ds.num("Size").unwrap_or(def.size),
-                    spread: ds.num("Spread").unwrap_or(def.spread),
-                    global_light: false,
-                };
-            }
-            if let Some(f) = t.find("FeatherSetting")
-                && f.get("Mode").is_some_and(|m| m != "None")
-            {
-                it.effects = Effects { feather: f.num("Width").unwrap_or(9.0), ..it.effects.clone() };
-            }
-            if let Some(g) = t.find("GradientFeatherSetting")
-                && g.boolean("Applied") == Some(true)
-            {
-                it.effects.gradient_feather = gradient_feather_in(g);
-            }
-            if let Some(df) = t.find("DirectionalFeatherSetting")
-                && df.boolean("Applied") == Some(true)
-            {
-                let w = |k: &str| finite(df.num(k)).unwrap_or(0.0).max(0.0);
-                it.effects.directional_feather =
-                    DirectionalFeather { on: true, widths: [w("TopWidth"), w("LeftWidth"), w("BottomWidth"), w("RightWidth")] };
-            }
+            self.effects_in(&t, &mut it.effects);
         }
         // Text wrap.
         if let Some(w) = self.with_style(e, "TextWrapPreference") {
@@ -2592,6 +2671,11 @@ impl<'r> Importer<'r> {
                 let options = TextFrameOptions {
                     path: Some(designcraft_doc::PathType {
                         start: tp.num("StartBracket").unwrap_or(0.0).max(0.0),
+                        // At (or past) the path's length it is the path's end: no end bracket.
+                        end: tp
+                            .num("EndBracket")
+                            .filter(|e| e.is_finite() && *e >= 0.0)
+                            .filter(|e| *e < designcraft_geom::warp::PathWarp::new(&it.path.to_bezpath(), false).length() - 0.01),
                         flip: tp.get("FlipPathEffect") == Some("Flipped"),
                         align: names::path_align_in(tp.get("TextAlignment").unwrap_or("")),
                     }),

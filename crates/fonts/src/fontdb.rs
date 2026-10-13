@@ -519,6 +519,29 @@ const KOREAN_FALLBACKS: &[&str] = &[
     "Source Han Sans K",
 ];
 
+/// Fonts made for Malayalam (macOS, Windows, Noto, Linux). A font that only maps the characters
+/// (Arial Unicode MS, first by path on macOS) sets them without conjuncts or vowel signs.
+const MALAYALAM_FALLBACKS: &[&str] = &[
+    "Malayalam Sangam MN",
+    "Malayalam MN",
+    "Nirmala UI",
+    "Kartika",
+    "Noto Sans Malayalam",
+    "Noto Serif Malayalam",
+    "Manjari",
+    "Rachana",
+    "Meera",
+    "Lohit Malayalam",
+];
+
+/// The fallback chain of a script that only fonts made for it set well, whatever the language.
+fn script_chain(c: char) -> Option<&'static [&'static str]> {
+    match c as u32 {
+        0x0D00..=0x0D7F => Some(MALAYALAM_FALLBACKS),
+        _ => None,
+    }
+}
+
 /// The Japanese fallback chain: the craft-fonts Japanese faces' families in document order
 /// (Mincho first; none without craft-fonts), then [`JAPANESE_FALLBACKS`].
 fn japanese_chain() -> &'static [&'static str] {
@@ -1850,12 +1873,12 @@ impl ScopedFonts<'_> {
     }
 
     /// A face other than `exclude` that covers `c` in `language` (a BCP 47 tag, `None` when
-    /// unknown). CJK characters try their language's chain first (see [`cjk_chain`]); then the
-    /// first face (fallback family first, then load order, the document's fonts last) that covers
-    /// `c`. On native, system fonts are cataloged and loaded lazily the first time no loaded face
-    /// covers a character.
+    /// unknown). CJK characters try their language's chain first (see [`cjk_chain`]), Malayalam
+    /// the fonts made for it (see [`script_chain`]); then the first face (fallback family first,
+    /// then load order, the document's fonts last) that covers `c`. On native, system fonts are
+    /// cataloged and loaded lazily the first time no loaded face covers a character.
     pub fn fallback_for(&self, c: char, exclude: u32, language: Option<&str>) -> Option<Arc<FontFace>> {
-        if let Some(chain) = cjk_chain(c, language)
+        if let Some(chain) = cjk_chain(c, language).or_else(|| script_chain(c))
             && let Some(f) = chain.iter().find_map(|family| self.chain_face(family, c, exclude))
         {
             return Some(f);
