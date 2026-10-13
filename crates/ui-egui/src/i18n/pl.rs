@@ -1740,5 +1740,4 @@ pub(super) const TABLE: &[(&str, &str)] = &[
 ];
 
 /// Contexts whose Polish noun differs from the shared action/text-layout label.
-pub(super) const CONTEXT: &[(&str, &str, &str)] =
-    &[("Columns", "table", "Kolumny"), ("Columns:", "grid", "Łamy:"), ("Group", "selection", "Grupa")];
+pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Columns", "table", "Kolumny"), ("Columns:", "grid", "Łamy:"), ("Group", "selection", "Grupa")];

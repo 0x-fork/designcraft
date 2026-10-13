@@ -3670,4 +3670,3 @@ fn style_names_ending_in_a_space_and_partial_rule_overrides_import() {
     assert_eq!((black.weight, black.offset), (16.0, -3.0), "weight and offset come from the base style");
     assert_ne!(black.color, white.color, "only the colour is overridden");
 }
-
