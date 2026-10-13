@@ -758,6 +758,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Vertical:", ["Vertikal:", "Vertical :", "Vertical:", "垂直方向:", "垂直:"]),
     ("Horizontal:", ["Horizontal:", "Horizontal :", "Horizontal:", "水平方向:", "水平:"]),
     ("Invalid value", ["Ungültiger Wert", "Valeur non valide", "Valor no válido", "無効な値", "无效值"]),
+    ("Isolate Blending", ["Füllmethode isolieren", "Isoler le mode de fusion", "Aislar fusión", "描画モードを分離", "分离混合"]),
+    ("Knockout Group", ["Aussparungsgruppe", "Groupe de masquage", "Grupo de exclusión", "グループの抜き", "挖空组"]),
+    ("Object:", ["Objekt:", "Objet :", "Objeto:", "オブジェクト:", "对象:"]),
+    ("Group:", ["Gruppe:", "Groupe :", "Grupo:", "グループ:", "编组:"]),
     ("Apply Condition", ["Apply Condition", "Apply Condition", "Apply Condition", "Apply Condition", "应用条件"]),
     (
         "Apply Parent to Pages…",
