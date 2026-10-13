@@ -2345,6 +2345,49 @@ mod tests {
         // The angle and scale fields are there.
         assert!(h.query_by(|n| n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("90°")).is_some());
     }
+
+    fn panel(app: DesignApp) -> Harness<'static, DesignApp> {
+        let mut h = Harness::builder().with_size(vec2(320.0, 1400.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let id = egui::Id::new("test_fonts");
+                if ui.data(|d| d.get_temp::<bool>(id)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(id, true));
+                    return;
+                }
+                show(app, ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn several_shapes_show_pathfinder_and_intersect_combines_them() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let a = app.run("frame.create", json!({"rect": [100, 100, 300, 300], "shape": "ellipse"})).unwrap()["id"].clone();
+        let b = app.run("frame.create", json!({"rect": [200, 100, 300, 200]})).unwrap()["id"].clone();
+        // One shape: no Pathfinder section.
+        app.run("selection.set", json!({"ids": [a]})).unwrap();
+        let mut h = panel(app);
+        assert!(h.query_by_label("Pathfinder").is_none());
+        // Two: the section and its five buttons; Intersect leaves one shape, the ellipse's quarter.
+        h.state_mut().run("selection.set", json!({"ids": [a, b]})).unwrap();
+        h.run_steps(3);
+        assert!(h.query_by_label("Pathfinder").is_some());
+        for op in ["Add", "Subtract", "Intersect", "Exclude Overlap", "Minus Back"] {
+            assert!(h.query_by_label(op).is_some(), "{op}");
+        }
+        h.get_by_label("Intersect").click();
+        h.run_steps(3);
+        let doc = &h.state().session.active().unwrap().doc;
+        let items = &doc.spreads[0].items;
+        assert_eq!(items.len(), 1, "one shape left");
+        let r = items[0].bounds();
+        assert!((r.x0 - 200.0).abs() < 0.5 && (r.y1 - 200.0).abs() < 0.5 && (r.x1 - 300.0).abs() < 0.5, "{r:?}");
+    }
 }
 
 #[cfg(test)]
@@ -2435,48 +2478,5 @@ mod effects_panel_tests {
         assert!(it.has_nested_items());
         assert!(!it.isolate && !it.knockout, "group-only options stay disabled for a frame holding content");
         assert_eq!(st.history.undo.len(), undo, "disabled controls do not create undo steps");
-    }
-
-    fn panel(app: DesignApp) -> Harness<'static, DesignApp> {
-        let mut h = Harness::builder().with_size(vec2(320.0, 1400.0)).build_ui_state(
-            |ui, app: &mut DesignApp| {
-                let id = egui::Id::new("test_fonts");
-                if ui.data(|d| d.get_temp::<bool>(id)).is_none() {
-                    crate::theme::install_fonts(ui.ctx(), "");
-                    ui.data_mut(|d| d.insert_temp(id, true));
-                    return;
-                }
-                show(app, ui);
-            },
-            app,
-        );
-        h.run_steps(3);
-        h
-    }
-
-    #[test]
-    fn several_shapes_show_pathfinder_and_intersect_combines_them() {
-        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
-        app.run("file.new", json!({})).unwrap();
-        let a = app.run("frame.create", json!({"rect": [100, 100, 300, 300], "shape": "ellipse"})).unwrap()["id"].clone();
-        let b = app.run("frame.create", json!({"rect": [200, 100, 300, 200]})).unwrap()["id"].clone();
-        // One shape: no Pathfinder section.
-        app.run("selection.set", json!({"ids": [a]})).unwrap();
-        let mut h = panel(app);
-        assert!(h.query_by_label("Pathfinder").is_none());
-        // Two: the section and its five buttons; Intersect leaves one shape, the ellipse's quarter.
-        h.state_mut().run("selection.set", json!({"ids": [a, b]})).unwrap();
-        h.run_steps(3);
-        assert!(h.query_by_label("Pathfinder").is_some());
-        for op in ["Add", "Subtract", "Intersect", "Exclude Overlap", "Minus Back"] {
-            assert!(h.query_by_label(op).is_some(), "{op}");
-        }
-        h.get_by_label("Intersect").click();
-        h.run_steps(3);
-        let doc = &h.state().session.active().unwrap().doc;
-        let items = &doc.spreads[0].items;
-        assert_eq!(items.len(), 1, "one shape left");
-        let r = items[0].bounds();
-        assert!((r.x0 - 200.0).abs() < 0.5 && (r.y1 - 200.0).abs() < 0.5 && (r.x1 - 300.0).abs() < 0.5, "{r:?}");
     }
 }

@@ -1075,7 +1075,7 @@ fn has_text_or_selection(s: &Session) -> std::result::Result<(), String> {
 fn sample_color(s: &mut Session, p: &Value) -> Result<Value> {
     const ID: &str = "color.sample";
     let at = super::point_param(p, "at").ok_or_else(|| bad(ID, "missing at"))?;
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, "spread")?;
     let st = s.doc()?;
     let (from, color) = image_color_at(&st.doc, sr, at).ok_or_else(|| bad(ID, "no placed image under the point"))?;
     let hex = color.to_hex();
