@@ -73,7 +73,7 @@ indd = { git = "https://github.com/aiongg/indd-utils", branch = "main" }
 craft-print = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "d991bf6792f8ade99c51358bf3c1d902c8cd96b5" }
 
 # ICC colour management: working spaces, transforms, black point compensation (craft-libs).
-craft-cms = { git = "https://github.com/aiongg/craft-libs.git", rev = "9e2b2b03d80fb36893116d678761fa1b06ea8059" }
+craft-cms = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e" }
 
 # ui
 # Shared frontend components; keep this dependency above the engine boundary.
