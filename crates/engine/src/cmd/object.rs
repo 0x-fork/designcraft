@@ -1164,15 +1164,18 @@ fn union_bounds(d: &Document, ids: &[ItemId]) -> Rect {
     ids.iter().filter_map(|i| d.item(*i)).map(Item::bounds).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO)
 }
 
-/// Transform an item's geometry in its own space: the path and the gradient vector with it.
+/// Transform an item's geometry in its own space: the path and the gradient vectors (fill and
+/// stroke) with it.
 pub(crate) fn bake(it: &mut Item, inner: Affine) {
     it.path.transform(inner);
     if let Some(w) = &mut it.wrap.path {
         w.transform(inner);
     }
-    if let Some([x0, y0, x1, y1]) = it.fill.gradient_vector {
-        let (a, b) = (inner * Point::new(x0, y0), inner * Point::new(x1, y1));
-        it.fill.gradient_vector = Some([a.x, a.y, b.x, b.y]);
+    for v in [&mut it.fill.gradient_vector, &mut it.stroke.gradient_vector] {
+        if let Some([x0, y0, x1, y1]) = *v {
+            let (a, b) = (inner * Point::new(x0, y0), inner * Point::new(x1, y1));
+            *v = Some([a.x, a.y, b.x, b.y]);
+        }
     }
 }
 
@@ -3544,6 +3547,38 @@ mod gradient_tests {
         s.execute("object.gradient", &json!({"angle": 90})).unwrap();
         assert_eq!(fill(&s).gradient_vector, None);
         assert_eq!(fill(&s).gradient_angle, Some(90.0));
+    }
+
+    #[test]
+    fn swatches_dropped_on_stops_keep_their_cmyk() {
+        use designcraft_color::Color;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [100, 100, 300, 200]})).unwrap();
+        let id = ItemId(r["id"].as_u64().unwrap());
+        // LYH Studio episode 6: magenta on the left stop, cyan dropped at 68.636 %, a grey third.
+        let r = s
+            .execute(
+                "object.gradient",
+                &json!({"stops": [
+                    {"location": 0, "swatch": "C=0 M=100 Y=0 K=0"},
+                    {"location": 68.636, "swatch": "C=100 M=0 Y=0 K=0"},
+                    {"location": 100, "color": {"gray": 25}}
+                ]}),
+            )
+            .unwrap();
+        let d = &s.doc().unwrap().doc;
+        let g = designcraft_color::swatch::resolve_gradient(&d.swatches, r["swatch"].as_str().unwrap()).unwrap();
+        assert_eq!(d.item(id).unwrap().fill.swatch, r["swatch"].as_str().unwrap());
+        assert_eq!(g.stops[0].color, Color::cmyk(0.0, 1.0, 0.0, 0.0));
+        assert_eq!(g.stops[1].color, Color::cmyk(1.0, 0.0, 0.0, 0.0));
+        assert!((g.stops[1].offset - 0.68636).abs() < 1e-6);
+        assert_eq!(g.stops[2].color, Color::gray(0.25));
+        // Not a colour: refused, nothing changes.
+        for bad in ["[None]", "Missing", r["swatch"].as_str().unwrap()] {
+            let p = json!({"stops": [{"location": 0, "swatch": bad}, {"location": 100, "color": "#000000"}]});
+            assert!(s.execute("object.gradient", &p).is_err(), "{bad}");
+        }
     }
 }
 

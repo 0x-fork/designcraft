@@ -170,16 +170,25 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Color Swatch…",
             [],
             None,
-            "{name?, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255)|{model: rgb|cmyk|gray, …}(0..1), spot?: bool}",
+            "{name?, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255)|{model: rgb|cmyk|gray, …}(0..1), spot?: bool} | {name? (\"New Gradient Swatch\"), gradient: {kind?: linear|radial, stops: [{location: 0–100, swatch?: a colour swatch's name | color?, opacity?: 0–100, midpoint?: 13–87}]}} → {name}",
             has_doc,
             create_swatch
+        ),
+        cmd!(
+            "swatch.new",
+            "New Swatch",
+            [],
+            None,
+            "{swatch?: name, target?: fill|stroke} → {name} — the Swatches panel's New Swatch: `swatch` (default: the selection's fill or stroke) as a new swatch. An unnamed colour or gradient becomes a named one (a gradient: \"New Gradient Swatch\"), still applied; a named swatch is duplicated (\"… copy\"); with nothing selected and no `swatch`, a new colour swatch",
+            has_doc,
+            new_swatch
         ),
         cmd!(
             "object.gradient",
             "Gradient",
             [],
             None,
-            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}|[r,g,b], opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
+            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255)|{model: rgb|cmyk|gray, …}(0..1) | swatch: name (its colour, as dropped on the Gradient panel), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), target?: fill|stroke, ids?} → {swatch, kind, stops} — edits the fill's (or the stroke's) gradient (an unnamed gradient unless it equals a gradient swatch)",
             super::has_selection,
             apply_gradient
         ),
@@ -883,7 +892,10 @@ fn edit_char(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn create_swatch(s: &mut Session, p: &Value) -> Result<Value> {
-    let c = p.get("color").ok_or_else(|| bad("swatch.create", "missing color"))?;
+    if let Some(g) = p.get("gradient") {
+        return create_gradient_swatch(s, p, g);
+    }
+    let c = p.get("color").ok_or_else(|| bad("swatch.create", "missing color (or gradient)"))?;
     let color = parse_color(c).ok_or_else(|| bad("swatch.create", "bad color"))?;
     let spot = p.get("spot").and_then(Value::as_bool).unwrap_or(false);
     let name = str_param(p, "name").map(str::to_string).unwrap_or_else(|| value_name(color));
@@ -900,6 +912,85 @@ fn create_swatch(s: &mut Session, p: &Value) -> Result<Value> {
             hidden: false,
         });
         Ok(json!({"name": name}))
+    })
+}
+
+/// `swatch.create {gradient}`: a named gradient swatch. Stops take a colour swatch by name (as a
+/// swatch dragged onto the Gradient panel's stop) or a colour.
+fn create_gradient_swatch(s: &mut Session, p: &Value, g: &Value) -> Result<Value> {
+    use designcraft_color::{Gradient, GradientKind, GradientStop};
+    const ID: &str = "swatch.create";
+    let kind = match g.get("kind").and_then(Value::as_str) {
+        None | Some("linear") => GradientKind::Linear,
+        Some("radial") => GradientKind::Radial,
+        Some(k) => return Err(bad(ID, format!("unknown gradient kind {k}"))),
+    };
+    let doc = &s.doc()?.doc;
+    let mut stops = Vec::new();
+    for st in g.get("stops").and_then(Value::as_array).ok_or_else(|| bad(ID, "a gradient needs stops"))? {
+        let color = match (st.get("swatch").and_then(Value::as_str), st.get("color")) {
+            (Some(n), _) => match doc.swatch(n).map(|w| &w.value) {
+                Some(SwatchValue::Gradient { .. }) => return Err(bad(ID, format!("`{n}` is a gradient; a stop takes a colour"))),
+                Some(_) => doc.resolve_color(n, 1.0).ok_or_else(|| bad(ID, format!("`{n}` has no colour")))?,
+                None => return Err(bad(ID, format!("no swatch named `{n}`"))),
+            },
+            (None, Some(c)) => parse_color(c).ok_or_else(|| bad(ID, "a stop has a bad color"))?,
+            (None, None) => return Err(bad(ID, "a stop needs a swatch or a color")),
+        };
+        let pct = |k: &str, d: f64| st.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(d).clamp(0.0, 100.0) as f32 / 100.0;
+        stops.push(GradientStop {
+            offset: pct("location", 0.0),
+            color,
+            opacity: pct("opacity", 100.0),
+            midpoint: pct("midpoint", 50.0).clamp(0.13, 0.87),
+        });
+    }
+    if stops.len() < 2 {
+        return Err(bad(ID, "a gradient needs at least two stops"));
+    }
+    let mut gradient = Gradient { kind, stops };
+    gradient.sort();
+    let name = str_param(p, "name").unwrap_or("New Gradient Swatch").to_string();
+    s.edit(|d, _| {
+        let name = Styles::unique_name(|n| d.swatch(n).is_some(), &name);
+        d.swatches.push(Swatch { name: name.clone(), value: SwatchValue::Gradient { gradient }, locked: false, named: true, hidden: false });
+        Ok(json!({"name": name}))
+    })
+}
+
+/// `swatch.new`: InDesign's New Swatch. An unnamed colour or gradient (the selection's, or
+/// `swatch`) is added to the swatches under a name, and stays applied; a named swatch is
+/// duplicated as "<name> copy".
+fn new_swatch(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "swatch.new";
+    let st = s.doc()?;
+    let name = match str_param(p, "swatch") {
+        Some(n) => n.to_string(),
+        None => {
+            let Some(id) = st.selection.items.first().copied() else {
+                // Nothing selected: a new colour swatch.
+                return create_swatch(s, &json!({"color": {"c": 0, "m": 50, "y": 100, "k": 0}}));
+            };
+            let it = st.doc.item(id).ok_or_else(|| bad(ID, "no such item"))?;
+            if str_param(p, "target") == Some("stroke") { it.stroke.swatch.clone() } else { it.fill.swatch.clone() }
+        }
+    };
+    let w = st.doc.swatch(&name).cloned().ok_or_else(|| bad(ID, format!("no swatch named `{name}`")))?;
+    if matches!(w.value, SwatchValue::None | SwatchValue::Registration) {
+        return Err(bad(ID, format!("`{name}` can't be made a new swatch")));
+    }
+    if w.hidden {
+        // An unnamed gradient takes InDesign's "New Gradient Swatch"; an unnamed colour its values.
+        let new = match w.value {
+            SwatchValue::Gradient { .. } => Styles::unique_name(|n| st.doc.swatch(n).is_some(), "New Gradient Swatch"),
+            _ => name.clone(),
+        };
+        return add_to_swatches(s, &json!({"swatch": name, "name": new}));
+    }
+    s.edit(|d, _| {
+        let copy = Styles::unique_name(|n| d.swatch(n).is_some(), &format!("{name} copy"));
+        d.swatches.push(Swatch { name: copy.clone(), locked: false, named: true, hidden: false, ..w.clone() });
+        Ok(json!({"name": copy}))
     })
 }
 
@@ -1186,9 +1277,17 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let stops = match p.get("stops").and_then(Value::as_array) {
         Some(a) => {
+            let doc = &s.doc()?.doc;
             let mut v = Vec::new();
             for st in a {
-                let color = st.get("color").and_then(parse_color).ok_or_else(|| bad("object.gradient", "a stop needs a color"))?;
+                // A swatch dropped on a stop gives it the swatch's colour (a tint's mixed in).
+                let color = match st.get("swatch").and_then(Value::as_str) {
+                    Some(name) => doc
+                        .resolve_color(name, 1.0)
+                        .filter(|_| designcraft_color::swatch::resolve_gradient(&doc.swatches, name).is_none())
+                        .ok_or_else(|| bad("object.gradient", format!("`{name}` isn't a colour swatch")))?,
+                    None => st.get("color").and_then(parse_color).ok_or_else(|| bad("object.gradient", "a stop needs a color or a swatch"))?,
+                };
                 let pct = |k: &str, d: f64| st.get(k).and_then(Value::as_f64).unwrap_or(d).clamp(0.0, 100.0) as f32 / 100.0;
                 v.push(GradientStop {
                     offset: pct("location", 0.0),
@@ -1206,13 +1305,18 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
     let angle = p.get("angle").and_then(Value::as_f64);
+    let stroke = match str_param(p, "target") {
+        None | Some("fill") => false,
+        Some("stroke") => true,
+        Some(t) => return Err(bad("object.gradient", format!("unknown target {t}"))),
+    };
     let (from, to) = (super::point_param(p, "from"), super::point_param(p, "to"));
     let ids = super::targets(s, p)?;
     s.edit(|d, _| {
         let mut out = Value::Null;
         for id in &ids {
             let Some(it) = d.item(*id) else { continue };
-            let cur_name = it.fill.swatch.clone();
+            let cur_name = if stroke { it.stroke.swatch.clone() } else { it.fill.swatch.clone() };
             let cur = designcraft_color::swatch::resolve_gradient(&d.swatches, &cur_name).cloned();
             let mut g = cur.clone().unwrap_or_default();
             if let Some(k) = kind {
@@ -1244,16 +1348,22 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let inv = d.find(*id).map(|l| d.parent_xf(&l)).zip(d.item(*id).map(|i| i.xf)).map(|(pxf, xf)| (pxf * xf).inverse());
             let Some(it) = d.item_mut(*id) else { continue };
-            it.fill.swatch = name.clone();
-            it.fill.tint = 1.0;
+            // The fill's or the stroke's paint: swatch, tint, angle, vector.
+            let (swatch, tint, g_angle, g_vector) = if stroke {
+                (&mut it.stroke.swatch, &mut it.stroke.tint, &mut it.stroke.gradient_angle, &mut it.stroke.gradient_vector)
+            } else {
+                (&mut it.fill.swatch, &mut it.fill.tint, &mut it.fill.gradient_angle, &mut it.fill.gradient_vector)
+            };
+            *swatch = name.clone();
+            *tint = 1.0;
             if let Some(a) = angle {
-                it.fill.gradient_angle = Some(a);
-                it.fill.gradient_vector = None;
+                *g_angle = Some(a);
+                *g_vector = None;
             }
             if let (Some(a), Some(b), Some(inv)) = (from, to, inv) {
                 let (a, b) = (inv * a, inv * b);
                 if (b - a).hypot() > 1e-6 {
-                    it.fill.gradient_vector = Some([a.x, a.y, b.x, b.y]);
+                    *g_vector = Some([a.x, a.y, b.x, b.y]);
                 }
             }
             if out.is_null() {
@@ -2690,5 +2800,208 @@ mod sample_color_tests {
         let it = s.doc().unwrap().doc.item(ItemId(line)).unwrap().clone();
         assert_eq!(it.stroke.swatch, r["swatch"].as_str().unwrap(), "{r}");
         assert!(it.fill.is_none(), "the fill stays empty");
+    }
+}
+
+#[cfg(test)]
+mod radial_gradient_tests {
+    use serde_json::json;
+
+    /// White at the side and the top of a 100×200 radial (black → white) rectangle at (50, 20) on
+    /// a 200×240 page, rendered at 1 px/pt.
+    fn sides(img: &designcraft_render::Rendered) -> (u8, u8, u8) {
+        (img.pixel(100, 120)[0], img.pixel(52, 120)[0], img.pixel(100, 22)[0])
+    }
+
+    #[test]
+    fn a_radial_gradient_is_the_objects_ellipse_on_screen_and_in_pdf() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 240, "facingPages": false})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [50, 20, 150, 220], "content": "unassigned"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "swatch": "[None]"})).unwrap();
+        s.execute(
+            "object.gradient",
+            &json!({"ids": [id], "kind": "radial", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+        )
+        .unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut r = designcraft_render::Renderer::new();
+        let (c, side, top) = sides(&r.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(c < 30 && side > 220 && top > 220, "screen: centre {c}, side {side}, top {top}");
+        // The PDF, placed back and drawn: the same ellipse.
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 240, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "radial.pdf", "x": 0, "y": 0, "width": 200}))
+            .unwrap();
+        let d = p.doc().unwrap().doc.clone();
+        let (c, side, top) = sides(&r.render_page(&d, &p.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(c < 30 && side > 220 && top > 220, "pdf: centre {c}, side {side}, top {top}");
+    }
+}
+
+#[cfg(test)]
+mod gradient_swatch_tests {
+    use designcraft_color::SwatchValue;
+    use serde_json::json;
+
+    fn doc() -> crate::Session {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        s
+    }
+
+    #[test]
+    fn a_gradient_swatch_from_colour_swatches() {
+        let mut s = doc();
+        // As the Gradient panel's stops take swatches dragged onto them.
+        let r = s
+            .execute(
+                "swatch.create",
+                &json!({"gradient": {"stops": [{"location": 100, "swatch": "C=100 M=0 Y=0 K=0"}, {"location": 0, "swatch": "C=0 M=100 Y=0 K=0"}]}}),
+            )
+            .unwrap();
+        assert_eq!(r["name"], "New Gradient Swatch");
+        let d = &s.doc().unwrap().doc;
+        let w = d.swatch("New Gradient Swatch").unwrap();
+        assert!(w.named && !w.hidden);
+        let SwatchValue::Gradient { gradient } = &w.value else { panic!("{w:?}") };
+        assert_eq!(gradient.stops[0].color, d.resolve_color("C=0 M=100 Y=0 K=0", 1.0).unwrap(), "sorted: magenta first");
+        assert_eq!(gradient.stops[1].color, d.resolve_color("C=100 M=0 Y=0 K=0", 1.0).unwrap());
+        // A second one gets its own name; bad stops are refused.
+        let r = s
+            .execute(
+                "swatch.create",
+                &json!({"gradient": {"kind": "radial", "stops": [{"color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}}),
+            )
+            .unwrap();
+        assert_eq!(r["name"], "New Gradient Swatch 2");
+        for bad in [
+            json!({"stops": [{"swatch": "C=0 M=100 Y=0 K=0"}]}),
+            json!({"stops": [{"swatch": "Nope"}, {"swatch": "[Black]"}]}),
+            json!({"stops": [{"swatch": "New Gradient Swatch"}, {"swatch": "[Black]"}]}),
+            json!({"kind": "conic", "stops": [{"color": "#000000"}, {"color": "#ffffff"}]}),
+        ] {
+            assert!(s.execute("swatch.create", &json!({"gradient": bad})).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn new_swatch_names_the_selections_gradient_or_duplicates_a_swatch() {
+        let mut s = doc();
+        let id = s.execute("frame.create", &json!({"rect": [0, 0, 100, 100], "content": "unassigned"})).unwrap()["id"].as_u64().unwrap();
+        // A gradient made in the Gradient panel is unnamed (and not listed) …
+        s.execute("object.gradient", &json!({"ids": [id], "stops": [{"location": 0, "color": {"c": 0, "m": 100, "y": 0, "k": 0}}, {"location": 100, "color": {"c": 100, "m": 0, "y": 0, "k": 0}}]})).unwrap();
+        let fill = |s: &crate::Session| s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().fill.swatch.clone();
+        assert!(s.doc().unwrap().doc.swatch(&fill(&s)).unwrap().hidden);
+        // … until New Swatch: "New Gradient Swatch", listed, still the object's fill.
+        s.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        assert_eq!(s.execute("swatch.new", &json!({})).unwrap()["name"], "New Gradient Swatch");
+        assert_eq!(fill(&s), "New Gradient Swatch");
+        let w = s.doc().unwrap().doc.swatch("New Gradient Swatch").unwrap().clone();
+        assert!(w.named && !w.hidden && matches!(w.value, SwatchValue::Gradient { .. }));
+        // A named swatch: a copy.
+        assert_eq!(s.execute("swatch.new", &json!({})).unwrap()["name"], "New Gradient Swatch copy");
+        assert_eq!(s.execute("swatch.new", &json!({"swatch": "C=100 M=0 Y=0 K=0"})).unwrap()["name"], "C=100 M=0 Y=0 K=0 copy");
+        assert!(s.execute("swatch.new", &json!({"swatch": "[None]"})).is_err());
+        // The stroke in front: the stroke's swatch.
+        s.execute("object.stroke", &json!({"ids": [id], "swatch": "C=100 M=0 Y=0 K=0"})).unwrap();
+        assert_eq!(s.execute("swatch.new", &json!({"target": "stroke"})).unwrap()["name"], "C=100 M=0 Y=0 K=0 copy 2");
+        // Nothing selected, no swatch given: a new colour swatch.
+        s.execute("edit.deselectAll", &json!({})).unwrap();
+        let n = s.execute("swatch.new", &json!({})).unwrap()["name"].as_str().unwrap().to_string();
+        let w = s.doc().unwrap().doc.swatch(&n).unwrap();
+        assert!(w.named && !w.hidden && matches!(w.value, SwatchValue::Color { .. }), "{w:?}");
+    }
+}
+
+#[cfg(test)]
+mod gradient_stroke_tests {
+    use serde_json::json;
+
+    /// Grey along a 20 pt line from (20, 60) to (180, 60): near its start, middle and end.
+    fn along(img: &designcraft_render::Rendered) -> (u8, u8, u8) {
+        (img.pixel(26, 60)[0], img.pixel(100, 60)[0], img.pixel(174, 60)[0])
+    }
+
+    #[test]
+    fn a_gradient_on_a_stroke_runs_across_the_path_on_screen_and_in_pdf() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [20, 60], "b": [180, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "weight": 20})).unwrap();
+        let r = s
+            .execute(
+                "object.gradient",
+                &json!({"ids": [id], "target": "stroke", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+            )
+            .unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let it = d.item(designcraft_doc::ItemId(id)).unwrap();
+        assert_eq!(it.stroke.swatch, r["swatch"].as_str().unwrap());
+        assert_eq!(it.fill.swatch, designcraft_color::swatch::NONE, "the fill is left alone");
+        let mut rr = designcraft_render::Renderer::new();
+        let (a, m, b) = along(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a < 40 && (90..170).contains(&m) && b > 215, "screen: {a} {m} {b}");
+        // The PDF, placed back and drawn: the same.
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "stroke.pdf", "x": 0, "y": 0, "width": 200}))
+            .unwrap();
+        let pd = p.doc().unwrap().doc.clone();
+        let (a, m, b) = along(&rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a < 40 && (90..170).contains(&m) && b > 215, "pdf: {a} {m} {b}");
+        // The Gradient Swatch tool's drag on the stroke: reversed by dragging right to left.
+        s.execute("object.gradient", &json!({"ids": [id], "target": "stroke", "from": [180, 60], "to": [20, 60]})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let (a, _, b) = along(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a > 215 && b < 40, "dragged: {a} {b}");
+        assert!(s.execute("object.gradient", &json!({"ids": [id], "target": "gap"})).is_err());
+    }
+
+    /// A 20 pt horizontal line with a gradient on its stroke, drawn on screen and from its PDF.
+    fn line_with_stroke_gradient(g: serde_json::Value) -> (designcraft_render::Rendered, designcraft_render::Rendered) {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [20, 60], "b": [180, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "weight": 20})).unwrap();
+        let mut g = g;
+        g["ids"] = json!([id]);
+        g["target"] = json!("stroke");
+        s.execute("object.gradient", &g).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut rr = designcraft_render::Renderer::new();
+        let screen = rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap();
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "line.pdf", "x": 0, "y": 0, "width": 200})).unwrap();
+        let pd = p.doc().unwrap().doc.clone();
+        let placed = rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap();
+        (screen, placed)
+    }
+
+    #[test]
+    fn a_radial_gradient_on_a_straight_lines_stroke_shows_all_its_stops() {
+        // The line's box has no height: the gradient is a circle across the line's length.
+        let (screen, pdf) = line_with_stroke_gradient(
+            json!({"kind": "radial", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+        );
+        for (what, img) in [("screen", &screen), ("pdf", &pdf)] {
+            let (a, m, b) = along(img);
+            assert!(m < 40 && a > 180 && b > 180, "{what}: {a} {m} {b}");
+        }
+    }
+
+    #[test]
+    fn a_linear_gradient_across_a_straight_line_paints_its_stroke_alike_on_screen_and_in_pdf() {
+        let (screen, pdf) =
+            line_with_stroke_gradient(json!({"angle": 90, "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}));
+        let (s, p) = (screen.pixel(100, 60), pdf.pixel(100, 60));
+        // The line's box has no height: the gradient runs across the line's length, so the stroke
+        // shows its middle.
+        assert!(s[1] < 60 && s[0] > 80 && s[2] > 80, "screen: the stroke is painted, {s:?}");
+        assert!((0..3).all(|i| s[i].abs_diff(p[i]) < 40), "screen {s:?}, pdf {p:?}");
     }
 }

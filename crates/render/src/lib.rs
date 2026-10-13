@@ -654,8 +654,17 @@ impl Renderer {
     }
 
     fn draw_stroke(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine) {
+        self.draw_stroke_painted(ctx, f, it, bp, xf);
+        ctx.reset_paint_transform();
+    }
+
+    /// The stroke, in its colour or gradient (a gradient runs across the path's box, as a fill's).
+    fn draw_stroke_painted(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine) {
         let st = &it.stroke;
-        let Some(c) = f.doc.resolve_color(&st.swatch, st.tint) else { return };
+        let (paint, bounds) = (st.as_fill(), bp.bounding_box());
+        if f.doc.resolve_color(&st.swatch, st.tint).is_none() && designcraft_color::swatch::resolve_gradient(&f.doc.swatches, &st.swatch).is_none() {
+            return;
+        }
         let mut stroke = kurbo::Stroke::new(st.weight)
             .with_caps(match st.cap {
                 designcraft_doc::Cap::Butt => kurbo::Cap::Butt,
@@ -680,7 +689,9 @@ impl Renderer {
             _ => {}
         }
         ctx.set_transform(f.view * xf);
-        ctx.set_paint(color_of(&c, 1.0));
+        if !set_fill_paint(ctx, f.doc, &paint, bounds) {
+            return;
+        }
         let closed = it.path.is_closed();
         // Arrowheads: the path is shortened under them; they're drawn after it.
         let arrows = designcraft_doc::arrow::apply(bp, st, closed);
@@ -707,7 +718,7 @@ impl Renderer {
             if op {
                 ctx.pop_layer();
             }
-            ctx.set_paint(color_of(&c, 1.0));
+            set_fill_paint(ctx, f.doc, &paint, bounds);
         }
         // Stripes, wavy and hash strokes are fills (along the path's centre line).
         if let Some(o) = kind.outline(bp, st.weight, 0.05 * f.px) {
@@ -938,28 +949,23 @@ pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
 
 /// Set a swatch fill (solid or gradient) as the paint. Returns false for [None]/unknown.
 fn set_fill_paint(ctx: &mut RenderContext, doc: &Document, fill: &designcraft_doc::Fill, bounds: Rect) -> bool {
-    let (swatch, tint, angle) = (fill.swatch.as_str(), fill.tint, fill.gradient_angle);
+    let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
     if let Some(g) = designcraft_color::swatch::resolve_gradient(&doc.swatches, swatch) {
         let stops: Vec<peniko::ColorStop> = g.expanded_stops().iter().map(|(o, c, a)| peniko::ColorStop::from((*o, color_of(c, *a)))).collect();
         if stops.is_empty() {
             return false;
         }
-        let c = bounds.center();
-        let grad = match (g.kind, fill.gradient_vector) {
-            (designcraft_color::GradientKind::Radial, Some([x0, y0, x1, y1])) => {
-                let r = Vec2::new(x1 - x0, y1 - y0).hypot().max(1e-3);
-                peniko::Gradient::new_radial((x0, y0), r as f32).with_stops(stops.as_slice())
-            }
-            (_, Some([x0, y0, x1, y1])) => peniko::Gradient::new_linear((x0, y0), (x1, y1)).with_stops(stops.as_slice()),
-            (designcraft_color::GradientKind::Radial, None) => {
-                let r = bounds.width().max(bounds.height()) / 2.0;
-                peniko::Gradient::new_radial(c, r as f32).with_stops(stops.as_slice())
+        let grad = match g.kind {
+            // Radial: a circle stretched into the object's ellipse (the paint transform).
+            designcraft_color::GradientKind::Radial => {
+                let (c, rx, ry) = fill.radial_ellipse(bounds);
+                let rx = rx.max(1e-3);
+                ctx.set_paint_transform(Affine::translate(c.to_vec2()) * Affine::scale_non_uniform(1.0, ry / rx) * Affine::translate(-c.to_vec2()));
+                peniko::Gradient::new_radial(c, rx as f32).with_stops(stops.as_slice())
             }
             _ => {
-                let a = angle.unwrap_or(0.0).to_radians();
-                let half = (bounds.width() * a.cos().abs() + bounds.height() * a.sin().abs()) / 2.0;
-                let d = Vec2::new(a.cos(), -a.sin()) * half;
-                peniko::Gradient::new_linear(c - d, c + d).with_stops(stops.as_slice())
+                let (a, b) = fill.linear_axis(bounds);
+                peniko::Gradient::new_linear(a, b).with_stops(stops.as_slice())
             }
         };
         ctx.set_paint(grad);

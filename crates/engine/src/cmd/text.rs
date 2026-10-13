@@ -2942,3 +2942,129 @@ mod reserve_tests {
         assert_eq!(s.journal, journal);
     }
 }
+
+#[cfg(test)]
+mod gradient_text_tests {
+    use serde_json::json;
+
+    /// Mean red and blue of the ink (pixels whose green is low: red → blue has none) in columns
+    /// `x0..x1`.
+    fn ink(img: &designcraft_render::Rendered, x0: u32, x1: u32) -> (f64, f64) {
+        let (mut r, mut b, mut n) = (0.0, 0.0, 0.0);
+        for x in x0..x1 {
+            for y in 0..img.height {
+                let p = img.pixel(x, y);
+                if p[1] < 100 {
+                    (r, b, n) = (r + p[0] as f64, b + p[2] as f64, n + 1.0);
+                }
+            }
+        }
+        assert!(n > 50.0, "no ink in {x0}..{x1}");
+        (r / n, b / n)
+    }
+
+    /// Red ink at the frame's left, blue at its right.
+    fn check(img: &designcraft_render::Rendered, what: &str) {
+        let (lr, lb) = ink(img, 0, 60);
+        let (rr, rb) = ink(img, 200, 300);
+        assert!(lr > lb + 80.0, "{what}: the left ink is red ({lr:.0}, {lb:.0})");
+        assert!(rb > rr + 80.0, "{what}: the right ink is blue ({rr:.0}, {rb:.0})");
+    }
+
+    #[test]
+    fn a_gradient_on_text_spans_its_frame_on_screen_and_in_pdf() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false, "margins": 0})).unwrap();
+        // A gradient swatch (an off-page object's unnamed one), red → blue.
+        let shape = s.execute("frame.create", &json!({"rect": [-60, 0, -50, 10], "content": "unassigned"})).unwrap()["id"].clone();
+        s.execute("object.gradient", &json!({"ids": [shape], "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}))
+            .unwrap();
+        let id = designcraft_doc::ItemId(shape.as_u64().unwrap());
+        let swatch = s.doc().unwrap().doc.item(id).unwrap().fill.swatch.clone();
+        let r = s.execute("frame.create", &json!({"rect": [0, 0, 300, 120], "content": "text", "text": "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII"})).unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 30})).unwrap();
+        s.execute("type.char", &json!({"size": 60, "tracking": 0, "fill": swatch})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut rr = designcraft_render::Renderer::new();
+        check(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap(), "screen");
+        // The PDF, placed back and drawn: the same gradient.
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": super::super::file::base64_encode(&pdf), "name": "text.pdf", "x": 0, "y": 0, "width": 300}))
+            .unwrap();
+        let d = p.doc().unwrap().doc.clone();
+        check(&rr.render_page(&d, &p.cache, 0, 1.0, false, &Default::default()).unwrap(), "pdf");
+    }
+
+    /// The columns the red → blue ink spans (black table edges left out).
+    fn ink_span(img: &designcraft_render::Rendered) -> (u32, u32) {
+        let cols: Vec<u32> = (0..img.width)
+            .filter(|&x| {
+                (0..img.height).any(|y| {
+                    let p = img.pixel(x, y);
+                    p[1] < 100 && p[0].max(p[2]) > 100
+                })
+            })
+            .collect();
+        (*cols.first().unwrap(), *cols.last().unwrap())
+    }
+
+    /// Mean red and blue of the red → blue ink in columns `x0..x1`.
+    fn coloured_ink(img: &designcraft_render::Rendered, x0: u32, x1: u32) -> (f64, f64) {
+        let (mut r, mut b, mut n) = (0.0, 0.0, 0.0);
+        for x in x0..x1 {
+            for y in 0..img.height {
+                let p = img.pixel(x, y);
+                if p[1] < 100 && p[0].max(p[2]) > 100 {
+                    (r, b, n) = (r + p[0] as f64, b + p[2] as f64, n + 1.0);
+                }
+            }
+        }
+        assert!(n > 20.0, "no ink in {x0}..{x1}");
+        (r / n, b / n)
+    }
+
+    #[test]
+    fn a_gradient_on_table_cell_text_spans_the_cells_text_in_pdf_as_on_screen() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false, "margins": 0})).unwrap();
+        let g = s
+            .execute("swatch.create", &json!({"gradient": {"stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}}))
+            .unwrap()["name"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let r = s.execute("frame.create", &json!({"rect": [0, 0, 300, 120], "content": "text", "text": ""})).unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 0})).unwrap();
+        s.execute("table.insert", &json!({"rows": 1, "cols": 3})).unwrap();
+        // A third of the frame's width: the cell's text, red → blue.
+        let mut d: designcraft_doc::Document = (*s.doc().unwrap().doc).clone();
+        let sid = d.stories.values().find(|st| !st.tables.is_empty()).unwrap().id;
+        let t = std::sync::Arc::make_mut(d.story_mut(sid).unwrap().tables.values_mut().next().unwrap());
+        let text = &mut t.cell_mut(0, 0).unwrap().text;
+        text.insert(0, "HHHH");
+        text.format_chars(0..4, |f| {
+            f.over.fill = Some(g.clone());
+            f.over.size = Some(24.0);
+        });
+        let mut rr = designcraft_render::Renderer::new();
+        let cache = designcraft_compose::Cache::new();
+        let screen = rr.render_page(&d, &cache, 0, 1.0, false, &Default::default()).unwrap();
+        let pdf = designcraft_pdf::export_pdf(&d, &cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": super::super::file::base64_encode(&pdf), "name": "cell.pdf", "x": 0, "y": 0, "width": 300}))
+            .unwrap();
+        let placed = rr.render_page(&p.doc().unwrap().doc.clone(), &p.cache, 0, 1.0, false, &Default::default()).unwrap();
+        let (x0, x1) = ink_span(&screen);
+        assert!(x1 < 120, "the text stays in the first column: {x0}..{x1}");
+        let q = (x1 - x0) / 4;
+        for (what, img) in [("screen", &screen), ("pdf", &placed)] {
+            let (lr, lb) = coloured_ink(img, x0, x0 + q);
+            let (rr, rb) = coloured_ink(img, x1 + 1 - q, x1 + 1);
+            assert!(lr > lb + 50.0, "{what}: the left ink is red ({lr:.0}, {lb:.0})");
+            assert!(rb > rr + 50.0, "{what}: the right ink is blue ({rr:.0}, {rb:.0})");
+        }
+    }
+}
