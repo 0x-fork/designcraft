@@ -2364,8 +2364,19 @@ impl<'r> Importer<'r> {
     /// An item's object style chain: its applied style, the styles that one is based on, then
     /// `[None]` (cycle-safe).
     fn object_style_chain(&self, e: &El) -> Vec<&El> {
+        let mut chain = self.object_style_bases(e.get("AppliedObjectStyle").map(str::to_string));
+        if let Some(none) = self.object_els.get("ObjectStyle/$ID/[None]")
+            && !chain.iter().any(|c| std::ptr::eq(*c, none))
+        {
+            chain.push(none);
+        }
+        chain
+    }
+
+    /// Object style `id` and the styles it is based on, nearest first (cycle-safe, at most 16).
+    fn object_style_bases(&self, id: Option<String>) -> Vec<&El> {
         let mut chain: Vec<&El> = Vec::new();
-        let mut os = e.get("AppliedObjectStyle").map(str::to_string);
+        let mut os = id;
         while let Some(id) = os {
             let Some(s) = self.object_els.get(&id) else { break };
             if chain.len() >= 16 || chain.iter().any(|c| std::ptr::eq(*c, s)) {
@@ -2376,11 +2387,6 @@ impl<'r> Importer<'r> {
                 let b = b.trim();
                 if b.starts_with("ObjectStyle/") { b.to_string() } else { format!("ObjectStyle/{}", names::escape_id(b)) }
             });
-        }
-        if let Some(none) = self.object_els.get("ObjectStyle/$ID/[None]")
-            && !chain.iter().any(|c| std::ptr::eq(*c, none))
-        {
-            chain.push(none);
         }
         chain
     }
@@ -2464,28 +2470,14 @@ impl<'r> Importer<'r> {
         }
     }
 
-    /// An object style element and the styles it is based on, nearest first (cycle-safe, bounded).
-    fn object_style_bases(&self, e: &El) -> Vec<El> {
-        let mut chain = vec![e.clone()];
-        let mut seen: HashSet<String> = e.get("Self").map(str::to_string).into_iter().collect();
-        let mut next = e.prop("BasedOn");
-        while let Some(b) = next {
-            let id = if b.starts_with("ObjectStyle/") { b } else { format!("ObjectStyle/{}", names::escape_id(&b)) };
-            if chain.len() >= 16 || !seen.insert(id.clone()) {
-                break;
-            }
-            let Some(s) = self.object_els.get(&id) else { break };
-            chain.push(s.clone());
-            next = s.prop("BasedOn");
-        }
-        chain
-    }
-
     /// An object style's drop shadow and feather. Each is read when the effects category turns it
     /// on (without category settings: when its setting is on), from the nearest style in the
     /// BasedOn chain that has the setting. `None` when the style sets neither.
     fn style_effects(&mut self, e: &El) -> Option<Effects> {
-        let chain = self.object_style_bases(e);
+        let mut chain = self.object_style_bases(e.get("Self").map(str::to_string));
+        if chain.is_empty() {
+            chain.push(e);
+        }
         let category = chain.iter().find_map(|s| s.find("ObjectStyleObjectEffectsCategorySettings")).cloned();
         let setting = |name: &str| chain.iter().find_map(|s| s.find("TransparencySetting")?.find(name)).cloned();
         let mut t = El::new("TransparencySetting");
