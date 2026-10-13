@@ -2475,6 +2475,12 @@ impl<'r> Importer<'r> {
             && f.get("Mode").is_some_and(|m| m != "None")
         {
             fx.feather = f.num("Width").unwrap_or(9.0);
+            fx.feather_options.choke = finite(f.num("ChokeAmount")).unwrap_or(0.0).clamp(0.0, 100.0);
+            fx.feather_options.corners = match f.get("CornerType") {
+                Some("Sharp") => designcraft_doc::FeatherCorners::Sharp,
+                Some("Rounded") => designcraft_doc::FeatherCorners::Rounded,
+                _ => designcraft_doc::FeatherCorners::Diffused,
+            };
         }
         if let Some(g) = t.find("GradientFeatherSetting")
             && g.boolean("Applied") == Some(true)

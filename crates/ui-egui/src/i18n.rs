@@ -78,7 +78,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Softer", ["Weicher", "Plus flou", "Más suave", "さらにソフトに", "柔和"]),
     ("Precise", ["Präzise", "Précis", "Precisa", "精細", "精确"]),
     ("Corners:", ["Ecken:", "Angles :", "Esquinas:", "角:", "角点："]),
-    ("Sharp", ["Spitz", "Vifs", "Nítidas", "シャープ", "锐化"]),
+    ("Sharp", ["Spitz", "Vifs", "Nítidas", "シャープ", "锐利"]),
     ("Diffused", ["Weich", "Diffus", "Difusas", "拡散", "扩散"]),
     ("Reverse Path", ["Pfadrichtung umkehren", "Inverser le tracé", "Invertir trazado", "パスの方向反転", "反转路径"]),
     ("Set Anchor", ["Ankerpunkt festlegen", "Définir le point d’ancrage", "Definir punto de ancla", "アンカーポイントを設定", "设置锚点"]),
