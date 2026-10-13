@@ -2,7 +2,7 @@
 //! (`ui.dialog.set {field, value}`) and confirm them (`ui.dialog.confirm`) like a user would.
 
 use designcraft_geom::{Unit, format_measure, units::parse_measure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::DesignApp;
@@ -1657,6 +1657,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                 });
             }
             STEP_AND_REPEAT => step_and_repeat_dialog(app, ui, &mut d),
+            TOC => toc_dialog(app, ui, &mut d),
             id if id.starts_with("cmd:") => command_form(app, ui, &mut d),
             "goToPage" => {
                 ui.horizontal(|ui| {
@@ -2183,6 +2184,15 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             if let Err(e) = &r {
                 let mut d = d.clone();
                 d.fields.remove(PREVIEWED);
+                d.fields.insert("status".into(), json!(e));
+                app.ui.dialog = Some(d);
+            }
+            r
+        }
+        TOC => {
+            let r = app.run("toc.generate", toc_params(app, &d));
+            if let Err(e) = &r {
+                let mut d = d.clone();
                 d.fields.insert("status".into(), json!(e));
                 app.ui.dialog = Some(d);
             }
@@ -3580,6 +3590,223 @@ fn command_form(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
 }
 
 const STEP_AND_REPEAT: &str = "cmd:edit.stepAndRepeat";
+const TOC: &str = "cmd:toc.generate";
+
+/// One included style of the Table of Contents dialog, as `toc.generate` takes it, with the
+/// separator in the dialog's notation (`^t` a tab).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+struct TocRow {
+    style: String,
+    level: u8,
+    entry_style: String,
+    page_number: String,
+    separator: String,
+}
+
+fn toc_separator_shown(s: &str) -> String {
+    s.replace('\t', "^t").replace('\u{2003}', "^m").replace('\u{2002}', "^>")
+}
+
+fn toc_separator_typed(s: &str) -> String {
+    s.replace("^t", "\t").replace("^m", "\u{2003}").replace("^>", "\u{2002}")
+}
+
+fn toc_rows(d: &Dialog) -> Vec<TocRow> {
+    d.fields.get("included").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
+/// Layout › Table of Contents…: prefilled from the document's table of contents when it has one.
+pub fn open_toc(app: &mut DesignApp) {
+    let Some(st) = app.session.active() else { return };
+    let d = &st.doc;
+    let styles: Vec<&str> = d.styles.paragraph.iter().map(|p| p.name.as_str()).filter(|n| *n != designcraft_doc::NO_PARA_STYLE).collect();
+    let toc = d.toc.as_ref().filter(|t| d.story(t.story).is_some());
+    let rows: Vec<TocRow> = toc
+        .map(|t| {
+            t.entries
+                .iter()
+                .map(|e| TocRow {
+                    style: e.style.clone(),
+                    level: e.level,
+                    entry_style: e.entry_style.clone().unwrap_or_default(),
+                    page_number: match (t.page_numbers, e.page_number) {
+                        (false, _) | (_, designcraft_doc::TocPageNumber::None) => "none",
+                        (_, designcraft_doc::TocPageNumber::Before) => "before",
+                        _ => "after",
+                    }
+                    .into(),
+                    separator: toc_separator_shown(e.separator.as_deref().unwrap_or("\t")),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let fields = json!({
+        "title": toc.map_or("Contents", |t| t.title.as_str()),
+        "titleStyle": toc.and_then(|t| t.title_style.clone()).unwrap_or_default(),
+        "included": rows,
+        "selected": 0,
+        "styles": styles,
+        "hasToc": toc.is_some(),
+        "replace": toc.is_some(),
+    });
+    app.ui.dialog = Some(Dialog::new(TOC, fields));
+}
+
+/// The dialog's fields as `toc.generate` params. A new frame goes on the page in view.
+fn toc_params(app: &DesignApp, d: &Dialog) -> Value {
+    let entries: Vec<Value> = toc_rows(d)
+        .iter()
+        .map(|r| {
+            let mut e = json!({"style": r.style, "level": r.level, "separator": toc_separator_typed(&r.separator)});
+            if !r.entry_style.is_empty() {
+                e["entryStyle"] = json!(r.entry_style);
+            }
+            if !r.page_number.is_empty() {
+                e["pageNumber"] = json!(r.page_number);
+            }
+            e
+        })
+        .collect();
+    let mut p = json!({"title": d.s("title"), "entries": entries, "replace": d.b("replace")});
+    let title_style = d.s("titleStyle");
+    if !title_style.is_empty() {
+        p["titleStyle"] = json!(title_style);
+    }
+    if let Some(page) = crate::canvas::current_page(app) {
+        p["page"] = json!(page + 1);
+    }
+    p
+}
+
+/// A paragraph style menu whose first choice, stored as "", is the generated style `auto`.
+fn toc_style_combo(ui: &mut egui::Ui, salt: &str, styles: &[String], auto: &str, cur: &mut String) -> bool {
+    let shown = if cur.is_empty() { auto.to_string() } else { cur.clone() };
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(("toc_style", salt)).selected_text(shown).width(200.0).show_ui(ui, |ui| {
+        if ui.selectable_label(cur.is_empty(), auto).clicked() {
+            cur.clear();
+            changed = true;
+        }
+        for n in styles.iter().filter(|n| *n != auto) {
+            if ui.selectable_label(cur == n, n.as_str()).clicked() {
+                *cur = n.clone();
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// Layout › Table of Contents: the title and its style, the paragraph styles to include (Add /
+/// Remove between the two lists) and, for the selected one, its entry style, page number
+/// position, separator and level.
+fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
+    let styles: Vec<String> = d.fields.get("styles").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let mut rows = toc_rows(d);
+    let mut sel = d.n("selected").map_or(0, |n| n.max(0.0) as usize);
+    let mut other = d.s("other");
+    let mut title_style = d.s("titleStyle");
+    egui::Grid::new("toc_title").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
+        crate::rtl::label(ui, tr("Title:"));
+        text_field(ui, d, "title", 200.0);
+        crate::rtl::label(ui, tr("Style:"));
+        toc_style_combo(ui, "title", &styles, "TOC Title", &mut title_style);
+        ui.end_row();
+    });
+    ui.add_space(8.0);
+    crate::rtl::label(ui, egui::RichText::new(tr("Styles in Table of Contents")).font(semibold(12.0)));
+    let others: Vec<&String> = styles.iter().filter(|n| !rows.iter().any(|r| &r.style == *n)).collect();
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            crate::rtl::label(ui, tr("Include Paragraph Styles:"));
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(200.0);
+                egui::ScrollArea::vertical().id_salt("toc_included").max_height(150.0).min_scrolled_height(150.0).show(ui, |ui| {
+                    for (i, r) in rows.iter().enumerate() {
+                        let indent = "  ".repeat(usize::from(r.level.saturating_sub(1)));
+                        if ui.selectable_label(i == sel, format!("{indent}{}", r.style)).clicked() {
+                            sel = i;
+                        }
+                    }
+                });
+            });
+        });
+        ui.vertical(|ui| {
+            ui.add_space(40.0);
+            if ui.button(tr("« Add")).clicked() && others.iter().any(|n| **n == other) {
+                let level = u8::try_from(rows.len() + 1).unwrap_or(9).min(9);
+                rows.push(TocRow { style: other.clone(), level, page_number: "after".into(), separator: "^t".into(), ..Default::default() });
+                sel = rows.len() - 1;
+                other.clear();
+            }
+            if ui.button(tr("Remove »")).clicked() && sel < rows.len() {
+                other = rows.remove(sel).style;
+                sel = sel.min(rows.len().saturating_sub(1));
+            }
+        });
+        ui.vertical(|ui| {
+            crate::rtl::label(ui, tr("Other Styles:"));
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(200.0);
+                egui::ScrollArea::vertical().id_salt("toc_other").max_height(150.0).min_scrolled_height(150.0).show(ui, |ui| {
+                    for n in styles.iter().filter(|n| !rows.iter().any(|r| &r.style == *n)) {
+                        if ui.selectable_label(*n == other, n.as_str()).clicked() {
+                            other = n.clone();
+                        }
+                    }
+                });
+            });
+        });
+    });
+    if let Some(r) = rows.get_mut(sel) {
+        ui.add_space(8.0);
+        crate::rtl::label(ui, egui::RichText::new(format!("{} {}", tr("Style:"), r.style)).font(semibold(12.0)));
+        egui::Grid::new("toc_entry").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+            crate::rtl::label(ui, tr("Entry Style:"));
+            let auto = format!("TOC Level {}", r.level.clamp(1, 9));
+            toc_style_combo(ui, "entry", &styles, &auto, &mut r.entry_style);
+            ui.end_row();
+            crate::rtl::label(ui, tr("Page Number:"));
+            let choices = [("after", "After Entry"), ("before", "Before Entry"), ("none", "No Page Number")];
+            let cur = choices.iter().find(|(v, _)| *v == r.page_number).map_or("After Entry", |(_, l)| l);
+            egui::ComboBox::from_id_salt("toc_page_number").selected_text(tr(cur)).width(200.0).show_ui(ui, |ui| {
+                for (v, l) in choices {
+                    if ui.selectable_label(r.page_number == v, tr(l)).clicked() {
+                        r.page_number = v.into();
+                    }
+                }
+            });
+            ui.end_row();
+            crate::rtl::label(ui, tr("Between Entry and Number:"));
+            ui.add(egui::TextEdit::singleline(&mut r.separator).desired_width(80.0).horizontal_align(egui::Align::Min));
+            ui.end_row();
+            crate::rtl::label(ui, tr("Level:"));
+            egui::ComboBox::from_id_salt("toc_level").selected_text(r.level.to_string()).width(60.0).show_ui(ui, |ui| {
+                for l in 1..=9u8 {
+                    if ui.selectable_label(r.level == l, l.to_string()).clicked() {
+                        r.level = l;
+                    }
+                }
+            });
+            ui.end_row();
+        });
+    }
+    ui.add_space(8.0);
+    crate::rtl::label(ui, egui::RichText::new(tr("Options")).font(semibold(12.0)));
+    let has_toc = d.b("hasToc");
+    ui.add_enabled_ui(has_toc, |ui| check(ui, d, "replace", &tr("Replace Existing Table of Contents")));
+    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+        ui.add_space(6.0);
+        crate::rtl::label(ui, egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+    }
+    d.fields.insert("included".into(), json!(rows));
+    d.fields.insert("selected".into(), json!(sel));
+    d.fields.insert("other".into(), json!(other));
+    d.fields.insert("titleStyle".into(), json!(title_style));
+}
 /// The params a previewing dialog shows on the page (its interaction is open while it is set).
 const PREVIEWED: &str = "_previewed";
 
@@ -3952,6 +4179,44 @@ mod tests {
         assert!(confirm(&mut app).is_err());
         let d = app.ui.dialog.as_ref().unwrap();
         assert_eq!(d.s("status"), "Invalid value: up");
+    }
+
+    #[test]
+    fn toc_dialog_adds_a_style_and_ok_makes_the_table_of_contents() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.newSample", json!({})).unwrap();
+        crate::menus::activate(&mut app, "toc.generate", &Value::Null);
+        assert_eq!(app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some(TOC));
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in
+            ["Table of Contents", "Title:", "Include Paragraph Styles:", "Other Styles:", "« Add", "Remove »", "Replace Existing Table of Contents"]
+        {
+            visible_label(&labels, screen, expected);
+        }
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "Headline").center());
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "« Add").center());
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in ["Entry Style:", "TOC Level 1", "After Entry", "Between Entry and Number:", "Level:"] {
+            visible_label(&labels, screen, expected);
+        }
+        let undo = app.session.doc().unwrap().history.undo.len();
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "OK").center());
+        assert!(app.ui.dialog.is_none());
+        let d = &app.session.doc().unwrap().doc;
+        let toc = d.toc.clone().unwrap();
+        assert_eq!(toc.entries, vec![designcraft_doc::TocEntry::new("Headline", 1)]);
+        let text = &d.story(toc.story).unwrap().text;
+        assert!(text.starts_with("Contents\n") && text.contains("\nNotes on the Grid\t"), "{text}");
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), undo + 1);
+        // Reopened, the dialog shows the table of contents and replaces it.
+        crate::menus::activate(&mut app, "toc.generate", &Value::Null);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert!(d.b("replace"));
+        assert_eq!(toc_rows(d).iter().map(|r| r.style.as_str()).collect::<Vec<_>>(), ["Headline"]);
     }
 
     fn dialog_context(language: &str) -> egui::Context {
