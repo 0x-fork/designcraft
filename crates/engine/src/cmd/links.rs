@@ -159,12 +159,14 @@ pub(crate) fn checkable_size(len: usize) -> bool {
 }
 
 /// Can a size and time be trusted to change when the file does? Times are whole seconds, so not
-/// while the file was changed in the last two: another change in that second keeps the time.
+/// while the file was changed in the last two: another change in that second keeps the time. A
+/// time in the future (clock skew, a file copied from another machine) counts as settled, or such
+/// a file would be read on every poll; a later save gives it a time unlike the remembered one.
 pub(crate) fn settled(f: &Fingerprint) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-        now.saturating_sub(f.mtime) >= 2
+        f.mtime > now || now.saturating_sub(f.mtime) >= 2
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -881,6 +883,13 @@ mod text_link_tests {
         s.execute("links.update", &json!({})).unwrap();
         readable(false);
         assert_eq!(status(&mut s), "ok");
+        // A time in the future (clock skew): read once, then not on every poll.
+        readable(true);
+        let f = std::fs::File::options().write(true).open(&path).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3600)).unwrap();
+        assert_eq!(status(&mut s), "ok");
+        readable(false);
+        assert_eq!(status(&mut s), "ok", "a future time is remembered");
         readable(true);
         let _ = std::fs::remove_dir_all(&dir);
     }
