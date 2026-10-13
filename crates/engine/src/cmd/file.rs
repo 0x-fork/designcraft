@@ -39,9 +39,9 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"),
-            "{path} — a DesignCraft or IDML file (recognised by its content, so the extension may be missing), or an InDesign .indd/.indt (recognised by its signature or extension, converted to IDML; its conversion warnings join `warnings`); the fonts in a `Document Fonts` folder beside it load first → {index, documentFonts: faces loaded, warnings: font files skipped, GREP styles whose pattern can't compile and, for IDML and InDesign files, package parts missing}",
+            "{path} — a DesignCraft or IDML file (recognised by its content, so the extension may be missing), or an InDesign .indd/.indt (recognised by its signature or extension, converted to IDML; its conversion warnings join `warnings`); the fonts in a `Document Fonts` folder beside it load first → {index, documentFonts: faces loaded, warnings: font files skipped, GREP styles whose pattern can't compile, Based on Parent links cleared and, for IDML and InDesign files, package parts missing}",
             always, file_open),
-        cmd!(noundo "file.openBytes", "Open Bytes", [], None, "{name, base64} — DesignCraft JSON, an IDML package or an InDesign .indd/.indt", always, file_open_bytes),
+        cmd!(noundo "file.openBytes", "Open Bytes", [], None, "{name, base64} — DesignCraft JSON, an IDML package or an InDesign .indd/.indt → {index, warnings}", always, file_open_bytes),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} — a `path` without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} — a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
         cmd!(noundo "file.saveACopy", "Save a Copy…", ["File"], None, "{path} — writes the document without changing which file it is or its unsaved state; a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, |s, p| {
@@ -152,7 +152,15 @@ pub fn is_document(bytes: &[u8]) -> bool {
 }
 
 pub fn from_bytes(b: &[u8]) -> Result<Document> {
-    designcraft_format::load(b).map_err(|e| EngineError::Other(e.to_string()))
+    load_bytes(b).map(|(d, _)| d)
+}
+
+/// Read `.designcraft` bytes and repair what a hand-edited file can get wrong without failing the
+/// open, with a warning for each repair.
+fn load_bytes(b: &[u8]) -> Result<(Document, Vec<String>)> {
+    let mut d = designcraft_format::load(b).map_err(|e| EngineError::Other(e.to_string()))?;
+    let warnings = d.fix_parent_bases();
+    Ok((d, warnings))
 }
 
 /// The longest saved preset name, and how many presets are kept.
@@ -272,10 +280,11 @@ fn file_open(s: &mut Session, p: &Value) -> Result<Value> {
         if !native && ext != designcraft_format::EXTENSION {
             return Err(bad("file.open", format!("{path}: not a DesignCraft or IDML file")));
         }
-        let mut d = from_bytes(&bytes)?;
+        let (mut d, mut warnings) = load_bytes(&bytes)?;
         super::interchange::resolve_packaged_links(&mut d, std::path::Path::new(path).parent());
         super::datamerge::resolve_sources_on_open(&mut d, Some(std::path::Path::new(path)));
-        let (fonts, faces, mut warnings) = load_document_fonts(&mut d, path);
+        let (fonts, faces, font_warnings) = load_document_fonts(&mut d, path);
+        warnings.extend(font_warnings);
         warnings.extend(super::style::grep_style_warnings(&d));
         let mut st = DocState::new(d, Some(path.to_string()));
         st.fonts = fonts;
@@ -333,13 +342,13 @@ fn file_open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     if designcraft_idml::is_idml(&b) || super::interchange::is_indd(str_param(p, "name").unwrap_or_default(), &b) {
         return super::interchange::open_idml(s, p);
     }
-    let mut d = from_bytes(&b)?;
+    let (mut d, warnings) = load_bytes(&b)?;
     super::datamerge::resolve_sources_on_open(&mut d, None);
     if let Some(n) = str_param(p, "name") {
         d.title = n.to_string();
     }
     let i = s.add_document(DocState::new(d, None));
-    Ok(json!({"index": i}))
+    Ok(json!({"index": i, "warnings": warnings}))
 }
 
 fn file_save(s: &mut Session, p: &Value) -> Result<Value> {

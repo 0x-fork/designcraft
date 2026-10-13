@@ -1,6 +1,6 @@
 # Where DesignCraft falls short of InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML; Tabs panel listed as present (#343); book chapter update safety) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML; Tabs panel listed as present (#343); book chapter update safety; gap 16: Based on Parent leftovers) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every known shortfall against InDesign 2026, one entry each, ranked by how much it stops an
 InDesign professional from doing real work. This is the work list: agents pick from the top.
@@ -167,7 +167,9 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   Profile / Edit Original, File ▸ File Info / Open PDF / Document and Print Presets / User
   Settings, Type ▸ Size presets, Table ▸ Table Options / Cell Options submenus, Paste Before/After,
   Convert Rows/Columns, Object ▸ Interactive ▸ Convert to (form fields), Flex Layout (new in 2026),
-  View ▸ Extras badges and Story Editor options.
+  View ▸ Extras badges and Story Editor options. Pages panel ▸ Parent Options (Based on Parent is
+  the `layout.parents.options` command only); overriding a base parent's items on a parent spread
+  itself (overrides work on document pages only).
 - **Estimate:** 40–70 h (most are thin wrappers over existing engine features).
 - **Doc:** [ui-parity.md](ui-parity.md)
 
@@ -244,6 +246,7 @@ Cue. These are excluded from every percentage.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Gap 16: Parent Options dialog and overrides of base items on a parent spread |
 | 2026-10-12 | minor | Gap 0 shrunk to the Primary Text Frame page fixes (#165): text threads by hand; gaps added for autoflow onto existing pages and threading into grouped frames |
 | 2026-10-10 | minor | Gap 0 added and marked alpha blocker: manual text threading is missing (stage re-normalized to pre-alpha) |
 | 2026-10-10 | major | Created: 25 ranked gaps from the full re-measure against InDesign 2026 21.6 and issues #1–#352 |
