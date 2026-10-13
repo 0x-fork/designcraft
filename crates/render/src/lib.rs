@@ -949,27 +949,23 @@ pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
 
 /// Set a swatch fill (solid or gradient) as the paint. Returns false for [None]/unknown.
 fn set_fill_paint(ctx: &mut RenderContext, doc: &Document, fill: &designcraft_doc::Fill, bounds: Rect) -> bool {
-    let (swatch, tint, angle) = (fill.swatch.as_str(), fill.tint, fill.gradient_angle);
+    let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
     if let Some(g) = designcraft_color::swatch::resolve_gradient(&doc.swatches, swatch) {
         let stops: Vec<peniko::ColorStop> = g.expanded_stops().iter().map(|(o, c, a)| peniko::ColorStop::from((*o, color_of(c, *a)))).collect();
         if stops.is_empty() {
             return false;
         }
-        let c = bounds.center();
-        let grad = match (g.kind, fill.gradient_vector) {
+        let grad = match g.kind {
             // Radial: a circle stretched into the object's ellipse (the paint transform).
-            (designcraft_color::GradientKind::Radial, _) => {
+            designcraft_color::GradientKind::Radial => {
                 let (c, rx, ry) = fill.radial_ellipse(bounds);
                 let rx = rx.max(1e-3);
                 ctx.set_paint_transform(Affine::translate(c.to_vec2()) * Affine::scale_non_uniform(1.0, ry / rx) * Affine::translate(-c.to_vec2()));
                 peniko::Gradient::new_radial(c, rx as f32).with_stops(stops.as_slice())
             }
-            (_, Some([x0, y0, x1, y1])) => peniko::Gradient::new_linear((x0, y0), (x1, y1)).with_stops(stops.as_slice()),
             _ => {
-                let a = angle.unwrap_or(0.0).to_radians();
-                let half = (bounds.width() * a.cos().abs() + bounds.height() * a.sin().abs()) / 2.0;
-                let d = Vec2::new(a.cos(), -a.sin()) * half;
-                peniko::Gradient::new_linear(c - d, c + d).with_stops(stops.as_slice())
+                let (a, b) = fill.linear_axis(bounds);
+                peniko::Gradient::new_linear(a, b).with_stops(stops.as_slice())
             }
         };
         ctx.set_paint(grad);

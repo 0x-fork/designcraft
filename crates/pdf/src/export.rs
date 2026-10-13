@@ -1046,7 +1046,7 @@ impl Exporter<'_> {
     /// [`Self::fill_paint`] for a gradient laid out in a space that `xf` maps to the current one
     /// (text runs: the frame's text space under the run's origin).
     pub(crate) fn fill_paint_in(&mut self, fill: &designcraft_doc::Fill, bounds: Rect, xf: Affine) -> Option<krilla::paint::Paint> {
-        let (swatch, tint, angle) = (fill.swatch.as_str(), fill.tint, fill.gradient_angle);
+        let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
         if let Some(g) = designcraft_color::swatch::resolve_gradient(&self.doc.swatches, swatch) {
             let kind = g.kind;
             let expanded = g.expanded_stops();
@@ -1079,8 +1079,6 @@ impl Exporter<'_> {
             if stops.is_empty() {
                 return None;
             }
-            let c = bounds.center();
-            let v = fill.gradient_vector;
             return Some(match kind {
                 GradientKind::Radial => {
                     // A circle stretched into the object's ellipse, as on screen.
@@ -1103,13 +1101,7 @@ impl Exporter<'_> {
                     .into()
                 }
                 _ => {
-                    let a = angle.unwrap_or(0.0).to_radians();
-                    let half = ((bounds.width() * a.cos().abs() + bounds.height() * a.sin().abs()) / 2.0).max(1e-3);
-                    let d = Vec2::new(a.cos(), -a.sin()) * half;
-                    let (p0, p1) = match v {
-                        Some([x0, y0, x1, y1]) => (designcraft_geom::Point::new(x0, y0), designcraft_geom::Point::new(x1, y1)),
-                        None => (c - d, c + d),
-                    };
+                    let (p0, p1) = fill.linear_axis(bounds);
                     LinearGradient {
                         x1: p0.x as f32,
                         y1: p0.y as f32,

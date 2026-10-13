@@ -2950,7 +2950,9 @@ mod gradient_stroke_tests {
         let (screen, pdf) =
             line_with_stroke_gradient(json!({"angle": 90, "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}));
         let (s, p) = (screen.pixel(100, 60), pdf.pixel(100, 60));
-        assert!(s[1] < 60 && s[0].max(s[2]) > 150, "screen: the stroke is painted, {s:?}");
+        // The line's box has no height: the gradient runs across the line's length, so the stroke
+        // shows its middle.
+        assert!(s[1] < 60 && s[0] > 80 && s[2] > 80, "screen: the stroke is painted, {s:?}");
         assert!((0..3).all(|i| s[i].abs_diff(p[i]) < 40), "screen {s:?}, pdf {p:?}");
     }
 }
