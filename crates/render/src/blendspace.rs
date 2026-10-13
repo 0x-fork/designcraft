@@ -370,13 +370,21 @@ impl Renderer {
         // Inside it: the two ink passes, with the render threads, over just the area.
         let (aw, ah) = (area.width() as u16, area.height() as u16);
         let shifted = Affine::translate((-area.x0, -area.y0)) * f.view;
+        // The passes draw only what reaches the area: items elsewhere are culled.
+        let visible = f.view.inverse().transform_rect_bbox(area);
         let stats = self.stats;
         let threads = self.threads;
         let mut pass = |plate| {
             let opts = RenderOptions { plate: Some(plate), ..rgb.clone() };
             crate::PLATE.with(|p| p.set(opts.plate));
             let mut off = RenderContext::new_with(aw, ah, vello_cpu::RenderSettings { num_threads: threads, ..Default::default() });
-            self.draw_spread(&mut off, &Frame { opts: &opts, view: shifted, mt: threads > 0, ..*f }, sr);
+            #[cfg(test)]
+            let items = self.stats.items;
+            self.draw_spread(&mut off, &Frame { opts: &opts, view: shifted, visible, mt: threads > 0, ..*f }, sr);
+            #[cfg(test)]
+            {
+                self.cmyk_pass_items = self.stats.items - items;
+            }
             off.flush();
             let mut pm = vello_cpu::Pixmap::new(aw, ah);
             off.render(&mut pm, &mut self.resources);
@@ -591,6 +599,20 @@ mod tests {
         rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(15.0, 15.0, 90.0, 60.0), "C=0 M=0 Y=100 K=0", DcBlend::Normal);
         draw(&doc, &mut renderer);
         assert!(renderer.cmyk_pass_pixels >= 75 * 45, "{} px", renderer.cmyk_pass_pixels);
+    }
+
+    #[test]
+    fn ink_passes_draw_only_the_items_that_reach_their_area() {
+        // A small Multiply object in a corner and a solid one far from it: the ink passes cover the
+        // corner and draw just the Multiply object.
+        let mut doc = document();
+        rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(100.0, 70.0, 150.0, 110.0), "C=100 M=0 Y=0 K=0", DcBlend::Normal);
+        rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(5.0, 5.0, 25.0, 25.0), "C=0 M=100 Y=0 K=0", DcBlend::Multiply);
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        draw(&doc, &mut renderer);
+        assert_eq!(renderer.cmyk_passes, 2);
+        assert_eq!(renderer.cmyk_pass_items, 1);
     }
 
     #[test]
