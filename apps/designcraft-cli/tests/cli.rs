@@ -138,6 +138,24 @@ fn run_export_options_come_before_their_export() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `--pdf-options` must be a JSON object; any other JSON value used to panic when the PDF path was set on it.
+#[test]
+fn pdf_options_that_are_not_an_object_are_an_error_not_a_panic() {
+    let dir = std::env::temp_dir().join(format!("dc-cli-pdfopts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("out.pdf");
+    let pdf = pdf.to_str().unwrap();
+    for val in ["[]", "true", "1", r#""x""#] {
+        let out = cli().args(["run", "--sample", "--pdf-options", val, "--export", pdf]).output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{val}: {err}");
+        assert!(err.contains("--pdf-options") && !err.contains("panicked"), "{val}: {err}");
+    }
+    let out = cli().args(["run", "--sample", "--pdf-options", "null", "--export", pdf]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[cfg(unix)]
 #[test]
 fn raster_export_preserves_an_existing_reader_and_private_symlink_target() {
