@@ -105,7 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Character Style…",
             [],
             None,
-            "{name, basedOn?: style | \"[None]\", chars?: {…}} — the style sets only `chars` → {name} (made unique)",
+            "{name, basedOn?: style | \"[None]\", chars?: {…}, fromSelection?: bool (default false)} — if true, capture the first selected character's style/local overrides (caret: typing format), then overlay chars (null unsets); only explicit fill names are validated; paragraph formatting stays inherited; no text target: chars only → {name} (made unique)",
             has_doc,
             create_char
         ),
@@ -180,9 +180,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply Color",
             [],
             None,
-            "{color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255), target?: fill|stroke, ids?} — an unnamed colour (not in the Swatches panel until Add to Swatches) on the selection",
-            super::has_selection,
+            "{color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255), target?: fill|stroke, text?: bool, ids?} — an unnamed colour on the selected text or objects; `text` also targets the text of selected frames",
+            has_text_or_selection,
             apply_color
+        ),
+        cmd!(
+            "color.sample",
+            "Sample Color (Eyedropper)",
+            [],
+            None,
+            "{at: [x,y] (spread coords), spread?, target?: fill|stroke, ids?} → {color: \"#rrggbb\", swatch, from: image id} — the Eyedropper on a placed image: the image's colour at the point (an unnamed colour) fills the selected text, else the selected objects",
+            has_text_or_selection,
+            sample_color
         ),
         cmd!(
             "swatch.addToSwatches",
@@ -622,8 +631,27 @@ fn delete_para(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
     let base = str_param(p, "name").unwrap_or("Character Style 1").to_string();
-    let chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let mut chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    // Validate caller-supplied fills; captured formatting may retain a deleted swatch name.
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.character.create")?;
+    if p.get("fromSelection").and_then(Value::as_bool).unwrap_or(false)
+        && let Some(target) = super::text::format_targets_pub(s).first()
+    {
+        let st = s.doc()?;
+        let story = st.doc.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
+        // Match paragraph fromSelection's first-character/caret policy, but keep paragraph
+        // attributes inherited instead of freezing the fully resolved character properties.
+        let format = if target.range.is_empty() { story.char_format_at(target.range.start) } else { story.format_after(target.range.start) };
+        let mut captured = st.doc.styles.char_style_attrs(&format.style);
+        captured.merge(&format.over);
+        // Replay the explicit fields so null clears a captured value rather than looking absent.
+        if let Some(overrides) = p.get("chars").and_then(Value::as_object) {
+            for (key, value) in overrides {
+                captured.set_json(key, value).map_err(|e| bad("style", e))?;
+            }
+        }
+        chars = captured;
+    }
     // Based on [None] is based on nothing.
     let based_on = str_param(p, "basedOn").filter(|b| *b != designcraft_doc::NO_CHAR_STYLE).map(str::to_string);
     s.edit(|d, _| {
@@ -955,41 +983,163 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
 fn apply_color(s: &mut Session, p: &Value) -> Result<Value> {
     let color = p.get("color").and_then(parse_color).ok_or_else(|| bad("object.color", "missing or bad color"))?;
     let stroke = str_param(p, "target") == Some("stroke");
-    let ids = super::targets(s, p)?;
-    s.edit(|d, _| {
-        // Reuse a swatch holding exactly this colour, else add an unnamed one.
-        let existing = d
-            .swatches
+    let named = p.get("ids").is_some() || p.get("id").is_some();
+    let text = !named
+        && (p.get("text").and_then(Value::as_bool).unwrap_or(false) || s.doc()?.selection.text.is_some() || s.doc()?.selection.cells.is_some());
+    if text {
+        let targets = super::text::format_targets(s);
+        // A caret in existing text has no editable range. Refuse it before creating a swatch
+        // or history; an empty story has a format run that the next insertion inherits.
+        if !targets
             .iter()
-            .find(|w| matches!(&w.value, SwatchValue::Color { color: c, color_type: designcraft_color::ColorType::Process } if *c == color))
-            .map(|w| w.name.clone());
-        let name = match existing {
-            Some(n) => n,
-            None => {
-                let name = Styles::unique_name(|n| d.swatch(n).is_some(), &value_name(color));
-                d.swatches.push(Swatch {
-                    name: name.clone(),
-                    value: SwatchValue::Color { color, color_type: designcraft_color::ColorType::Process },
-                    locked: false,
-                    named: false,
-                    hidden: true,
-                });
-                name
-            }
-        };
-        for id in &ids {
-            if let Some(it) = d.item_mut(*id) {
-                if stroke {
-                    it.stroke.swatch = name.clone();
-                    it.stroke.tint = 1.0;
+            .any(|t| !t.range.is_empty() || s.active().is_some_and(|d| d.doc.text_story(t.story, t.cell).is_some_and(|st| st.is_empty())))
+        {
+            return Err(bad("object.color", "select the text to colour"));
+        }
+        return s.edit(|d, _| {
+            let name = color_swatch(d, color);
+            for t in &targets {
+                let Some(story) = d.text_story_mut(t.story, t.cell) else { continue };
+                let set = |f: &mut designcraft_doc::CharFormat| {
+                    if stroke {
+                        (f.over.stroke, f.over.stroke_tint) = (Some(name.clone()), Some(1.0));
+                    } else {
+                        (f.over.fill, f.over.fill_tint) = (Some(name.clone()), Some(1.0));
+                    }
+                };
+                if t.range.is_empty() {
+                    if story.is_empty()
+                        && let Some(run) = story.chars.first_mut()
+                    {
+                        set(&mut run.format);
+                        story.rev = story.rev.wrapping_add(1);
+                    }
                 } else {
-                    it.fill.swatch = name.clone();
-                    it.fill.tint = 1.0;
+                    story.format_chars(t.range.clone(), set);
                 }
             }
-        }
+            Ok(json!({"swatch": name}))
+        });
+    }
+    let ids = super::targets(s, p)?;
+    s.edit(|d, _| {
+        let name = color_swatch(d, color);
+        color_items(d, &ids, &name, stroke);
         Ok(json!({"swatch": name}))
     })
+}
+
+/// A process swatch holding exactly `color`, else a new unnamed one (hidden from the Swatches
+/// panel until Add to Swatches).
+fn color_swatch(d: &mut designcraft_doc::Document, color: designcraft_color::Color) -> String {
+    let existing = d
+        .swatches
+        .iter()
+        .find(|w| matches!(&w.value, SwatchValue::Color { color: c, color_type: designcraft_color::ColorType::Process } if *c == color))
+        .map(|w| w.name.clone());
+    if let Some(n) = existing {
+        return n;
+    }
+    let name = Styles::unique_name(|n| d.swatch(n).is_some(), &value_name(color));
+    d.swatches.push(Swatch {
+        name: name.clone(),
+        value: SwatchValue::Color { color, color_type: designcraft_color::ColorType::Process },
+        locked: false,
+        named: false,
+        hidden: true,
+    });
+    name
+}
+
+fn color_items(d: &mut designcraft_doc::Document, ids: &[designcraft_doc::ItemId], name: &str, stroke: bool) {
+    for id in ids {
+        if let Some(it) = d.item_mut(*id) {
+            if stroke {
+                it.stroke.swatch = name.to_string();
+                it.stroke.tint = 1.0;
+            } else {
+                it.fill.swatch = name.to_string();
+                it.fill.tint = 1.0;
+            }
+        }
+    }
+}
+
+fn has_text_or_selection(s: &Session) -> std::result::Result<(), String> {
+    has_doc(s)?;
+    if s.active().is_some_and(|d| d.selection.text.is_some() || d.selection.cells.is_some()) { Ok(()) } else { super::has_selection(s) }
+}
+
+/// The Eyedropper on a placed image (InDesign samples the pixel under the pointer): that colour,
+/// as an unnamed colour, fills the selected text (characters), or the selected objects.
+fn sample_color(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "color.sample";
+    let at = super::point_param(p, "at").ok_or_else(|| bad(ID, "missing at"))?;
+    let sr = super::spread_param(p, "spread")?;
+    let st = s.doc()?;
+    let (from, color) = image_color_at(&st.doc, sr, at).ok_or_else(|| bad(ID, "no placed image under the point"))?;
+    let hex = color.to_hex();
+    let mut params = p.clone();
+    params["color"] = json!(hex);
+    let mut result = apply_color(s, &params)?;
+    result["color"] = json!(hex);
+    result["from"] = json!(from.0);
+    Ok(result)
+}
+
+/// The colour of the placed raster image at `at` on spread `sr`: the frontmost visible image whose
+/// frame shows that point (locked ones too, as sampling changes nothing). (image frame, colour);
+/// None over no image, a transparent pixel, or a graphic that is not a raster (PDF, EPS).
+pub(crate) fn image_color_at(
+    d: &designcraft_doc::Document,
+    sr: designcraft_doc::SpreadRef,
+    at: designcraft_geom::Point,
+) -> Option<(designcraft_doc::ItemId, designcraft_color::Color)> {
+    let sp = d.spread(sr)?;
+    let mut items: Vec<&designcraft_doc::Item> = sp.items.iter().map(|i| &**i).collect();
+    items.sort_by_key(|i| d.layer_rank(i.layer));
+    items
+        .into_iter()
+        .rev()
+        .filter(|it| d.layer(it.layer).is_none_or(|l| l.visible))
+        .find_map(|it| sample_item(d, it, designcraft_geom::Affine::IDENTITY, at, 0))
+}
+
+fn sample_item(
+    d: &designcraft_doc::Document,
+    it: &designcraft_doc::Item,
+    outer: designcraft_geom::Affine,
+    at: designcraft_geom::Point,
+    depth: usize,
+) -> Option<(designcraft_doc::ItemId, designcraft_color::Color)> {
+    use designcraft_doc::Content;
+    if it.hidden || depth > 64 {
+        return None;
+    }
+    let xf = outer * it.xf;
+    match &it.content {
+        Content::Group { items } => items.iter().rev().find_map(|c| sample_item(d, c, xf, at, depth + 1)),
+        Content::Graphic(g) => {
+            let inner = xf.inverse() * at;
+            if !designcraft_geom::hit::fill_contains(&it.path.to_bezpath(), designcraft_geom::FillRule::NonZero, inner) {
+                return None;
+            }
+            let gp = g.xf.inverse() * inner;
+            let (w, h) = g.size;
+            // Written so that NaN (a degenerate transform) is outside too.
+            if !(w > 0.0 && h > 0.0 && gp.x >= 0.0 && gp.y >= 0.0 && gp.x < w && gp.y < h) {
+                return None;
+            }
+            let asset = d.assets.get(&g.asset).filter(|a| a.is_raster())?;
+            let img = designcraft_images::decode_rgba(&asset.data)?;
+            let (pw, ph) = img.dimensions();
+            let px = ((gp.x / w * f64::from(pw)) as u32).min(pw.checked_sub(1)?);
+            let py = ((gp.y / h * f64::from(ph)) as u32).min(ph.checked_sub(1)?);
+            let [r, gr, b, a] = img.get_pixel_checked(px, py)?.0;
+            (a > 0).then(|| (it.id, designcraft_color::Color::rgb8(r, gr, b)))
+        }
+        _ => None,
+    }
 }
 
 fn add_to_swatches(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1491,5 +1641,113 @@ mod cjk_tests {
         let restored = s.cache.get(&s.doc().unwrap().doc, sid, None);
         assert_eq!(old.frames[0].lines[0].end_x, restored.frames[0].lines[0].end_x);
         assert!(s.execute("style.compositeFont.set", &definition(-1.0)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod sample_color_tests {
+    use designcraft_color::{Color, SwatchValue};
+    use designcraft_doc::ItemId;
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// A 2×1 image, red then blue, placed 144 pt wide at (72, 72): each pixel is 72 pt.
+    fn session_with_image() -> (Session, u64) {
+        let png = designcraft_render::Rendered { width: 2, height: 1, pixels: vec![255, 0, 0, 255, 0, 0, 255, 255] }.to_png();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let b64 = super::super::file::base64_encode(&png);
+        let r = s.execute("file.place", &json!({"base64": b64, "name": "rb.png", "x": 72, "y": 72, "width": 144})).unwrap();
+        (s, r["id"].as_u64().unwrap())
+    }
+
+    fn swatch_color(s: &Session, name: &str) -> Color {
+        match &s.doc().unwrap().doc.swatch(name).unwrap().value {
+            SwatchValue::Color { color, .. } => *color,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_eyedropper_colours_selected_text_with_the_image_under_it() {
+        let (mut s, image) = session_with_image();
+        let f = s.execute("frame.create", &json!({"rect": [300, 300, 500, 360], "content": "text", "text": "Elevate."})).unwrap();
+        let fid = ItemId(f["id"].as_u64().unwrap());
+        let story = s.doc().unwrap().doc.item(fid).unwrap().text_frame().unwrap().story;
+        s.execute("text.select", &json!({"story": story.0, "anchor": 0, "focus": 7})).unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        let r = s.execute("color.sample", &json!({"at": [180, 100]})).unwrap();
+        assert_eq!((r["color"].as_str(), r["from"].as_u64()), (Some("#0000ff"), Some(image)), "{r}");
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1, "one undo step");
+        let name = r["swatch"].as_str().unwrap().to_string();
+        assert_eq!(swatch_color(&s, &name), Color::rgb8(0, 0, 255));
+        assert!(s.doc().unwrap().doc.swatch(&name).unwrap().hidden, "an unnamed colour");
+        let st = s.doc().unwrap().doc.story(story).unwrap().clone();
+        assert_eq!(st.format_after(0).over.fill.as_deref(), Some(name.as_str()));
+        assert_eq!(st.format_after(7).over.fill, None, "the full stop keeps its colour");
+        // The frame itself is not coloured.
+        assert!(s.doc().unwrap().doc.item(fid).unwrap().fill.is_none());
+    }
+
+    #[test]
+    fn the_eyedropper_fills_selected_objects_and_samples_locked_images() {
+        let (mut s, _) = session_with_image();
+        let lid = s.doc().unwrap().doc.layers[0].id.0;
+        s.execute("layer.set", &json!({"id": lid, "locked": true})).unwrap();
+        s.execute("layer.new", &json!({"name": "TEXT"})).unwrap();
+        let rect = s.execute("frame.create", &json!({"rect": [300, 300, 400, 400]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("selection.set", &json!({"ids": [rect]})).unwrap();
+        let r = s.execute("color.sample", &json!({"at": [100, 100], "target": "stroke"})).unwrap();
+        assert_eq!(r["color"], "#ff0000", "{r}");
+        let it = s.doc().unwrap().doc.item(ItemId(rect)).unwrap().clone();
+        assert_eq!(swatch_color(&s, &it.stroke.swatch), Color::rgb8(255, 0, 0));
+        // Sampling the same colour again reuses its swatch.
+        let again = s.execute("color.sample", &json!({"at": [90, 90]})).unwrap();
+        assert_eq!(again["swatch"], r["swatch"]);
+    }
+
+    #[test]
+    fn nothing_to_sample_or_nothing_to_colour_is_refused_without_an_edit() {
+        let (mut s, _) = session_with_image();
+        let f = s.execute("frame.create", &json!({"rect": [300, 300, 500, 360], "content": "text", "text": "Hi"})).unwrap();
+        let fid = ItemId(f["id"].as_u64().unwrap());
+        let story = s.doc().unwrap().doc.item(fid).unwrap().text_frame().unwrap().story;
+        s.execute("text.select", &json!({"story": story.0, "anchor": 1, "focus": 1})).unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        let caret = s.execute("color.sample", &json!({"at": [100, 100]})).unwrap_err().to_string();
+        assert!(caret.contains("select the text"), "{caret}");
+        s.execute("text.select", &json!({"story": story.0, "anchor": 0, "focus": 2})).unwrap();
+        let none = s.execute("color.sample", &json!({"at": [600, 600]})).unwrap_err().to_string();
+        assert!(none.contains("no placed image"), "{none}");
+        // Just past the image's right edge.
+        assert!(s.execute("color.sample", &json!({"at": [216.5, 100]})).is_err());
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+    }
+
+    #[test]
+    fn sampling_and_explicit_colour_use_the_same_text_application_path() {
+        for command in ["color.sample", "object.color"] {
+            let (mut s, _) = session_with_image();
+            let f = s.execute("frame.create", &json!({"rect": [300, 300, 500, 360], "content": "text"})).unwrap();
+            let story = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+            s.execute("text.select", &json!({"story": story.0, "anchor": 0})).unwrap();
+            let undo = s.doc().unwrap().history.undo.len();
+            let r = s.execute(command, &json!({"at": [100, 100], "color": "#ff0000"})).unwrap();
+            assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1, "{command}");
+            s.execute("text.insert", &json!({"text": "Hi"})).unwrap();
+            let text = s.doc().unwrap().doc.story(story).unwrap();
+            assert_eq!(text.format_after(0).over.fill.as_deref(), r["swatch"].as_str(), "empty-story typing: {command}");
+            // Explicit ids override text targeting, including with a text selection active.
+            let fid = ItemId(f["id"].as_u64().unwrap());
+            s.execute("text.select", &json!({"story": story.0, "anchor": 0, "focus": 2})).unwrap();
+            let r = s.execute(command, &json!({"at": [180, 100], "color": "#0000ff", "id": fid.0})).unwrap();
+            assert_eq!(s.doc().unwrap().doc.item(fid).unwrap().fill.swatch, r["swatch"].as_str().unwrap());
+            let text = s.doc().unwrap().doc.story(story).unwrap();
+            assert_ne!(text.format_after(0).over.fill.as_deref(), r["swatch"].as_str(), "text unchanged: {command}");
+            let r = s.execute(command, &json!({"at": [180, 100], "color": "#0000ff", "target": "stroke"})).unwrap();
+            let text = s.doc().unwrap().doc.story(story).unwrap();
+            assert_eq!(text.format_after(0).over.stroke.as_deref(), r["swatch"].as_str(), "selected text stroke: {command}");
+        }
     }
 }

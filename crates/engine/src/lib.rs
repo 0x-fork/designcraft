@@ -183,6 +183,8 @@ pub struct Prefs {
     pub rich_black_output: bool,
     /// Font menu favourites (family names).
     pub favorite_fonts: Vec<String>,
+    /// Fonts picked in the font menus, most recent first (shown at the menus' top).
+    pub recent_fonts: Vec<String>,
     /// Preferences › Type › Show Font Names in English: the font menus show CJK families by their
     /// English names instead of their native ones. Documents store the English name either way.
     pub show_font_names_in_english: bool,
@@ -239,6 +241,7 @@ impl Default for Prefs {
             highlight_substituted_fonts: true,
             rich_black_output: false,
             favorite_fonts: Vec::new(),
+            recent_fonts: Vec::new(),
             show_font_names_in_english: false,
             smart_text_reflow: true,
             autocorrect: false,
