@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · A selected placed graphic shows its own brown bounding box with handles: dragging one resizes the graphic inside its frame (Shift keeps proportions, Alt from the centre) and leaves the frame as it is; `transform.set` takes the graphic's new spread `bounds`. Builds on #415 and #550. No readiness percentage change.
 - **2026-10-13** · Create Outlines makes one compound path per line (and per text colour within a line), grouped, as InDesign does: Ungroup then leaves each line on its own to be spaced and made into one compound path again. A single line in one colour stays a single compound path. No readiness percentage change.
 - **2026-10-13** · Ungroup only takes groups apart: a frame with pasted-in content stays whole (and selected), is named by its shape in the Layers and Properties panels, and offers Convert Shape rather than Ungroup. Non-groups stay selected. No readiness percentage change.
 - **2026-10-13** · Copy with a placed graphic selected (Direct Selection) copies just the graphic, uncropped, where it sits on the page and without the frame's stroke, so Paste Into puts the whole image in place; Cut and Delete then remove only the graphic and leave its frame empty. Nested selections copy in their spread coordinates. No readiness percentage change.

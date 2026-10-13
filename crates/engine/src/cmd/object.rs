@@ -116,7 +116,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Transform Panel",
             [],
             None,
-            "{x?, y? (measured from the rulers' zero point, view.zeroPoint), width?, height?, scaleX? (%), scaleY? (%), rotation? (°), shear? (°), ref?: 0..8, ids?, content?: bool (the placed graphic inside each frame; the frame stays. Default: whether the selection is content, when no ids are given)} — reference-point based geometry; rotation and shear are absolute (Transformations are Totals decides whether nested objects measure them on the pasteboard)",
+            "{x?, y? (measured from the rulers' zero point, view.zeroPoint), width?, height?, scaleX? (%), scaleY? (%), rotation? (°), shear? (°), ref?: 0..8, ids?, content?: bool (the placed graphic inside each frame; the frame stays. Default: whether the selection is content, when no ids are given), bounds?: [x0, y0, x1, y1] (content: the graphic's new bounds on the spread, as its handles drag it)} — reference-point based geometry; rotation and shear are absolute (Transformations are Totals decides whether nested objects measure them on the pasteboard)",
             has_selection,
             transform_set
         ),
@@ -1415,6 +1415,7 @@ fn transform_content(s: &mut Session, p: &Value, ids: &[ItemId]) -> Result<Value
     let get = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
     let (rot, shear, sx, sy) = (get("rotation"), get("shear").map(|v| v.clamp(-85.0, 85.0)), get("scaleX"), get("scaleY"));
     let (x, y, w, h) = (get("x"), get("y"), get("width").map(|v| v.max(0.01)), get("height").map(|v| v.max(0.01)));
+    let bounds = rect_param(p, "bounds").filter(|r| [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite()));
     if [sx, sy].iter().flatten().any(|v| v.abs() < 0.01) {
         return Err(bad("transform.set", "scale too small"));
     }
@@ -1468,6 +1469,17 @@ fn transform_content(s: &mut Session, p: &Value, ids: &[ItemId]) -> Result<Value
                 cur = Affine::translate(a) * delta * Affine::translate(-a) * cur;
             }
             let mut gx = q.inverse() * cur;
+            // The graphic's bounds dragged on the spread (its content handles): scale and move it so
+            // its bounding box becomes `bounds` (normalized; at least 0.01 pt each way).
+            if let Some(r) = bounds {
+                let to =
+                    Rect::new(r.x0.min(r.x1), r.y0.min(r.y1), r.x0.max(r.x1).max(r.x0.min(r.x1) + 0.01), r.y0.max(r.y1).max(r.y0.min(r.y1) + 0.01));
+                let b = (frame * gx).transform_rect_bbox(rect);
+                let m = Affine::translate((to.x0, to.y0))
+                    * Affine::scale_non_uniform(to.width() / b.width().max(1e-9), to.height() / b.height().max(1e-9))
+                    * Affine::translate((-b.x0, -b.y0));
+                gx = frame.inverse() * m * frame * gx;
+            }
             // Position and size: the graphic's bounds on the page.
             if x.is_some() || y.is_some() || w.is_some() || h.is_some() {
                 let b = (frame * gx).transform_rect_bbox(rect);
@@ -4423,6 +4435,33 @@ mod content_transform_tests {
         s.execute("transform.rotate", &json!({"ids": [f], "angle": -45})).unwrap();
         s.execute("selection.set", &json!({"ids": [f], "content": true})).unwrap();
         (s, f)
+    }
+
+    #[test]
+    fn content_bounds_resize_the_graphic_and_leave_the_frame() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [100, 100, 200, 200], "content": "graphic"})).unwrap()["id"].as_u64().unwrap();
+        let png = designcraft_render::Rendered { width: 200, height: 100, pixels: vec![200u8; 200 * 100 * 4] }.to_png();
+        s.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&png), "name": "a.png", "frame": f})).unwrap();
+        let bounds = |s: &Session| {
+            let it = s.doc().unwrap().doc.item(designcraft_doc::ItemId(f)).unwrap().clone();
+            let g = it.graphic().unwrap().clone();
+            (it.bounds(), (it.xf * g.xf).transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1)))
+        };
+        let (frame0, _) = bounds(&s);
+        // The handles' drag: the image to (20, 40)–(420, 240), one undo step; the frame stays.
+        s.execute("transform.set", &json!({"ids": [f], "content": true, "bounds": [20, 40, 420, 240]})).unwrap();
+        let (frame1, g1) = bounds(&s);
+        assert_eq!(frame1, frame0);
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        assert!(near(g1.x0, 20.0) && near(g1.y0, 40.0) && near(g1.x1, 420.0) && near(g1.y1, 240.0), "{g1:?}");
+        // Dragged past the opposite edge: normalized, never empty.
+        s.execute("transform.set", &json!({"ids": [f], "content": true, "bounds": [300, 300, 300, 100]})).unwrap();
+        let (_, g2) = bounds(&s);
+        assert!(g2.width() > 0.0 && near(g2.y0, 100.0) && near(g2.y1, 300.0), "{g2:?}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(near(bounds(&s).1.x1, 420.0));
     }
 
     #[test]

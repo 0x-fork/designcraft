@@ -1692,3 +1692,41 @@ fn direct_selection_drags_the_end_anchors_of_type_on_a_path() {
         assert_eq!(direct.pointer(&cx, &PointerEvent::new(PointerKind::Down, p.x, p.y)), vec![Action::Begin("Move Anchor".into())]);
     }
 }
+
+#[test]
+fn a_selected_graphics_own_handles_resize_it_and_leave_the_frame() {
+    let mut d = Document::new(&NewDocument::default());
+    let f = graphic_frame(&mut d);
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let content = Selection { content: true, ..Selection::items(vec![f]) };
+    let set_params = |a: &[Action]| match a.last() {
+        Some(Action::Preview(cmd, p)) if cmd == "transform.set" => p.clone(),
+        other => panic!("{other:?}"),
+    };
+    for tool in ["selection", "directSelection"] {
+        let mut t = create(tool);
+        let cx = ctx(&d, &content, &c, &l);
+        // The graphic's bottom-right corner, (250, 200), outside the frame's (200, 200).
+        let corner = spread_pt(&l, 250.0, 200.0);
+        assert_ne!(t.cursor(&cx, corner, Mods::default()), Cursor::Arrow, "{tool}");
+        assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, corner.x, corner.y)), vec![Action::Begin("Resize Content".into())], "{tool}");
+        let to = spread_pt(&l, 300.0, 250.0);
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, to.x, to.y));
+        let p = set_params(&a);
+        assert_eq!(
+            (&p["ids"], &p["content"], &p["bounds"]),
+            (&serde_json::json!([f.0]), &serde_json::json!(true), &serde_json::json!([50.0, 100.0, 300.0, 250.0]))
+        );
+        assert!(t.overlays(&cx).contains(&Overlay::ContentGhost(f)));
+        // Shift keeps the graphic's proportions (2:1).
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, to.x, to.y).with_mods(Mods { shift: true, ..Default::default() }));
+        let b = set_params(&a)["bounds"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect::<Vec<_>>();
+        assert!(((b[2] - b[0]) / (b[3] - b[1]) - 2.0).abs() < 1e-6, "{b:?}");
+        assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, to.x, to.y)), vec![Action::Commit]);
+    }
+    // The frame's own handles don't resize the frame while its graphic is selected.
+    let mut t = create("selection");
+    let frame_corner = spread_pt(&l, 200.0, 200.0);
+    let a = t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Down, frame_corner.x, frame_corner.y));
+    assert!(!a.contains(&Action::Begin("Resize".into())), "{a:?}");
+}
