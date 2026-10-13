@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (.indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (.indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes; content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every format InDesign 2026 reads or writes, with DesignCraft's support, fidelity and tests. The
 InDesign list comes from its bundle's `Info.plist` (`CFBundleDocumentTypes`,
@@ -22,7 +22,7 @@ score below).
 | InDesign document | `.indd` | read/write (native) | ✓ (converted to IDML in memory by [storytold/indd-utils](https://github.com/storytold/indd-utils), then the IDML importer; #21, #114) | ✗ | Converter warnings join the open result; unreadable files are open errors. Synthetic-bytes tests only; indd-utils reports 96.9% of IDML values reproduced on ~650 pairs. No real-file corpus test | 30% |
 | InDesign template | `.indt` | read/write | ✓ (as `.indd`) | ✗ | As `.indd` | 2% |
 | InDesign Markup | `.idml` | read/write | ✓ | ✓ | Synthetic fixtures in `crates/idml/src/tests.rs` (51 tests); exported files verified by opening in InDesign 2026 by hand; indd-utils' 98-document run imports 811 spreads / 2,866 stories / 5,812 items. Open: #193, #338, #339, #340, #211. No real-file corpus test | 20% |
-| DesignCraft native | `.designcraft` | — | ✓ | ✓ | zip + JSON, versioned; round-trip tests | — |
+| DesignCraft native | `.designcraft` | — | ✓ | ✓ | zip + JSON, versioned; round-trip tests. Asset loading and compaction index by content hash, then confirm byte equality; equal-sized distinct files fall into separate search buckets (#727). Separate links, MIME types and PDF pages retain their identity | — |
 | InDesign book | `.indb` | read/write | ✗ (own `.dcbook`) | ✗ | Books are shallow (see gaps.md) | 2% |
 | InDesign library | `.indl`, `.inlx` | read/write | ✗ (own `.dclib`) | ✗ | | 1% |
 | Snippet | `.idms` | read/write | ✗ (own snippets) | ✗ | | 1% |
@@ -108,6 +108,7 @@ up to 30 points.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Asset loading and compaction use content fingerprints with exact equality checks; tests cover equal-sized distinct buffers, shared copies, independent links and missing data (#727) |
 | 2026-10-13 | minor | `.indd` and `.indt` read through storytold/indd-utils; INDD remaining work is a real-file corpus (10–30 h); score unchanged until it is measured |
 | 2026-10-12 | minor | XLSX table placement and data merge preserve small numeric values and cached formula strings; synthetic regressions in `textimport::xlsx::tests`. Scores unchanged. |
 | 2026-10-10 | major | Created from InDesign 2026's declared document types and filters, `plan/indesign/08-file-formats.md` and the code |
