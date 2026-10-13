@@ -2541,15 +2541,19 @@ mod tests {
                     ),
                     pixels: Some((32, 32)),
                     page: 0,
+                    pdf_crop: Default::default(),
+                    pdf_box: None,
                 }),
             );
             doc.item_mut(id).unwrap().content = Content::Graphic(Graphic {
                 asset: aid,
                 size: (72.0, 72.0),
                 xf: designcraft_geom::Affine::IDENTITY,
+                clip: None,
                 auto_fit: Default::default(),
                 fit_align: 4,
                 crop: [0.0; 4],
+                wrap: Default::default(),
             });
             items.push(id);
             assets.push(aid);
