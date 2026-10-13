@@ -860,7 +860,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                 .and_then(|i| app.session.prefs.recent_files.get(i))
                 .map(|path| recent_label(path))
                 .unwrap_or_default();
-            app.open_file("file.openRecent", json!({"index": index, "name": name}))
+            app.open_named_file("file.openRecent", json!({"index": index}), name)
         }
         "app.placeDialog" => app.pick_and_open("place"),
         "app.placeWithOptions" => {

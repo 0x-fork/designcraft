@@ -59,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let path = with_document_extension(path);
             let mut copy = (*s.doc()?.doc).clone();
             super::datamerge::refresh_relative_paths(&mut copy, std::path::Path::new(&path));
-            let bytes = to_bytes_with_preview(&copy, &s.cache);
+            let bytes = to_bytes_with_preview(&copy, &s.cache)?;
             #[cfg(not(target_arch = "wasm32"))]
             crate::atomic::write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -149,11 +149,16 @@ thread_local! {
 
 /// The document as `.designcraft` bytes, or an error when it can't be written; never an empty file.
 pub fn to_bytes(d: &Document) -> Result<Vec<u8>> {
+    save_bytes(d, None)
+}
+
+/// [`to_bytes`] with `preview` (PNG bytes) stored as the file's first-page picture.
+fn save_bytes(d: &Document, preview: Option<&[u8]>) -> Result<Vec<u8>> {
     #[cfg(test)]
     if FAIL_TO_BYTES.with(std::cell::Cell::get) {
         return Err(EngineError::Other("could not write the document: injected failure".into()));
     }
-    designcraft_format::save(d).map_err(|e| EngineError::Other(format!("could not write the document: {e}")))
+    designcraft_format::save_with_preview(d, preview).map_err(|e| EngineError::Other(format!("could not write the document: {e}")))
 }
 
 /// `path` ending in `.designcraft`: the extension is added when it is missing or another one, so
@@ -177,7 +182,7 @@ const PREVIEW_PX: f64 = 320.0;
 
 /// [`to_bytes`] with a picture of the first page, which the start screen shows next to the file
 /// in its recent files. A page that can't be drawn just leaves the picture out.
-fn to_bytes_with_preview(d: &Document, cache: &crate::Cache) -> Vec<u8> {
+fn to_bytes_with_preview(d: &Document, cache: &crate::Cache) -> Result<Vec<u8>> {
     let preview = d.page_loc(0).and_then(|(si, pi)| {
         let b = d.spreads.get(si)?.pages.get(pi)?.bounds();
         let side = b.width().max(b.height());
@@ -185,7 +190,7 @@ fn to_bytes_with_preview(d: &Document, cache: &crate::Cache) -> Vec<u8> {
     });
     let png =
         preview.and_then(|scale| designcraft_render::Renderer::new().render_page(d, cache, 0, scale, false, &Default::default())).map(|r| r.to_png());
-    designcraft_format::save_with_preview(d, png.as_deref()).unwrap_or_default()
+    save_bytes(d, png.as_deref())
 }
 
 pub fn from_bytes(b: &[u8]) -> Result<Document> {
@@ -391,7 +396,6 @@ fn has_recent(s: &Session) -> std::result::Result<(), String> {
     if s.prefs.recent_files.is_empty() { Err("no recent files".into()) } else { Ok(()) }
 }
 
-/// One File › Open Recent row: the path, its file name and whether it is still there.
 /// A recent file's first-page picture as straight RGBA, for the start screen.
 pub struct RecentPreview {
     pub width: u32,
@@ -417,6 +421,7 @@ pub fn recent_preview(path: &str) -> Option<RecentPreview> {
     }
 }
 
+/// One File › Open Recent row: the path, its file name and whether it is still there.
 fn recent_entry(path: &str) -> Value {
     let name = std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string());
     #[cfg(not(target_arch = "wasm32"))]
@@ -549,7 +554,7 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
     super::datamerge::refresh_relative_paths(&mut saved, std::path::Path::new(&path));
     let paths_changed = saved.data_merge != st.doc.data_merge;
     let saved = if paths_changed { Arc::new(saved) } else { st.doc.clone() };
-    let bytes = to_bytes_with_preview(&saved, &s.cache);
+    let bytes = to_bytes_with_preview(&saved, &s.cache)?;
     #[cfg(not(target_arch = "wasm32"))]
     crate::atomic::write_file(&path, &bytes)?;
     let st = s.doc_mut()?;
@@ -1574,6 +1579,7 @@ mod save_tests {
         super::FAIL_TO_BYTES.with(|f| f.set(true));
         let save = s.execute("file.save", &json!({}));
         let copy = s.execute("file.saveACopy", &json!({"path": dir.join("copy.designcraft").to_string_lossy()}));
+        let save_as = s.execute("file.saveAs", &json!({"path": dir.join("other.designcraft").to_string_lossy()}));
         let serialized = s.execute("file.serialize", &json!({}));
         super::FAIL_TO_BYTES.with(|f| f.set(false));
 
@@ -1582,6 +1588,8 @@ mod save_tests {
         assert!(copy.is_err() && serialized.is_err(), "no empty copy and no empty download");
         assert_eq!(std::fs::read(&path).unwrap(), before, "the saved file is untouched");
         assert!(!dir.join("copy.designcraft").exists());
+        assert!(save_as.is_err() && !dir.join("other.designcraft").exists());
+        assert!(!s.prefs.recent_files.iter().any(|p| p.ends_with("other.designcraft")), "a failed Save As isn't a recent file");
         assert!(s.doc().unwrap().is_dirty(), "the document still has unsaved changes");
         assert!(checkpoint.exists(), "the recovery checkpoint stays");
         let _ = std::fs::remove_dir_all(&dir);
