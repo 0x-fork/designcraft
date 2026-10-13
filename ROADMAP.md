@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · Text takes gradient swatches: a gradient fill or stroke on characters spans the text frame's box (on a path: the path's), on screen and in PDF. No readiness percentage change.
 - **2026-10-13** · Gradient swatches work on strokes: drawn across the path's box on screen and in PDF (they drew nothing), set with `object.gradient {target: stroke}` and in the Gradient panel when the Stroke box is in front; the stroke's gradient vector moves with the shape and round-trips through IDML. No readiness percentage change.
 - **2026-10-13** · The Gradient panel follows InDesign's layout (thumbnail, Type, Location, Angle, Reverse, ramp with midpoint diamonds) and takes swatches dragged from the Swatches panel: dropped on a stop they colour it, elsewhere they add a stop. Stops keep their CMYK through panel edits; `object.gradient` stops accept a `swatch`. No readiness percentage change.
 - **2026-10-13** · New Swatch works as InDesign's: a gradient made in the Gradient panel becomes "New Gradient Swatch" (still applied), an unnamed colour a listed swatch, a named swatch a "copy" (`swatch.new`); `swatch.create {gradient}` makes a gradient swatch from colour swatches. No readiness percentage change.

@@ -21,12 +21,30 @@ use designcraft_fonts::{FontDb, FontFace};
 use designcraft_geom::kurbo::Shape as _;
 use designcraft_geom::{Affine, BezPath, Rect};
 use krilla::geom::Point;
-use krilla::paint::Stroke;
+use krilla::num::NormalizedF32;
+use krilla::paint::{Fill, FillRule, Paint, Stroke};
 use krilla::surface::Surface;
 use krilla::tagging::{Artifact, ArtifactType, ContentTag, SpanTag};
 use krilla::text::{Font, GlyphId, KrillaGlyph};
 
 use crate::export::{Exporter, solid_fill, tf, to_path};
+
+impl Exporter<'_> {
+    /// A text run's paint: solid, or a gradient spanning the frame's box (`area`, text space),
+    /// for glyphs drawn under `origin` (text space ← run space).
+    fn text_paint(&mut self, swatch: &str, tint: f32, origin: Affine, area: Rect) -> Option<Paint> {
+        if designcraft_color::swatch::resolve_gradient(&self.doc.swatches, swatch).is_some() && origin.determinant().abs() > 1e-12 {
+            let fill = designcraft_doc::Fill { swatch: swatch.into(), tint, ..designcraft_doc::Fill::none() };
+            return self.fill_paint_in(&fill, self.text_area.unwrap_or(area), origin.inverse());
+        }
+        self.swatch_color(swatch, tint).map(Into::into)
+    }
+}
+
+/// An opaque nonzero fill with `paint`.
+fn paint_fill(paint: Paint) -> Fill {
+    Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }
+}
 
 /// Private-use characters DesignCraft stores for markers (page numbers, section markers, breaks).
 fn is_marker(c: char) -> bool {
@@ -428,21 +446,27 @@ impl Exporter<'_> {
     fn run(&mut self, s: &mut Surface, cs: &ComposedStory, glyphs: &[PlacedGlyph], baseline: f64, story: &str) {
         let g0 = &glyphs[0];
         let st = &cs.styles[g0.style as usize];
-        let fill = self.swatch_color(&st.fill, st.fill_tint);
-        let stroke =
-            if st.stroke != designcraft_color::swatch::NONE && st.stroke_weight > 0.0 { self.swatch_color(&st.stroke, st.stroke_tint) } else { None };
-        if fill.is_none() && stroke.is_none() {
-            return;
-        }
-        if st.overprint_fill || st.overprint_stroke {
-            self.warn("overprint is not exported yet");
-        }
         let face = g0.face;
         let size = g0.sy * face.upem;
         let hs = g0.sx / g0.sy;
         let tan = if st.skew != 0.0 { st.skew.to_radians().tan() } else { 0.0 };
         let skew = if st.skew != 0.0 { Affine::new([1.0, 0.0, -tan, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
         let origin = Affine::translate((g0.x, baseline + g0.y)) * skew * Affine::scale_non_uniform(hs, 1.0);
+        // Outside a frame (no text area), a gradient spans the run.
+        let end = glyphs.last().map_or(g0.x, |g| g.x + g.adv);
+        let run_area = Rect::new(g0.x, baseline - size, end.max(g0.x + 1.0), baseline + size * 0.25);
+        let fill = self.text_paint(&st.fill, st.fill_tint, origin, run_area);
+        let stroke = if st.stroke != designcraft_color::swatch::NONE && st.stroke_weight > 0.0 {
+            self.text_paint(&st.stroke, st.stroke_tint, origin, run_area)
+        } else {
+            None
+        };
+        if fill.is_none() && stroke.is_none() {
+            return;
+        }
+        if st.overprint_fill || st.overprint_stroke {
+            self.warn("overprint is not exported yet");
+        }
         // Stroke behind fill: a double-width stroke first, as outlines so the text is not
         // duplicated, then the fill over its inner half. With no fill, the stroke is clipped
         // to the outside of the glyphs instead.
@@ -487,8 +511,8 @@ impl Exporter<'_> {
         size: f64,
         hs: f64,
         tan: f64,
-        fill: Option<krilla::color::Color>,
-        stroke: Option<krilla::color::Color>,
+        fill: Option<Paint>,
+        stroke: Option<Paint>,
         stroke_weight: f64,
     ) {
         let Some(g0) = glyphs.first() else { return };
@@ -510,8 +534,8 @@ impl Exporter<'_> {
             .collect();
         let start = order.first().and_then(|&i| glyphs.get(i)).map_or(0.0, |g| (g.x - g0.x) / hs);
         s.push_transform(&tf(origin));
-        s.set_fill(fill.map(|c| solid_fill(c, 1.0)));
-        s.set_stroke(stroke.map(|c| Stroke { paint: c.into(), width: stroke_weight as f32, ..Default::default() }));
+        s.set_fill(fill.map(paint_fill));
+        s.set_stroke(stroke.map(|paint| Stroke { paint, width: stroke_weight as f32, ..Default::default() }));
         s.draw_glyphs(Point::from_xy(start as f32, 0.0), &kg, font, &text, size as f32, false);
         s.set_fill(None);
         s.set_stroke(None);
@@ -524,14 +548,14 @@ impl Exporter<'_> {
         s: &mut Surface,
         outlines: &BezPath,
         origin: Affine,
-        fill: Option<krilla::color::Color>,
-        stroke: Option<krilla::color::Color>,
+        fill: Option<Paint>,
+        stroke: Option<Paint>,
         stroke_weight: f64,
     ) {
         let Some(p) = to_path(outlines) else { return };
         s.push_transform(&tf(origin));
-        s.set_fill(fill.map(|c| solid_fill(c, 1.0)));
-        s.set_stroke(stroke.map(|c| Stroke { paint: c.into(), width: stroke_weight as f32, ..Default::default() }));
+        s.set_fill(fill.map(paint_fill));
+        s.set_stroke(stroke.map(|paint| Stroke { paint, width: stroke_weight as f32, ..Default::default() }));
         s.draw_path(&p);
         s.set_fill(None);
         s.set_stroke(None);
