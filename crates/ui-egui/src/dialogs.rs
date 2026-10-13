@@ -7439,4 +7439,51 @@ mod tests {
         drag(&mut h, title, title - vec2(900.0, 0.0));
         assert!((rect(&h).right() - 100.0).abs() < 2.0, "{:?}", rect(&h));
     }
+
+    #[test]
+    fn the_new_document_window_drags_mostly_aside_and_keeps_its_preview() {
+        use egui::{Event, Modifiers, PointerButton, vec2};
+        use egui_kittest::{Harness, kittest::Queryable};
+        let rect = |h: &Harness<'static, DesignApp>| h.ctx.memory(|m| m.area_rect(egui::Id::new("dialog"))).unwrap();
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"title": "A"})).unwrap();
+        app.ui.new_document_preview = true;
+        app.run("app.newDocumentDialog", json!({})).unwrap();
+        let mut ready = false;
+        let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            move |ui, app: &mut DesignApp| {
+                if !ready {
+                    crate::theme::install_fonts(ui.ctx(), &app.ui.language);
+                    crate::theme::apply(ui.ctx(), &crate::theme::Tokens::for_brightness(crate::theme::Brightness::default()));
+                    ready = true;
+                    return;
+                }
+                show(app, ui.ctx());
+            },
+            app,
+        );
+        h.run_steps(6);
+        let preview = h.state().session.new_document_preview();
+        assert!(preview.is_some(), "Preview is on");
+        let centred = rect(&h);
+        assert!(centred.width() > 900.0, "{centred:?}");
+        let from = h.get_all_by_label("New Document").map(|n| n.rect().center()).min_by(|a, b| a.y.total_cmp(&b.y)).unwrap();
+        let to = from + vec2(1300.0, 0.0);
+        h.event(Event::PointerMoved(from));
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        for step in 1..=8 {
+            h.event(Event::PointerMoved(from + (to - from) * (step as f32 / 8.0)));
+            h.run_steps(1);
+        }
+        h.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(3);
+        // All but 100 px of the window's width is past the right edge, over the preview.
+        assert!((rect(&h).left() - 1300.0).abs() < 2.0, "{:?}", rect(&h));
+        let app = h.state();
+        assert_eq!(app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some("newDocument"));
+        assert_eq!(app.session.new_document_preview(), preview, "moving the window keeps the preview");
+        assert_eq!(app.session.documents().len(), 2);
+    }
 }
