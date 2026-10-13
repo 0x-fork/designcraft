@@ -124,7 +124,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Place…",
             ["File"],
             Some("Cmd+D"),
-            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?: finite number > 0 (null: absent), pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), loadCursor?: with no frame to fill and no x/y, an image loads into the place cursor (File › Place), layoutPage?: n (IDML / .designcraft: that page's objects as a group)} — places an image into `frame` when given; otherwise any explicit x/y/spread/width creates a new frame; otherwise uses the selected empty or graphic frame, or creates a new frame; text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect` — {autoflow?: threads one frame per page column (from the first frame on), adding pages until the text fits, removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename}",
+            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?: finite number > 0 (null: absent), pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), loadCursor?: with no frame to fill and no x/y, an image loads into the place cursor (File › Place), layoutPage?: n (IDML / .designcraft: that page's objects as a group)} — places an image into `frame` when given; otherwise any explicit x/y/spread/width creates a new frame; otherwise uses the selected empty or graphic frame, or creates a new frame; text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect` — {autoflow?: threads one frame per page column (from the first frame on), adding pages until the text fits, removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename, link?: keep the file linked (Links panel; default: the linkTextFiles preference)}",
             has_doc,
             file_place
         ),
@@ -405,7 +405,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Text files (plain, Word, RTF) flow into frames.
     if designcraft_textimport::is_text_file(&name) {
-        return super::place_text::place_text(s, p, &name, &bytes);
+        return super::place_text::place_text(s, p, &name, &bytes, link);
     }
     let want_w = p
         .get("width")

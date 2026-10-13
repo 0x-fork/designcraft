@@ -1900,6 +1900,7 @@ impl<'r> Importer<'r> {
             objects: objects.into_iter().map(Arc::new).collect(),
             editorial: Vec::new(),
             link: None,
+            file_link: None,
         };
         st.fix_notes();
         st.fix_marks();

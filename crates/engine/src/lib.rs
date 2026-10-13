@@ -233,6 +233,9 @@ pub struct Prefs {
     pub recovery_minutes: f64,
     /// File › New › Document › Save Document Preset: saved document presets, by name (`title`).
     pub document_presets: Vec<designcraft_doc::build::NewDocument>,
+    /// Preferences › File Handling › Create Links When Placing Text Files: placed text files are
+    /// linked (Links panel) unless `file.place` says otherwise.
+    pub link_text_files: bool,
 }
 
 /// A starter autocorrect list (common English typing slips).
@@ -283,6 +286,7 @@ impl Default for Prefs {
             show_added_text: true,
             show_note_anchors: true,
             recovery_minutes: 0.5,
+            link_text_files: false,
         }
     }
 }
