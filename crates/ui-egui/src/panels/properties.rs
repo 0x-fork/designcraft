@@ -2153,7 +2153,12 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         ui.data_mut(|d| d.insert_temp(sel_key, c));
     }
     ui.add_space(6.0);
-    if let Some(path) = rows.iter().find(|r| r["asset"].as_u64().or_else(|| r["story"].as_u64()) == chosen).and_then(|r| r["path"].as_str()).filter(|path| !path.is_empty()) {
+    if let Some(path) = rows
+        .iter()
+        .find(|r| r["asset"].as_u64().or_else(|| r["story"].as_u64()) == chosen)
+        .and_then(|r| r["path"].as_str())
+        .filter(|path| !path.is_empty())
+    {
         // A selected link stays distinguishable even if two rows truncate to the same prefix.
         ui.add(egui::Label::new(egui::RichText::new(path).color(t.text_dim).size(11.0)).wrap());
         ui.add_space(6.0);
