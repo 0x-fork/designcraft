@@ -26,13 +26,16 @@ pub struct EpubOptions {
     pub language: String,
     /// Stable identifier (urn:uuid:…); derived from the title when absent.
     pub identifier: Option<String>,
-    /// Cover image (PNG), shown first and marked as the book's cover.
+    /// Cover image (PNG or JPEG), shown first and marked as the book's cover.
     pub cover: Option<Vec<u8>>,
     /// Generic CSS family (`serif`, `sans-serif`, `monospace`, `cursive`, `fantasy`) per font
     /// family, from the fonts' classification; families not in it are guessed from their name.
     pub generic_families: BTreeMap<String, String>,
     /// Font files packaged with the book and declared with `@font-face`.
     pub fonts: Vec<EmbeddedFont>,
+    /// `dcterms:modified` (Unix seconds, UTC); the document's last save, else its creation, when
+    /// absent.
+    pub modified: Option<i64>,
 }
 
 /// A font file packaged with an EPUB: the face of `family` in `style` (`Bold Italic`…).
@@ -117,6 +120,49 @@ fn font_file(k: usize, f: &EmbeddedFont) -> (String, &'static str) {
     (format!("fonts/{k}-{name}.{ext}"), mime)
 }
 
+/// An ISO 8601 UTC timestamp (`2026-10-13T09:30:00Z`) for Unix seconds `t`.
+fn iso8601(t: i64) -> String {
+    let (days, secs) = (t.div_euclid(86_400), t.rem_euclid(86_400));
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs % 3600 / 60, secs % 60)
+}
+
+/// The package's `dcterms:modified`: the given time, else the document's last save or creation.
+fn modified(doc: &Document, opts: &EpubOptions) -> String {
+    let t = opts.modified.or((doc.modified > 0).then_some(doc.modified)).or((doc.created > 0).then_some(doc.created));
+    t.map_or_else(|| "2026-01-01T00:00:00Z".to_string(), iso8601)
+}
+
+/// The book's identifier: the given one, else a `urn:uuid` derived from the title and the
+/// document's creation time, so a book keeps its identifier from export to export and two books
+/// with the same title don't share one.
+fn identifier(doc: &Document, opts: &EpubOptions, title: &str) -> String {
+    if let Some(id) = opts.identifier.clone().filter(|i| !i.trim().is_empty()) {
+        return id;
+    }
+    // Two FNV-1a 64-bit hashes (different offsets) as 128 bits, shaped as a version-5-style UUID.
+    let seed = format!("{title}\n{}", doc.created);
+    let fnv = |offset: u64| seed.bytes().fold(offset, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
+    let (a, b) = (fnv(0xcbf2_9ce4_8422_2325), fnv(0x84222325_cbf29ce4));
+    let hi = (a & 0xffff_ffff_ffff_0fff) | 0x5000;
+    let lo = (b & 0x3fff_ffff_ffff_ffff) | 0x8000_0000_0000_0000;
+    format!("urn:uuid:{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", hi >> 32, (hi >> 16) & 0xffff, hi & 0xffff, lo >> 48, lo & 0xffff_ffff_ffff)
+}
+
+/// Package name and media type of a cover image: JPEG by its signature, else PNG.
+fn cover_file(data: &[u8]) -> (&'static str, &'static str) {
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) { ("images/cover.jpg", "image/jpeg") } else { ("images/cover.png", "image/png") }
+}
+
 /// A page of a fixed-layout EPUB: its image (PNG), size in points and text (kept for search,
 /// read-aloud and accessibility).
 #[derive(Clone, Debug)]
@@ -133,7 +179,8 @@ pub fn export_fixed_epub(doc: &Document, pages: &[FixedPage], opts: &EpubOptions
     let zerr = |e: zip::result::ZipError| EpubError(e.to_string());
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
     let lang = language_tag(&opts.language);
-    let id = opts.identifier.clone().unwrap_or_else(|| format!("urn:designcraft:{}", slug(&title)));
+    let id = identifier(doc, opts, &title);
+    let modified = modified(doc, opts);
     let mut manifest = String::from("<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n");
     let mut spine = String::new();
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -163,7 +210,7 @@ pub fn export_fixed_epub(doc: &Document, pages: &[FixedPage], opts: &EpubOptions
     );
     let author = opts.author.as_deref().map(|a| format!("<dc:creator>{}</dc:creator>", xml_text(a))).unwrap_or_default();
     let opf = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"bookid\" xml:lang=\"{lang}\" prefix=\"rendition: http://www.idpf.org/vocab/rendition/#\">\n<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n<dc:identifier id=\"bookid\">{}</dc:identifier>\n<dc:title>{}</dc:title>\n<dc:language>{lang}</dc:language>{author}\n<meta property=\"dcterms:modified\">2026-01-01T00:00:00Z</meta>\n<meta property=\"rendition:layout\">pre-paginated</meta>\n<meta property=\"rendition:spread\">auto</meta>\n<meta name=\"original-resolution\" content=\"{vw}x{vh}\"/>\n<meta name=\"generator\" content=\"DesignCraft\"/>\n</metadata>\n<manifest>\n{manifest}</manifest>\n<spine>\n{spine}</spine>\n</package>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"bookid\" xml:lang=\"{lang}\" prefix=\"rendition: http://www.idpf.org/vocab/rendition/#\">\n<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n<dc:identifier id=\"bookid\">{}</dc:identifier>\n<dc:title>{}</dc:title>\n<dc:language>{lang}</dc:language>{author}\n<meta property=\"dcterms:modified\">{modified}</meta>\n<meta property=\"rendition:layout\">pre-paginated</meta>\n<meta property=\"rendition:spread\">auto</meta>\n<meta name=\"original-resolution\" content=\"{vw}x{vh}\"/>\n<meta name=\"generator\" content=\"DesignCraft\"/>\n</metadata>\n<manifest>\n{manifest}</manifest>\n<spine>\n{spine}</spine>\n</package>\n",
         xml_text(&id),
         xml_text(&title)
     );
@@ -201,6 +248,7 @@ impl Default for EpubOptions {
             cover: None,
             generic_families: BTreeMap::new(),
             fonts: Vec::new(),
+            modified: None,
         }
     }
 }
@@ -1059,7 +1107,8 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
     let io = |e: std::io::Error| EpubError(e.to_string());
     let zerr = |e: zip::result::ZipError| EpubError(e.to_string());
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
-    let id = opts.identifier.clone().unwrap_or_else(|| format!("urn:designcraft:{}", slug(&title)));
+    let id = identifier(doc, opts, &title);
+    let modified = modified(doc, opts);
     let (body, images, toc) = body_html(doc, true, &|name, _, _| name.to_string());
     let lang = language_tag(&opts.language);
     let chapter = format!(
@@ -1088,13 +1137,17 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
         let _ = writeln!(manifest, "<item id=\"font{k}\" href=\"{}\" media-type=\"{mime}\"/>", xml_attr(&name));
     }
     // Cover: an image page first in reading order.
-    if opts.cover.is_some() {
-        manifest.push_str("<item id=\"cover-img\" href=\"images/cover.png\" media-type=\"image/png\" properties=\"cover-image\"/>\n<item id=\"cover\" href=\"cover.xhtml\" media-type=\"application/xhtml+xml\"/>\n");
+    if let Some(c) = &opts.cover {
+        let (name, mime) = cover_file(c);
+        let _ = writeln!(
+            manifest,
+            "<item id=\"cover-img\" href=\"{name}\" media-type=\"{mime}\" properties=\"cover-image\"/>\n<item id=\"cover\" href=\"cover.xhtml\" media-type=\"application/xhtml+xml\"/>"
+        );
     }
     let cover_spine = if opts.cover.is_some() { "<itemref idref=\"cover\"/>\n" } else { "" };
     let author = opts.author.as_deref().map(|a| format!("<dc:creator>{}</dc:creator>", xml_text(a))).unwrap_or_default();
     let opf = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"bookid\" xml:lang=\"{lang}\">\n<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n<dc:identifier id=\"bookid\">{}</dc:identifier>\n<dc:title>{}</dc:title>\n<dc:language>{lang}</dc:language>{author}\n<meta property=\"dcterms:modified\">2026-01-01T00:00:00Z</meta>\n<meta name=\"generator\" content=\"DesignCraft\"/>\n</metadata>\n<manifest>\n{manifest}</manifest>\n<spine>\n{cover_spine}<itemref idref=\"content\"/>\n</spine>\n</package>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"bookid\" xml:lang=\"{lang}\">\n<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n<dc:identifier id=\"bookid\">{}</dc:identifier>\n<dc:title>{}</dc:title>\n<dc:language>{lang}</dc:language>{author}\n<meta property=\"dcterms:modified\">{modified}</meta>\n<meta name=\"generator\" content=\"DesignCraft\"/>\n</metadata>\n<manifest>\n{manifest}</manifest>\n<spine>\n{cover_spine}<itemref idref=\"content\"/>\n</spine>\n</package>\n",
         xml_text(&id),
         xml_text(&title)
     );
@@ -1125,11 +1178,12 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
             z.write_all(&f.data).map_err(io)?;
         }
         if let Some(c) = &opts.cover {
-            z.start_file("OEBPS/images/cover.png", stored).map_err(zerr)?;
+            z.start_file(format!("OEBPS/{}", cover_file(c).0), stored).map_err(zerr)?;
             z.write_all(c).map_err(io)?;
             let xhtml = format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title><style>body{{margin:0;text-align:center}} img{{max-width:100%;max-height:100vh}}</style></head>\n<body epub:type=\"cover\"><img src=\"images/cover.png\" alt=\"{}\"/></body>\n</html>\n",
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title><style>body{{margin:0;text-align:center}} img{{max-width:100%;max-height:100vh}}</style></head>\n<body epub:type=\"cover\"><img src=\"{}\" alt=\"{}\"/></body>\n</html>\n",
                 xml_text(&title),
+                cover_file(c).0,
                 xml_attr(&title)
             );
             z.start_file("OEBPS/cover.xhtml", deflate).map_err(zerr)?;
@@ -1168,6 +1222,52 @@ mod tests {
         z.by_name("OEBPS/style.css").unwrap().read_to_string(&mut css).unwrap();
         assert!(css.contains("p.basic-paragraph"));
         assert!(z.by_name("OEBPS/nav.xhtml").is_ok());
+    }
+
+    #[test]
+    fn iso8601_timestamps() {
+        for (t, want) in [
+            (0, "1970-01-01T00:00:00Z"),
+            (951_782_400, "2000-02-29T00:00:00Z"),
+            (1_791_891_000, "2026-10-13T11:30:00Z"),
+            (-86_400, "1969-12-31T00:00:00Z"),
+        ] {
+            assert_eq!(iso8601(t), want);
+        }
+    }
+
+    /// #771, #773: dcterms:modified is a real time, the default identifier is a stable urn:uuid
+    /// that differs between documents with the same title, and a JPEG cover keeps its type.
+    #[test]
+    fn package_metadata_and_cover_image() {
+        let opf = |d: &Document, opts: &EpubOptions| {
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(export_epub(d, opts).unwrap())).unwrap();
+            let mut s = String::new();
+            z.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut s).unwrap();
+            let names: Vec<String> = z.file_names().map(str::to_string).collect();
+            (s, names)
+        };
+        let id_of = |opf: &str| opf.split("<dc:identifier id=\"bookid\">").nth(1).and_then(|r| r.split('<').next()).unwrap_or_default().to_string();
+        let mut a = Document::new(&NewDocument::default());
+        a.title = "Same".into();
+        a.created = 1_700_000_000;
+        let mut b = a.clone();
+        b.created = 1_700_000_001;
+        let (oa, _) = opf(&a, &EpubOptions::default());
+        let (oa2, _) = opf(&a, &EpubOptions::default());
+        let (ob, _) = opf(&b, &EpubOptions::default());
+        assert!(id_of(&oa).starts_with("urn:uuid:") && id_of(&oa).len() == 45, "{}", id_of(&oa));
+        assert_eq!(id_of(&oa), id_of(&oa2), "stable from export to export");
+        assert_ne!(id_of(&oa), id_of(&ob), "not shared by two books with the same title");
+        // Modified: the given time, else the document's save (or creation) time.
+        assert!(oa.contains("<meta property=\"dcterms:modified\">2023-11-14T22:13:20Z</meta>"), "{oa}");
+        let at = EpubOptions { modified: Some(1_791_891_000), ..Default::default() };
+        assert!(opf(&a, &at).0.contains("2026-10-13T11:30:00Z"));
+        // A JPEG cover is packaged as such.
+        let jpeg = EpubOptions { cover: Some(vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2]), ..Default::default() };
+        let (o, names) = opf(&a, &jpeg);
+        assert!(o.contains("href=\"images/cover.jpg\" media-type=\"image/jpeg\" properties=\"cover-image\""), "{o}");
+        assert!(names.contains(&"OEBPS/images/cover.jpg".to_string()), "{names:?}");
     }
 
     #[test]

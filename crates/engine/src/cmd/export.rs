@@ -12,7 +12,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "{path?, pages?: \"1-3,5\" | [1,3] (1-based positions; default all), flatten?: high|medium|low|ppi (Transparency Flattener: spreads with transparency are rasterised), spreads?: bool, fullScreen?: bool, bookmarksPanel?: bool, pageLayout?: single|continuous|twoUp|twoUpCover|twoUpContinuous, view?: fitPage|fitWidth|actual, advanceSeconds?: number (interactive PDF), bleed?: bool (document bleed), marks?: bool | {crop?, bleed?, pageInfo?, weight?, offset?}, standard?: \"none\"|\"x4\"|\"a2b\", compressImages?: bool, tagged?: bool (structure tree: stories as paragraphs, figures with alt text), media?: bool (interactive: embed placed video and sound), title?, author?} → {path, bytes, pages, warnings} (no path: {base64, …})",
         has_doc, export_pdf),
         cmd!(noundo "file.exportEpub", "Export EPUB (Reflowable)…", ["File"], None,
-        "{path?, title?, author?, language?: \"en\", cover?: bool (the first page as the cover image), embedFonts?: bool (package the stylesheet's fonts whose licence allows it, whole files), fixedLayout?: bool (pre-paginated: each page as an image with its text)} → {path, bytes, warnings} (no path: {base64, bytes, warnings}); warnings name images without alt text, exported as decorative, and fonts not embedded",
+        "{path?, title?, author?, language?: \"en\", identifier?: str (dc:identifier; a stable urn:uuid by default), coverImage?: path (a PNG or JPEG as the cover), cover?: bool (the first page as the cover image), embedFonts?: bool (package the stylesheet's fonts whose licence allows it, whole files), fixedLayout?: bool (pre-paginated: each page as an image with its text)} → {path, bytes, warnings} (no path: {base64, bytes, warnings}); warnings name images without alt text, exported as decorative, and fonts not embedded",
         has_doc, export_epub),
         cmd!(noundo "file.exportFixedEpub", "Export EPUB (Fixed Layout)…", ["File"], None,
         "{path?, title?, author?, language?} — pre-paginated EPUB → {path, bytes} (no path: {base64, bytes})",
@@ -178,12 +178,21 @@ fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
     rr.threads = designcraft_render::default_threads();
     let ropts = designcraft_render::RenderOptions { printing_only: true, ..Default::default() };
     let mut warnings: Vec<String> = Vec::new();
-    let cover = (want_cover && !fixed).then(|| rr.render_page(&st.doc, &s.cache, 0, 2.0, false, &ropts).map(|img| img.to_png())).flatten();
+    // A cover image file (PNG or JPEG), else the first page rendered when `cover` asks for it.
+    let cover = match p.get("coverImage").and_then(Value::as_str).filter(|_| !fixed) {
+        Some(path) => Some(std::fs::read(path).map_err(|e| crate::EngineError::Other(format!("{path}: {e}")))?),
+        None => (want_cover && !fixed).then(|| rr.render_page(&st.doc, &s.cache, 0, 2.0, false, &ropts).map(|img| img.to_png())).flatten(),
+    };
+    if let Some(c) = &cover
+        && !(c.starts_with(b"\x89PNG") || c.starts_with(&[0xFF, 0xD8, 0xFF]))
+    {
+        return Err(crate::EngineError::Other("the cover image must be a PNG or JPEG file".into()));
+    }
     let opts = designcraft_epub::EpubOptions {
         title: p.get("title").and_then(Value::as_str).map(str::to_string),
         author: p.get("author").and_then(Value::as_str).map(str::to_string),
         language: p.get("language").and_then(Value::as_str).unwrap_or("en").to_string(),
-        identifier: None,
+        identifier: p.get("identifier").and_then(Value::as_str).map(str::to_string),
         cover,
         generic_families: generic_families(&st.doc),
         fonts: if p.get("embedFonts").and_then(Value::as_bool).unwrap_or(false) && !fixed {
@@ -191,6 +200,11 @@ fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
         } else {
             Vec::new()
         },
+        // The export time; on the web the document's own save time stands in.
+        #[cfg(not(target_arch = "wasm32"))]
+        modified: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().and_then(|d| i64::try_from(d.as_secs()).ok()),
+        #[cfg(target_arch = "wasm32")]
+        modified: None,
     };
     if fixed {
         let d = &st.doc;
@@ -839,6 +853,30 @@ mod text_tests {
         }
         let semi = css.lines().find(|l| l.contains(".semi {")).unwrap_or_default();
         assert!(semi.contains("font-weight: 600;"), "{css}");
+    }
+
+    /// #771, #773: a cover image file and an identifier through the command; the package's
+    /// modified time is the export's.
+    #[test]
+    fn epub_cover_image_file_and_identifier() {
+        let dir = std::env::temp_dir().join(format!("dc-epub-cover-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let jpg = dir.join("cover.jpg");
+        std::fs::write(&jpg, [0xFF, 0xD8, 0xFF, 0xE0, 0, 16]).unwrap();
+        let bad = dir.join("cover.txt");
+        std::fs::write(&bad, b"not an image").unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1})).unwrap();
+        s.execute("frame.create", &json!({"rect": [72, 72, 400, 200], "content": "text", "text": "Words", "caret": false})).unwrap();
+        let r = s.execute("file.exportEpub", &json!({"coverImage": jpg.to_str().unwrap(), "identifier": "urn:isbn:9780000000002"})).unwrap();
+        let mut z = unzip(r["base64"].as_str().unwrap());
+        let opf = read(&mut z, "OEBPS/content.opf");
+        assert!(opf.contains("<dc:identifier id=\"bookid\">urn:isbn:9780000000002</dc:identifier>"), "{opf}");
+        assert!(opf.contains("href=\"images/cover.jpg\" media-type=\"image/jpeg\""), "{opf}");
+        assert!(!opf.contains("2026-01-01T00:00:00Z"), "the export time, not a fixed date: {opf}");
+        assert!(z.by_name("OEBPS/images/cover.jpg").is_ok());
+        assert!(s.execute("file.exportEpub", &json!({"coverImage": bad.to_str().unwrap()})).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
