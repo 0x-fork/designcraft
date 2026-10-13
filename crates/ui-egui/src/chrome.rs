@@ -739,8 +739,9 @@ fn recent_files(app: &mut DesignApp, ui: &mut egui::Ui) {
     let mut open = None;
     ui.horizontal_wrapped(|ui| {
         for (i, path) in rows {
-            let modified = std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.modified().ok());
-            let there = modified.is_some();
+            let stat = recent_file_stat(ui.ctx(), &path);
+            let there = stat.exists;
+            let modified = there.then_some(stat.modified);
             let (cr, resp) = ui.allocate_exact_size(vec2(140.0, 170.0), Sense::click());
             let resp = resp.on_hover_text(&path);
             ui.painter().rect_filled(cr, 6.0, if resp.hovered() { t.hover } else { t.panel });
@@ -778,7 +779,38 @@ fn recent_files(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The texture of a recent file's saved first-page picture, read again when the file changes.
+/// How often a recent file is looked up on disk again, in ms: the start screen and the Open Recent
+/// menu draw every frame and must not touch the file system each time.
+const RECENT_STAT_MS: f64 = 3000.0;
+
+/// A recent file as last seen on disk.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RecentStat {
+    pub exists: bool,
+    pub modified: Option<std::time::SystemTime>,
+    checked: f64,
+}
+
+/// Whether recent file `path` is there and when it last changed, looked up again at most every
+/// [`RECENT_STAT_MS`].
+pub(crate) fn recent_file_stat(ctx: &egui::Context, path: &str) -> RecentStat {
+    recent_file_stat_at(ctx, path, crate::now_ms())
+}
+
+fn recent_file_stat_at(ctx: &egui::Context, path: &str, now: f64) -> RecentStat {
+    let key = egui::Id::new(("recent_stat", path));
+    if let Some(st) = ctx.data(|d| d.get_temp::<RecentStat>(key))
+        && (0.0..RECENT_STAT_MS).contains(&(now - st.checked))
+    {
+        return st;
+    }
+    let meta = std::fs::metadata(path).ok().filter(std::fs::Metadata::is_file);
+    let st = RecentStat { exists: meta.is_some(), modified: meta.and_then(|m| m.modified().ok()), checked: now };
+    ctx.data_mut(|d| d.insert_temp(key, st.clone()));
+    st
+}
+
+/// The texture of a recent file's saved first-page picture, decoded once per file version.
 fn recent_preview_texture(ctx: &egui::Context, path: &str, modified: Option<std::time::SystemTime>) -> Option<egui::TextureHandle> {
     type Cached = (Option<std::time::SystemTime>, Option<egui::TextureHandle>);
     let key = egui::Id::new(("recent_preview", path));
@@ -857,6 +889,22 @@ mod tests {
     /// The Control panel's last control with no text frame selected.
     const LAST_CONTROL: &str = "Align bottom edges";
     const FIRST_CONTROL: &str = "Rotate 90° Counterclockwise";
+
+    /// The start screen and Open Recent menu look a recent file up on disk at most every few
+    /// seconds, not every frame.
+    #[test]
+    fn recent_files_are_looked_up_on_disk_every_few_seconds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.designcraft");
+        std::fs::write(&path, b"x").unwrap();
+        let path = path.to_string_lossy().to_string();
+        let ctx = egui::Context::default();
+        let first = super::recent_file_stat_at(&ctx, &path, 10_000.0);
+        assert!(first.exists && first.modified.is_some());
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(super::recent_file_stat_at(&ctx, &path, 10_000.0 + super::RECENT_STAT_MS - 1.0), first, "cached");
+        assert!(!super::recent_file_stat_at(&ctx, &path, 10_000.0 + super::RECENT_STAT_MS).exists, "looked up again");
+    }
 
     fn app() -> crate::DesignApp {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());

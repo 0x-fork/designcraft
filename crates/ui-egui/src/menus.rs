@@ -2615,7 +2615,7 @@ fn recent_menu_items(app: &mut DesignApp, ui: &mut egui::Ui) {
             Item::Cmd { label, id, params, .. } => {
                 let path = params["index"].as_u64().and_then(|i| app.session.prefs.recent_files.get(i as usize)).cloned().unwrap_or_default();
                 let mut text = egui::RichText::new(label);
-                if !std::path::Path::new(&path).is_file() {
+                if !crate::chrome::recent_file_stat(ui.ctx(), &path).exists {
                     text = text.color(dim);
                 }
                 if ui.button(crate::rtl::widget(ui, text)).on_hover_text(&path).clicked() {
