@@ -186,6 +186,24 @@ pub fn specs() -> Vec<CommandSpec> {
             set_flag(s, p, move |i| i.fill = Fill { swatch: sw.clone(), tint, ..i.fill.clone() }, false)
         }),
         cmd!(
+            "object.swapFillStroke",
+            "Swap Fill and Stroke",
+            [],
+            None,
+            "{ids?} — each object's fill and stroke colours (and tints) trade places; locked objects stay as they are",
+            has_editable_selection,
+            |s, p| edit_unlocked(s, p, swap_fill_stroke)
+        ),
+        cmd!(
+            "object.defaultFillStroke",
+            "Default Fill and Stroke",
+            [],
+            None,
+            "{ids?} — no fill and a black stroke; locked objects stay as they are",
+            has_editable_selection,
+            |s, p| edit_unlocked(s, p, default_fill_stroke)
+        ),
+        cmd!(
             "object.stroke",
             "Stroke",
             [],
@@ -1466,6 +1484,60 @@ fn set_flag(s: &mut Session, p: &Value, f: impl Fn(&mut Item), deselect: bool) -
     })
 }
 
+/// An object a colour command may change: neither it nor its layer is locked.
+fn unlocked(d: &Document, it: &Item) -> bool {
+    !it.locked && d.layer(it.layer).is_none_or(|l| !l.locked)
+}
+
+fn has_editable_selection(s: &Session) -> std::result::Result<(), String> {
+    has_selection(s)?;
+    let st = s.active().ok_or_else(|| super::NOTHING_SELECTED.to_string())?;
+    if st.selection.items.iter().any(|id| st.doc.item(*id).is_some_and(|it| unlocked(&st.doc, it))) {
+        Ok(())
+    } else {
+        Err("the selected objects are locked".into())
+    }
+}
+
+/// Runs `f` on each unlocked target in one edit (one undo step).
+fn edit_unlocked(s: &mut Session, p: &Value, f: impl Fn(&mut Item)) -> Result<Value> {
+    let ids = targets(s, p)?;
+    s.edit(|d, _| {
+        let mut changed = 0;
+        for id in &ids {
+            if d.item(*id).is_some_and(|it| unlocked(d, it))
+                && let Some(it) = d.item_mut(*id)
+            {
+                f(it);
+                changed += 1;
+            }
+        }
+        Ok(json!({"changed": changed}))
+    })
+}
+
+/// A stroke that gets a colour needs a weight to show it.
+fn visible_weight(st: &mut Stroke) {
+    if st.swatch != designcraft_color::swatch::NONE && st.weight <= 0.0 {
+        st.weight = Stroke::default().weight;
+    }
+}
+
+fn swap_fill_stroke(it: &mut Item) {
+    let fill = std::mem::take(&mut it.fill);
+    it.fill = Fill { swatch: std::mem::take(&mut it.stroke.swatch), tint: it.stroke.tint, ..fill.clone() };
+    it.stroke.swatch = fill.swatch;
+    it.stroke.tint = fill.tint;
+    visible_weight(&mut it.stroke);
+}
+
+fn default_fill_stroke(it: &mut Item) {
+    it.fill = Fill { swatch: designcraft_color::swatch::NONE.into(), tint: 1.0, ..it.fill.clone() };
+    it.stroke.swatch = designcraft_color::swatch::BLACK.into();
+    it.stroke.tint = 1.0;
+    visible_weight(&mut it.stroke);
+}
+
 fn all_flag(s: &mut Session, f: impl Fn(&mut Item)) -> Result<Value> {
     s.edit(|d, _| {
         for i in 0..d.spreads.len() {
@@ -2432,6 +2504,44 @@ mod arrange_tests {
 #[cfg(test)]
 mod step_repeat_tests {
     use super::*;
+
+    #[test]
+    fn swap_and_default_fill_stroke_are_one_undo_step_per_object() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = |v: Value| ItemId(v["id"].as_u64().unwrap());
+        let a = id(s.execute("frame.create", &json!({"rect": [0, 0, 10, 10]})).unwrap());
+        let b = id(s.execute("frame.create", &json!({"rect": [20, 0, 30, 10]})).unwrap());
+        let locked = id(s.execute("frame.create", &json!({"rect": [40, 0, 50, 10]})).unwrap());
+        s.execute("object.fill", &json!({"ids": [a.0], "swatch": "[Paper]", "tint": 0.5})).unwrap();
+        s.execute("object.stroke", &json!({"ids": [a.0], "swatch": "[Black]", "weight": 2})).unwrap();
+        s.execute("object.fill", &json!({"ids": [b.0, locked.0], "swatch": "[Black]"})).unwrap();
+        s.execute("object.stroke", &json!({"ids": [b.0, locked.0], "swatch": "[None]"})).unwrap();
+        s.execute("object.lock", &json!({"ids": [locked.0]})).unwrap();
+        s.execute("selection.set", &json!({"ids": [a.0, b.0, locked.0]})).unwrap();
+        let colors = |s: &Session, i: ItemId| {
+            let it = s.doc().unwrap().doc.item(i).unwrap().clone();
+            (it.fill.swatch, it.fill.tint, it.stroke.swatch, it.stroke.tint)
+        };
+        let before = [colors(&s, a), colors(&s, b), colors(&s, locked)];
+
+        assert_eq!(s.execute("object.swapFillStroke", &json!({})).unwrap()["changed"], 2);
+        assert_eq!(colors(&s, a), ("[Black]".into(), 1.0, "[Paper]".into(), 0.5));
+        assert_eq!(colors(&s, b), ("[None]".into(), 1.0, "[Black]".into(), 1.0));
+        assert_eq!(colors(&s, locked), before[2], "a locked object keeps its colours");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!([colors(&s, a), colors(&s, b), colors(&s, locked)], before, "one undo restores both");
+
+        s.execute("object.defaultFillStroke", &json!({})).unwrap();
+        for i in [a, b] {
+            assert_eq!(colors(&s, i), ("[None]".into(), 1.0, "[Black]".into(), 1.0));
+        }
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!([colors(&s, a), colors(&s, b), colors(&s, locked)], before);
+
+        s.execute("selection.set", &json!({"ids": [locked.0]})).unwrap();
+        assert!(s.execute("object.swapFillStroke", &json!({})).is_err(), "nothing unlocked to change");
+    }
 
     #[test]
     fn step_repeat_validates_counts_and_offsets() {
