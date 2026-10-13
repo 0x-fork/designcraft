@@ -1059,6 +1059,28 @@ fn split_chapters(body: &str) -> Vec<String> {
     out
 }
 
+/// `chapter` (the file `own`) with each in-document link (`href="#id"`) to an element in another
+/// chapter file pointed at that file.
+fn link_across_chapters(chapter: &str, own: &str, files: &BTreeMap<String, String>) -> String {
+    const HREF: &str = "href=\"#";
+    let mut out = String::with_capacity(chapter.len());
+    let mut rest = chapter;
+    while let Some(i) = rest.find(HREF) {
+        out.push_str(rest.get(..i).unwrap_or_default());
+        let tail = rest.get(i + HREF.len()..).unwrap_or_default();
+        let id = tail.split('"').next().unwrap_or_default();
+        match files.get(id) {
+            Some(file) if file != own => {
+                let _ = write!(out, "href=\"{file}#");
+            }
+            _ => out.push_str(HREF),
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The package file of chapter `k` (0-based): `content.xhtml`, then `content2.xhtml`, ….
 fn chapter_file(k: usize) -> String {
     if k == 0 { "content.xhtml".to_string() } else { format!("content{}.xhtml", k + 1) }
@@ -1369,6 +1391,8 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
             }
         }
     }
+    // Note links whose target ended up in another file (endnotes end the book) point at it.
+    let chapters: Vec<String> = chapters.iter().enumerate().map(|(k, c)| link_across_chapters(c, &chapter_file(k), &files)).collect();
     let mut nav_items = nav_list(&toc, &files);
     if nav_items.is_empty() {
         nav_items = format!("<li><a href=\"content.xhtml\">{}</a></li>", xml_text(&title));
@@ -1764,6 +1788,41 @@ mod tests {
         // HTML stays one page, without the marks.
         let html = export_html(&d, &HtmlOptions::default());
         assert!(!html.contains(CHAPTER_MARK) && html.contains("Second text"));
+    }
+
+    /// Note links stay working across chapter files: endnotes end the book, in the last file.
+    #[test]
+    fn note_links_point_at_the_chapter_file_of_their_target() {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        d.styles_mut().paragraph.push(designcraft_doc::ParagraphStyle {
+            name: "Chapter".into(),
+            based_on: None,
+            next_style: None,
+            para: Default::default(),
+            chars: CharAttrs::default(),
+            shortcut: String::new(),
+        });
+        d.styles_mut().export_tags.insert("p:Chapter".into(), designcraft_doc::ExportTag { tag: "h1".into(), class: String::new() });
+        let (_, sid) = d
+            .add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 400.0), lid, "One\nFirst text\nTwo\nSecond text", ParaFormat::default())
+            .unwrap();
+        let st = d.story_mut(sid).unwrap();
+        st.paras[0].style = "Chapter".into();
+        st.paras[2].style = "Chapter".into();
+        // After "First": an endnote and a footnote.
+        st.insert_endnote(9, "End note", ParaFormat::default());
+        st.insert_note(9, "Foot note", ParaFormat::default());
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(export_epub(&d, &EpubOptions::default()).unwrap())).unwrap();
+        let mut read = |path: &str| {
+            let mut s = String::new();
+            z.by_name(path).unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        let (first, last) = (read("OEBPS/content.xhtml"), read("OEBPS/content2.xhtml"));
+        assert!(first.contains("id=\"enref-1\" href=\"content2.xhtml#en-1\""), "{first}");
+        assert!(first.contains("href=\"#fn-1\"") && first.contains("href=\"#fnref-1\""), "a footnote stays in its chapter: {first}");
+        assert!(last.contains("Second text") && last.contains("<a href=\"content.xhtml#enref-1\">"), "{last}");
     }
 
     #[test]
