@@ -172,23 +172,23 @@ impl Session {
     /// leave the previous preview as it was. Returns the preview document's uid.
     pub fn preview_new_document(&mut self, p: &Value) -> Result<u64> {
         let mut nd = new_document_settings(self, p)?;
-        nd.title = str_param(p, "title").map(str::to_string).unwrap_or_else(|| self.next_untitled_title());
-        let st = DocState::new(Document::new(&nd), None);
-        let uid = st.uid;
-        let shown = self.new_document_preview.and_then(|(old, _)| self.docs.iter().position(|d| d.uid == old));
         let previous = match self.new_document_preview {
             Some((_, previous)) => previous,
             None => self.active().map(|d| d.uid),
         };
-        match shown.and_then(|i| self.docs.get_mut(i).map(|d| (i, d))) {
+        let shown = self.new_document_preview.and_then(|(old, _)| self.docs.iter().position(|d| d.uid == old));
+        // A preview edited or saved by a menu or script while the window is open has become a
+        // document of its own: it stays, and the preview gets a tab of its own.
+        let replace = shown.filter(|&i| self.docs.get(i).is_some_and(|d| !d.is_dirty() && d.path.is_none()));
+        if replace.is_none() && shown.is_some() {
+            self.untitled += 1;
+        }
+        nd.title = str_param(p, "title").map(str::to_string).unwrap_or_else(|| self.next_untitled_title());
+        let st = DocState::new(Document::new(&nd), None);
+        let uid = st.uid;
+        match replace.and_then(|i| self.docs.get_mut(i).map(|d| (i, d))) {
             Some((i, d)) => {
-                let old = std::mem::replace(d, st);
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(dir) = &self.recovery_dir {
-                    crate::recovery::discard(dir, old.uid);
-                }
-                #[cfg(target_arch = "wasm32")]
-                let _ = old;
+                *d = st;
                 self.active = Some(i);
             }
             None => {
@@ -206,20 +206,41 @@ impl Session {
         self.new_document_preview.map(|(uid, _)| uid)
     }
 
-    /// Remove New Document's preview document and make the document that was active before it
-    /// active again. Returns the preview's uid.
+    /// End New Document's preview. Its document goes, and if it was still the active document,
+    /// the one that was active before it is active again. A preview that a menu or script has
+    /// edited or saved stays open as a document, with an Untitled number. Returns the uid of the
+    /// document removed. Without a preview it does nothing.
     pub fn end_new_document_preview(&mut self) -> Option<u64> {
         let (uid, previous) = self.new_document_preview.take()?;
-        if let Some(i) = self.docs.iter().position(|d| d.uid == uid) {
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(dir) = &self.recovery_dir {
-                crate::recovery::discard(dir, uid);
-            }
-            self.docs.remove(i);
+        let i = self.docs.iter().position(|d| d.uid == uid)?;
+        let d = self.docs.get(i)?;
+        if d.is_dirty() || d.path.is_some() {
+            self.untitled += 1;
+            return None;
         }
-        let back = previous.and_then(|p| self.docs.iter().position(|d| d.uid == p));
-        self.active = back.or_else(|| self.docs.len().checked_sub(1));
+        self.docs.remove(i);
+        self.active = match self.active {
+            Some(a) if a == i => previous.and_then(|p| self.docs.iter().position(|d| d.uid == p)).or_else(|| self.docs.len().checked_sub(1)),
+            Some(a) if a > i => Some(a - 1),
+            a => a,
+        };
         Some(uid)
+    }
+
+    /// Create in the New Document window, with the settings the preview shows: the preview
+    /// document becomes the new document, as `file.new` would make it (the next Untitled number,
+    /// no undo history). Returns its index, or `None` when there is no unedited preview to keep.
+    pub fn keep_new_document_preview(&mut self) -> Option<usize> {
+        let (uid, _) = self.new_document_preview?;
+        let i = self.docs.iter().position(|d| d.uid == uid && !d.is_dirty() && d.path.is_none())?;
+        self.new_document_preview = None;
+        self.untitled += 1;
+        if let Some(d) = self.docs.get_mut(i) {
+            d.history.undo.clear();
+            d.history.redo.clear();
+        }
+        self.active = Some(i);
+        Some(i)
     }
 }
 
@@ -881,14 +902,28 @@ mod new_document_tests {
         assert!(s.preview_new_document(&json!({"width": 0})).is_err());
         let d = s.doc().unwrap();
         assert_eq!((d.uid, d.doc.settings.page_width, d.doc.page(0).unwrap().columns.count), (b, 400.0, 3), "a refused size keeps it");
-        // Even edited, it never reaches the recovery folder.
-        s.execute("frame.create", &json!({"rect": [10, 10, 100, 100]})).unwrap();
-        assert_eq!(crate::recovery::save(&s, &dir).unwrap(), 0);
+        let listed = s.execute("document.list", &json!({})).unwrap();
+        assert_eq!((listed[0].get("preview"), &listed[1]["preview"]), (None, &json!(true)));
         assert_eq!(s.end_new_document_preview(), Some(b));
         let d = s.doc().unwrap();
         assert_eq!((s.documents().len(), d.uid, d.is_dirty(), d.history.undo.len()), (1, first, false, 0));
+        assert_eq!(s.end_new_document_preview(), None, "without a preview it does nothing");
+        // Edited by a script while shown, it writes no recovery data while it is a preview, and
+        // stays as a document when the window closes, with its Untitled number.
+        let c = s.preview_new_document(&json!({})).unwrap();
+        s.execute("frame.create", &json!({"rect": [10, 10, 100, 100]})).unwrap();
+        assert_eq!(crate::recovery::save(&s, &dir).unwrap(), 0);
+        assert_eq!(s.end_new_document_preview(), None);
+        assert_eq!((s.documents().len(), s.doc().unwrap().uid, s.doc().unwrap().doc.title.as_str()), (2, c, "Untitled-2"));
         s.execute("file.new", &json!({})).unwrap();
-        assert_eq!(s.doc().unwrap().doc.title, "Untitled-2", "the preview took no Untitled number");
+        assert_eq!(s.doc().unwrap().doc.title, "Untitled-3");
+        // Create with the previewed settings keeps the preview as the document.
+        let d = s.preview_new_document(&json!({"pages": 2})).unwrap();
+        assert_eq!(s.keep_new_document_preview(), Some(3));
+        let st = s.doc().unwrap();
+        assert_eq!((st.uid, st.doc.title.as_str(), s.new_document_preview()), (d, "Untitled-4", None));
+        s.execute("file.new", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.title, "Untitled-5");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -12,7 +12,20 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "app.links", "Community & Project Links", [], None,
             "{} → {discord, website, appPage, github, issues} (ArtCraft Discord, website, DesignCraft page and repository)", always, |_, _| Ok(crate::links::all())),
         cmd!(query "document.list", "List Documents", [], None, "{}", always, |s, _| {
-            Ok(json!(s.documents().iter().enumerate().map(|(i, d)| json!({"index": i, "title": d.title(), "dirty": d.is_dirty(), "active": Some(i) == s.active_index()})).collect::<Vec<_>>()))
+            let preview = s.new_document_preview();
+            Ok(json!(s
+                .documents()
+                .iter()
+                .enumerate()
+                .map(|(i, d)| {
+                    let mut v = json!({"index": i, "title": d.title(), "dirty": d.is_dirty(), "active": Some(i) == s.active_index()});
+                    // New Document's preview, not a document yet.
+                    if preview == Some(d.uid) {
+                        v["preview"] = json!(true);
+                    }
+                    v
+                })
+                .collect::<Vec<_>>()))
         }),
         cmd!(noundo "tool.select", "Select Tool", [], None, "{tool: selection|directSelection|type|rectangleFrame|…}", always, |s, p| {
             let t = p.get("tool").and_then(Value::as_str).unwrap_or("selection");

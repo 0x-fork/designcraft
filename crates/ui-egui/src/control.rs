@@ -76,7 +76,18 @@ pub fn inspect(app: &DesignApp, ctx: &egui::Context) -> Value {
         "view": app.view().map(|v| serde_json::to_value(v).unwrap_or_default()),
         "canvasRect": app.canvas_rect.map(|c| json!([c.left(), c.top(), c.width(), c.height()])),
         "window": [r.width(), r.height()],
-        "documents": app.session.documents().iter().map(|d| json!({"title": d.title(), "dirty": d.is_dirty()})).collect::<Vec<_>>(),
+        "documents": app
+            .session
+            .documents()
+            .iter()
+            .map(|d| {
+                let mut v = json!({"title": d.title(), "dirty": d.is_dirty()});
+                if app.session.new_document_preview() == Some(d.uid) {
+                    v["preview"] = json!(true);
+                }
+                v
+            })
+            .collect::<Vec<_>>(),
         "currentPage": crate::canvas::current_page(app),
         "dialog": app.ui.dialog.as_ref().map(|d| serde_json::to_value(d).unwrap_or_default()),
         "activeDocument": app.session.active_index(),
