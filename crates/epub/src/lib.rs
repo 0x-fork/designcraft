@@ -720,6 +720,11 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
                     }
                     list = list_tag;
                 }
+                // An EPUB chapter file starts before each top-level h1, outside any open list or
+                // preformatted block.
+                if depth == 0 && self.heading_ids.is_some() && heading_level(tag) == Some(1) {
+                    out.push_str(CHAPTER_MARK);
+                }
                 if continues_pre {
                     out.push('\n');
                 } else {
@@ -1015,6 +1020,50 @@ pub fn story_html(doc: &Document, sid: StoryId) -> String {
     StoryWriter::new(doc, true, None).story(sid, None)
 }
 
+/// Where the EPUB body splits into chapter files: before each `h1`.
+const CHAPTER_MARK: &str = "<!--dc:chapter-->";
+
+/// The body split at its [`CHAPTER_MARK`]s into chapter bodies, each with its sections closed
+/// and the one a split goes through reopened in the next; a part with nothing but the start of a
+/// section (a story that opens with its `h1`) moves that start into the next part.
+fn split_chapters(body: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut carry: Option<String> = None;
+    for piece in body.split(CHAPTER_MARK) {
+        let mut part = carry.take().unwrap_or_default();
+        part.push_str(piece);
+        if let Some(open) = part.rfind("<section").filter(|i| !part[*i..].contains("</section>")) {
+            let tag_end = part[open..].find('>').map_or(part.len(), |e| open + e + 1);
+            if part[tag_end..].trim().is_empty() {
+                carry = Some(part[open..].to_string());
+                part.truncate(open);
+            } else {
+                part.push_str("</section>\n");
+                carry = Some("<section>\n".to_string());
+            }
+        }
+        if !part.trim().is_empty() {
+            out.push(part);
+        }
+    }
+    if let Some(rest) = carry.filter(|c| !c.trim().is_empty())
+        && let Some(last) = out.last_mut()
+    {
+        // Only an opening tag can be left over; close it where it stands.
+        last.push_str(&rest);
+        last.push_str("</section>\n");
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// The package file of chapter `k` (0-based): `content.xhtml`, then `content2.xhtml`, ….
+fn chapter_file(k: usize) -> String {
+    if k == 0 { "content.xhtml".to_string() } else { format!("content{}.xhtml", k + 1) }
+}
+
 /// The level of a heading element (`h1` → 1 … `h6` → 6).
 fn heading_level(tag: &str) -> Option<u8> {
     tag.strip_prefix('h').and_then(|n| n.parse::<u8>().ok()).filter(|n| (1..=6).contains(n))
@@ -1053,11 +1102,12 @@ fn toc_entries(doc: &Document, order: &[Block]) -> Vec<(String, String, u8)> {
 
 /// The table of contents as nested `li`/`ol` items (the content of the navigation's outer
 /// `ol`): a deeper level goes into the previous item, skipped levels count as one.
-fn nav_list(entries: &[(String, String, u8)]) -> String {
+fn nav_list(entries: &[(String, String, u8)], files: &BTreeMap<String, String>) -> String {
     let mut out = String::new();
     let mut open: Vec<u8> = Vec::new();
     for (target, label, level) in entries {
-        let item = format!("<li><a href=\"content.xhtml#{target}\">{}</a>", xml_text(label));
+        let file = files.get(target).map_or("content.xhtml", String::as_str);
+        let item = format!("<li><a href=\"{file}#{target}\">{}</a>", xml_text(label));
         match open.last().copied() {
             None => open.push(*level),
             Some(top) if *level > top => {
@@ -1300,11 +1350,26 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
     let modified = modified(doc, opts);
     let Body { html: body, images, toc, .. } = body_html(doc, true, &|name, _, _| name.to_string());
     let lang = language_tag(&opts.language);
-    let chapter = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\" lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title><link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/></head>\n<body>\n{body}</body>\n</html>\n",
-        xml_text(&title)
-    );
-    let mut nav_items = nav_list(&toc);
+    // One file per chapter (split before each h1), so e-readers needn't load the whole book.
+    let chapters: Vec<String> = split_chapters(&body)
+        .into_iter()
+        .map(|part| {
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\" lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title><link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/></head>\n<body>\n{part}</body>\n</html>\n",
+                xml_text(&title)
+            )
+        })
+        .collect();
+    // The file each navigation target (an element id) ended up in.
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    for (k, c) in chapters.iter().enumerate() {
+        for rest in c.split(" id=\"").skip(1) {
+            if let Some(id) = rest.split('"').next() {
+                files.entry(id.to_string()).or_insert_with(|| chapter_file(k));
+            }
+        }
+    }
+    let mut nav_items = nav_list(&toc, &files);
     if nav_items.is_empty() {
         nav_items = format!("<li><a href=\"content.xhtml\">{}</a></li>", xml_text(&title));
     }
@@ -1314,8 +1379,14 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
         xml_text(opts.toc_title.as_deref().filter(|t| !t.trim().is_empty()).unwrap_or(contents_title(&opts.language)))
     );
     let mut manifest = String::from(
-        "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n<item id=\"content\" href=\"content.xhtml\" media-type=\"application/xhtml+xml\"/>\n",
+        "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n",
     );
+    let mut spine = String::new();
+    for k in 0..chapters.len() {
+        let item = if k == 0 { "content".to_string() } else { format!("content{}", k + 1) };
+        let _ = writeln!(manifest, "<item id=\"{item}\" href=\"{}\" media-type=\"application/xhtml+xml\"/>", chapter_file(k));
+        let _ = writeln!(spine, "<itemref idref=\"{item}\"/>");
+    }
     for (k, (name, (mime, _))) in images.iter().enumerate() {
         let _ = writeln!(manifest, "<item id=\"img{k}\" href=\"{}\" media-type=\"{}\"/>", xml_attr(name), xml_attr(mime));
     }
@@ -1334,7 +1405,7 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
     let cover_spine = if opts.cover.is_some() { "<itemref idref=\"cover\"/>\n" } else { "" };
     let author = opts.author.as_deref().map(|a| format!("<dc:creator>{}</dc:creator>", xml_text(a))).unwrap_or_default();
     let opf = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"bookid\" xml:lang=\"{lang}\">\n<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n<dc:identifier id=\"bookid\">{}</dc:identifier>\n<dc:title>{}</dc:title>\n<dc:language>{lang}</dc:language>{author}\n<meta property=\"dcterms:modified\">{modified}</meta>\n<meta name=\"generator\" content=\"DesignCraft\"/>\n</metadata>\n<manifest>\n{manifest}</manifest>\n<spine>\n{cover_spine}<itemref idref=\"content\"/>\n</spine>\n</package>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"bookid\" xml:lang=\"{lang}\">\n<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n<dc:identifier id=\"bookid\">{}</dc:identifier>\n<dc:title>{}</dc:title>\n<dc:language>{lang}</dc:language>{author}\n<meta property=\"dcterms:modified\">{modified}</meta>\n<meta name=\"generator\" content=\"DesignCraft\"/>\n</metadata>\n<manifest>\n{manifest}</manifest>\n<spine>\n{cover_spine}{spine}</spine>\n</package>\n",
         xml_text(&id),
         xml_text(&title)
     );
@@ -1351,10 +1422,13 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
             ("OEBPS/content.opf", opf.as_bytes()),
             ("OEBPS/nav.xhtml", nav.as_bytes()),
             ("OEBPS/style.css", stylesheet_with(doc, &opts.generic_families, &opts.fonts).as_bytes()),
-            ("OEBPS/content.xhtml", chapter.as_bytes()),
         ] {
             z.start_file(name, deflate).map_err(zerr)?;
             z.write_all(data).map_err(io)?;
+        }
+        for (k, c) in chapters.iter().enumerate() {
+            z.start_file(format!("OEBPS/{}", chapter_file(k)), deflate).map_err(zerr)?;
+            z.write_all(c.as_bytes()).map_err(io)?;
         }
         for (name, (_, data)) in &images {
             z.start_file(format!("OEBPS/{name}"), stored).map_err(zerr)?;
@@ -1609,12 +1683,13 @@ mod tests {
         };
         let nl = EpubOptions { language: "nl".into(), ..Default::default() };
         let nav = read(&d, &nl, "OEBPS/nav.xhtml");
-        let link = |t: &str, l: &str| format!("<a href=\"content.xhtml#{t}\">{l}</a>");
+        let link = |f: &str, t: &str, l: &str| format!("<a href=\"{f}#{t}\">{l}</a>");
+        // Each h1 starts a chapter file (#768).
         let want = format!(
             "<h1>Inhoud</h1><ol><li>{}<ol><li>{}</li></ol></li><li>{}</li></ol>",
-            link("s0-p0", "One"),
-            link("s0-p2", "One point one"),
-            link("s0-p4", "Two")
+            link("content.xhtml", "s0-p0", "One"),
+            link("content.xhtml", "s0-p2", "One point one"),
+            link("content2.xhtml", "s0-p4", "Two")
         );
         assert!(nav.contains(&want), "{nav}");
         assert!(!nav.contains("Text after the figure"), "{nav}");
@@ -1627,18 +1702,83 @@ mod tests {
         let lid = plain.default_layer();
         plain.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 100.0), lid, "Opening\nrest", ParaFormat::default()).unwrap();
         let nav = read(&plain, &EpubOptions::default(), "OEBPS/nav.xhtml");
-        assert!(nav.contains(&format!("<h1>Contents</h1><ol><li>{}</li></ol>", link("s0", "Opening"))), "{nav}");
+        assert!(nav.contains(&format!("<h1>Contents</h1><ol><li>{}</li></ol>", link("content.xhtml", "s0", "Opening"))), "{nav}");
         // A heading shallower than the one before it but deeper than its parent stays under the
         // parent: h1 A, h3 B, h2 C nest B and C under A.
+        let files: BTreeMap<String, String> = "ABCD".chars().map(|c| (c.to_string(), c.to_string())).collect();
         let e = |t: &str, l: u8| (t.to_string(), t.to_string(), l);
         assert_eq!(
-            nav_list(&[e("A", 1), e("B", 3), e("C", 2), e("D", 1)]),
-            format!("<li>{}<ol><li>{}</li><li>{}</li></ol></li><li>{}</li>", link("A", "A"), link("B", "B"), link("C", "C"), link("D", "D"))
+            nav_list(&[e("A", 1), e("B", 3), e("C", 2), e("D", 1)], &files),
+            format!("<li>{}<ol><li>{}</li><li>{}</li></ol></li><li>{}</li>", link("A", "A", "A"), link("B", "B", "B"), link("C", "C", "C"), link("D", "D", "D"))
         );
         assert_eq!(
-            nav_list(&[e("A", 1), e("B", 2), e("C", 3), e("D", 1)]),
-            format!("<li>{}<ol><li>{}<ol><li>{}</li></ol></li></ol></li><li>{}</li>", link("A", "A"), link("B", "B"), link("C", "C"), link("D", "D"))
+            nav_list(&[e("A", 1), e("B", 2), e("C", 3), e("D", 1)], &files),
+            format!("<li>{}<ol><li>{}<ol><li>{}</li></ol></li></ol></li><li>{}</li>", link("A", "A", "A"), link("B", "B", "B"), link("C", "C", "C"), link("D", "D", "D"))
         );
+    }
+
+    /// #768: the book is split into one file per chapter, before each h1, with well-formed
+    /// sections; the spine and manifest list the files in order.
+    #[test]
+    fn chapters_are_split_at_h1() {
+        let mut d = Document::new(&NewDocument { pages: 3, ..Default::default() });
+        let lid = d.default_layer();
+        d.styles_mut().paragraph.push(designcraft_doc::ParagraphStyle {
+            name: "Chapter".into(),
+            based_on: None,
+            next_style: None,
+            para: Default::default(),
+            chars: CharAttrs::default(),
+            shortcut: String::new(),
+        });
+        d.styles_mut().export_tags.insert("p:Chapter".into(), designcraft_doc::ExportTag { tag: "h1".into(), class: String::new() });
+        // A title page without a heading, then a story that opens with a chapter and has a
+        // second one in the middle.
+        d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 100.0), lid, "Title page", ParaFormat::default()).unwrap();
+        let (_, sid) = d
+            .add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 200.0, 300.0, 400.0), lid, "One\nFirst text\nTwo\nSecond text", ParaFormat::default())
+            .unwrap();
+        let st = d.story_mut(sid).unwrap();
+        st.paras[0].style = "Chapter".into();
+        st.paras[2].style = "Chapter".into();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(export_epub(&d, &EpubOptions::default()).unwrap())).unwrap();
+        let mut read = |path: &str| {
+            let mut s = String::new();
+            z.by_name(path).unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        let (c1, c2, c3) = (read("OEBPS/content.xhtml"), read("OEBPS/content2.xhtml"), read("OEBPS/content3.xhtml"));
+        assert!(c1.contains("Title page") && !c1.contains("One"), "{c1}");
+        assert!(c2.contains("<section id=\"s1\">\n<h1 id=\"s1-p0\"") && c2.contains("First text") && !c2.contains("Two"), "{c2}");
+        assert!(c3.contains("<section>\n<h1 id=\"s1-p2\""), "{c3}");
+        for c in [&c1, &c2, &c3] {
+            assert_eq!(c.matches("<section").count(), c.matches("</section>").count(), "{c}");
+            assert!(!c.contains(CHAPTER_MARK));
+        }
+        let opf = read("OEBPS/content.opf");
+        assert!(opf.contains("<itemref idref=\"content\"/>\n<itemref idref=\"content2\"/>\n<itemref idref=\"content3\"/>\n</spine>"), "{opf}");
+        assert!(opf.contains("<item id=\"content3\" href=\"content3.xhtml\""), "{opf}");
+        let nav = read("OEBPS/nav.xhtml");
+        assert!(nav.contains("href=\"content2.xhtml#s1-p0\"") && nav.contains("href=\"content3.xhtml#s1-p2\""), "{nav}");
+        assert!(z.by_name("OEBPS/content4.xhtml").is_err());
+        // HTML stays one page, without the marks.
+        let html = export_html(&d, &HtmlOptions::default());
+        assert!(!html.contains(CHAPTER_MARK) && html.contains("Second text"));
+    }
+
+    #[test]
+    fn split_chapters_keeps_sections_well_formed() {
+        let m = CHAPTER_MARK;
+        assert_eq!(split_chapters("<section id=\"s0\">\n<p>a</p>\n</section>\n"), vec!["<section id=\"s0\">\n<p>a</p>\n</section>\n"]);
+        assert_eq!(
+            split_chapters(&format!("<section id=\"s0\">\n{m}<h1>A</h1>\n</section>\n")),
+            vec!["<section id=\"s0\">\n<h1>A</h1>\n</section>\n"]
+        );
+        assert_eq!(
+            split_chapters(&format!("<section id=\"s0\">\n<p>a</p>\n{m}<h1>B</h1>\n</section>\n")),
+            vec!["<section id=\"s0\">\n<p>a</p>\n</section>\n", "<section>\n<h1>B</h1>\n</section>\n"]
+        );
+        assert_eq!(split_chapters(""), vec![String::new()]);
     }
 
     #[test]
