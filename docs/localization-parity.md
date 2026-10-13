@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (Japanese print, import and table controls localized; catalog counts remain the 2026-10-10 measurement) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (Polish interface; catalog counts remain the 2026-10-10 measurement) · **Target:** Adobe InDesign 2026 (21.6)
 
 Per-language status of the DesignCraft interface and of document typesetting in each script.
 Script-specific typesetting detail: [cjk.md](cjk.md), [cjk-typography.md](cjk-typography.md),
@@ -55,8 +55,9 @@ craft-fonts. The language totals above retain their dated measurement; this is a
 | Czech | cs | 1,722 (99%), plural categories handled | partial |
 | Italian | it | 1,464 (85%) | partial |
 | Ukrainian | uk | 1,432 (83%), plural categories handled | partial |
+| Polish | pl | 1,717 (99%), count captions category-first; AI-drafted, awaiting native review | partial |
 
-DesignCraft ships **3** interface languages beyond the twelve; InDesign ships 17 beyond its
+DesignCraft ships **4** interface languages beyond the twelve; InDesign ships 17 beyond its
 eight of the twelve (cs, da, el, en_GB, fi, hu, it, nb, nl, pl, ro, ru, sq, sv, tr, uk, zh_TW).
 
 ## Document languages
@@ -86,3 +87,4 @@ locale shaping. See [typography-parity.md](typography-parity.md).
 | 2026-10-11 | minor | Localized Japanese print, import and table controls; checked Japanese and English renders |
 | 2026-10-10 | major | Created: catalogs measured (1,724 strings), the twelve key languages plus Italian and Ukrainian |
 | 2026-10-11 | minor | Czech (cs) added: 1,722 strings, plural categories handled |
+| 2026-10-13 | minor | Polish interface added (1,717 strings) |

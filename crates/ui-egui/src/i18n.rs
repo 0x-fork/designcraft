@@ -10,6 +10,7 @@ mod de;
 mod fr;
 mod it;
 mod ja;
+mod pl;
 mod pt_br;
 mod ru;
 mod uk;
@@ -28,6 +29,7 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("uk", "Українська"),
     ("ru", "Русский"),
     ("cs", "Čeština"),
+    ("pl", "Polski"),
 ];
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
@@ -4100,6 +4102,7 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     static UKRAINIAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static PORTUGUESE_BR: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static ITALIAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    static POLISH: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static RUSSIAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static CZECH: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static FRENCH: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
@@ -4129,6 +4132,9 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     }
     if lang == "it" {
         return ITALIAN.get_or_init(|| it::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
+    }
+    if lang == "pl" {
+        return POLISH.get_or_init(|| pl::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
     }
     if lang == "uk" {
         return UKRAINIAN.get_or_init(|| uk::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
@@ -4165,11 +4171,11 @@ pub(crate) fn russian_catalog() -> Vec<&'static str> {
     ru::TABLE.iter().map(|(_, text)| *text).chain(ru::CONTEXT.iter().map(|(_, _, text)| *text)).collect()
 }
 
-/// Ukrainian and Russian have several plural forms, so their count captions put the category
-/// before the value ("сторінок: 5", "страниц: 5") and every number stays grammatical; other
-/// languages keep the existing value-first caption.
+/// Ukrainian, Russian and Polish have several plural forms, so their count captions put the
+/// category before the value ("сторінок: 5", "страниц: 5", "Strony: 5") and every number stays
+/// grammatical; other languages keep the existing value-first caption.
 pub fn category_first(lang: &str) -> bool {
-    matches!(lang, "uk" | "ru")
+    matches!(lang, "uk" | "ru" | "pl")
 }
 
 /// Caption for a counted category, e.g. `count_label("ru", "pages", 5)` is "страниц: 5". Czech
@@ -4253,8 +4259,11 @@ mod tests {
         for (key, expected) in fr::TABLE {
             assert_eq!(tr("fr", key), *expected, "fr: {key}");
         }
+        for (key, expected) in pl::TABLE {
+            assert_eq!(tr("pl", key), *expected, "pl: {key}");
+        }
         let unknown = String::from("A user-defined untranslated label");
-        for lang in ["cs", "uk", "ru", "ar", "pt-br", "it", "zh", "ja", "de", "fr", "es", "", "unknown"] {
+        for lang in ["pl", "cs", "uk", "ru", "ar", "pt-br", "it", "zh", "ja", "de", "fr", "es", "", "unknown"] {
             assert!(std::ptr::eq(tr(lang, &unknown), unknown.as_str()));
         }
     }
@@ -4452,6 +4461,49 @@ mod tests {
             let pages = tr("ru", "{pages} Pages in {spreads} Spreads").replace("{pages}", &n.to_string()).replace("{spreads}", &n.to_string());
             assert_eq!(pages, format!("Страниц: {n}; разворотов: {n}"));
         }
+    }
+
+    #[test]
+    fn polish_catalog_covers_existing_keys_and_preserves_placeholders() {
+        let catalog: HashMap<_, _> = pl::TABLE.iter().copied().collect();
+        assert_eq!(catalog.len(), pl::TABLE.len(), "duplicate Polish keys");
+        let mut keys = std::collections::HashSet::new();
+        keys.extend(TABLE.iter().map(|(key, _)| *key));
+        for table in [ar::TABLE, pt_br::TABLE, ja::TABLE, it::TABLE, uk::TABLE, de::TABLE, fr::TABLE, ru::TABLE, cs::TABLE] {
+            keys.extend(table.iter().map(|(key, _)| *key));
+        }
+        // A new English string falls back to English until it is translated; only stale entries fail.
+        let stale: Vec<_> = catalog.keys().filter(|k| !keys.contains(*k)).collect();
+        assert!(stale.is_empty(), "Polish entries for unknown keys: {stale:?}");
+        let placeholders =
+            |s: &str| s.split('{').skip(1).filter_map(|part| part.split_once('}').map(|(name, _)| name.to_owned())).collect::<Vec<_>>();
+        for (key, translation) in pl::TABLE {
+            assert!(!translation.trim().is_empty(), "empty {key}");
+            let mut source = placeholders(key);
+            let mut translated = placeholders(translation);
+            source.sort();
+            translated.sort();
+            assert_eq!(source, translated, "placeholders: {key}");
+            assert_eq!(key.ends_with('…'), translation.ends_with('…'), "ellipsis: {key}");
+        }
+        assert!(LANGUAGES.contains(&("pl", "Polski")));
+        assert!(!is_rtl("pl"));
+        assert_eq!(tr("pl", "File"), "Plik");
+        assert_eq!(tr("pl", "New Document…"), "Nowy dokument…");
+        assert_eq!(tr("pl", "Spread"), "Rozkładówka");
+        assert_eq!(tr("pl", "Unknown label"), "Unknown label");
+        assert_eq!(style_name("pl", "[Basic Paragraph]"), "[Podstawowy akapit]");
+        assert_eq!(workspace_name("pl", "Essentials"), "Podstawowe");
+    }
+
+    #[test]
+    fn polish_counts_use_category_captions_for_every_number() {
+        for n in [0, 1, 2, 5, 12, 22, 25] {
+            assert_eq!(count_label("pl", "pages", n), format!("Strony: {n}"));
+            assert_eq!(count_label("pl", "objects", n), format!("Obiekty: {n}"));
+            assert_eq!(count_label("pl", "errors", n), format!("Błędy: {n}"));
+        }
+        assert_eq!(tr("pl", "{pages} Pages in {spreads} Spreads"), "Strony: {pages}, rozkładówki: {spreads}");
     }
 
     #[test]
