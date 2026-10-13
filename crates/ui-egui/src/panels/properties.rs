@@ -16,6 +16,14 @@ use crate::widgets::{
 };
 use crate::{DesignApp, icons};
 
+/// A link to another panel. `window.panel` shows it in the docked layout or as a flyout; it
+/// toggles the flyout, so a flyout that is already open is left as it is.
+fn show_panel(app: &mut DesignApp, panel: &str) {
+    if app.ui.open_panel.as_deref() != Some(panel) {
+        let _ = app.run("window.panel", json!({"panel": panel}));
+    }
+}
+
 fn units(app: &DesignApp) -> Unit {
     app.session.active().map(|d| d.doc.settings.horizontal_units).unwrap_or(Unit::Picas)
 }
@@ -479,7 +487,7 @@ fn transform_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
     }
     transform_angles(app, ui, rp);
     if more_options(ui, &app.ui.language).clicked() {
-        app.ui.open_panel = Some("info".into());
+        show_panel(app, "info");
     }
 }
 
@@ -683,7 +691,7 @@ fn appearance_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Stroke swatch"));
     swatch_menu(app, &resp, &doc, &i.stroke, true, i.is_text && i.count == 1, false);
     if place(ui, sub(b, 34.0, 0.0, 56.0, FIELD_H), |ui| link_label(ui, crate::i18n::tr(&app.ui.language, "Stroke"), 56.0)).clicked() {
-        app.ui.open_panel = Some("stroke".into());
+        show_panel(app, "stroke");
     }
     const WEIGHTS: &[f64] = &[0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 20.0, 30.0, 40.0, 50.0, 100.0];
     if let Some(v) = place(ui, sub(b, 96.0, 0.0, 69.0, FIELD_H), |ui| {
@@ -715,7 +723,7 @@ fn appearance_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
     let b = block(ui, FIELD_H);
     icons::paint(ui.painter(), sub(b, 3.0, 1.0, 19.0, 19.0), "opacity", t.icon);
     if place(ui, sub(b, 34.0, 0.0, 56.0, FIELD_H), |ui| link_label(ui, crate::i18n::tr(&app.ui.language, "Opacity"), 56.0)).clicked() {
-        app.ui.open_panel = Some("effects".into());
+        show_panel(app, "effects");
     }
     if let Some(v) = place(ui, sub(b, 96.0, 0.0, 51.0, FIELD_H), |ui| {
         NumField::number("opacity", Some((i.opacity * 100.0).round()), "%", 0).width(51.0).range(0.0, 100.0).show(ui)
@@ -727,13 +735,13 @@ fn appearance_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
     ui.painter().rect(more, 0.0, if mresp.hovered() { t.hover } else { t.input }, Stroke::new(1.0, t.field_border), StrokeKind::Inside);
     icons::paint(ui.painter(), more.shrink(4.0), "chevron-right", t.icon);
     if mresp.clicked() {
-        app.ui.open_panel = Some("effects".into());
+        show_panel(app, "effects");
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         if icon_toggle(ui, "frame-dashed", false, crate::i18n::tr(&app.ui.language, "Frame Fitting")).clicked() {
-            app.ui.open_panel = Some("textWrap".into());
+            show_panel(app, "textWrap");
         }
         if icon_toggle(ui, "fx", i.shadow, crate::i18n::tr(&app.ui.language, "Effects: Drop Shadow")).clicked() {
             let _ = app.run("object.dropShadow", json!({"on": !i.shadow}));
@@ -886,7 +894,7 @@ fn wrap_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
         }
     });
     if more_options(ui, &app.ui.language).clicked() {
-        app.ui.open_panel = Some("textWrap".into());
+        show_panel(app, "textWrap");
     }
 }
 
@@ -1101,7 +1109,7 @@ fn text_appearance_section(app: &mut DesignApp, ui: &mut Ui) {
             );
         } else {
             if place(ui, sub(b, 34.0, 0.0, 56.0, FIELD_H), |ui| link_label(ui, crate::i18n::tr(&app.ui.language, label), 56.0)).clicked() {
-                app.ui.open_panel = Some("stroke".into());
+                show_panel(app, "stroke");
             }
             const WEIGHTS: &[f64] = &[0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0];
             if let Some(v) = place(ui, sub(b, 96.0, 0.0, 69.0, FIELD_H), |ui| {
@@ -1212,7 +1220,7 @@ fn character_section(app: &mut DesignApp, ui: &mut Ui) {
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| language_menu(app, ui, &lang));
     });
     if more_options(ui, &app.ui.language).clicked() {
-        app.ui.open_panel = Some("character".into());
+        show_panel(app, "character");
     }
 }
 
@@ -1244,7 +1252,7 @@ fn paragraph_section(app: &mut DesignApp, ui: &mut Ui) {
         }
     });
     if more_options(ui, &app.ui.language).clicked() {
-        app.ui.open_panel = Some("paragraph".into());
+        show_panel(app, "paragraph");
     }
 }
 
@@ -1262,7 +1270,7 @@ fn bullets_section(app: &mut DesignApp, ui: &mut Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
             if outline_button(ui, crate::i18n::tr(&app.ui.language, "Options"), 66.0).clicked() {
-                app.ui.open_panel = Some("paragraph".into());
+                show_panel(app, "paragraph");
             }
         });
     });
