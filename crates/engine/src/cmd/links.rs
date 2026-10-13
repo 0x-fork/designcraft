@@ -126,6 +126,21 @@ fn uses(d: &Document, aid: AssetId) -> Vec<ItemId> {
     out
 }
 
+/// Whether an asset's linked file is gone ([`status`] "missing" without reading the file). An
+/// asset can hold data while its file is missing: the document's preview of it.
+pub fn link_missing(a: &designcraft_doc::Asset) -> bool {
+    let Some(path) = &a.link else { return false };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::fs::metadata(path).is_err()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        false
+    }
+}
+
 /// Link status of an asset.
 pub fn status(a: &designcraft_doc::Asset) -> &'static str {
     let Some(path) = &a.link else { return "embedded" };

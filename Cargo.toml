@@ -118,3 +118,8 @@ debug = 0
 # once eframe depends on a winit release with the fix.
 [patch.crates-io]
 winit = { git = "https://github.com/rust-windowing/winit", rev = "39c4009c41e5977d779cf8a365792c8153ca77c5" }
+# The hayro crates from pdfcraft's vendor/ directory, with the patches its README lists.
+hayro = { git = "https://github.com/storytold/pdfcraft", rev = "b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9" }
+hayro-interpret = { git = "https://github.com/storytold/pdfcraft", rev = "b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9" }
+hayro-syntax = { git = "https://github.com/storytold/pdfcraft", rev = "b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9" }
+hayro-jbig2 = { git = "https://github.com/storytold/pdfcraft", rev = "b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9" }
