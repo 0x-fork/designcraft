@@ -129,6 +129,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · Command scripts look up only a well-formed `$N.path` / `$last.path` reference; other strings starting with `$`, such as a GREP replacement of `$1` and a nonbreaking space, stay as written, and `$$` writes a literal `$` (#749). No readiness percentage change.
 - **2026-10-12** · macOS Dock Quit uses the same unsaved-document prompts as window and menu Quit. Repeated requests keep the current answers; Cancel retains every tab and unsaved recovery checkpoint, and completed Save/Don't Save answers exit through the ordinary event loop. No readiness percentage change.
 - **2026-10-12** · Orderly native exit writes the latest recovery state after finalizing current quit approvals; incomplete or stale plans keep their documents, and Undo to the saved state clears stale recovery. Unavailable or failed recovery is reported. Cancelable macOS Dock Quit remains open (#544). No readiness percentage change.
 - **2026-10-12** · Recovered documents keep a checkpoint until saved, closed or reverted, including a second crash before autosave. Restarted document IDs and explicit recovery folders preserve other snapshots; failed republishing retains the original. No readiness percentage change.
