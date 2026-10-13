@@ -940,19 +940,23 @@ fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
         // Local edits outrank previously imported edges, including explicit zero/None.
         let priority = if stroke.is_some() { next_cell_stroke_priority(t) } else { 0 };
         let rg = g.range;
+        // Edges are inner or outer within the selection grown to whole merged cells, so a
+        // merged cell selected through one of its grid positions keeps its own outline.
+        let outline = t.expand_range(rg);
         // Each chosen edge starts from the stroke drawn there, which both copies of a shared
         // edge then take, so the edit changes only the attributes it names.
         let mut bases = std::collections::HashMap::new();
         if let Some((_, edges)) = &stroke {
             for (r, c) in t.selected_owners(rg) {
                 let Some(cell) = t.cell(r, c) else { continue };
-                for (i, on) in edges.sides(rg, (r, c), (cell.row_span, cell.col_span), rtl).into_iter().enumerate() {
+                for (i, on) in edges.sides(outline, (r, c), (cell.row_span, cell.col_span), rtl).into_iter().enumerate() {
                     if let Some(base) = drawn_side(t, &owners, (r, c), i).filter(|_| on) {
                         bases.insert((r, c, i), base);
                     }
                 }
             }
         }
+        let mut edited = std::collections::HashSet::new();
         for (r, c) in t.selected_owners(rg) {
             let Some(cell) = t.cell_mut(r, c) else { continue };
             if let Some(f) = &fill {
@@ -974,6 +978,7 @@ fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some((edit, _)) = &stroke {
                 for i in 0..4 {
                     if let Some(base) = bases.remove(&(r, c, i)) {
+                        edited.insert((r, c, i));
                         cell.strokes[i] = edit.apply(base);
                         cell.stroke_defined[i] = true;
                         cell.stroke_priorities[i] = priority;
@@ -982,31 +987,36 @@ fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
         }
-        // Keep both copies of unmerged shared boundaries consistent. Left/right name
-        // physical sides, also in RTL tables.
+        // Keep both copies of unmerged shared boundaries consistent: each edited edge is
+        // copied to its neighbour. Left/right name physical sides, also in RTL tables.
+        let mirror = |t: &mut Table, from: (usize, usize), edge: usize, to: (usize, usize), opposite: usize| {
+            if edited.contains(&(from.0, from.1, edge)) {
+                mirror_cell_edge(t, &owners, from, edge, to, opposite);
+            }
+        };
         if let Some((_, edges)) = &stroke {
             if edges.top
                 && let Some(row) = rg.r0.checked_sub(1)
             {
                 for c in rg.c0..=rg.c1 {
-                    mirror_cell_edge(t, &owners, (rg.r0, c), 0, (row, c), 2);
+                    mirror(t, (rg.r0, c), 0, (row, c), 2);
                 }
             }
             if edges.bottom && rg.r1.saturating_add(1) < nr {
                 for c in rg.c0..=rg.c1 {
-                    mirror_cell_edge(t, &owners, (rg.r1, c), 2, (rg.r1 + 1, c), 0);
+                    mirror(t, (rg.r1, c), 2, (rg.r1 + 1, c), 0);
                 }
             }
             if (if rtl { edges.right } else { edges.left })
                 && let Some(col) = rg.c0.checked_sub(1)
             {
                 for r in rg.r0..=rg.r1 {
-                    mirror_cell_edge(t, &owners, (r, rg.c0), if rtl { 3 } else { 1 }, (r, col), if rtl { 1 } else { 3 });
+                    mirror(t, (r, rg.c0), if rtl { 3 } else { 1 }, (r, col), if rtl { 1 } else { 3 });
                 }
             }
             if (if rtl { edges.left } else { edges.right }) && rg.c1.saturating_add(1) < nc {
                 for r in rg.r0..=rg.r1 {
-                    mirror_cell_edge(t, &owners, (r, rg.c1), if rtl { 1 } else { 3 }, (r, rg.c1 + 1), if rtl { 3 } else { 1 });
+                    mirror(t, (r, rg.c1), if rtl { 1 } else { 3 }, (r, rg.c1 + 1), if rtl { 3 } else { 1 });
                 }
             }
         }
@@ -1023,7 +1033,7 @@ fn get_cell_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let t = st.doc.story(g.story).and_then(|x| x.tables.get(&g.table)).ok_or_else(|| bad(ID, "no table"))?;
     let owners = t.owners();
-    let nc = t.ncols();
+    let outline = t.expand_range(g.range);
     let rtl = t.options.direction == designcraft_doc::TextDirection::RightToLeft;
     // One value per key, or null once two edges (cells) disagree.
     fn merge(slot: &mut Option<Value>, v: Value) {
@@ -1038,28 +1048,23 @@ fn get_cell_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     let (mut fill, mut fill_tint) = (None, None);
     // Each drawn edge once: a shared edge is a side of both its cells.
     let mut seen = std::collections::HashSet::new();
-    for r in g.range.r0..=g.range.r1 {
-        for c in g.range.c0..=g.range.c1 {
-            if owners.get(r * nc + c) != Some(&(r, c)) {
+    for (r, c) in t.selected_owners(g.range) {
+        let Some(cell) = t.cell(r, c) else { continue };
+        merge(&mut fill, json!(cell.fill));
+        merge(&mut fill_tint, json!(cell.fill_tint));
+        for (i, on) in edges.sides(outline, (r, c), (cell.row_span, cell.col_span), rtl).into_iter().enumerate() {
+            if !on {
                 continue;
             }
-            let Some(cell) = t.cell(r, c) else { continue };
-            merge(&mut fill, json!(cell.fill));
-            merge(&mut fill_tint, json!(cell.fill_tint));
-            for (i, on) in edges.sides(g.range, (r, c), (cell.row_span, cell.col_span), rtl).into_iter().enumerate() {
-                if !on {
+            for side in compose::table::cell_side_strokes(t, &owners, (r, c), i) {
+                let (x, y) = (Some((r, c)), side.neighbor);
+                if !seen.insert((i % 2, side.boundary, x.min(y), x.max(y))) {
                     continue;
                 }
-                for side in compose::table::cell_side_strokes(t, &owners, (r, c), i) {
-                    let (x, y) = (Some((r, c)), side.neighbor);
-                    if !seen.insert((i % 2, side.boundary, x.min(y), x.max(y))) {
-                        continue;
-                    }
-                    let e = side.stroke;
-                    let values = [json!(e.weight), json!(e.color), json!(e.tint), json!(e.kind), json!(e.gap_color), json!(e.gap_tint)];
-                    for (slot, v) in stroke.iter_mut().zip(values) {
-                        merge(slot, v);
-                    }
+                let e = side.stroke;
+                let values = [json!(e.weight), json!(e.color), json!(e.tint), json!(e.kind), json!(e.gap_color), json!(e.gap_tint)];
+                for (slot, v) in stroke.iter_mut().zip(values) {
+                    merge(slot, v);
                 }
             }
         }

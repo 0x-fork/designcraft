@@ -209,7 +209,9 @@ fn selected_merged_owners_receive_cell_options_and_unique_style_counts() {
 }
 
 #[test]
-fn covered_owner_strokes_keep_literal_edge_masks_and_neighbors() {
+fn selecting_part_of_a_merged_cell_strokes_its_whole_outline() {
+    // Row 0 is one merged cell; selecting its second grid position selects the whole cell, so
+    // all four of its edges are outer edges.
     for rtl in [false, true] {
         for outer in [false, true] {
             let (mut s, sid, tid, _) = selected_merged_table(true);
@@ -218,23 +220,25 @@ fn covered_owner_strokes_keep_literal_edge_masks_and_neighbors() {
             }
             s.execute("table.select", &json!({"rows": [0, 0], "cols": [1, 1]})).unwrap();
             let before = table_for(&s, sid, tid).clone();
-            s.execute("table.setCell", &json!({"stroke": {"weight": 3, "edges": if outer { "outer" } else { "inner" }}})).unwrap();
+            let edges = if outer { "outer" } else { "inner" };
+            s.execute("table.setCell", &json!({"stroke": {"weight": 3, "edges": edges}})).unwrap();
             let after = table_for(&s, sid, tid);
-            let mask = if rtl { [true, true, true, false] } else { [true, false, true, true] };
-            let expected = mask.map(|edge| if outer { edge } else { !edge });
             let owner = after.cell(0, 0).unwrap();
-            assert_eq!(owner.border_overrides, expected);
-            assert_eq!(owner.stroke_defined, expected);
-            for (i, on) in expected.into_iter().enumerate() {
-                if on {
-                    assert_eq!(owner.strokes[i].weight, 3.0);
-                    assert_eq!(owner.stroke_priorities[i], 1);
-                } else {
-                    assert_eq!(owner.strokes[i], before.cell(0, 0).unwrap().strokes[i]);
-                }
+            if outer {
+                assert_eq!(owner.border_overrides, [true; 4]);
+                assert_eq!(owner.stroke_defined, [true; 4]);
+                assert!(owner.strokes.iter().all(|e| e.weight == 3.0));
+                assert_eq!(owner.stroke_priorities, [1; 4]);
+            } else {
+                assert_eq!(Some(owner), before.cell(0, 0), "a single merged cell has no inner edges");
             }
             for (r, c) in [(0, 1), (1, 0), (1, 1)] {
                 assert_eq!(after.cell(r, c), before.cell(r, c), "strict merged/covered mirror guard preserves {r},{c}");
+            }
+            let shown = s.execute("table.getCellStroke", &json!({"edges": "outer"})).unwrap();
+            assert!(shown["edges"].as_u64().unwrap() >= 4, "the merged cell's outline is read: {shown}");
+            if outer {
+                assert_eq!(shown["weight"], 3.0);
             }
             assert_eq!(s.doc().unwrap().selection.cells.unwrap().range, doc::CellRange::cell(0, 1));
             check(&s);
