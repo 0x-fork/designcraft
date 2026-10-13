@@ -1103,12 +1103,15 @@ fn union_bounds(d: &Document, ids: &[ItemId]) -> Rect {
     ids.iter().filter_map(|i| d.item(*i)).map(Item::bounds).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO)
 }
 
-/// Transform an item's geometry in its own space: the path and the gradient vector with it.
+/// Transform an item's geometry in its own space: the path and the gradient vectors (fill and
+/// stroke) with it.
 pub(crate) fn bake(it: &mut Item, inner: Affine) {
     it.path.transform(inner);
-    if let Some([x0, y0, x1, y1]) = it.fill.gradient_vector {
-        let (a, b) = (inner * Point::new(x0, y0), inner * Point::new(x1, y1));
-        it.fill.gradient_vector = Some([a.x, a.y, b.x, b.y]);
+    for v in [&mut it.fill.gradient_vector, &mut it.stroke.gradient_vector] {
+        if let Some([x0, y0, x1, y1]) = *v {
+            let (a, b) = (inner * Point::new(x0, y0), inner * Point::new(x1, y1));
+            *v = Some([a.x, a.y, b.x, b.y]);
+        }
     }
 }
 

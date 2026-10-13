@@ -28,6 +28,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Taglia"),
     ("Copy", "Copia"),
     ("Paste", "Incolla"),
+    ("The stroke isn't a gradient.", "La traccia non è una sfumatura."),
     ("Reverse Path", "Inverti tracciato"),
     ("Set Anchor", "Imposta ancoraggio"),
     ("Clear", "Cancella"),

@@ -1479,3 +1479,20 @@ fn type_on_a_path_keeps_its_start_and_end_brackets() {
         assert_eq!(pt.end.map(|e| e.round()), end, "an end bracket at the path's end is no end bracket");
     }
 }
+
+#[test]
+fn a_strokes_gradient_vector_round_trips() {
+    let mut d = designcraft_doc::Document::new(&designcraft_doc::build::NewDocument::default());
+    let id = designcraft_doc::ItemId(d.alloc());
+    let mut it = designcraft_doc::Item::new(
+        id,
+        d.default_layer(),
+        designcraft_doc::Shape::Path,
+        designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(10.0, 10.0, 110.0, 60.0)),
+    );
+    it.stroke.gradient_vector = Some([10.0, 35.0, 110.0, 35.0]);
+    d.insert_item(designcraft_doc::SpreadRef::Doc(0), it, None).unwrap();
+    let back = crate::import_idml(&crate::export_idml(&d)).unwrap();
+    let v = back.spreads[0].items[0].stroke.gradient_vector.unwrap();
+    assert!(v.iter().zip([10.0, 35.0, 110.0, 35.0]).all(|(a, b)| (a - b).abs() < 1e-6), "{v:?}");
+}

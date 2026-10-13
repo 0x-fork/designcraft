@@ -31,6 +31,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Вирізати"),
     ("Copy", "Копіювати"),
     ("Paste", "Вставити"),
+    ("The stroke isn't a gradient.", "Обведення не є градієнтом."),
     ("Reverse Path", "Розвернути контур"),
     ("Set Anchor", "Задати прив’язку"),
     ("Clear", "Очистити"),

@@ -30,6 +30,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "カット"),
     ("Copy", "コピー"),
     ("Paste", "ペースト"),
+    ("The stroke isn't a gradient.", "線はグラデーションではありません。"),
     ("Reverse Path", "パスの方向反転"),
     ("Set Anchor", "アンカーポイントを設定"),
     ("Clear", "消去"),

@@ -2129,6 +2129,19 @@ impl<'r> Importer<'r> {
                 it.stroke.swatch = swatch::NONE.into();
                 it.stroke.weight = 1.0;
             }
+            // A gradient on the stroke: its angle, or the Gradient Swatch tool's vector.
+            if let Some(a) = e.num("GradientStrokeAngle")
+                && a != 0.0
+            {
+                it.stroke.gradient_angle = Some(a);
+            }
+            let start: Option<Vec<f64>> = e.prop("GradientStrokeStart").map(|s| s.split_whitespace().filter_map(|v| v.parse().ok()).collect());
+            if let (Some([x, y]), Some(len)) = (start.as_deref().and_then(|v| <[f64; 2]>::try_from(v).ok()), e.num("GradientStrokeLength"))
+                && len > 0.0
+            {
+                let a = e.num("GradientStrokeAngle").unwrap_or(0.0).to_radians();
+                it.stroke.gradient_vector = Some([x, y, x + len * a.cos(), y - len * a.sin()]);
+            }
         }
         // Corners.
         let cn = crate::export::corner_names(&it.path);

@@ -621,8 +621,17 @@ impl Renderer {
     }
 
     fn draw_stroke(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine) {
+        self.draw_stroke_painted(ctx, f, it, bp, xf);
+        ctx.reset_paint_transform();
+    }
+
+    /// The stroke, in its colour or gradient (a gradient runs across the path's box, as a fill's).
+    fn draw_stroke_painted(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine) {
         let st = &it.stroke;
-        let Some(c) = f.doc.resolve_color(&st.swatch, st.tint) else { return };
+        let (paint, bounds) = (st.as_fill(), bp.bounding_box());
+        if f.doc.resolve_color(&st.swatch, st.tint).is_none() && designcraft_color::swatch::resolve_gradient(&f.doc.swatches, &st.swatch).is_none() {
+            return;
+        }
         let mut stroke = kurbo::Stroke::new(st.weight)
             .with_caps(match st.cap {
                 designcraft_doc::Cap::Butt => kurbo::Cap::Butt,
@@ -642,7 +651,9 @@ impl Renderer {
             _ => {}
         }
         ctx.set_transform(f.view * xf);
-        ctx.set_paint(color_of(&c, 1.0));
+        if !set_fill_paint(ctx, f.doc, &paint, bounds) {
+            return;
+        }
         let closed = it.path.is_closed();
         // Arrowheads: the path is shortened under them; they're drawn after it.
         let arrows = designcraft_doc::arrow::apply(bp, st, closed);
@@ -669,7 +680,7 @@ impl Renderer {
             if op {
                 ctx.pop_layer();
             }
-            ctx.set_paint(color_of(&c, 1.0));
+            set_fill_paint(ctx, f.doc, &paint, bounds);
         }
         // Stripes, wavy and hash strokes are fills (along the path's centre line).
         if let Some(o) = kind.outline(bp, st.weight, 0.05 * f.px) {

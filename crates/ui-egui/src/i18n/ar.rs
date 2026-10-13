@@ -30,6 +30,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "قص"),
     ("Copy", "نسخ"),
     ("Paste", "لصق"),
+    ("The stroke isn't a gradient.", "الحد ليس تدرجًا."),
     ("Reverse Path", "عكس المسار"),
     ("Set Anchor", "تعيين نقطة الارتساء"),
     ("Clear", "مسح"),
