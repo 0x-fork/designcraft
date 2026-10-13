@@ -10,6 +10,7 @@ use super::*;
 mod assets;
 mod clipping;
 mod decorations;
+mod index_sort;
 mod object_styles;
 mod rtl_binding;
 mod spread_rotation;
