@@ -3519,7 +3519,7 @@ fn object_style_effects_round_trip() {
     let got = style("Photo").effects.clone().unwrap();
     let ds = &got.drop_shadow;
     assert!(ds.on && ds.size == 12.0 && (ds.opacity - 0.28).abs() < 1e-6, "{ds:?}");
-    assert!((ds.distance - 5.0).abs() < 1e-6 && (ds.angle - 135.0).abs() < 1e-6, "{ds:?}");
+    assert!((ds.distance - 5.0).abs() < 1e-6 && (ds.angle - DropShadow::default().angle).abs() < 1e-6, "{ds:?}");
     assert_eq!(got.feather, 3.0);
     assert!(style("Plain").effects.is_none());
     // The frame's effects are the style's, so it follows later edits of the style.
