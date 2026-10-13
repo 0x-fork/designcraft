@@ -12,7 +12,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "{path?, pages?: \"1-3,5\" | [1,3] (1-based positions; default all), flatten?: high|medium|low|ppi (Transparency Flattener: spreads with transparency are rasterised), spreads?: bool, fullScreen?: bool, bookmarksPanel?: bool, pageLayout?: single|continuous|twoUp|twoUpCover|twoUpContinuous, view?: fitPage|fitWidth|actual, advanceSeconds?: number (interactive PDF), bleed?: bool (document bleed), marks?: bool | {crop?, bleed?, pageInfo?, weight?, offset?}, standard?: \"none\"|\"x4\"|\"a2b\", compressImages?: bool, tagged?: bool (structure tree: stories as paragraphs, figures with alt text), media?: bool (interactive: embed placed video and sound), title?, author?} → {path, bytes, pages, warnings} (no path: {base64, …})",
         has_doc, export_pdf),
         cmd!(noundo "file.exportEpub", "Export EPUB (Reflowable)…", ["File"], None,
-        "{path?, title?, author?, language?: \"en\", cover?: bool (the first page as the cover image), fixedLayout?: bool (pre-paginated: each page as an image with its text)} → {path, bytes, warnings} (no path: {base64, bytes, warnings}); warnings name images without alt text, exported as decorative",
+        "{path?, title?, author?, language?: \"en\", cover?: bool (the first page as the cover image), embedFonts?: bool (package the stylesheet's fonts whose licence allows it, whole files), fixedLayout?: bool (pre-paginated: each page as an image with its text)} → {path, bytes, warnings} (no path: {base64, bytes, warnings}); warnings name images without alt text, exported as decorative, and fonts not embedded",
         has_doc, export_epub),
         cmd!(noundo "file.exportFixedEpub", "Export EPUB (Fixed Layout)…", ["File"], None,
         "{path?, title?, author?, language?} — pre-paginated EPUB → {path, bytes} (no path: {base64, bytes})",
@@ -54,8 +54,11 @@ fn print_booklet(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn export_html(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let opts =
-        designcraft_epub::HtmlOptions { title: str_param(p, "title").map(str::to_string), language: str_param(p, "language").map(str::to_string) };
+    let opts = designcraft_epub::HtmlOptions {
+        title: str_param(p, "title").map(str::to_string),
+        language: str_param(p, "language").map(str::to_string),
+        generic_families: generic_families(&st.doc),
+    };
     let text = designcraft_epub::export_html(&st.doc, &opts);
     match str_param(p, "path") {
         Some(path) => {
@@ -121,6 +124,49 @@ fn page_text(d: &designcraft_doc::Document, cache: &designcraft_compose::Cache, 
     out
 }
 
+/// The CSS generic family of each font family the EPUB/HTML stylesheet names, from the fonts'
+/// classification (PANOSE, OS/2 class, name), for the `font-family` fallbacks.
+fn generic_families(d: &designcraft_doc::Document) -> std::collections::BTreeMap<String, String> {
+    use designcraft_fonts::FontClass;
+    let db = designcraft_fonts::FontDb::global().scoped(d.font_scope);
+    let mut out = std::collections::BTreeMap::new();
+    for (family, _) in designcraft_epub::stylesheet_fonts(d) {
+        if out.contains_key(&family) {
+            continue;
+        }
+        let generic = match db.family_kind(&family).map(|(k, _)| k.class) {
+            Some(FontClass::Serif | FontClass::SlabSerif) => "serif",
+            Some(FontClass::SansSerif) => "sans-serif",
+            Some(FontClass::Monospaced) => "monospace",
+            Some(FontClass::Script) => "cursive",
+            Some(FontClass::Decorative) => "fantasy",
+            Some(FontClass::Symbol | FontClass::Other) | None => continue,
+        };
+        out.insert(family, generic.to_string());
+    }
+    out
+}
+
+/// The faces the EPUB stylesheet names, to package with it; `warnings` gets the ones left out
+/// (not available, a licence that forbids embedding, or part of a font collection).
+fn embedded_fonts(d: &designcraft_doc::Document, warnings: &mut Vec<String>) -> Vec<designcraft_epub::EmbeddedFont> {
+    let db = designcraft_fonts::FontDb::global().scoped(d.font_scope);
+    let mut out = Vec::new();
+    for (family, style) in designcraft_epub::stylesheet_fonts(d) {
+        let face = db.face(&family, &style);
+        if !face.family.eq_ignore_ascii_case(&family) {
+            warnings.push(format!("font `{family} {style}` is not available; not embedded"));
+        } else if face.restricted_licence() {
+            warnings.push(format!("font `{family} {style}`: its licence doesn't allow embedding; not embedded"));
+        } else if face.data().starts_with(b"ttcf") {
+            warnings.push(format!("font `{family} {style}` is part of a font collection; not embedded"));
+        } else {
+            out.push(designcraft_epub::EmbeddedFont { family, style: face.style.clone(), data: face.data().to_vec() });
+        }
+    }
+    out
+}
+
 fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     // Object Export Options › Rasterize: those objects go in as images.
@@ -131,6 +177,7 @@ fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
     let mut rr = designcraft_render::Renderer::new();
     rr.threads = designcraft_render::default_threads();
     let ropts = designcraft_render::RenderOptions { printing_only: true, ..Default::default() };
+    let mut warnings: Vec<String> = Vec::new();
     let cover = (want_cover && !fixed).then(|| rr.render_page(&st.doc, &s.cache, 0, 2.0, false, &ropts).map(|img| img.to_png())).flatten();
     let opts = designcraft_epub::EpubOptions {
         title: p.get("title").and_then(Value::as_str).map(str::to_string),
@@ -138,6 +185,12 @@ fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
         language: p.get("language").and_then(Value::as_str).unwrap_or("en").to_string(),
         identifier: None,
         cover,
+        generic_families: generic_families(&st.doc),
+        fonts: if p.get("embedFonts").and_then(Value::as_bool).unwrap_or(false) && !fixed {
+            embedded_fonts(&st.doc, &mut warnings)
+        } else {
+            Vec::new()
+        },
     };
     if fixed {
         let d = &st.doc;
@@ -158,10 +211,11 @@ fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
         };
     }
     let bytes = designcraft_epub::export_epub(epub_doc, &opts).map_err(|e| crate::EngineError::Other(e.to_string()))?;
-    let warnings: Vec<String> = designcraft_epub::images_without_alt(epub_doc)
-        .into_iter()
-        .map(|name| format!("{name}: no alt text (Object Export Options); exported as decorative (alt=\"\")"))
-        .collect();
+    warnings.extend(
+        designcraft_epub::images_without_alt(epub_doc)
+            .into_iter()
+            .map(|name| format!("{name}: no alt text (Object Export Options); exported as decorative (alt=\"\")")),
+    );
     match p.get("path").and_then(Value::as_str) {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
@@ -727,6 +781,34 @@ mod text_tests {
         assert!(opf.contains("rendition:layout\">pre-paginated") && opf.contains("page2.xhtml"));
         let p1 = read(&mut z, "OEBPS/page1.xhtml");
         assert!(p1.contains("width=612, height=792") && p1.contains("Page one words"), "{p1}");
+    }
+
+    /// #775: the fallback follows the font's class, and embedFonts packages the stylesheet's fonts
+    /// (and reports those it can't).
+    #[test]
+    fn epub_font_fallbacks_and_embedding() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1})).unwrap();
+        s.execute("style.paragraph.create", &json!({"name": "Sans", "chars": {"fontFamily": "Source Sans 3", "fontStyle": "Regular"}})).unwrap();
+        s.execute("style.paragraph.create", &json!({"name": "Gone", "chars": {"fontFamily": "No Such Font Family", "fontStyle": "Regular"}}))
+            .unwrap();
+        s.execute("frame.create", &json!({"rect": [72, 72, 400, 200], "content": "text", "text": "Words", "caret": false})).unwrap();
+        let r = s.execute("file.exportEpub", &json!({})).unwrap();
+        let mut z = unzip(r["base64"].as_str().unwrap());
+        let css = read(&mut z, "OEBPS/style.css");
+        assert!(css.contains("font-family: \"Source Sans 3\", sans-serif;"), "{css}");
+        assert!(!css.contains("@font-face") && r["warnings"] == json!([]), "nothing embedded unless asked");
+        let r = s.execute("file.exportEpub", &json!({"embedFonts": true})).unwrap();
+        let mut z = unzip(r["base64"].as_str().unwrap());
+        let css = read(&mut z, "OEBPS/style.css");
+        assert!(css.contains("@font-face { font-family: \"Source Sans 3\"; src: url(\"fonts/"), "{css}");
+        let opf = read(&mut z, "OEBPS/content.opf");
+        let font = opf.split("href=\"fonts/").nth(1).and_then(|r| r.split('"').next()).map(|n| format!("OEBPS/fonts/{n}"));
+        assert!(font.as_ref().is_some_and(|f| z.by_name(f).is_ok_and(|e| e.size() > 1000)), "{opf}");
+        let warnings = r["warnings"].as_array().unwrap();
+        assert!(warnings.iter().any(|w| w.as_str().unwrap().contains("No Such Font Family")), "{warnings:?}");
+        let html = s.execute("file.exportHtml", &json!({})).unwrap()["text"].as_str().unwrap().to_string();
+        assert!(html.contains("\"Source Sans 3\", sans-serif;"));
     }
 
     #[test]
