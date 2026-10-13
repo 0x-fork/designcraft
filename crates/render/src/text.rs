@@ -19,6 +19,45 @@ use vello_cpu::peniko;
 
 use crate::{Frame, Renderer, color_of, rect_overlaps};
 
+/// A text colour: solid, or a gradient swatch laid across the frame (InDesign spans a gradient on
+/// text across its frame's box).
+#[derive(Clone)]
+enum TextPaint {
+    Solid(peniko::Color),
+    Gradient(designcraft_doc::Fill),
+}
+
+impl TextPaint {
+    fn of(doc: &designcraft_doc::Document, swatch: &str, tint: f32) -> Option<Self> {
+        if designcraft_color::swatch::resolve_gradient(&doc.swatches, swatch).is_some() {
+            return Some(TextPaint::Gradient(designcraft_doc::Fill { swatch: swatch.into(), tint, ..designcraft_doc::Fill::none() }));
+        }
+        doc.resolve_color(swatch, tint).map(|c| TextPaint::Solid(color_of(&c, 1.0)))
+    }
+
+    /// Make this the context's paint; a gradient runs across `area` (text space).
+    fn set(&self, ctx: &mut RenderContext, doc: &designcraft_doc::Document, area: Rect) {
+        match self {
+            TextPaint::Solid(c) => ctx.set_paint(*c),
+            TextPaint::Gradient(fill) => {
+                crate::set_fill_paint(ctx, doc, fill, area);
+            }
+        }
+    }
+}
+
+/// The box a gradient on a frame's text spans: the frame's, in text space (the union of its lines
+/// when the frame is gone).
+fn text_area(doc: &designcraft_doc::Document, ft: &FrameText) -> Rect {
+    if let Some(it) = doc.item(ft.frame) {
+        let local = doc.text_local(it);
+        if local.determinant().abs() > 1e-12 {
+            return local.inverse().transform_rect_bbox(it.inner_bounds());
+        }
+    }
+    ft.lines.iter().filter_map(line_box).reduce(|a, b| a.union(b)).unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0))
+}
+
 /// Cached outlines of one composed line.
 pub(crate) struct LineGlyphs {
     /// Frame-space bounds of everything drawn for the line (empty lines: `None`).
@@ -349,13 +388,16 @@ impl Renderer {
         ctx.set_transform(m);
         if !shown.is_empty() {
             let fg = self.glyphs.get(cs, ft);
-            // Resolve each style's paints once per frame.
-            let mut fills: Vec<Option<Option<peniko::Color>>> = vec![None; cs.styles.len()];
-            let mut fill_of = |si: u32| -> Option<peniko::Color> {
-                *fills[si as usize].get_or_insert_with(|| {
-                    let st = &cs.styles[si as usize];
-                    doc.resolve_color(&st.fill, st.fill_tint).map(|c| color_of(&c, 1.0))
-                })
+            // Resolve each style's paints once per frame; gradients span the frame.
+            let area = text_area(doc, ft);
+            let mut fills: Vec<Option<Option<TextPaint>>> = vec![None; cs.styles.len()];
+            let mut fill_of = |si: u32| -> Option<TextPaint> {
+                fills[si as usize]
+                    .get_or_insert_with(|| {
+                        let st = &cs.styles[si as usize];
+                        TextPaint::of(doc, &st.fill, st.fill_tint)
+                    })
+                    .clone()
             };
             shown.retain(|&i| fg.lines[i].bounds.is_some_and(|b| rect_overlaps(b, vis)));
             // Paint all underlines before any glyphs: skewed runs and tightly spaced lines
@@ -384,19 +426,21 @@ impl Renderer {
                                 None,
                             );
                         }
-                        ctx.set_paint(c);
+                        c.set(ctx, doc, area);
                         ctx.fill_path(bp);
+                        ctx.reset_paint_transform();
                         if op {
                             ctx.pop_layer();
                         }
                     }
                     let st = &cs.styles[*si as usize];
                     if st.stroke != designcraft_color::swatch::NONE
-                        && let Some(c) = doc.resolve_color(&st.stroke, st.stroke_tint)
+                        && let Some(c) = TextPaint::of(doc, &st.stroke, st.stroke_tint)
                     {
-                        ctx.set_paint(color_of(&c, 1.0));
+                        c.set(ctx, doc, area);
                         ctx.set_stroke(kurbo::Stroke::new(st.stroke_weight));
                         ctx.stroke_path(bp);
+                        ctx.reset_paint_transform();
                     }
                 }
             }
@@ -496,18 +540,22 @@ impl Renderer {
     ) {
         let doc = f.doc;
         ctx.set_transform(f.view * xf);
+        // A gradient on type on a path spans the path's box.
+        let area = path.bounding_box();
         for (si, bp) in designcraft_compose::path_glyphs(cs, ft, path, pt) {
             let st = &cs.styles[si as usize];
-            if let Some(c) = doc.resolve_color(&st.fill, st.fill_tint) {
-                ctx.set_paint(color_of(&c, 1.0));
+            if let Some(c) = TextPaint::of(doc, &st.fill, st.fill_tint) {
+                c.set(ctx, doc, area);
                 ctx.fill_path(&bp);
+                ctx.reset_paint_transform();
             }
             if st.stroke != designcraft_color::swatch::NONE
-                && let Some(c) = doc.resolve_color(&st.stroke, st.stroke_tint)
+                && let Some(c) = TextPaint::of(doc, &st.stroke, st.stroke_tint)
             {
-                ctx.set_paint(color_of(&c, 1.0));
+                c.set(ctx, doc, area);
                 ctx.set_stroke(kurbo::Stroke::new(st.stroke_weight));
                 ctx.stroke_path(&bp);
+                ctx.reset_paint_transform();
             }
             self.stats.glyphs += 1;
         }
