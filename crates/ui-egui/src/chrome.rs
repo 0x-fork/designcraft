@@ -28,6 +28,31 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
             let mut tools_start = full.max.x;
             // Windows caption buttons stay at the right edge; the rest of the bar scrolls.
             let caption_w = if app.custom_titlebar { CAPTION_W } else { 0.0 };
+            // Undecorated window: the bar moves it. The drag area is the whole bar but the caption
+            // buttons, lower band included, registered before the menus and tools so they stay on
+            // top of it: any gap drags, and the lower band is always there, however narrow the
+            // window (the menus and tools scroll).
+            if app.custom_titlebar {
+                let drag = egui::Rect::from_min_max(
+                    egui::pos2(full.min.x - left as f32, full.min.y),
+                    egui::pos2(full.max.x - caption_w, full.min.y + BAR_H + LOWER_BAND),
+                );
+                let response = ui.interact(drag, egui::Id::new("window_title_drag"), Sense::click_and_drag());
+                // Only from an empty part of the bar: the lower band, or the gap between the menus
+                // and the tools (as they were last frame). A menu title pressed and dragged doesn't
+                // move the window, as with native title bars.
+                let (gap0, gap1) =
+                    ui.data(|d| (d.get_temp::<f32>(egui::Id::new("app_bar_menus_end")), d.get_temp::<f32>(egui::Id::new("app_bar_tools_start"))));
+                let empty = |p: egui::Pos2| p.y >= full.min.y + BAR_H || matches!((gap0, gap1), (Some(a), Some(b)) if p.x >= a && p.x <= b);
+                let from_empty = ui.input(|i| i.pointer.press_origin().or(i.pointer.interact_pos())).is_some_and(empty);
+                if response.double_clicked() && from_empty {
+                    let on = !ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                    let _ = app.run("window.maximize", json!({"on": on}));
+                } else if response.drag_started_by(egui::PointerButton::Primary) && from_empty {
+                    let _ = app.run("window.drag", json!({}));
+                }
+                app.flush_window_commands(ui.ctx());
+            }
             if app.custom_titlebar {
                 let caption = egui::Rect::from_min_max(egui::pos2(full.max.x - caption_w, full.min.y), full.max);
                 ui.scope_builder(egui::UiBuilder::new().max_rect(caption).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
@@ -41,6 +66,7 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                 let tools_w_id = ui.id().with("tools_width");
                 let tools_w: f32 = ui.data(|d| d.get_temp(tools_w_id)).unwrap_or(0.0);
                 crate::widgets::overflow_scrolling(ui);
+                // (Drag-scrolling is touch-only by default, so a mouse drag on the bar moves the window.)
                 egui::ScrollArea::horizontal().id_salt("app_bar_scroll").auto_shrink([false, false]).show(ui, |ui| {
                     ui.horizontal_centered(|ui| {
                         if icons::button(ui, "home", 24.0, app.session.active().is_none(), crate::i18n::tr(&app.ui.language, "Home")).clicked() {
@@ -55,6 +81,8 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                             crate::menus::menu_bar(app, ui);
                         }
                         menus_end = ui.min_rect().max.x;
+                        // Where the menus end on screen (moves as a narrow bar scrolls).
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new("app_bar_menus_end"), menus_end));
                         let size = vec2(ui.available_width().max(tools_w), ui.available_height());
                         let tools = ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add_space(4.0);
@@ -144,6 +172,7 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                                 let _ = app.run("help.discord", json!({}));
                             }
                             tools_start = ui.min_rect().min.x;
+                            ui.data_mut(|d| d.insert_temp(egui::Id::new("app_bar_tools_start"), tools_start));
                             ui.min_rect().width()
                         });
                         if (tools.inner - tools_w).abs() > 0.5 {
@@ -162,19 +191,8 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
             let galley = crate::rtl::plain(ui.ctx(), &title, egui::FontId::proportional(11.5), t.text);
             let w = galley.size().x;
             let cx = full.center().x;
-            if app.custom_titlebar {
-                let drag = egui::Rect::from_min_max(egui::pos2(menus_end, full.top()), egui::pos2(tools_start.max(menus_end), full.top() + 36.0));
-                let response = ui.interact(drag, egui::Id::new("window_title_drag"), Sense::click_and_drag());
-                if response.double_clicked() {
-                    let on = !ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                    let _ = app.run("window.maximize", json!({"on": on}));
-                } else if response.drag_started_by(egui::PointerButton::Primary) {
-                    let _ = app.run("window.drag", json!({}));
-                }
-                app.flush_window_commands(ui.ctx());
-            }
             if cx - w / 2.0 > menus_end + 12.0 && cx + w / 2.0 < tools_start - 12.0 {
-                ui.painter().galley(egui::pos2(cx - w / 2.0, full.min.y + 18.0 - galley.size().y / 2.0), galley, t.text);
+                ui.painter().galley(egui::pos2(cx - w / 2.0, full.min.y + BAR_H / 2.0 - galley.size().y / 2.0), galley, t.text);
             }
         });
     let r = resp.response.rect;
@@ -182,6 +200,9 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
     ui.painter().line_segment([egui::pos2(r.min.x, r.max.y), egui::pos2(r.max.x, r.max.y)], Stroke::new(1.0, t.border));
 }
 
+/// The app bar: its 36 pt row and the 7 pt lower band under it (InDesign 2026).
+const BAR_H: f32 = 36.0;
+const LOWER_BAND: f32 = 7.0;
 const CAPTION_BUTTON_W: f32 = 46.0;
 /// Minimize, maximize and close, and the space after them.
 const CAPTION_W: f32 = 3.0 * CAPTION_BUTTON_W + 8.0;
@@ -195,14 +216,14 @@ fn caption_buttons(app: &mut DesignApp, ui: &mut egui::Ui) {
     for (command, label) in
         [("window.close", "Close"), ("window.maximize", if maximized { "Restore" } else { "Maximize" }), ("window.minimize", "Minimize")]
     {
-        let (rect, _) = ui.allocate_exact_size(vec2(CAPTION_BUTTON_W, 36.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(vec2(CAPTION_BUTTON_W, BAR_H), Sense::hover());
         let response = ui.interact(rect, egui::Id::new(command), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
         let hovered = response.hovered();
         if hovered {
-            ui.painter().rect_filled(rect, 0.0, if command == "window.close" { Color32::from_rgb(196, 43, 28) } else { t.hover });
+            ui.painter().rect_filled(rect, 0.0, if command == "window.close" { t.caption_close } else { t.hover });
         }
-        let color = if hovered && command == "window.close" { Color32::WHITE } else { t.text };
+        let color = if hovered && command == "window.close" { t.caption_close_text } else { t.text };
         let stroke = Stroke::new(1.0, color);
         let icon = egui::Rect::from_center_size(rect.center(), vec2(10.0, 10.0));
         match command {
@@ -1129,7 +1150,8 @@ mod tests {
         h.frame(vec![]);
         h.frame(vec![]);
         let rect = |h: &WindowHarness, id: &str| h.ctx.read_response(egui::Id::new(id)).unwrap().rect;
-        let (close, title) = (rect(&h, "window.close"), rect(&h, "window_title_drag"));
+        let menus_end = |h: &WindowHarness| h.ctx.data(|d| d.get_temp::<f32>(egui::Id::new("app_bar_menus_end"))).unwrap();
+        let (close, menus0) = (rect(&h, "window.close"), menus_end(&h));
         assert!(close.left() >= 0.0 && close.right() <= h.size.x, "{close:?}");
         let p = egui::pos2(200.0, 18.0);
         h.frame(vec![
@@ -1144,9 +1166,27 @@ mod tests {
         for _ in 0..10 {
             h.frame(vec![]);
         }
-        assert!(rect(&h, "window_title_drag").left() < title.left(), "the menus scrolled");
+        assert!(menus_end(&h) < menus0, "the menus scrolled");
         assert_eq!(rect(&h, "window.close"), close, "the caption buttons did not");
         assert!(h.click(close.center()).contains(&egui::ViewportCommand::Close));
+    }
+
+    #[test]
+    fn the_window_drags_from_its_lower_band_at_the_minimum_width() {
+        // At 900 px the menus and tools fill the bar's row; its lower band still moves the window,
+        // and it isn't drawn over the caption buttons.
+        let mut h = WindowHarness::new();
+        h.size = vec2(900.0, 560.0);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        let drag = h.ctx.read_response(egui::Id::new("window_title_drag")).unwrap().rect;
+        let close = h.ctx.read_response(egui::Id::new("window.close")).unwrap().rect;
+        assert!(drag.right() <= close.left() + 0.5, "{drag:?} {close:?}");
+        let p = egui::pos2(450.0, BAR_H + LOWER_BAND / 2.0);
+        assert!(drag.contains(p), "{drag:?}");
+        let mut commands = h.press(p);
+        commands.extend(h.frame(vec![egui::Event::PointerMoved(p + vec2(20.0, 0.0))]));
+        assert!(commands.contains(&egui::ViewportCommand::StartDrag));
     }
 
     #[test]
