@@ -307,6 +307,8 @@ fn properties_stroke_link_opens_the_stroke_panel_in_a_custom_workspace() {
     app.run("file.new", json!({"width":480,"height":360})).unwrap();
     app.run("frame.create", json!({"rect":[80,70,330,230],"content":"none"})).unwrap();
     app.run("window.panel.float", json!({"panel":"layers"})).unwrap();
+    // Floating Layers leaves Pages the active tab beside Properties.
+    app.run("window.panel", json!({"panel":"properties"})).unwrap();
     assert!(!app.ui.docking.as_ref().unwrap().contains(&"stroke".into()));
     let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_ui_state(
         |ui, app: &mut DesignApp| {
