@@ -368,6 +368,50 @@ impl Document {
         v
     }
 
+    /// Calls `f` on every item `hit` selects: on document and parent spreads, inside groups and
+    /// among anchored objects. Only the branches holding a hit are copied (copy-on-write). Returns
+    /// how many items `f` saw.
+    pub fn update_items(&mut self, hit: impl Fn(&Item) -> bool, mut f: impl FnMut(&mut Item)) -> usize {
+        const MAX_GROUP_DEPTH: usize = 64;
+        fn any(it: &Item, hit: &impl Fn(&Item) -> bool) -> bool {
+            let mut found = false;
+            it.walk(&mut |i| found |= hit(i));
+            found
+        }
+        fn update(it: &mut Item, hit: &impl Fn(&Item) -> bool, f: &mut impl FnMut(&mut Item), n: &mut usize, depth: usize) {
+            if hit(it) {
+                f(it);
+                *n += 1;
+            }
+            if depth >= MAX_GROUP_DEPTH {
+                return;
+            }
+            if let Some(children) = it.children_mut() {
+                for c in children.iter_mut().filter(|c| any(c, hit)) {
+                    update(Arc::make_mut(c), hit, f, n, depth + 1);
+                }
+            }
+        }
+        let mut n = 0;
+        for sp in self.spreads.iter_mut().chain(self.parents.iter_mut()) {
+            if !sp.items.iter().any(|i| any(i, &hit)) {
+                continue;
+            }
+            for it in Arc::make_mut(sp).items.iter_mut().filter(|i| any(i, &hit)) {
+                update(Arc::make_mut(it), &hit, &mut f, &mut n, 0);
+            }
+        }
+        for st in self.stories.values_mut() {
+            if !st.objects.iter().any(|o| any(&o.item, &hit)) {
+                continue;
+            }
+            for o in Arc::make_mut(st).objects.iter_mut().filter(|o| any(&o.item, &hit)) {
+                update(&mut Arc::make_mut(o).item, &hit, &mut f, &mut n, 0);
+            }
+        }
+        n
+    }
+
     /// Plain story text with frame/story stats (for agents).
     pub fn story_summary(&self, sid: StoryId) -> Option<serde_json::Value> {
         let st = self.story(sid)?;

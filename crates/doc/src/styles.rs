@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attrs::{CharAttrs, CharProps, ParaAttrs, ParaProps};
-use crate::item::{Fill, Stroke, TextFrameOptions};
+use crate::item::{Effects, Fill, Stroke, TextFrameOptions};
 use crate::story::{BASIC_PARAGRAPH, CharFormat, NO_CHAR_STYLE, ParaFormat};
 
 pub const NO_PARA_STYLE: &str = "[No Paragraph Style]";
@@ -55,6 +55,10 @@ pub struct ObjectStyle {
     pub paragraph_style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_frame: Option<TextFrameOptions>,
+    /// Effects (drop shadow, feather, glows…). An item using the style follows them until its own
+    /// effects differ from the style's (a local override).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effects: Option<Effects>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

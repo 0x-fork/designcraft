@@ -983,7 +983,8 @@ impl<'r> Importer<'r> {
             } else {
                 None
             };
-            let s = ObjectStyle { name: name.clone(), based_on, fill, stroke, paragraph_style, text_frame };
+            let effects = self.style_effects(e);
+            let s = ObjectStyle { name: name.clone(), based_on, fill, stroke, paragraph_style, text_frame, effects };
             match self.styles.object.iter_mut().find(|o| o.name == name) {
                 Some(slot) => *slot = s,
                 None => self.styles.object.push(s),
@@ -2008,6 +2009,53 @@ impl<'r> Importer<'r> {
         None
     }
 
+    /// Reads the drop shadow and feather of a `TransparencySetting` into `fx`.
+    fn effects_in(&mut self, t: &El, fx: &mut Effects) {
+        if let Some(ds) = t.find("DropShadowSetting")
+            && ds.get("Mode") == Some("Drop")
+        {
+            let x = ds.num("XOffset").unwrap_or(4.95);
+            let y = ds.num("YOffset").unwrap_or(4.95);
+            let def = DropShadow::default();
+            fx.drop_shadow = DropShadow {
+                on: true,
+                color: ds.get("EffectColor").map(|c| self.swatch_ref(c)).unwrap_or(def.color),
+                opacity: ds.num("Opacity").map(|o| (o / 100.0) as f32).unwrap_or(def.opacity),
+                angle: names_angle(x, y),
+                distance: x.hypot(y),
+                size: ds.num("Size").unwrap_or(def.size),
+                spread: ds.num("Spread").unwrap_or(def.spread),
+                global_light: false,
+            };
+        }
+        if let Some(f) = t.find("FeatherSetting")
+            && f.get("Mode").is_some_and(|m| m != "None")
+        {
+            fx.feather = f.num("Width").unwrap_or(9.0);
+        }
+    }
+
+    /// An object style's effects: set when its effects category turns on an effect this model
+    /// reads, or (without category settings) when it gives a drop shadow or feather that is on.
+    fn style_effects(&mut self, e: &El) -> Option<Effects> {
+        let t = e.find("TransparencySetting");
+        let set = match e.find("ObjectStyleObjectEffectsCategorySettings") {
+            Some(c) => ["EnableDropShadow", "EnableFeather"].iter().any(|k| c.get(k) == Some("true")),
+            None => t.is_some_and(|t| {
+                t.find("DropShadowSetting").is_some_and(|d| d.get("Mode") == Some("Drop"))
+                    || t.find("FeatherSetting").is_some_and(|f| f.get("Mode").is_some_and(|m| m != "None"))
+            }),
+        };
+        if !set {
+            return None;
+        }
+        let mut fx = Effects::default();
+        if let Some(t) = t {
+            self.effects_in(t, &mut fx);
+        }
+        Some(fx)
+    }
+
     fn stroke_from(&mut self, e: &El, item: Option<&El>) -> Stroke {
         let g = |s: &Self, k: &str| -> Option<String> { if item.is_some() { s.attr_or_style(e, k) } else { e.get(k).map(str::to_string) } };
         let color = g(self, "StrokeColor");
@@ -2135,28 +2183,7 @@ impl<'r> Importer<'r> {
                     it.blend = names::blend_in(m);
                 }
             }
-            if let Some(ds) = t.find("DropShadowSetting")
-                && ds.get("Mode") == Some("Drop")
-            {
-                let x = ds.num("XOffset").unwrap_or(4.95);
-                let y = ds.num("YOffset").unwrap_or(4.95);
-                let def = DropShadow::default();
-                it.effects.drop_shadow = DropShadow {
-                    on: true,
-                    color: ds.get("EffectColor").map(|c| self.swatch_ref(c)).unwrap_or(def.color),
-                    opacity: ds.num("Opacity").map(|o| (o / 100.0) as f32).unwrap_or(def.opacity),
-                    angle: names_angle(x, y),
-                    distance: x.hypot(y),
-                    size: ds.num("Size").unwrap_or(def.size),
-                    spread: ds.num("Spread").unwrap_or(def.spread),
-                    global_light: false,
-                };
-            }
-            if let Some(f) = t.find("FeatherSetting")
-                && f.get("Mode").is_some_and(|m| m != "None")
-            {
-                it.effects = Effects { feather: f.num("Width").unwrap_or(9.0), ..it.effects.clone() };
-            }
+            self.effects_in(t, &mut it.effects);
         }
         // Text wrap.
         if let Some(w) = e.find("TextWrapPreference") {

@@ -1454,3 +1454,34 @@ fn list_numbering_format_expression_and_bullet_import_and_round_trip() {
     check(&d);
     check(&import_idml(&export_idml(&d)).unwrap());
 }
+
+#[test]
+fn object_style_effects_round_trip() {
+    use designcraft_doc::{DropShadow, Effects, ObjectStyle};
+    let mut d = Document::new(&NewDocument::default());
+    let fx = Effects {
+        drop_shadow: DropShadow { on: true, distance: 5.0, size: 12.0, opacity: 0.28, ..Default::default() },
+        feather: 3.0,
+        ..Default::default()
+    };
+    d.styles_mut().object.push(ObjectStyle { name: "Photo".into(), effects: Some(fx.clone()), ..Default::default() });
+    d.styles_mut().object.push(ObjectStyle { name: "Plain".into(), fill: Some(Fill::swatch("Black")), ..Default::default() });
+    let lid = d.default_layer();
+    let id = designcraft_doc::ItemId(d.alloc());
+    let mut it = designcraft_doc::Item::new(id, lid, Shape::Rectangle, shapes::rectangle(Rect::new(40.0, 40.0, 140.0, 140.0)));
+    it.object_style = "Photo".into();
+    it.effects = fx.clone();
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+
+    let back = import_idml(&export_idml(&d)).unwrap();
+    let style = |n: &str| back.styles.object.iter().find(|s| s.name == n).unwrap();
+    let got = style("Photo").effects.clone().unwrap();
+    let ds = &got.drop_shadow;
+    assert!(ds.on && ds.size == 12.0 && (ds.opacity - 0.28).abs() < 1e-6, "{ds:?}");
+    assert!((ds.distance - 5.0).abs() < 1e-6 && (ds.angle - 135.0).abs() < 1e-6, "{ds:?}");
+    assert_eq!(got.feather, 3.0);
+    assert!(style("Plain").effects.is_none());
+    // The frame's effects are the style's, so it follows later edits of the style.
+    let frame = back.spreads[0].items.iter().find(|i| i.object_style == "Photo").unwrap();
+    assert_eq!(frame.effects, got);
+}

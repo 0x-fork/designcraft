@@ -438,6 +438,61 @@ fn object_styles_create_and_apply() {
     assert_eq!(ib.object_style, "Magenta Box");
 }
 
+#[test]
+fn object_style_effects_follow_the_style_until_overridden() {
+    use designcraft_doc::{BASIC_GRAPHICS_FRAME, ItemId};
+    let mut s = session();
+    let frame = |s: &mut Session, x: f64| {
+        let r = s.execute("frame.create", &json!({"rect": [x, 36, x + 100.0, 136], "content": "unassigned"})).unwrap();
+        r["id"].as_u64().unwrap()
+    };
+    let item = |s: &Session, id: u64| s.doc().unwrap().doc.item(ItemId(id)).unwrap().clone();
+    let shadow = |s: &Session, id: u64| item(s, id).effects.drop_shadow;
+    let a = frame(&mut s, 36.0);
+    s.execute("object.dropShadow", &json!({"on": true, "distance": 0, "size": 12, "opacity": 0.28, "ids": [a]})).unwrap();
+    s.execute("selection.set", &json!({"ids": [a]})).unwrap();
+    s.execute("style.object.create", &json!({"name": "Photo", "fromSelection": true})).unwrap();
+    let b = frame(&mut s, 200.0);
+    let c = frame(&mut s, 360.0);
+    s.execute("style.object.apply", &json!({"name": "Photo", "ids": [a, b, c]})).unwrap();
+    assert_eq!(shadow(&s, b), shadow(&s, a));
+    assert!(shadow(&s, b).on && shadow(&s, b).size == 12.0);
+    s.execute("object.dropShadow", &json!({"on": true, "size": 30, "ids": [c]})).unwrap();
+
+    // Editing the style updates the items that follow it; `c`'s local shadow stays.
+    let r = s.execute("style.object.edit", &json!({"name": "Photo", "dropShadow": {"size": 20}})).unwrap();
+    assert_eq!(r["updated"], 2);
+    assert_eq!((shadow(&s, a).size, shadow(&s, b).size, shadow(&s, c).size), (20.0, 20.0, 30.0));
+    assert_eq!(shadow(&s, a).opacity, 0.28);
+    s.execute("style.object.clearOverrides", &json!({"ids": [c]})).unwrap();
+    assert_eq!(shadow(&s, c), shadow(&s, a));
+
+    // Saved and opened again, the style keeps its effects.
+    let bytes = s.execute("file.serialize", &json!({})).unwrap();
+    let mut back = Session::new();
+    back.execute("file.openBytes", &json!({"name": "copy", "base64": bytes["base64"]})).unwrap();
+    let d = &back.doc().unwrap().doc;
+    assert_eq!(d.styles.object_style("Photo").unwrap().effects.as_ref().unwrap().drop_shadow.size, 20.0);
+    assert!(d.styles.object_style(BASIC_GRAPHICS_FRAME).unwrap().effects.is_none());
+
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(shadow(&s, c).size, 30.0);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((shadow(&s, a).size, shadow(&s, b).size), (12.0, 12.0));
+    assert_eq!(s.doc().unwrap().doc.styles.object_style("Photo").unwrap().effects.as_ref().unwrap().drop_shadow.size, 12.0);
+
+    // A style that didn't set effects gives them to every item using it; `null` stops setting them.
+    let e = frame(&mut s, 36.0);
+    s.execute("style.object.apply", &json!({"name": BASIC_GRAPHICS_FRAME, "ids": [e]})).unwrap();
+    s.execute("object.dropShadow", &json!({"on": true, "ids": [e]})).unwrap();
+    s.execute("style.object.edit", &json!({"name": BASIC_GRAPHICS_FRAME, "feather": 4})).unwrap();
+    assert_eq!(item(&s, e).effects, designcraft_doc::Effects { feather: 4.0, ..Default::default() });
+    s.execute("style.object.edit", &json!({"name": BASIC_GRAPHICS_FRAME, "effects": null})).unwrap();
+    assert!(s.doc().unwrap().doc.styles.object_style(BASIC_GRAPHICS_FRAME).unwrap().effects.is_none());
+    assert_eq!(item(&s, e).effects.feather, 4.0);
+    assert!(s.execute("style.object.edit", &json!({"name": "Photo", "dropShadow": {"size": "big"}})).is_err());
+}
+
 /// Unicode text per page, through hayro's interpreter (ToUnicode / ActualText).
 fn pdf_text(bytes: &[u8]) -> Vec<String> {
     use hayro_interpret::font::Glyph;
