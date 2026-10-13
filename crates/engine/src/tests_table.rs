@@ -531,7 +531,6 @@ fn cell_and_table_style_strokes_take_type_and_gap_colour_with_validation() {
     }
 }
 
-
 #[test]
 fn split_selected_row_or_column_splits_both_cells() {
     for horizontal in [true, false] {

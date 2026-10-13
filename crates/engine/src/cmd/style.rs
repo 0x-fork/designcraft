@@ -794,7 +794,8 @@ fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
         let story = st.doc.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
         // Match paragraph fromSelection's first-character/caret policy, but keep paragraph
         // attributes inherited instead of freezing the fully resolved character properties.
-        let mut format = if target.range.is_empty() { story.char_format_at(target.range.start) } else { story.format_after(target.range.start) }.clone();
+        let mut format =
+            if target.range.is_empty() { story.char_format_at(target.range.start) } else { story.format_after(target.range.start) }.clone();
         // A bare caret: what typing there would get, as `type.selectionAttrs` reports.
         if target.range.is_empty() {
             super::text::with_typing_format(s, &mut format);
