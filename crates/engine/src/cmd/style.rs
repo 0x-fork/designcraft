@@ -144,7 +144,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Swatch",
             [],
             None,
-            "{swatch?: name, target?: fill|stroke} → {name} — the Swatches panel's New Swatch: `swatch` (default: the selection's fill or stroke) as a new swatch. An unnamed colour or gradient becomes a named one (a gradient: \"New Gradient Swatch\"), still applied; a named swatch is duplicated (\"… copy\")",
+            "{swatch?: name, target?: fill|stroke} → {name} — the Swatches panel's New Swatch: `swatch` (default: the selection's fill or stroke) as a new swatch. An unnamed colour or gradient becomes a named one (a gradient: \"New Gradient Swatch\"), still applied; a named swatch is duplicated (\"… copy\"); with nothing selected and no `swatch`, a new colour swatch",
             has_doc,
             new_swatch
         ),
@@ -807,7 +807,10 @@ fn new_swatch(s: &mut Session, p: &Value) -> Result<Value> {
     let name = match str_param(p, "swatch") {
         Some(n) => n.to_string(),
         None => {
-            let id = st.selection.items.first().copied().ok_or_else(|| bad(ID, "select an object or give `swatch`"))?;
+            let Some(id) = st.selection.items.first().copied() else {
+                // Nothing selected: a new colour swatch.
+                return create_swatch(s, &json!({"color": {"c": 0, "m": 50, "y": 100, "k": 0}}));
+            };
             let it = st.doc.item(id).ok_or_else(|| bad(ID, "no such item"))?;
             if str_param(p, "target") == Some("stroke") { it.stroke.swatch.clone() } else { it.fill.swatch.clone() }
         }
@@ -1997,8 +2000,14 @@ mod gradient_swatch_tests {
         assert_eq!(s.execute("swatch.new", &json!({})).unwrap()["name"], "New Gradient Swatch copy");
         assert_eq!(s.execute("swatch.new", &json!({"swatch": "C=100 M=0 Y=0 K=0"})).unwrap()["name"], "C=100 M=0 Y=0 K=0 copy");
         assert!(s.execute("swatch.new", &json!({"swatch": "[None]"})).is_err());
+        // The stroke in front: the stroke's swatch.
+        s.execute("object.stroke", &json!({"ids": [id], "swatch": "C=100 M=0 Y=0 K=0"})).unwrap();
+        assert_eq!(s.execute("swatch.new", &json!({"target": "stroke"})).unwrap()["name"], "C=100 M=0 Y=0 K=0 copy 2");
+        // Nothing selected, no swatch given: a new colour swatch.
         s.execute("edit.deselectAll", &json!({})).unwrap();
-        assert!(s.execute("swatch.new", &json!({})).is_err(), "nothing selected, no swatch given");
+        let n = s.execute("swatch.new", &json!({})).unwrap()["name"].as_str().unwrap().to_string();
+        let w = s.doc().unwrap().doc.swatch(&n).unwrap();
+        assert!(w.named && !w.hidden && matches!(w.value, SwatchValue::Color { .. }), "{w:?}");
     }
 }
 
