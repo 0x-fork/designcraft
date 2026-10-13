@@ -546,7 +546,9 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     let Some(st) = app.session.active() else { return };
     let item = st.selection.items.first().and_then(|i| st.doc.item(*i));
     let has_item = item.is_some();
-    let fill = item.map(|it| it.fill.clone()).unwrap_or_default();
+    // The fill's gradient, or the stroke's when the toolbox's Stroke box is in front.
+    let stroke_front = app.ui.stroke_front;
+    let fill = item.map(|it| if stroke_front { it.stroke.as_fill() } else { it.fill.clone() }).unwrap_or_default();
     let cur = designcraft_color::swatch::resolve_gradient(&st.doc.swatches, &fill.swatch).cloned();
     let is_gradient = cur.is_some();
     let g = cur.unwrap_or_default();
@@ -818,7 +820,10 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             }
         });
     });
-    if let Some(p) = send {
+    if let Some(mut p) = send {
+        if let Some(o) = p.as_object_mut() {
+            o.insert("target".to_string(), json!(if stroke_front { "stroke" } else { "fill" }));
+        }
         let _ = app.run("object.gradient", p);
     }
 }
