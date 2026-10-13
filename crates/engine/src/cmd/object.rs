@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use designcraft_color::BlendMode;
 use designcraft_doc::{
-    Content, Document, Fill, Item, ItemId, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke, TextFrame, TextFrameOptions, TextSel,
+    AssetId, Content, Document, Fill, Item, ItemId, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke, TextFrame, TextFrameOptions,
+    TextSel,
 };
 use designcraft_geom::{Affine, Point, Rect, Vec2, shapes};
 use serde_json::{Value, json};
@@ -966,13 +967,24 @@ pub fn duplicate_from(dst: &mut Document, src: &Document, ids: &[ItemId], to: Sp
     Ok(out)
 }
 
+/// The id to reference in `dst` for asset `id` of `src`. When `src` lacks the asset (a missing graphic), an id that `dst`
+/// already uses for a different asset is swapped for a fresh unused one so the reference stays missing instead of showing
+/// an unrelated image.
+fn adopt_or_dangle(dst: &mut Document, src: &Document, id: AssetId) -> AssetId {
+    match dst.adopt_asset(src, id) {
+        Some(a) => a,
+        None if dst.assets.contains_key(&id) => AssetId(dst.alloc()),
+        None => id,
+    }
+}
+
 fn renumber(dst: &mut Document, src: &Document, it: &mut Item, stories: &mut HashMap<StoryId, StoryId>) {
     it.id = ItemId(dst.alloc());
     let my_id = it.id;
     if let Some(m) = it.media.as_mut()
         && let Some(p) = m.poster
     {
-        m.poster = dst.adopt_asset(src, p).or(Some(p));
+        m.poster = Some(adopt_or_dangle(dst, src, p));
     }
     match &mut it.content {
         Content::Text(tf) => {
@@ -984,9 +996,8 @@ fn renumber(dst: &mut Document, src: &Document, it: &mut Item, stories: &mut Has
                     st.id = n;
                     let mut assets = HashMap::new();
                     for a in designcraft_doc::story_asset_refs(&st) {
-                        if let Some(na) = dst.adopt_asset(src, a)
-                            && na != a
-                        {
+                        let na = adopt_or_dangle(dst, src, a);
+                        if na != a {
                             assets.insert(a, na);
                         }
                     }
@@ -1003,9 +1014,7 @@ fn renumber(dst: &mut Document, src: &Document, it: &mut Item, stories: &mut Has
             }
         }
         Content::Graphic(g) => {
-            if let Some(a) = dst.adopt_asset(src, g.asset) {
-                g.asset = a;
-            }
+            g.asset = adopt_or_dangle(dst, src, g.asset);
         }
         Content::Group { items } => {
             for c in items.iter_mut() {
