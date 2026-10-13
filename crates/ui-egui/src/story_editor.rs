@@ -137,7 +137,7 @@ mod tests {
         app.run("file.activate", json!({"index": 0})).unwrap();
         app.run("app.storyEditor", json!({"story": stories[0]})).unwrap();
         let mut h = crate::test_window::open(app, egui::vec2(1440.0, 900.0));
-        h.get_by_value("Alpha story").focus();
+        h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput && n.value().as_deref() == Some("Alpha story")).focus();
         h.run_steps(2);
         h.event(egui::Event::Text("!".into()));
         h.run_steps(2);
