@@ -3202,6 +3202,18 @@ fn layout_line(
             // A default tab stop is a left tab.
             last_tab = Some((i, stop.as_ref().is_none_or(|t| t.align == TabAlign::Left)));
         } else if line[i].ch == story::RIGHT_INDENT_TAB {
+            // Use the first stop past the right margin, or the last stop at/before it.
+            // Choose the stop before checking its leader: an empty leader takes precedence too.
+            let right = x1 - tab_origin;
+            let stop = pp
+                .tabs
+                .iter()
+                .filter(|t| t.position > right)
+                .min_by(|a, b| a.position.total_cmp(&b.position))
+                .or_else(|| pp.tabs.iter().filter(|t| t.position <= right).max_by(|a, b| a.position.total_cmp(&b.position)));
+            if let Some(t) = stop.filter(|t| !t.leader.is_empty()) {
+                leaders.push((i, t.leader.clone()));
+            }
             let rest: f64 = line[i + 1..].iter().map(|g| g.adv).sum();
             line[i].adv = (measure - x - rest).max(0.0);
             last_tab = Some((i, false));
