@@ -121,6 +121,11 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     section(ui, crate::i18n::tr(&app.ui.language, "Align"), true);
     align_row(app, ui);
     divider(ui);
+    if i.count > 1 {
+        section(ui, crate::i18n::tr(&app.ui.language, "Pathfinder"), true);
+        pathfinder_row(app, ui);
+        divider(ui);
+    }
     if i.is_text && i.count == 1 {
         section(ui, crate::i18n::tr(&app.ui.language, "Text Frame"), true);
         text_frame_section(app, ui);
@@ -1775,6 +1780,27 @@ pub fn wrap_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The Pathfinder operations, in the order of InDesign's Pathfinder buttons.
+const PATHFINDER: [(&str, &str, &str); 5] = [
+    ("pf-add", "add", "Add"),
+    ("pf-subtract", "subtract", "Subtract"),
+    ("pf-intersect", "intersect", "Intersect"),
+    ("pf-exclude", "exclude", "Exclude Overlap"),
+    ("pf-minus-back", "minusBack", "Minus Back"),
+];
+
+/// Properties › Pathfinder (several objects selected): combine them into one shape.
+fn pathfinder_row(app: &mut DesignApp, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        for (icon, op, tip) in PATHFINDER {
+            if icon_toggle(ui, icon, false, crate::i18n::tr(&app.ui.language, tip)).clicked() {
+                let _ = app.run("object.pathfinder", json!({"op": op}));
+            }
+        }
+    });
+}
+
 /// Pathfinder panel: combine the selected shapes; make or release compound paths.
 pub fn pathfinder_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Pathfinder")).strong());
@@ -2409,5 +2435,48 @@ mod effects_panel_tests {
         assert!(it.has_nested_items());
         assert!(!it.isolate && !it.knockout, "group-only options stay disabled for a frame holding content");
         assert_eq!(st.history.undo.len(), undo, "disabled controls do not create undo steps");
+    }
+
+    fn panel(app: DesignApp) -> Harness<'static, DesignApp> {
+        let mut h = Harness::builder().with_size(vec2(320.0, 1400.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let id = egui::Id::new("test_fonts");
+                if ui.data(|d| d.get_temp::<bool>(id)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(id, true));
+                    return;
+                }
+                show(app, ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn several_shapes_show_pathfinder_and_intersect_combines_them() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let a = app.run("frame.create", json!({"rect": [100, 100, 300, 300], "shape": "ellipse"})).unwrap()["id"].clone();
+        let b = app.run("frame.create", json!({"rect": [200, 100, 300, 200]})).unwrap()["id"].clone();
+        // One shape: no Pathfinder section.
+        app.run("selection.set", json!({"ids": [a]})).unwrap();
+        let mut h = panel(app);
+        assert!(h.query_by_label("Pathfinder").is_none());
+        // Two: the section and its five buttons; Intersect leaves one shape, the ellipse's quarter.
+        h.state_mut().run("selection.set", json!({"ids": [a, b]})).unwrap();
+        h.run_steps(3);
+        assert!(h.query_by_label("Pathfinder").is_some());
+        for op in ["Add", "Subtract", "Intersect", "Exclude Overlap", "Minus Back"] {
+            assert!(h.query_by_label(op).is_some(), "{op}");
+        }
+        h.get_by_label("Intersect").click();
+        h.run_steps(3);
+        let doc = &h.state().session.active().unwrap().doc;
+        let items = &doc.spreads[0].items;
+        assert_eq!(items.len(), 1, "one shape left");
+        let r = items[0].bounds();
+        assert!((r.x0 - 200.0).abs() < 0.5 && (r.y1 - 200.0).abs() < 0.5 && (r.x1 - 300.0).abs() < 0.5, "{r:?}");
     }
 }
