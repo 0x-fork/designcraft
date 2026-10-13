@@ -403,6 +403,32 @@ fn drawn(bytes: &[u8]) -> (Vec<(String, kurbo::Rect)>, Vec<kurbo::Rect>) {
 }
 
 #[test]
+fn pdfa_leaves_out_form_fields_added_after_validation() {
+    let mut d = doc_with_text("Archive me");
+    let lid = d.default_layer();
+    let id = ItemId(d.alloc());
+    let mut b = Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(36.0, 400.0, 200.0, 430.0)));
+    b.form_field = Some(designcraft_doc::FormField {
+        kind: designcraft_doc::FieldKind::TextField,
+        name: "name".into(),
+        value: String::new(),
+        options: Vec::new(),
+        multiline: false,
+        required: false,
+        font_size: 0.0,
+    });
+    d.insert_item(SpreadRef::Doc(0), b, None).unwrap();
+    let plain = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
+    assert!(String::from_utf8_lossy(&plain).contains("/AcroForm"), "control: a plain export has the field");
+    let opts = PdfOptions { standard: Standard::PdfA2b, created: Some(1_700_000_000), ..Default::default() };
+    let a = export_pdf_with_report(&d, &Cache::new(), &opts).unwrap();
+    let text = String::from_utf8_lossy(&a.bytes).to_string();
+    assert!(text.contains("pdfaid"));
+    assert!(!text.contains("/AcroForm") && !text.contains("NeedAppearances"), "PDF/A must not get the form update");
+    assert!(a.warnings.iter().any(|w| w.contains("PDF/A-2b") && w.contains("left out")), "{:?}", a.warnings);
+}
+
+#[test]
 fn missing_glyphs_print_as_boxes() {
     // Source Serif 4 lacks 語: its .notdef box is drawn as a path, not as a .notdef glyph
     // (which PDF/A and PDF/UA forbid).
