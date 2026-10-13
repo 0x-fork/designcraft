@@ -785,8 +785,8 @@ mod paste_tests {
         assert_eq!(clip.assets.keys().copied().collect::<Vec<_>>(), [aid]);
     }
 
-    /// Undo leaves the id of the copy it removed in the selection. Copy measures from the spread
-    /// of the first selected object that is still there.
+    /// A selection can name an object that is gone (here the copy that Undo removed). Copy
+    /// measures from the spread of the first selected object that is still there.
     #[test]
     fn copy_measures_from_the_first_selected_object_that_exists() {
         let mut s = Session::new();
@@ -797,8 +797,8 @@ mod paste_tests {
         s.execute("edit.copy", &json!({})).unwrap();
         let gone = s.execute("edit.paste", &json!({"spread": 1})).unwrap()["ids"][0].as_u64().unwrap();
         s.execute("edit.undo", &json!({})).unwrap();
-        s.execute("selection.set", &json!({"ids": [a], "add": true})).unwrap();
-        assert_eq!(s.doc().unwrap().selection.items, [ItemId(gone), ItemId(a)]);
+        assert_eq!(s.doc().unwrap().selection.items, [ItemId(a)], "Undo restores the selection from before the paste");
+        s.doc_mut().unwrap().selection.items = vec![ItemId(gone), ItemId(a)];
         s.execute("edit.copy", &json!({})).unwrap();
         assert_eq!(pasted(&mut s, "edit.pasteInPlace", json!({"spread": 1})), (SpreadRef::Doc(1), Rect::new(w + 36.0, 36.0, w + 136.0, 136.0)));
     }
