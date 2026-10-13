@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · The Gradient panel follows InDesign's layout (thumbnail, Type, Location, Angle, Reverse, ramp with midpoint diamonds) and takes swatches dragged from the Swatches panel: dropped on a stop they colour it, elsewhere they add a stop. Stops keep their CMYK through panel edits; `object.gradient` stops accept a `swatch`. No readiness percentage change.
 - **2026-10-13** · New Swatch works as InDesign's: a gradient made in the Gradient panel becomes "New Gradient Swatch" (still applied), an unnamed colour a listed swatch, a named swatch a "copy" (`swatch.new`); `swatch.create {gradient}` makes a gradient swatch from colour swatches. No readiness percentage change.
 - **2026-10-13** · Radial gradients stretch with the object's box, as InDesign draws them: by default an ellipse reaching the frame's sides (it was a circle reaching only the longer side), and a Gradient Swatch tool drag keeps the box's proportions; on screen and in PDF. No readiness percentage change.
 - **2026-10-13** · `.indd` and `.indt` documents open through File › Open, drop, the web inbox, `file.open`, `file.openBytes`, `file.openIdml` and the CLI: [storytold/indd-utils](https://github.com/storytold/indd-utils) converts them to IDML in memory and the IDML importer reads the result, on desktop and web. Converter warnings come first in the open result; an unreadable file is an open error (#21, #114). No readiness percentage change until a real-file corpus measures it.

@@ -188,7 +188,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Gradient",
             [],
             None,
-            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}|[r,g,b], opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
+            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}|{gray}|[r,g,b] | swatch: name (its colour, as dropped on the Gradient panel), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
             super::has_selection,
             apply_gradient
         ),
@@ -1006,6 +1006,10 @@ pub fn parse_color(v: &Value) -> Option<designcraft_color::Color> {
                 return Some(Color::gray(if gray > 1.0 { gray / 100.0 } else { gray } as f32));
             }
             let g = |k: &str| o.get(k).and_then(Value::as_f64);
+            // {gray: 0–100} is a grey with that much black.
+            if let Some(k) = g("gray") {
+                return Some(Color::gray((k.clamp(0.0, 100.0) / 100.0) as f32));
+            }
             let v = [g("c")?, g("m")?, g("y")?, g("k")?];
             let scale = if v.iter().any(|&x| x > 1.0) { 100.0 } else { 1.0 };
             Some(Color::cmyk((v[0] / scale) as f32, (v[1] / scale) as f32, (v[2] / scale) as f32, (v[3] / scale) as f32))
@@ -1270,9 +1274,17 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let stops = match p.get("stops").and_then(Value::as_array) {
         Some(a) => {
+            let doc = &s.doc()?.doc;
             let mut v = Vec::new();
             for st in a {
-                let color = st.get("color").and_then(parse_color).ok_or_else(|| bad("object.gradient", "a stop needs a color"))?;
+                // A swatch dropped on a stop gives it the swatch's colour (a tint's mixed in).
+                let color = match st.get("swatch").and_then(Value::as_str) {
+                    Some(name) => doc
+                        .resolve_color(name, 1.0)
+                        .filter(|_| designcraft_color::swatch::resolve_gradient(&doc.swatches, name).is_none())
+                        .ok_or_else(|| bad("object.gradient", format!("`{name}` isn't a colour swatch")))?,
+                    None => st.get("color").and_then(parse_color).ok_or_else(|| bad("object.gradient", "a stop needs a color or a swatch"))?,
+                };
                 let pct = |k: &str, d: f64| st.get(k).and_then(Value::as_f64).unwrap_or(d).clamp(0.0, 100.0) as f32 / 100.0;
                 v.push(GradientStop {
                     offset: pct("location", 0.0),
