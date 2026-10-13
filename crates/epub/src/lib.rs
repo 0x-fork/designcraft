@@ -15,7 +15,7 @@ use std::io::Write;
 
 use designcraft_doc::geom::{Affine, Rect};
 use designcraft_doc::{
-    Align, CharAttrs, CharProps, Content, Document, ENDNOTE_REF, FOOTNOTE_REF, Item, ItemId, ParaProps, SpreadRef, Story, StoryId, Styles, Table,
+    Align, AnchorPosition, AnchoredObject, CharAttrs, CharProps, Content, Document, ENDNOTE_REF, FOOTNOTE_REF, Item, ItemId, OBJECT_MARK, ParaProps, SpreadRef, Story, StoryId, Styles, Table,
     story,
 };
 
@@ -590,7 +590,7 @@ fn class_selector(tag: &str, class: &str) -> Option<String> {
 const MAX_DEPTH: usize = 8;
 
 /// Writes stories with their tables and notes, numbering notes across the stories of one export.
-struct StoryWriter<'a> {
+struct StoryWriter<'a, 'f> {
     doc: &'a Document,
     pc: BTreeMap<&'a str, String>,
     cc: BTreeMap<&'a str, String>,
@@ -604,10 +604,17 @@ struct StoryWriter<'a> {
     next_endnote: u32,
     /// Endnotes met so far: (number, list item markup).
     endnotes: Vec<(u32, String)>,
+    /// Names each packaged file (a package path, or a data URI for single-file HTML). Without
+    /// it, anchored objects are left out.
+    img_src: Option<&'f dyn Fn(&str, &str, &[u8]) -> String>,
+    /// Images, video and sound met so far, by package name.
+    images: BTreeMap<String, (&'a str, &'a [u8])>,
+    /// Asset names of the images written without alt text (decorative).
+    no_alt: Vec<String>,
 }
 
-impl<'a> StoryWriter<'a> {
-    fn new(doc: &'a Document, epub: bool) -> Self {
+impl<'a, 'f> StoryWriter<'a, 'f> {
+    fn new(doc: &'a Document, epub: bool, img_src: Option<&'f dyn Fn(&str, &str, &[u8]) -> String>) -> Self {
         StoryWriter {
             doc,
             pc: para_classes(&doc.styles),
@@ -618,6 +625,9 @@ impl<'a> StoryWriter<'a> {
             next_footnote: 1,
             next_endnote: 1,
             endnotes: Vec::new(),
+            img_src,
+            images: BTreeMap::new(),
+            no_alt: Vec::new(),
         }
     }
 
@@ -685,13 +695,22 @@ impl<'a> StoryWriter<'a> {
             let Some(raw) = st.text.get(a..b) else { continue };
             let mut t = String::new();
             let mut seg_start = 0;
+            // Index of the next anchored object: marks count from the story start, as
+            // `Story::object_at` counts them (counted once, at the run's first mark).
+            let mut mark: Option<usize> = None;
             for (i, c) in raw.char_indices() {
-                if c != FOOTNOTE_REF && c != ENDNOTE_REF {
+                if c != FOOTNOTE_REF && c != ENDNOTE_REF && c != OBJECT_MARK {
                     continue;
                 }
                 t.push_str(&run_text(doc, raw.get(seg_start..i).unwrap_or_default()));
                 seg_start = i + c.len_utf8();
-                if depth < MAX_DEPTH {
+                if c == OBJECT_MARK {
+                    let k = mark.unwrap_or_else(|| st.text.get(..a).map_or(0, |t| t.matches(OBJECT_MARK).count()));
+                    mark = Some(k.saturating_add(1));
+                    if let Some(o) = st.objects.get(k) {
+                        t.push_str(&self.object(o));
+                    }
+                } else if depth < MAX_DEPTH {
                     if c == FOOTNOTE_REF {
                         self.footnote(st, a + i, depth, &mut t, after);
                     } else {
@@ -714,6 +733,72 @@ impl<'a> StoryWriter<'a> {
                 let _ = write!(out, "<{ctag}{cls}{style_attr}>{t}</{ctag}>");
             }
         }
+    }
+
+    /// An anchored object where it is anchored: its graphics in the text, an above-line object as
+    /// a block of its own. Anchored text frames are left out.
+    fn object(&mut self, o: &AnchoredObject) -> String {
+        let mut out = String::new();
+        o.item.walk(&mut |it| {
+            if let Some((markup, _)) = self.graphic(it) {
+                out.push_str(&markup);
+            }
+        });
+        match &o.position {
+            AnchorPosition::AboveLine { align, .. } if !out.is_empty() => {
+                let align = match align {
+                    designcraft_doc::anchored::AnchorAlign::Left => "left",
+                    designcraft_doc::anchored::AnchorAlign::Center => "center",
+                    designcraft_doc::anchored::AnchorAlign::Right => "right",
+                };
+                format!("<span class=\"anchored\" style=\"display:block;text-align:{align}\">{out}</span>")
+            }
+            _ => out,
+        }
+    }
+
+    /// The markup for one graphic item: an `<img>`, or an HTML5 player for video and sound (with
+    /// `true`), its file registered in `images`. `None` for an item that isn't a graphic, whose
+    /// asset has no data, or when the writer names no files.
+    fn graphic(&mut self, it: &Item) -> Option<(String, bool)> {
+        let img_src = self.img_src?;
+        let doc = self.doc;
+        let Content::Graphic(g) = &it.content else { return None };
+        let a = doc.assets.get(&g.asset)?;
+        if a.data.is_empty() {
+            return None;
+        }
+        let mime = safe_mime(&a.mime);
+        // Video and sound: an HTML5 player (with the poster, when there is one).
+        if let Some(kind) = designcraft_doc::media_kind(mime) {
+            let name = asset_path("media", a, mime);
+            self.images.insert(name.clone(), (mime, a.data.as_slice()));
+            let m = it.media.clone().unwrap_or_default();
+            let mut attrs = String::new();
+            for (on, attr) in [(m.controls, " controls=\"controls\""), (m.play_on_page_load, " autoplay=\"autoplay\""), (m.looping, " loop=\"loop\"")] {
+                if on {
+                    attrs.push_str(attr);
+                }
+            }
+            if let Some(pa) = m.poster.and_then(|p| doc.assets.get(&p)) {
+                let poster_mime = safe_mime(&pa.mime);
+                let pn = asset_path("images", pa, poster_mime);
+                self.images.insert(pn.clone(), (poster_mime, pa.data.as_slice()));
+                if kind == "video" {
+                    attrs.push_str(&format!(" poster=\"{}\"", xml_attr(&img_src(&pn, poster_mime, &pa.data))));
+                }
+            }
+            let markup = format!("<{kind} src=\"{}\"{attrs}>{}</{kind}>", xml_attr(&img_src(&name, mime, &a.data)), xml_text(&a.name));
+            return Some((markup, true));
+        }
+        let name = asset_path("images", a, mime);
+        self.images.insert(name.clone(), (mime, a.data.as_slice()));
+        // Alt text from Object Export Options; without one the image counts as decorative
+        // (`alt=""`): a file name read aloud helps nobody.
+        if it.alt_text.trim().is_empty() {
+            self.no_alt.push(a.name.clone());
+        }
+        Some((format!("<img src=\"{}\" alt=\"{}\"/>", xml_attr(&img_src(&name, mime, &a.data)), xml_attr(&it.alt_text)), false))
     }
 
     /// The footnote whose reference is at byte `pos` of `st`: a note reference in `out`, the note
@@ -846,7 +931,7 @@ fn run_text(doc: &Document, raw: &str) -> String {
 /// One story as XHTML: paragraphs, tables, and each footnote after the paragraph that refers to
 /// it. Endnote references link to the endnotes section that the full export ends with.
 pub fn story_html(doc: &Document, sid: StoryId) -> String {
-    StoryWriter::new(doc, true).story(sid)
+    StoryWriter::new(doc, true, None).story(sid)
 }
 
 /// Reading order of document content: (page, y, x) of each story's first frame and of graphics.
@@ -953,19 +1038,23 @@ fn ext(mime: &str) -> &'static str {
     }
 }
 
+/// The document content as HTML, with the files it names.
+struct Body<'a> {
+    html: String,
+    /// Images, video and sound by package name: (media type, bytes).
+    images: BTreeMap<String, (&'a str, &'a [u8])>,
+    /// Table of contents: (element id, label).
+    toc: Vec<(String, String)>,
+    /// Asset names of the images written without alt text.
+    no_alt: Vec<String>,
+}
+
 /// The content in reading order as HTML sections and figures; `img_src` names each image
-/// (a package path, or a data URI for single-file HTML). Returns (body, images by name, table of
-/// contents).
-#[allow(clippy::type_complexity)]
-fn body_html<'a>(
-    doc: &'a Document,
-    epub: bool,
-    img_src: &dyn Fn(&str, &str, &[u8]) -> String,
-) -> (String, BTreeMap<String, (&'a str, &'a [u8])>, Vec<(String, String)>) {
+/// (a package path, or a data URI for single-file HTML).
+fn body_html<'a>(doc: &'a Document, epub: bool, img_src: &dyn Fn(&str, &str, &[u8]) -> String) -> Body<'a> {
     let order = reading_order(doc);
-    let mut writer = StoryWriter::new(doc, epub);
+    let mut writer = StoryWriter::new(doc, epub, Some(img_src));
     let mut body = String::new();
-    let mut images: BTreeMap<String, (&str, &[u8])> = BTreeMap::new();
     let mut toc: Vec<(String, String)> = Vec::new();
     for (k, b) in order.iter().enumerate() {
         match b {
@@ -985,48 +1074,14 @@ fn body_html<'a>(
                 let _ = write!(body, "<section id=\"{anchor}\">\n{}</section>\n", writer.story(*sid));
             }
             Block::Image(iid) => {
-                let Some(Content::Graphic(g)) = doc.item(*iid).map(|i| &i.content) else { continue };
-                let Some(a) = doc.assets.get(&g.asset) else { continue };
-                if a.data.is_empty() {
+                let Some(it) = doc.item(*iid) else { continue };
+                let Some((markup, media)) = writer.graphic(it) else { continue };
+                if media {
+                    let _ = writeln!(body, "<figure>{markup}</figure>");
                     continue;
                 }
-                let mime = safe_mime(&a.mime);
-                // Video and sound: an HTML5 player (with the poster, when there is one).
-                if let Some(kind) = designcraft_doc::media_kind(mime) {
-                    let name = asset_path("media", a, mime);
-                    images.insert(name.clone(), (mime, a.data.as_slice()));
-                    let m = doc.item(*iid).and_then(|i| i.media.clone()).unwrap_or_default();
-                    let mut attrs = String::new();
-                    for (on, attr) in
-                        [(m.controls, " controls=\"controls\""), (m.play_on_page_load, " autoplay=\"autoplay\""), (m.looping, " loop=\"loop\"")]
-                    {
-                        if on {
-                            attrs.push_str(attr);
-                        }
-                    }
-                    if let Some(pa) = m.poster.and_then(|p| doc.assets.get(&p)) {
-                        let poster_mime = safe_mime(&pa.mime);
-                        let pn = asset_path("images", pa, poster_mime);
-                        images.insert(pn.clone(), (poster_mime, pa.data.as_slice()));
-                        if kind == "video" {
-                            attrs.push_str(&format!(" poster=\"{}\"", xml_attr(&img_src(&pn, poster_mime, &pa.data))));
-                        }
-                    }
-                    let _ = writeln!(
-                        body,
-                        "<figure><{kind} src=\"{}\"{attrs}>{}</{kind}></figure>",
-                        xml_attr(&img_src(&name, mime, &a.data)),
-                        xml_text(&a.name)
-                    );
-                    continue;
-                }
-                let name = asset_path("images", a, mime);
-                images.insert(name.clone(), (mime, a.data.as_slice()));
-                // Alt text from Object Export Options; without one the image counts as decorative
-                // (`alt=""`): a file name read aloud helps nobody.
-                let alt = doc.item(*iid).map_or("", |i| i.alt_text.as_str());
                 // Object Export Options: alignment and a page break before.
-                let eo = doc.item(*iid).map(|i| i.export_options.clone()).unwrap_or_default();
+                let eo = &it.export_options;
                 let mut css = String::new();
                 if matches!(eo.align.as_str(), "left" | "center" | "right") {
                     css.push_str(&format!("text-align:{};", eo.align));
@@ -1035,8 +1090,7 @@ fn body_html<'a>(
                     css.push_str("page-break-before:always;break-before:page;");
                 }
                 let style = if css.is_empty() { String::new() } else { format!(" style=\"{}\"", xml_attr(&css)) };
-                let _ =
-                    writeln!(body, "<figure{style}><img src=\"{}\" alt=\"{}\"/></figure>", xml_attr(&img_src(&name, mime, &a.data)), xml_attr(alt));
+                let _ = writeln!(body, "<figure{style}>{markup}</figure>");
             }
         }
     }
@@ -1048,23 +1102,13 @@ fn body_html<'a>(
         }
         body.push_str(&endnotes);
     }
-    (body, images, toc)
+    Body { html: body, images: writer.images, toc, no_alt: writer.no_alt }
 }
 
-/// Placed images (not video or sound) without alt text, by asset name: they are exported as
+/// Placed and anchored images (not video or sound) without alt text, by asset name: they are exported as
 /// decorative (`alt=""`), which an export can report.
 pub fn images_without_alt(doc: &Document) -> Vec<String> {
-    let mut out = Vec::new();
-    for b in reading_order(doc) {
-        let Block::Image(iid) = b else { continue };
-        let Some(it) = doc.item(iid) else { continue };
-        let Content::Graphic(g) = &it.content else { continue };
-        let Some(a) = doc.assets.get(&g.asset) else { continue };
-        if !a.data.is_empty() && designcraft_doc::media_kind(safe_mime(&a.mime)).is_none() && it.alt_text.trim().is_empty() {
-            out.push(a.name.clone());
-        }
-    }
-    out
+    body_html(doc, true, &|name, _, _| name.to_string()).no_alt
 }
 
 /// Options for [`export_html`].
@@ -1082,7 +1126,7 @@ pub fn export_html(doc: &Document, opts: &HtmlOptions) -> String {
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
     let language = opts.language.as_deref().unwrap_or("en");
     let lang = language_tag(language);
-    let (body, _, _) = body_html(doc, false, &|_, mime, data| format!("data:{mime};base64,{}", base64(data)));
+    let body = body_html(doc, false, &|_, mime, data| format!("data:{mime};base64,{}", base64(data))).html;
     format!(
         "<!DOCTYPE html>\n<html lang=\"{lang}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"generator\" content=\"DesignCraft\">\n<title>{}</title>\n<style>\nbody {{ max-width: 40em; margin: 2em auto; padding: 0 1em; }}\nfigure {{ margin: 1em 0; }} figure img {{ max-width: 100%; height: auto; }}\n{}</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
         xml_text(&title),
@@ -1109,7 +1153,7 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
     let id = identifier(doc, opts, &title);
     let modified = modified(doc, opts);
-    let (body, images, toc) = body_html(doc, true, &|name, _, _| name.to_string());
+    let Body { html: body, images, toc, .. } = body_html(doc, true, &|name, _, _| name.to_string());
     let lang = language_tag(&opts.language);
     let chapter = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\" lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title><link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/></head>\n<body>\n{body}</body>\n</html>\n",
@@ -1222,6 +1266,70 @@ mod tests {
         z.by_name("OEBPS/style.css").unwrap().read_to_string(&mut css).unwrap();
         assert!(css.contains("p.basic-paragraph"));
         assert!(z.by_name("OEBPS/nav.xhtml").is_ok());
+    }
+
+    /// #766: anchored graphics are exported where they are anchored (inline in the text, an
+    /// above-line object as a block of its own), and their images go into the package.
+    #[test]
+    fn anchored_objects_are_exported_in_place() {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 200.0), lid, "AB\nCD", ParaFormat::default()).unwrap();
+        let aid = AssetId(d.alloc());
+        d.assets.insert(
+            aid,
+            Arc::new(Asset {
+                page: 0,
+                id: aid,
+                name: "dot.png".into(),
+                mime: "image/png".into(),
+                link: None,
+                data: Arc::new(vec![7]),
+                pixels: Some((1, 1)),
+                ..Default::default()
+            }),
+        );
+        let graphic = |d: &mut Document, alt: &str| {
+            let mut item = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(Rect::new(0.0, 0.0, 10.0, 10.0)));
+            item.alt_text = alt.into();
+            item.content = Content::Graphic(Graphic {
+                asset: aid,
+                size: (1.0, 1.0),
+                xf: Affine::IDENTITY,
+                auto_fit: Default::default(),
+                fit_align: 4,
+                crop: [0.0; 4],
+                clip: None,
+                wrap: Default::default(),
+            });
+            item
+        };
+        let inline = designcraft_doc::AnchoredObject::new(graphic(&mut d, "inline"), designcraft_doc::AnchorPosition::Inline { y_offset: 0.0 });
+        let above = designcraft_doc::AnchoredObject::new(
+            graphic(&mut d, "above"),
+            designcraft_doc::AnchorPosition::AboveLine { align: designcraft_doc::anchored::AnchorAlign::Center, space_before: 0.0, space_after: 0.0 },
+        );
+        let st = d.story_mut(sid).unwrap();
+        st.insert_object(1, inline);
+        // Byte offsets: "A" (1), the mark (3), "B\nC" (3): the second object goes between C and D.
+        st.insert_object(7, above);
+        // An anchored image without alt text is decorative and reported, like a placed one.
+        let bare = designcraft_doc::AnchoredObject::new(graphic(&mut d, ""), designcraft_doc::AnchorPosition::Inline { y_offset: 0.0 });
+        let end = d.story(sid).unwrap().text.len();
+        d.story_mut(sid).unwrap().insert_object(end, bare);
+        assert_eq!(images_without_alt(&d), vec!["dot.png".to_string()]);
+        let bytes = export_epub(&d, &EpubOptions::default()).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut html = String::new();
+        z.by_name("OEBPS/content.xhtml").unwrap().read_to_string(&mut html).unwrap();
+        let img = |alt: &str| format!("<img src=\"images/dot-{}.png\" alt=\"{alt}\"/>", aid.0);
+        assert!(html.contains(&format!("A{}B</p>", img("inline"))), "{html}");
+        assert!(html.contains(&format!("C<span class=\"anchored\" style=\"display:block;text-align:center\">{}</span>D", img("above"))), "{html}");
+        assert!(z.by_name(&format!("OEBPS/images/dot-{}.png", aid.0)).is_ok(), "the image is in the package");
+        let page = export_html(&d, &HtmlOptions::default());
+        assert!(page.contains("alt=\"inline\"") && page.contains("alt=\"above\""), "{page}");
+        // story_html on its own still leaves objects out.
+        assert!(!story_html(&d, sid).contains("<img"));
     }
 
     #[test]
