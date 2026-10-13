@@ -593,6 +593,7 @@ pub struct DisplayKey {
     overprint_preview: bool,
     proof_colors: bool,
     tag_markers: bool,
+    document_grid: bool,
     highlight_substituted_fonts: bool,
     highlight_hj: bool,
     show_note_anchors: bool,
@@ -610,6 +611,7 @@ fn display_key(app: &DesignApp) -> DisplayKey {
         overprint_preview: ui.overprint_preview,
         proof_colors: ui.proof_colors,
         tag_markers: ui.tag_markers,
+        document_grid: ui.document_grid,
         highlight_substituted_fonts: prefs.highlight_substituted_fonts,
         highlight_hj: prefs.highlight_hj,
         show_note_anchors: prefs.show_note_anchors,
@@ -2684,6 +2686,11 @@ mod tests {
         app.ui.display_quality = designcraft_render::DisplayQuality::Fast;
         invalidate_on_display_change(&mut app);
         assert!(app.canvas.shown.is_none() && app.canvas.pending.is_none() && app.canvas.pending_doc.is_none());
+        // The document grid is drawn into the texture too.
+        app.canvas.shown = Some(shown);
+        app.ui.document_grid = !app.ui.document_grid;
+        invalidate_on_display_change(&mut app);
+        assert!(app.canvas.shown.is_none());
     }
 
     fn right_click(h: &mut Harness<'_, DesignApp>, p: Pos2) {
