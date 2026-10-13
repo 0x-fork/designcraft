@@ -826,7 +826,16 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
             && sel.content
         {
             let gb = xf.rect((a * it.xf).transform_rect_bbox(g.xf.transform_rect_bbox(DRect::new(0.0, 0.0, g.size.0, g.size.1))));
-            painter.rect_stroke(gb, 0.0, Stroke::new(1.0, Color32::from_rgb(196, 111, 43)), StrokeKind::Middle);
+            let brown = Color32::from_rgb(196, 111, 43);
+            painter.rect_stroke(gb, 0.0, Stroke::new(1.0, brown), StrokeKind::Middle);
+            // Its own handles resize the graphic (InDesign's brown content bounding box).
+            if sel.items.len() == 1 {
+                for h in designcraft_tools::select::handles(DRect::new(gb.min.x as f64, gb.min.y as f64, gb.max.x as f64, gb.max.y as f64)) {
+                    let r = Rect::from_center_size(pos2(h.x as f32, h.y as f32), vec2(6.5, 6.5));
+                    painter.rect_filled(r, 0.0, Color32::WHITE);
+                    painter.rect_stroke(r, 0.0, Stroke::new(hair(painter), brown), StrokeKind::Inside);
+                }
+            }
         }
     }
     let direct = matches!(app.session.tool_id(), "directSelection" | "pen" | "addAnchor" | "deleteAnchor" | "convertDirection");
@@ -869,7 +878,13 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
             painter.rect_filled(lc, 0.0, Color32::from_rgb(0xff, 0xe5, 0x00));
             painter.rect_stroke(lc, 0.0, Stroke::new(1.0, color), StrokeKind::Inside);
         }
-        for h in designcraft_tools::select::handles(DRect::new(u.min.x as f64, u.min.y as f64, u.max.x as f64, u.max.y as f64)) {
+        // A selected placed graphic has its own handles instead of the frame's.
+        let graphic_selected =
+            sel.content && sel.items.len() == 1 && doc.item(sel.items[0]).is_some_and(|i| matches!(i.content, Content::Graphic(_)));
+        for h in designcraft_tools::select::handles(DRect::new(u.min.x as f64, u.min.y as f64, u.max.x as f64, u.max.y as f64))
+            .into_iter()
+            .filter(|_| !graphic_selected)
+        {
             let r = Rect::from_center_size(pos2(h.x as f32, h.y as f32), vec2(hs, hs));
             painter.rect_filled(r, 0.0, Color32::WHITE);
             painter.rect_stroke(r, 0.0, Stroke::new(hair(painter), color), StrokeKind::Inside);

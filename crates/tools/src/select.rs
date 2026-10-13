@@ -7,6 +7,8 @@
 //! Content (a placed graphic, or items pasted into a frame) moves inside its frame: the Direct
 //! Selection tool selects and drags it, the Selection tool drags it by the content grabber (the
 //! circle at the frame's centre), and double-clicking a frame toggles between frame and content.
+//! A selected placed graphic shows its own bounding box: its handles resize the graphic (Shift keeps
+//! its proportions, Alt from its centre) and leave the frame as it is.
 
 use designcraft_doc::{Content, Item, ItemId, SpreadRef};
 use designcraft_geom::{Affine, Point, Rect, Vec2};
@@ -33,6 +35,14 @@ enum Drag {
     Resize {
         handle: usize,
         start: Point,
+        from: Rect,
+        spread: SpreadRef,
+    },
+    /// Resizing a selected placed graphic by its own bounding-box handles (`from`: its bounds on
+    /// the spread at pointer down).
+    ContentResize {
+        id: ItemId,
+        handle: usize,
         from: Rect,
         spread: SpreadRef,
     },
@@ -246,7 +256,27 @@ pub fn handles(r: Rect) -> [Point; 8] {
     ]
 }
 
+/// The selected placed graphic (content selection of one graphic frame) and its bounds on the canvas.
+fn selected_graphic(cx: &ToolContext) -> Option<(ItemId, Rect)> {
+    let [id] = cx.selection.items.as_slice() else { return None };
+    if !cx.selection.content || !matches!(cx.doc.item(*id)?.content, Content::Graphic(_)) {
+        return None;
+    }
+    Some((*id, content_bounds(cx)?))
+}
+
+/// A handle of the selected placed graphic's bounding box under `p` (0 TL … 7 L).
+fn content_handle_at(cx: &ToolContext, p: Point) -> Option<(ItemId, usize)> {
+    let (id, b) = selected_graphic(cx)?;
+    let tol = cx.tol(5.0);
+    handles(b).iter().position(|h| (h.x - p.x).abs() <= tol && (h.y - p.y).abs() <= tol).map(|h| (id, h))
+}
+
 fn handle_at(cx: &ToolContext, p: Point) -> Option<usize> {
+    // With a placed graphic selected, the handles are the graphic's, not the frame's.
+    if selected_graphic(cx).is_some() {
+        return None;
+    }
     let b = cx.selection_bounds()?;
     let tol = cx.tol(5.0);
     handles(b).iter().position(|h| (h.x - p.x).abs() <= tol && (h.y - p.y).abs() <= tol)
@@ -515,6 +545,17 @@ impl Tool for SelectionTool {
                     self.drag = Drag::Anchor { id, si, ai, handle, start: p, at };
                     return vec![Action::Begin(if handle.is_some() { "Move Direction Handle".into() } else { "Move Anchor".into() })];
                 }
+                // A selected placed graphic's own handles resize it inside its frame (the
+                // frame's anchors, under Direct Selection, come first).
+                if let Some((id, h)) = content_handle_at(cx, p)
+                    && let (Some(loc), Some((_, b))) = (cx.doc.find(id), selected_graphic(cx))
+                {
+                    let turns = cx.layout.slot(loc.spread).map_or(0, |s| s.rotation as usize);
+                    let handle = (h + 8 - 2 * turns) % 8;
+                    let from = cx.layout.xf(loc.spread).inverse().transform_rect_bbox(b);
+                    self.drag = Drag::ContentResize { id, handle, from, spread: loc.spread };
+                    return vec![Action::Begin("Resize Content".into())];
+                }
                 if !self.direct
                     && handle_at(cx, p).is_none()
                     && let Some(center) = rotate_zone(cx, p)
@@ -757,6 +798,10 @@ impl Tool for SelectionTool {
                         json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "distribute": distribute}),
                     )]
                 }
+                Drag::ContentResize { id, handle, from, spread } => {
+                    let to = resize_rect(from, handle, cx.layout.to_spread(spread, p), ev.mods);
+                    vec![Action::Preview("transform.set".into(), json!({"ids": [id.0], "content": true, "bounds": rect_json(to)}))]
+                }
                 Drag::Marquee { start, .. } => {
                     self.drag = Drag::Marquee { start, cur: p };
                     vec![]
@@ -851,7 +896,12 @@ impl Tool for SelectionTool {
                 let release = self.shift_release.take();
                 let d = std::mem::replace(&mut self.drag, Drag::None);
                 match d {
-                    Drag::Move { .. } | Drag::Resize { .. } | Drag::Anchor { .. } | Drag::Rotate { .. } | Drag::Bracket { .. } => {
+                    Drag::Move { .. }
+                    | Drag::Resize { .. }
+                    | Drag::ContentResize { .. }
+                    | Drag::Anchor { .. }
+                    | Drag::Rotate { .. }
+                    | Drag::Bracket { .. } => {
                         vec![Action::Commit]
                     }
                     Drag::Pending { .. } => match release {
@@ -928,6 +978,8 @@ impl Tool for SelectionTool {
                 v
             }
             Drag::Move { .. } | Drag::Resize { .. } | Drag::Rotate { .. } | Drag::Anchor { .. } => self.guides.clone(),
+            // The whole graphic shows while it's resized, outside the frame too.
+            Drag::ContentResize { id, .. } => vec![Overlay::ContentGhost(*id)],
             Drag::None | Drag::Bracket { .. } => brackets(cx),
             _ => vec![],
         }
@@ -939,6 +991,15 @@ impl Tool for SelectionTool {
         }
         if let Drag::Move { content: true, .. } = self.drag {
             return Cursor::HandGrab;
+        }
+        if let Drag::ContentResize { handle, .. } = self.drag {
+            return handle_cursor(handle);
+        }
+        if matches!(self.drag, Drag::None)
+            && !(self.direct && anchor_at(cx, p).is_some())
+            && let Some((_, h)) = content_handle_at(cx, p)
+        {
+            return handle_cursor(h);
         }
         if self.direct {
             let over_content = matches!(self.drag, Drag::None)
