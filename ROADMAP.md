@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5–7 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects; table anchors keep their own paragraphs; grouped HTML/EPUB reading order; Links source paths; XLSX cached cell values retain numeric precision and text) · **Target:** Adobe InDesign 2026
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (.indd and .indt open through indd-utils; text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects; table anchors keep their own paragraphs; grouped HTML/EPUB reading order; Links source paths; XLSX cached cell values retain numeric precision and text) · **Target:** Adobe InDesign 2026
 
 DesignCraft aims at full Adobe InDesign parity, and to be better: faster, open (documented JSON
 format + IDML), scriptable by agents (MCP), and available on the web.
@@ -21,7 +21,7 @@ format + IDML), scriptable by agents (MCP), and available on the web.
 | Audience | Ready | Opus 5.5 agent-hours to ~95% | Work that dominates |
 |---|---|---|---|
 | Full target (ready for real work) | ~47% | 1,150–1,950 (~70% parallel) | depth across all areas, scripting compatibility, localization, typography fidelity, INDD/IDML |
-| Mainstream practitioner | ~42% | 500–850 (~65% parallel) | INDD import and IDML corpus, composition fidelity, weekly-area depth, PDF/X-1a and printing |
+| Mainstream practitioner | ~42% | 500–850 (~65% parallel) | INDD and IDML real-file corpus, composition fidelity, weekly-area depth, PDF/X-1a and printing |
 | Essentials user | ~54% | 135–250 (~50% parallel) | start-up robustness, context menus and copy/paste, threading, fonts, Windows printing |
 
 **Why pre-alpha:** it fails one of InDesign's core workflows, the alpha gate in
@@ -30,7 +30,7 @@ draw a frame; thread and unthread commands), but Primary Text Frame autoflow add
 can't delete (#165). Everything else in the gate works end to end on macOS (document setup,
 styles, images, object editing, PDF export, save and reopen), and ready for real work (~47%) is
 above the alpha bar, so the Primary Text Frame page fixes are the whole distance to alpha.
-Beyond that, beta needs INDD opening, IDML proven on real files, composition compared with
+Beyond that, beta needs INDD and IDML proven on real files, composition compared with
 InDesign's, and basic editing fixed on Windows and Linux. Details:
 [docs/target-app-parity.md](docs/target-app-parity.md).
 
@@ -40,7 +40,7 @@ InDesign's, and basic editing fixed on Windows and Linux. Details:
 |---|---|---|---|
 | Features (depth) | 55% | 250–400 | [target-app-parity.md](docs/target-app-parity.md) |
 | Typography and composition fidelity | 45% | 120–200 | [typography-parity.md](docs/typography-parity.md) |
-| File formats | 40% | 150–250 + 20–60 (INDD) | [file-format-parity.md](docs/file-format-parity.md) |
+| File formats | 40% | 150–250 + 10–30 (INDD corpus) | [file-format-parity.md](docs/file-format-parity.md) |
 | UI/UX fidelity | 45% | 120–180 | [ui-parity.md](docs/ui-parity.md) |
 | Stability | 45% | 60–100 | [gaps.md](docs/gaps.md) |
 | Performance | 65% | 40–80 | [gaps.md](docs/gaps.md) |
@@ -108,7 +108,7 @@ Ranked; detail and estimates in [docs/roadmap.md](docs/roadmap.md), the full lis
 1. **Alpha gate:** Primary Text Frame page fixes: autoflow adds pages users can't delete (#165) (5–7 h)
 2. Basic editing on every platform: copy/paste, context menus, caret formatting (30–50 h)
 3. CI running `cargo xtask ci` on pull requests (4–8 h)
-4. Open INDD through a clean-room converter, owner decision on #114 (20–60 h)
+4. INDD real-file corpus: measure what `.indd` files keep through indd-utils (10–30 h)
 5. IDML real-file corpus and fixes (60–100 h)
 6. Composition oracle against InDesign; optical kerning tuning; overset rule (70–125 h)
 7. Start on any GPU; find every installed font (25–50 h)
@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · `.indd` and `.indt` documents open through File › Open, drop, the web inbox, `file.open`, `file.openBytes`, `file.openIdml` and the CLI: [storytold/indd-utils](https://github.com/storytold/indd-utils) converts them to IDML in memory and the IDML importer reads the result, on desktop and web. Converter warnings come first in the open result; an unreadable file is an open error (#21, #114). No readiness percentage change until a real-file corpus measures it.
 - **2026-10-13** · macOS: a command chosen with the mouse in the menu bar runs at once. It used to wait for the next mouse move or key press over the window, so File › Open, Place and Save As seemed to take 10–20 seconds to open their dialogs. No readiness percentage change.
 - **2026-10-13** · An explicit recovery folder (`file.recovery.save` with `dir`) never overwrites or deletes another running app's checkpoints. Document uids start at 1 in every process, so two apps saving recovery to one chosen folder replaced or removed each other's `<uid>.designcraft`. A run replaces or removes only the entries it wrote or recovered there, refuses an occupied uid, and refuses a folder whose run lock another app holds. No readiness percentage change.
 - **2026-10-13** · PDF export leaves out form fields, buttons and video or sound that don't print: inside a hidden group, on a hidden or non-printing layer, or marked non-printing. Page content and interactive elements follow one inclusion rule. No readiness percentage change.
