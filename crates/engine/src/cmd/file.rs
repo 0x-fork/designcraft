@@ -187,7 +187,6 @@ fn has_recent(s: &Session) -> std::result::Result<(), String> {
     if s.prefs.recent_files.is_empty() { Err("no recent files".into()) } else { Ok(()) }
 }
 
-/// One File › Open Recent row: the path, its file name and whether it is still there.
 /// A recent file's first-page picture as straight RGBA, for the start screen.
 pub struct RecentPreview {
     pub width: u32,
@@ -213,6 +212,7 @@ pub fn recent_preview(path: &str) -> Option<RecentPreview> {
     }
 }
 
+/// One File › Open Recent row: the path, its file name and whether it is still there.
 fn recent_entry(path: &str) -> Value {
     let name = std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string());
     #[cfg(not(target_arch = "wasm32"))]
