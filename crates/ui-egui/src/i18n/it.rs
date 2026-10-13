@@ -1512,4 +1512,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Rule Below", "Filetto sotto"),
     ("Tint:", "Tinta:"),
     ("Presentation", "Presentazione"),
+    ("Apply To:", "Applica a:"),
+    ("Frame", "Cornice"),
 ];
