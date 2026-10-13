@@ -1,18 +1,26 @@
 use designcraft_color::cms::{self, Cms, ColorSettings};
 use image::{ImageEncoder, Rgba};
-use moxcms::ColorProfile;
 
 use super::*;
 use crate::decode_rgba;
 
+/// Generic CMYK as the working space.
+fn generic(bpc: bool) -> Cms {
+    Cms::new(&ColorSettings { cmyk: cms::GENERIC_CMYK.into(), bpc, ..ColorSettings::default() }).unwrap()
+}
+
 /// sRGB 0..255 of CMYK inks through the Generic CMYK model (relative colorimetric, no BPC).
 fn generic_rgb(cmyk: [f32; 4]) -> [f32; 3] {
-    Cms::default().cmyk_to_srgb(cmyk, false).map(|v| v * 255.0)
+    generic(false).cmyk_to_srgb(cmyk, false).map(|v| v * 255.0)
 }
 
 /// The default colour settings without black point compensation.
 fn no_bpc() -> DisplayColour {
     DisplayColour::of(&Cms::new(&ColorSettings { bpc: false, ..ColorSettings::default() }).unwrap())
+}
+
+fn icc(b: Builtin) -> Vec<u8> {
+    b.profile().to_bytes().to_vec()
 }
 
 /// One CMYK pixel (inks 0..255) as shown with `display`.
@@ -93,7 +101,7 @@ fn png_with_icc(w: u32, h: u32, px: &[u8], icc: Option<Vec<u8>>) -> Vec<u8> {
 }
 
 fn adobe_rgb_icc() -> Vec<u8> {
-    ColorProfile::new_adobe_rgb().encode().unwrap()
+    icc(Builtin::AdobeRgbCompat)
 }
 
 /// sRGB 0..255 of an Adobe RGB colour through the colour crate's float transform.
@@ -124,10 +132,35 @@ fn cmyk_jpeg_goes_through_the_working_cmyk_space() {
 }
 
 #[test]
+fn cmyk_without_a_profile_shows_as_the_default_swatches_do() {
+    // Default settings: Coated FOGRA39, relative colorimetric with black point compensation.
+    let display = DisplayColour::of(&Cms::default());
+    for (inks, want) in [
+        ([0, 50, 100, 0], [243.0, 146.0, 0.0]),
+        ([0, 60, 100, 0], [239.0, 123.0, 0.0]),
+        ([0, 0, 0, 100], [28.0, 28.0, 27.0]),
+        ([100, 100, 0, 0], [48.0, 38.0, 131.0]),
+    ] {
+        let inks = inks.map(|v: u16| u8::try_from((v * 255 + 50) / 100).unwrap());
+        let p = shown(inks, &display);
+        let swatch = Cms::default().display_rgb(&Color::cmyk(
+            f32::from(inks[0]) / 255.0,
+            f32::from(inks[1]) / 255.0,
+            f32::from(inks[2]) / 255.0,
+            f32::from(inks[3]) / 255.0,
+        ));
+        assert!(near(p, want, 2.0), "{inks:?}: {p:?} vs {want:?}");
+        assert!(near(p, swatch.map(|v| v * 255.0), 2.0), "{inks:?}: {p:?} vs swatch {swatch:?}");
+        // A CMYK JPEG without a profile (and without an Adobe marker: inks as stored) too.
+        assert_eq!(decode_rgba(&solid_jpeg(inks, None)).unwrap().get_pixel(0, 0).0, shown(inks, &DisplayColour::active()));
+    }
+}
+
+#[test]
 fn working_cmyk_follows_the_model_and_black_point_compensation() {
-    // The working space's ICC table agrees with the Generic CMYK model itself.
+    // Generic CMYK's ICC table agrees with the model itself.
     for inks in [[255, 0, 0, 0], [0, 255, 0, 0], [0, 0, 255, 0], [0, 0, 0, 255], [64, 32, 160, 20]] {
-        let p = shown(inks, &no_bpc());
+        let p = shown(inks, &DisplayColour::of(&generic(false)));
         let want = generic_rgb(inks.map(|v| f32::from(v) / 255.0));
         // Within the 9-point table and 8-bit rounding.
         assert!(near(p, want, 6.0), "{inks:?}: {p:?} vs {want:?}");
@@ -151,9 +184,9 @@ fn cmyk_uses_its_own_profile_before_the_working_space() {
     assert_eq!(img.get_pixel(0, 0).0, [0, 255, 255, 255]);
     assert_eq!(img.get_pixel(1, 0).0, [0, 0, 0, 128]);
     // An embedded profile wins over it.
-    let icc = cms::icc_out::generic_cmyk_icc();
+    let icc = cms::icc_out::generic_cmyk_icc().unwrap();
     let img = to_display_rgba(Pixels::Cmyk(raster()), Some(icc), &device).unwrap();
-    assert_eq!(img.get_pixel(0, 0).0, shown([255, 0, 0, 0], &DisplayColour::active()));
+    assert_eq!(img.get_pixel(0, 0).0, shown([255, 0, 0, 0], &DisplayColour::of(&generic(true))));
     assert_eq!(img.get_pixel(1, 0).0[3], 128, "alpha kept");
     // A damaged one falls back to the working space.
     let img = to_display_rgba(Pixels::Cmyk(raster()), Some(&icc[..200]), &device).unwrap();
@@ -176,7 +209,7 @@ fn rgb_with_an_embedded_profile_is_converted_to_srgb() {
     assert_eq!(img.get_pixel(1, 0).0[3], 128, "alpha kept");
 
     // An sRGB profile, or none, leaves the pixels exactly as stored.
-    let srgb = png_with_icc(2, 1, &px, Some(ColorProfile::new_srgb().encode().unwrap()));
+    let srgb = png_with_icc(2, 1, &px, Some(icc(Builtin::Srgb)));
     assert_eq!(decode_rgba(&srgb).unwrap().as_raw(), &px);
     assert_eq!(decode_rgba(&png_with_icc(2, 1, &px, None)).unwrap().as_raw(), &px);
 }
@@ -184,7 +217,7 @@ fn rgb_with_an_embedded_profile_is_converted_to_srgb() {
 #[test]
 fn gray_with_an_embedded_profile_is_converted() {
     let img = image::RgbaImage::from_pixel(1, 1, Rgba([128, 128, 128, 255]));
-    let icc = ColorProfile::new_gray_with_gamma(1.0).encode().unwrap();
+    let icc = craft_cms::builtin::linear_gray().to_bytes().to_vec();
     let p = to_display_rgba(Pixels::Gray(img), Some(&icc), &DisplayColour::active()).unwrap().get_pixel(0, 0).0;
     // Linear 50 % grey is sRGB 188.
     assert!(p[0].abs_diff(188) <= 2 && p[0] == p[1] && p[1] == p[2], "{p:?}");
@@ -194,7 +227,7 @@ fn gray_with_an_embedded_profile_is_converted() {
 fn unusable_profiles_leave_the_pixels_alone() {
     let px = [64, 192, 64, 255];
     let adobe = adobe_rgb_icc();
-    let cmyk = cms::icc_out::generic_cmyk_icc().to_vec();
+    let cmyk = cms::icc_out::generic_cmyk_icc().unwrap().to_vec();
     let mut huge = adobe.clone();
     huge.resize(MAX_ICC_BYTES + 1, 0);
     let mut lying = adobe.clone();

@@ -674,7 +674,7 @@ mod tests {
         let plain = pixels(&Psd::new(3, vec![r.clone(), g.clone(), b.clone()]).write());
         assert_eq!(plain[0], [64, 192, 64, 255]);
         let mut psd = Psd::new(3, vec![r, g, b]);
-        psd.icc = moxcms::ColorProfile::new_adobe_rgb().encode().unwrap();
+        psd.icc = craft_cms::Builtin::AdobeRgbCompat.profile().to_bytes().to_vec();
         let px = pixels(&psd.write());
         // Adobe RGB green is greener than sRGB's: less red once shown as sRGB.
         assert!(px[0][0] < 50 && px[0][1] > 180 && px[0][3] == 255, "{:?}", px[0]);
