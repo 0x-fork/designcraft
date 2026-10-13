@@ -2035,24 +2035,48 @@ impl<'r> Importer<'r> {
         }
     }
 
-    /// An object style's effects: set when its effects category turns on an effect this model
-    /// reads, or (without category settings) when it gives a drop shadow or feather that is on.
+    /// An object style element and the styles it is based on, nearest first (cycle-safe, bounded).
+    fn object_style_chain(&self, e: &El) -> Vec<El> {
+        let mut chain = vec![e.clone()];
+        let mut seen: HashSet<String> = e.get("Self").map(str::to_string).into_iter().collect();
+        let mut next = e.prop("BasedOn");
+        while let Some(b) = next {
+            let id = if b.starts_with("ObjectStyle/") { b } else { format!("ObjectStyle/{}", names::escape_id(&b)) };
+            if chain.len() >= 16 || !seen.insert(id.clone()) {
+                break;
+            }
+            let Some(s) = self.object_els.get(&id) else { break };
+            chain.push(s.clone());
+            next = s.prop("BasedOn");
+        }
+        chain
+    }
+
+    /// An object style's drop shadow and feather. Each is read when the effects category turns it
+    /// on (without category settings: when its setting is on), from the nearest style in the
+    /// BasedOn chain that has the setting. `None` when the style sets neither.
     fn style_effects(&mut self, e: &El) -> Option<Effects> {
-        let t = e.find("TransparencySetting");
-        let set = match e.find("ObjectStyleObjectEffectsCategorySettings") {
-            Some(c) => ["EnableDropShadow", "EnableFeather"].iter().any(|k| c.get(k) == Some("true")),
-            None => t.is_some_and(|t| {
-                t.find("DropShadowSetting").is_some_and(|d| d.get("Mode") == Some("Drop"))
-                    || t.find("FeatherSetting").is_some_and(|f| f.get("Mode").is_some_and(|m| m != "None"))
-            }),
-        };
-        if !set {
+        let chain = self.object_style_chain(e);
+        let category = chain.iter().find_map(|s| s.find("ObjectStyleObjectEffectsCategorySettings")).cloned();
+        let setting = |name: &str| chain.iter().find_map(|s| s.find("TransparencySetting")?.find(name)).cloned();
+        let mut t = El::new("TransparencySetting");
+        let mut any = false;
+        for (name, flag) in [("DropShadowSetting", "EnableDropShadow"), ("FeatherSetting", "EnableFeather")] {
+            let el = setting(name);
+            let on = match &category {
+                Some(c) => c.get(flag) == Some("true"),
+                None => el.as_ref().and_then(|x| x.get("Mode")).is_some_and(|m| m != "None"),
+            };
+            any |= on;
+            if let (true, Some(el)) = (on, el) {
+                t.push(el);
+            }
+        }
+        if !any {
             return None;
         }
         let mut fx = Effects::default();
-        if let Some(t) = t {
-            self.effects_in(t, &mut fx);
-        }
+        self.effects_in(&t, &mut fx);
         Some(fx)
     }
 

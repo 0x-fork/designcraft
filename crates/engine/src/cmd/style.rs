@@ -151,7 +151,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Object Style Options…",
             [],
             None,
-            "{name, effects?: {…} | null (the style no longer sets effects), dropShadow?, feather?, innerShadow?, outerGlow?, innerGlow?, bevel?, satin?, gradientFeather?, directionalFeather?} — effect objects merge field by field into the style's effects (fields as in `document.inspect` item effects); items using the style whose effects match the style's take the new effects, items with their own effects keep them → {name, updated}",
+            "{name, effects?: {…} | null (the style no longer sets effects), dropShadow?, feather?, innerShadow?, outerGlow?, innerGlow?, bevel?, satin?, gradientFeather?, directionalFeather?} — effect objects merge field by field into the style's effects (fields as in `document.inspect` item effects); values that aren't finite numbers are refused, the others clamped (opacities 0–1, sizes and distances ≥ 0); items using the style whose effects match the style's (no effects, when the style set none) take the new effects, items with their own effects keep them → {name, updated}",
             has_doc,
             edit_object
         ),
@@ -160,7 +160,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Clear Object Style Overrides",
             [],
             None,
-            "{ids?} — each item takes its object style's fill, stroke, effects and text frame options again",
+            "{ids?} — each item takes its object style's fill, stroke, effects and text frame options again → {changed}",
             super::has_selection,
             clear_object_overrides
         ),
@@ -780,7 +780,7 @@ fn apply_object(s: &mut Session, p: &Value) -> Result<Value> {
         for id in &ids {
             let Some(it) = d.item_mut(*id) else { continue };
             it.object_style = name.clone();
-            set_object_attrs(it, &os);
+            os.apply_to(it);
             if let Some(tf) = it.text_frame() {
                 stories.push(tf.story);
             }
@@ -797,32 +797,29 @@ fn apply_object(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// Gives `it` the attributes the object style `os` sets.
-fn set_object_attrs(it: &mut Item, os: &ObjectStyle) {
-    if let Some(f) = &os.fill {
-        it.fill = f.clone();
-    }
-    if let Some(st) = &os.stroke {
-        it.stroke = st.clone();
-    }
-    if let Some(e) = &os.effects {
-        it.effects = e.clone();
-    }
-    if let (Some(tf), Some(o)) = (it.text_frame_mut(), &os.text_frame) {
-        tf.options = o.clone();
-    }
-}
-
 fn clear_object_overrides(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = super::targets(s, p)?;
+    // Each target with its style's attributes applied, kept only where that changes the item.
+    let d = &s.doc()?.doc;
+    let changed: Vec<Item> = ids
+        .iter()
+        .filter_map(|id| {
+            let it = d.item(*id)?;
+            let mut next = it.clone();
+            d.styles.object_style(&it.object_style)?.apply_to(&mut next);
+            (next != *it).then_some(next)
+        })
+        .collect();
+    if changed.is_empty() {
+        return Ok(json!({"changed": 0}));
+    }
     s.edit(|d, _| {
-        for id in &ids {
-            let Some(os) = d.item(*id).and_then(|it| d.styles.object_style(&it.object_style)).cloned() else { continue };
-            if let Some(it) = d.item_mut(*id) {
-                set_object_attrs(it, &os);
+        for next in &changed {
+            if let Some(it) = d.item_mut(next.id) {
+                *it = next.clone();
             }
         }
-        Ok(Value::Null)
+        Ok(json!({"changed": changed.len()}))
     })
 }
 
@@ -850,7 +847,8 @@ fn effects_param(cmd: &str, p: &Value, base: &Effects) -> Result<Option<Effects>
     }
     let mut v = serde_json::to_value(base).map_err(|e| bad(cmd, e.to_string()))?;
     merge_json(&mut v, Value::Object(patch), 0);
-    serde_json::from_value(v).map(Some).map_err(|e| bad(cmd, format!("effects: {e}")))
+    let e: Effects = serde_json::from_value(v).map_err(|e| bad(cmd, format!("effects: {e}")))?;
+    e.sanitized().map(Some).map_err(|m| bad(cmd, m))
 }
 
 /// Merges `top` into `base`: objects key by key, anything else replaced.
@@ -916,17 +914,20 @@ fn edit_object(s: &mut Session, p: &Value) -> Result<Value> {
             None => return Ok(json!({"name": name, "updated": 0})),
         }
     };
+    if effects == old.effects {
+        return Ok(json!({"name": name, "updated": 0}));
+    }
     s.edit(|d, _| {
         let Some(os) = d.styles_mut().object.iter_mut().find(|o| o.name == name) else {
             return Err(bad(CMD, format!("no object style `{name}`")));
         };
         os.effects = effects.clone();
-        // An item follows the style while its effects are the style's; when the style didn't set
-        // effects before, every item using it takes them.
+        // An item follows the style while its effects are the style's. When the style didn't set
+        // effects before, only items without effects of their own follow (the default styles are
+        // on most frames).
+        let follows = old.effects.clone().unwrap_or_default();
         let updated = match &effects {
-            Some(new) => {
-                d.update_items(|it| it.object_style == name && old.effects.as_ref().is_none_or(|e| it.effects == *e), |it| it.effects = new.clone())
-            }
+            Some(new) => d.update_items(|it| it.object_style == name && it.effects == follows, |it| it.effects = new.clone()),
             None => 0,
         };
         Ok(json!({"name": name, "updated": updated}))

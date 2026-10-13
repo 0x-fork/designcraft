@@ -1472,8 +1472,23 @@ fn object_style_effects_round_trip() {
     it.object_style = "Photo".into();
     it.effects = fx.clone();
     d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    // A frame that turned the style's effects off writes them off, so it doesn't take the style's.
+    let id = designcraft_doc::ItemId(d.alloc());
+    let mut off = designcraft_doc::Item::new(id, lid, Shape::Rectangle, shapes::rectangle(Rect::new(200.0, 40.0, 300.0, 140.0)));
+    off.object_style = "Photo".into();
+    d.insert_item(SpreadRef::Doc(0), off, None).unwrap();
 
-    let back = import_idml(&export_idml(&d)).unwrap();
+    let bytes = export_idml(&d);
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).unwrap();
+    let mut spreads = String::new();
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).unwrap();
+        if f.name().starts_with("Spreads/") {
+            std::io::Read::read_to_string(&mut f, &mut spreads).unwrap();
+        }
+    }
+    assert!(spreads.contains(r#"<DropShadowSetting Mode="None""#) && spreads.contains(r#"<FeatherSetting Mode="None""#), "{spreads}");
+    let back = import_idml(&bytes).unwrap();
     let style = |n: &str| back.styles.object.iter().find(|s| s.name == n).unwrap();
     let got = style("Photo").effects.clone().unwrap();
     let ds = &got.drop_shadow;
@@ -1482,6 +1497,40 @@ fn object_style_effects_round_trip() {
     assert_eq!(got.feather, 3.0);
     assert!(style("Plain").effects.is_none());
     // The frame's effects are the style's, so it follows later edits of the style.
-    let frame = back.spreads[0].items.iter().find(|i| i.object_style == "Photo").unwrap();
-    assert_eq!(frame.effects, got);
+    let frames: Vec<_> = back.spreads[0].items.iter().filter(|i| i.object_style == "Photo").collect();
+    assert_eq!(frames[0].effects, got);
+    assert_eq!(frames[1].effects, Effects::default());
+}
+
+#[test]
+fn object_style_effects_import_by_category_and_based_on() {
+    let styles = r#"
+      <ObjectStyle Self="ObjectStyle/Base" Name="Base">
+        <TransparencySetting>
+          <DropShadowSetting Mode="Drop" XOffset="3" YOffset="4" Size="9" Opacity="50"/>
+          <FeatherSetting Mode="Standard" Width="6"/>
+        </TransparencySetting>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="true" EnableFeather="false"/>
+      </ObjectStyle>
+      <ObjectStyle Self="ObjectStyle/Child" Name="Child">
+        <Properties><BasedOn type="object">ObjectStyle/Base</BasedOn></Properties>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="true" EnableFeather="true"/>
+      </ObjectStyle>
+      <ObjectStyle Self="ObjectStyle/Off" Name="Off">
+        <TransparencySetting><DropShadowSetting Mode="Drop" Size="9"/></TransparencySetting>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="false" EnableFeather="false"/>
+      </ObjectStyle>
+      <ObjectStyle Self="ObjectStyle/Loop" Name="Loop">
+        <Properties><BasedOn type="object">ObjectStyle/Loop</BasedOn></Properties>
+        <ObjectStyleObjectEffectsCategorySettings EnableDropShadow="true"/>
+      </ObjectStyle>"#;
+    let d = inset_fixture("", styles);
+    let fx = |n: &str| d.styles.object.iter().find(|s| s.name == n).unwrap().effects.clone();
+    let base = fx("Base").unwrap();
+    assert!(base.drop_shadow.on && base.drop_shadow.size == 9.0 && (base.drop_shadow.distance - 5.0).abs() < 1e-9);
+    assert_eq!(base.feather, 0.0, "EnableFeather=false");
+    let child = fx("Child").unwrap();
+    assert_eq!((child.drop_shadow.size, child.feather), (9.0, 6.0), "settings from the BasedOn style");
+    assert!(fx("Off").is_none());
+    assert!(!fx("Loop").unwrap().drop_shadow.on);
 }

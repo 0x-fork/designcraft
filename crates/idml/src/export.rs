@@ -1704,11 +1704,14 @@ impl<'a> Ex<'a> {
         }
         let mut el = with_props(el, props);
         // Transparency.
+        // An item whose style sets effects writes the effects it has turned off too, so that on
+        // import it doesn't take the style's.
+        let styled = self.d.styles.object_effects(os).is_some();
         let ds = &it.effects.drop_shadow;
-        if it.opacity < 1.0 || it.blend != designcraft_color::BlendMode::Normal || ds.on || it.effects.feather > 0.0 {
+        if it.opacity < 1.0 || it.blend != designcraft_color::BlendMode::Normal || ds.on || it.effects.feather > 0.0 || styled {
             let mut t = El::new("TransparencySetting");
             t.push(El::new("BlendingSetting").attr("BlendMode", names::blend_out(it.blend)).attr("Opacity", pct(it.opacity as f64)));
-            for c in self.effect_els(&it.effects, false) {
+            for c in self.effect_els(&it.effects, styled) {
                 t.push(c);
             }
             el.push(t);

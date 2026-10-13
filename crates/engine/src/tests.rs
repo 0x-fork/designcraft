@@ -481,16 +481,65 @@ fn object_style_effects_follow_the_style_until_overridden() {
     assert_eq!((shadow(&s, a).size, shadow(&s, b).size), (12.0, 12.0));
     assert_eq!(s.doc().unwrap().doc.styles.object_style("Photo").unwrap().effects.as_ref().unwrap().drop_shadow.size, 12.0);
 
-    // A style that didn't set effects gives them to every item using it; `null` stops setting them.
+    // A style that didn't set effects gives them to the items using it that have no effects of
+    // their own, and to new frames that get it by default; `null` stops setting them.
     let e = frame(&mut s, 36.0);
-    s.execute("style.object.apply", &json!({"name": BASIC_GRAPHICS_FRAME, "ids": [e]})).unwrap();
+    let f = frame(&mut s, 200.0);
+    s.execute("style.object.apply", &json!({"name": BASIC_GRAPHICS_FRAME, "ids": [e, f]})).unwrap();
     s.execute("object.dropShadow", &json!({"on": true, "ids": [e]})).unwrap();
-    s.execute("style.object.edit", &json!({"name": BASIC_GRAPHICS_FRAME, "feather": 4})).unwrap();
-    assert_eq!(item(&s, e).effects, designcraft_doc::Effects { feather: 4.0, ..Default::default() });
+    let r = s.execute("style.object.edit", &json!({"name": BASIC_GRAPHICS_FRAME, "feather": 4})).unwrap();
+    assert_eq!(r["updated"], 1);
+    assert!(item(&s, e).effects.drop_shadow.on && item(&s, e).effects.feather == 0.0);
+    assert_eq!(item(&s, f).effects, designcraft_doc::Effects { feather: 4.0, ..Default::default() });
+    let g = s.execute("frame.create", &json!({"rect": [36, 300, 136, 400], "content": "graphic"})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!((item(&s, g).object_style.as_str(), item(&s, g).effects.feather), (BASIC_GRAPHICS_FRAME, 4.0));
     s.execute("style.object.edit", &json!({"name": BASIC_GRAPHICS_FRAME, "effects": null})).unwrap();
     assert!(s.doc().unwrap().doc.styles.object_style(BASIC_GRAPHICS_FRAME).unwrap().effects.is_none());
-    assert_eq!(item(&s, e).effects.feather, 4.0);
+    assert_eq!(item(&s, f).effects.feather, 4.0);
+
+    // Nothing to change: no edit, no undo step.
+    let rev = s.doc().unwrap().revision;
+    s.execute("style.object.edit", &json!({"name": BASIC_GRAPHICS_FRAME, "effects": null})).unwrap();
+    s.execute("style.object.clearOverrides", &json!({"ids": [a, b]})).unwrap();
+    assert_eq!(s.doc().unwrap().revision, rev);
+}
+
+#[test]
+fn object_style_effects_reach_grouped_and_anchored_items() {
+    use designcraft_doc::ItemId;
+    let mut s = session();
+    let frame = |s: &mut Session, x: f64| {
+        s.execute("frame.create", &json!({"rect": [x, 36, x + 50.0, 86], "content": "unassigned"})).unwrap()["id"].as_u64().unwrap()
+    };
+    let (a, b, c) = (frame(&mut s, 36.0), frame(&mut s, 100.0), frame(&mut s, 200.0));
+    s.execute("style.object.create", &json!({"name": "Photo", "fromSelection": false, "dropShadow": {"on": true}})).unwrap();
+    s.execute("style.object.apply", &json!({"name": "Photo", "ids": [a, b, c]})).unwrap();
+    s.execute("object.group", &json!({"ids": [a, b]})).unwrap();
+    let r = s.execute("frame.create", &json!({"rect": [36, 200, 400, 400], "content": "text", "text": "Before after."})).unwrap();
+    let sid = s.doc().unwrap().doc.item(ItemId(r["id"].as_u64().unwrap())).unwrap().text_frame().unwrap().story;
+    s.execute("anchored.insert", &json!({"ids": [c], "story": sid.0, "pos": 7})).unwrap();
+
+    let r = s.execute("style.object.edit", &json!({"name": "Photo", "dropShadow": {"size": 25}})).unwrap();
+    assert_eq!(r["updated"], 3);
+    let d = &s.doc().unwrap().doc;
+    assert_eq!(d.item(ItemId(a)).unwrap().effects.drop_shadow.size, 25.0);
+    assert_eq!(d.story(sid).unwrap().objects[0].item.effects.drop_shadow.size, 25.0);
+
+    // Values that aren't finite numbers are refused (an f32 opacity of 1e39 is infinite); the
+    // others are clamped, and the document still saves and opens.
+    assert!(s.execute("style.object.edit", &json!({"name": "Photo", "dropShadow": {"opacity": 1e39}})).is_err());
+    assert!(s.execute("object.dropShadow", &json!({"opacity": 1e39, "ids": [b]})).is_err());
     assert!(s.execute("style.object.edit", &json!({"name": "Photo", "dropShadow": {"size": "big"}})).is_err());
+    s.execute("style.object.edit", &json!({"name": "Photo", "dropShadow": {"opacity": 3, "size": -5}})).unwrap();
+    s.execute("object.innerShadow", &json!({"on": true, "distance": -2, "ids": [b]})).unwrap();
+    let d = &s.doc().unwrap().doc;
+    let ds = &d.styles.object_style("Photo").unwrap().effects.as_ref().unwrap().drop_shadow;
+    assert_eq!((ds.opacity, ds.size), (1.0, 0.0));
+    assert_eq!(d.item(ItemId(b)).unwrap().effects.inner_shadow.distance, 0.0);
+    let bytes = s.execute("file.serialize", &json!({})).unwrap();
+    let mut back = Session::new();
+    back.execute("file.openBytes", &json!({"name": "copy", "base64": bytes["base64"]})).unwrap();
+    assert_eq!(back.doc().unwrap().doc.styles.object_style("Photo").unwrap().effects.as_ref().unwrap().drop_shadow.opacity, 1.0);
 }
 
 /// Unicode text per page, through hayro's interpreter (ToUnicode / ActualText).

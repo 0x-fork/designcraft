@@ -187,13 +187,9 @@ impl Document {
         self.stories.insert(sid, Arc::new(story));
         let mut item = Item::new(id, layer, Shape::Rectangle, shapes::rectangle(rect));
         item.object_style = self.styles.default_text_frame.clone();
-        if let Some(os) = self.styles.object_style(&self.styles.default_text_frame).cloned() {
-            if let Some(f) = os.fill {
-                item.fill = f;
-            }
-            if let Some(s) = os.stroke {
-                item.stroke = s;
-            }
+        // Applied before the content exists, so the frame keeps default text frame options.
+        if let Some(os) = self.styles.object_style(&self.styles.default_text_frame) {
+            os.apply_to(&mut item);
         }
         item.content = Content::Text(TextFrame { story: sid, options: TextFrameOptions::default() });
         self.insert_item(r, item, None)?;
