@@ -143,7 +143,7 @@ fn fill(story: &mut Story, from: &Story) {
 
 /// The link a story placed from `path` keeps (Create Links When Placing Text Files).
 /// `before`: the file's size and time before `bytes` were read (its time is kept only when the
-/// size matches what was read).
+/// size matches what was read and it can be trusted, see [`super::links::settled`]).
 fn text_link(
     path: &str,
     bytes: &[u8],
@@ -157,7 +157,7 @@ fn text_link(
         path: path.to_string(),
         size: bytes.len() as u64,
         hash: super::links::fnv_hex(bytes),
-        mtime: before.filter(|f| f.size == bytes.len() as u64).map_or(0, |f| f.mtime),
+        mtime: before.filter(|f| f.size == bytes.len() as u64 && super::links::settled(f)).map_or(0, |f| f.mtime),
         style_map: map.into_iter().collect(),
         style_conflicts: conflict.name().into(),
         remove_styles: remove,
