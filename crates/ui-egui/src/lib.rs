@@ -16,6 +16,7 @@ pub mod dock;
 pub mod i18n;
 pub mod icons;
 pub mod menus;
+mod modal_drag;
 mod panel_docking;
 pub mod panels;
 mod prefs;
