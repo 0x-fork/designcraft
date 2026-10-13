@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Paragraph Style…",
             [],
             None,
-            "{name, basedOn?, nextStyle?, para?: {… startAt?: null = continue numbering; grepStyles?: [{style, pattern}]: a pattern that can't compile is an error}, chars?: {…}, fromSelection?: bool}",
+            "{name, basedOn?, nextStyle?, para?: {paragraph attributes, as type.para names them: align, leftIndent, firstLineIndent, spaceBefore, spaceAfter, …; startAt?: null = continue numbering; grepStyles?: [{style, pattern}]: a pattern that can't compile is an error}, chars?: {character attributes, as type.char names them: fontFamily, fontStyle, size, leading, tracking, fill, …}, fromSelection?: bool}",
             has_doc,
             create_para
         ),
@@ -95,7 +95,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph Style Options…",
             [],
             None,
-            "{name, rename?, basedOn?, nextStyle?, para?: {… ruleAbove?/ruleBelow?: only the named rule fields change; startAt?: null = continue numbering; kinsoku?: set | null (default rules); a grepStyles pattern that can't compile is an error}, chars?: {…}}",
+            "{name, rename?, basedOn?, nextStyle?, para?: {paragraph attributes, as type.para names them: align, leftIndent, spaceBefore, …; ruleAbove?/ruleBelow?: only the named rule fields change; startAt?: null = continue numbering; kinsoku?: set | null (default rules); a grepStyles pattern that can't compile is an error}, chars?: {character attributes, as type.char names them: fontFamily, fontStyle, size, leading, tracking, fill, …}}",
             has_doc,
             edit_para
         ),
@@ -105,7 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Character Style…",
             [],
             None,
-            "{name, basedOn?: style | \"[None]\", chars?: {…}, fromSelection?: bool (default false)} — if true, capture the first selected character's style/local overrides (caret: typing format), then overlay chars (null unsets); only explicit fill names are validated; paragraph formatting stays inherited; no text target: chars only → {name} (made unique)",
+            "{name, basedOn?: style | \"[None]\", chars?: {character attributes, as type.char names them: fontFamily, fontStyle, size, leading, tracking, fill, …}, fromSelection?: bool (default false)} — if true, capture the first selected character's style/local overrides (caret: typing format), then overlay chars (null unsets); only explicit fill names are validated; paragraph formatting stays inherited; no text target: chars only → {name} (made unique)",
             has_doc,
             create_char
         ),
@@ -114,7 +114,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Character Style Options…",
             [],
             None,
-            "{name, rename?, basedOn?: style | \"[None]\" | null, chars?: {attr: value | null (no longer set)}} — renaming updates every use",
+            "{name, rename?, basedOn?: style | \"[None]\" | null, chars?: {character attribute (as type.char names them: fontFamily, fontStyle, size, …): value | null (no longer set)}} — renaming updates every use",
             has_doc,
             edit_char
         ),
@@ -424,12 +424,18 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn attrs<T: Default>(v: Option<&Value>, set: impl Fn(&mut T, &str, &Value) -> std::result::Result<(), String>) -> Result<T> {
+/// The `group` (`chars`, `para`) object of command `cmd`'s params as attributes; a bad attribute
+/// is that command's parameter error, naming the group.
+fn attrs<T: Default>(cmd: &str, group: &str, p: &Value, set: impl Fn(&mut T, &str, &Value) -> std::result::Result<(), String>) -> Result<T> {
     let mut a = T::default();
-    if let Some(o) = v.and_then(Value::as_object) {
-        for (k, v) in o {
-            set(&mut a, k, v).map_err(|e| bad("style", e))?;
+    match p.get(group) {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(o)) => {
+            for (k, v) in o {
+                set(&mut a, k, v).map_err(|e| bad(cmd, format!("{group}: {e}")))?;
+            }
         }
+        Some(_) => return Err(bad(cmd, format!("{group} must be an object of attributes"))),
     }
     Ok(a)
 }
@@ -490,11 +496,12 @@ fn continue_numbering(p: Option<&Value>, para: &mut ParaAttrs) {
 
 fn create_para(s: &mut Session, p: &Value) -> Result<Value> {
     let base = str_param(p, "name").unwrap_or("Paragraph Style 1").to_string();
-    let mut para: ParaAttrs = attrs(p.get("para"), |a: &mut ParaAttrs, k, v| a.set_json_over(k, v, &designcraft_doc::ParaProps::default()))?;
+    let mut para: ParaAttrs =
+        attrs("style.paragraph.create", "para", p, |a: &mut ParaAttrs, k, v| a.set_json_over(k, v, &designcraft_doc::ParaProps::default()))?;
     continue_numbering(p.get("para"), &mut para);
     explicit_default_kinsoku(&mut para, p.get("para"));
     check_grep_styles("style.paragraph.create", &para)?;
-    let mut chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let mut chars: CharAttrs = attrs("style.paragraph.create", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     // Validate caller-supplied fills, not selection fills retained after a swatch is deleted.
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.paragraph.create")?;
     if p.get("fromSelection").and_then(Value::as_bool).unwrap_or(false)
@@ -578,7 +585,7 @@ fn CharProps_to_attrs(p: &designcraft_doc::CharProps) -> CharAttrs {
 
 fn edit_para(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("style.paragraph.edit", "missing name"))?.to_string();
-    let chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let chars: CharAttrs = attrs("style.paragraph.edit", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.paragraph.edit")?;
     let rename = str_param(p, "rename").map(str::to_string);
     let based = p.get("basedOn").cloned();
@@ -590,7 +597,7 @@ fn edit_para(s: &mut Session, p: &Value) -> Result<Value> {
         }
         // A rule object changes only the rule fields it names, over the style's resolved rule.
         let (current, _) = d.styles.resolve_para_style(&name);
-        let mut para: ParaAttrs = attrs(p.get("para"), |a: &mut ParaAttrs, k, v| a.set_json_over(k, v, &current))?;
+        let mut para: ParaAttrs = attrs("style.paragraph.edit", "para", p, |a: &mut ParaAttrs, k, v| a.set_json_over(k, v, &current))?;
         continue_numbering(p.get("para"), &mut para);
         explicit_default_kinsoku(&mut para, p.get("para"));
         check_grep_styles("style.paragraph.edit", &para)?;
@@ -784,7 +791,7 @@ fn delete_style(s: &mut Session, p: &Value, para: bool) -> Result<Value> {
 
 fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
     let base = str_param(p, "name").unwrap_or("Character Style 1").to_string();
-    let mut chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let mut chars: CharAttrs = attrs("style.character.create", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     // Validate caller-supplied fills; captured formatting may retain a deleted swatch name.
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.character.create")?;
     if p.get("fromSelection").and_then(Value::as_bool).unwrap_or(false)
@@ -805,7 +812,7 @@ fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
         // Replay the explicit fields so null clears a captured value rather than looking absent.
         if let Some(overrides) = p.get("chars").and_then(Value::as_object) {
             for (key, value) in overrides {
-                captured.set_json(key, value).map_err(|e| bad("style", e))?;
+                captured.set_json(key, value).map_err(|e| bad("style.character.create", format!("chars: {e}")))?;
             }
         }
         chars = captured;
@@ -829,7 +836,7 @@ fn edit_char(s: &mut Session, p: &Value) -> Result<Value> {
     if name == designcraft_doc::NO_CHAR_STYLE {
         return Err(bad("style.character.edit", "[None] can't be edited"));
     }
-    let chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let chars: CharAttrs = attrs("style.character.edit", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.character.edit")?;
     // `null` unsets an attribute (the style no longer sets it).
     let unset: Vec<String> = p
@@ -1548,6 +1555,48 @@ fn swatch_options(s: &mut Session, p: &Value) -> Result<Value> {
         d.rename_swatch_refs(&name, &new);
         Ok(json!({"name": new}))
     })
+}
+
+/// #777: the params descriptions name the attributes, and a wrong one is the command's error.
+#[cfg(test)]
+mod attribute_error_tests {
+    use super::*;
+    use crate::cmd::find_command;
+
+    #[test]
+    fn a_wrong_attribute_names_the_command_and_the_right_attribute() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let err = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_err().to_string();
+        assert_eq!(
+            err(&mut s, "style.paragraph.create", json!({"name": "H", "chars": {"font": "Source Sans 3"}})),
+            "invalid parameters for `style.paragraph.create`: chars: unknown attribute `font`; did you mean `fontFamily`?"
+        );
+        assert_eq!(
+            err(&mut s, "style.paragraph.create", json!({"name": "H", "para": {"spaceBefor": 6}})),
+            "invalid parameters for `style.paragraph.create`: para: unknown attribute `spaceBefor`; did you mean `spaceBefore`?"
+        );
+        assert!(
+            err(&mut s, "style.character.create", json!({"name": "C", "chars": {"font": "X"}}))
+                .starts_with("invalid parameters for `style.character.create`: chars:")
+        );
+        assert!(err(&mut s, "style.paragraph.create", json!({"name": "H", "chars": "bold"})).contains("chars must be an object of attributes"));
+        s.execute("style.paragraph.create", &json!({"name": "H", "chars": {"fontFamily": "Source Sans 3", "size": 14}})).unwrap();
+        assert!(
+            err(&mut s, "style.paragraph.edit", json!({"name": "H", "chars": {"font": "X"}}))
+                .starts_with("invalid parameters for `style.paragraph.edit`: chars:")
+        );
+        s.execute("style.character.create", &json!({"name": "C", "chars": {"fontStyle": "Bold"}})).unwrap();
+        assert!(
+            err(&mut s, "style.character.edit", json!({"name": "C", "chars": {"font": "X"}}))
+                .starts_with("invalid parameters for `style.character.edit`: chars:")
+        );
+        for id in ["style.paragraph.create", "style.paragraph.edit", "style.character.create", "style.character.edit"] {
+            let doc = find_command(id).unwrap().params;
+            assert!(doc.contains("as type.char names them: fontFamily"), "{id}: {doc}");
+        }
+        assert!(find_command("style.paragraph.create").unwrap().params.contains("as type.para names them: align"));
+    }
 }
 
 #[cfg(test)]
