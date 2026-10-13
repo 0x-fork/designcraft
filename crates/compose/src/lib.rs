@@ -1477,7 +1477,9 @@ fn spacing_for(pp: &ParaProps, base_size: f64) -> Spacing {
         hyphen_penalty: 50.0 + 450.0 * pp.hyph_weight,
         hyphen_limit: pp.hyph_limit,
         ragged_stretch: base_size * 2.0,
-        hyph_zone: if pp.align.is_justified() { 0.0 } else { pp.hyph_zone },
+        // The zone is the Single-line Composer's (unjustified text only), as in InDesign: the
+        // Paragraph Composer weighs every break of the paragraph instead.
+        hyph_zone: if pp.align.is_justified() || pp.composer != Composer::SingleLine { 0.0 } else { pp.hyph_zone },
         optical: pp.optical_margin,
         korean_char_breaks: pp.korean_char_breaks,
     }

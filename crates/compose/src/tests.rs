@@ -288,11 +288,16 @@ fn hyphenation_zone_limits_ragged_hyphens() {
         let cs = compose_story(&d, sid, &ComposeOptions::default());
         all_lines(&cs).iter().filter(|l| l.hyphenated).count()
     };
-    for c in [designcraft_doc::Composer::Paragraph, designcraft_doc::Composer::SingleLine] {
-        let (free, zoned, huge) = (count(0.0, c), count(36.0, c), count(1000.0, c));
-        // A huge zone leaves only words that start a line (no space to break at) hyphenable.
-        assert!(free > 0 && zoned <= free && huge * 4 <= free, "{c:?}: {free} {zoned} {huge}");
-    }
+    // Single-line Composer: a huge zone leaves only words that start a line (no space to break
+    // at) hyphenable.
+    let c = designcraft_doc::Composer::SingleLine;
+    let (free, zoned, huge) = (count(0.0, c), count(36.0, c), count(1000.0, c));
+    assert!(free > 0 && zoned <= free && huge * 4 <= free, "{c:?}: {free} {zoned} {huge}");
+    // The zone is the Single-line Composer's only (InDesign): the Paragraph Composer hyphenates
+    // the same whatever it is.
+    let c = designcraft_doc::Composer::Paragraph;
+    let (free, zoned, huge) = (count(0.0, c), count(36.0, c), count(1000.0, c));
+    assert!(free > 0 && zoned == free && huge == free, "{c:?}: {free} {zoned} {huge}");
 }
 
 #[test]
