@@ -105,7 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Character Style…",
             [],
             None,
-            "{name, basedOn?: style | \"[None]\", chars?: {…}} — the style sets only `chars` → {name} (made unique)",
+            "{name, basedOn?: style | \"[None]\", chars?: {…}, fromSelection?: bool (default false)} — if true, capture the first selected character's style/local overrides (caret: typing format), then overlay chars (null unsets); only explicit fill names are validated; paragraph formatting stays inherited; no text target: chars only → {name} (made unique)",
             has_doc,
             create_char
         ),
@@ -622,8 +622,27 @@ fn delete_para(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
     let base = str_param(p, "name").unwrap_or("Character Style 1").to_string();
-    let chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let mut chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    // Validate caller-supplied fills; captured formatting may retain a deleted swatch name.
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.character.create")?;
+    if p.get("fromSelection").and_then(Value::as_bool).unwrap_or(false)
+        && let Some(target) = super::text::format_targets_pub(s).first()
+    {
+        let st = s.doc()?;
+        let story = st.doc.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
+        // Match paragraph fromSelection's first-character/caret policy, but keep paragraph
+        // attributes inherited instead of freezing the fully resolved character properties.
+        let format = if target.range.is_empty() { story.char_format_at(target.range.start) } else { story.format_after(target.range.start) };
+        let mut captured = st.doc.styles.char_style_attrs(&format.style);
+        captured.merge(&format.over);
+        // Replay the explicit fields so null clears a captured value rather than looking absent.
+        if let Some(overrides) = p.get("chars").and_then(Value::as_object) {
+            for (key, value) in overrides {
+                captured.set_json(key, value).map_err(|e| bad("style", e))?;
+            }
+        }
+        chars = captured;
+    }
     // Based on [None] is based on nothing.
     let based_on = str_param(p, "basedOn").filter(|b| *b != designcraft_doc::NO_CHAR_STYLE).map(str::to_string);
     s.edit(|d, _| {
