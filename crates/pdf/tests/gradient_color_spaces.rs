@@ -53,7 +53,7 @@ fn mixed_gradient_export_survives_in_subprocess() {
     let rgb = Color::rgb(1.0, 0.0, 0.0);
     let cmyk = Color::cmyk(1.0, 0.0, 0.0, 0.0);
     let gray = Color::gray(0.4);
-    for colors in [vec![cmyk, rgb], vec![rgb, cmyk], vec![rgb, gray], vec![gray, cmyk], vec![gray, rgb, cmyk]] {
+    for colors in [vec![cmyk, rgb], vec![rgb, cmyk], vec![rgb, gray], vec![gray, rgb, cmyk]] {
         for kind in [GradientKind::Linear, GradientKind::Radial] {
             for standard in [Standard::None, Standard::PdfX4, Standard::PdfA2b] {
                 let d = document(&colors, kind, 0.5, 0.7);
@@ -107,6 +107,8 @@ fn homogeneous_gradients_keep_device_spaces_and_components() {
         ([Color::rgb(1.0, 0.0, 0.0), Color::rgb(0.0, 0.0, 1.0)], "DeviceRGB", vec![1.0, 0.0, 0.0], vec![0.0, 0.0, 1.0]),
         ([Color::cmyk(1.0, 0.0, 0.0, 0.0), Color::cmyk(0.0, 1.0, 0.0, 0.0)], "DeviceCMYK", vec![1.0, 0.0, 0.0, 0.0], vec![0.0, 1.0, 0.0, 0.0]),
         ([Color::gray(0.2), Color::gray(0.8)], "DeviceGray", vec![0.8], vec![0.2]),
+        // Grey beside CMYK is the K ink, so the shading stays CMYK.
+        ([Color::gray(0.4), Color::cmyk(1.0, 0.0, 0.0, 0.0)], "DeviceCMYK", vec![0.0, 0.0, 0.0, 0.4], vec![1.0, 0.0, 0.0, 0.0]),
     ] {
         for standard in [Standard::None, Standard::PdfX4] {
             let report = export_pdf_with_report(

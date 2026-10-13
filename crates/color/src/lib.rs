@@ -173,7 +173,6 @@ impl Color {
         let [r, g, b] = self.to_rgb();
         Color::rgb(1.0 - r, 1.0 - g, 1.0 - b)
     }
-    /// Linear interpolation in display RGB.
     /// The colour `t` of the way to `other`. Process inks blend as inks (CMYK with CMYK or grey,
     /// grey with grey), as InDesign blends a gradient's stops; anything else blends in RGB.
     pub fn lerp(&self, other: &Color, t: f32) -> Color {
