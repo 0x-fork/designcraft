@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use designcraft_color::BlendMode;
 use designcraft_doc::{
-    Content, Document, Effects, Fill, Item, ItemId, ItemLoc, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke, TextFrame, TextFrameOptions,
-    TextSel,
+    Content, Document, Effects, Fill, Item, ItemId, ItemLoc, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke, TextFrame,
+    TextFrameOptions, TextSel,
 };
 use designcraft_geom::{Affine, Point, Rect, Vec2, shapes};
 use serde_json::{Value, json};

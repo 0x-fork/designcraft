@@ -287,7 +287,11 @@ impl Cache {
     fn neighbour(&self, doc: &Document, sid: StoryId) -> Arc<ComposedStory> {
         let indexed =
             doc.stories.get(&sid).is_some_and(|st| crate::xref::has_xrefs(st) || (crate::vars::has_vars(st) && crate::vars::has_running(doc, st)));
-        if indexed { Arc::new(crate::wrap::compose_among(doc, sid, &ComposeOptions::default(), &[])) } else { self.get_with(doc, sid, ShownOn::Own, false) }
+        if indexed {
+            Arc::new(crate::wrap::compose_among(doc, sid, &ComposeOptions::default(), &[]))
+        } else {
+            self.get_with(doc, sid, ShownOn::Own, false)
+        }
     }
 
     pub fn clear(&self) {
