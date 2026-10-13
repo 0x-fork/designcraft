@@ -93,12 +93,22 @@ fn nested_and_item_rotations_are_combined_before_measuring_graphics() {
             data: Arc::new(br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red"/></svg>"#.to_vec()),
             pixels: None,
             page: 0,
+            pdf_crop: Default::default(),
+            pdf_box: None,
         }),
     );
     let image = ItemId(doc.alloc());
     let mut item = Item::new(image, doc.default_layer(), Shape::Rectangle, shapes::rectangle(Rect::new(0.0, 0.0, 100.0, 10.0)));
-    item.content =
-        Content::Graphic(Graphic { asset: aid, size: (1.0, 1.0), xf: Affine::IDENTITY, auto_fit: Default::default(), fit_align: 4, crop: [0.0; 4] });
+    item.content = Content::Graphic(Graphic {
+        asset: aid,
+        size: (1.0, 1.0),
+        xf: Affine::IDENTITY,
+        clip: None,
+        auto_fit: Default::default(),
+        fit_align: 4,
+        crop: [0.0; 4],
+        wrap: Default::default(),
+    });
     item.xf = Affine::rotate(std::f64::consts::FRAC_PI_4);
     doc.insert_item(SpreadRef::Doc(0), item, None).unwrap();
     let inner = group(&mut doc, 0, &[image], Affine::rotate(-std::f64::consts::FRAC_PI_4));
