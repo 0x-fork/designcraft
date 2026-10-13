@@ -1593,6 +1593,13 @@ fn mixed_para_attrs(doc: &designcraft_doc::Document, targets: &[Target]) -> Vec<
     mixed.into_iter().collect()
 }
 
+/// `cf` with the typing format chosen at the active document's caret, if any.
+pub(crate) fn with_typing_format(s: &Session, cf: &mut designcraft_doc::CharFormat) {
+    if let Some(f) = typing_format(s) {
+        apply_typing_format(cf, f);
+    }
+}
+
 fn apply_typing_format(cf: &mut designcraft_doc::CharFormat, f: &TypingFormat) {
     cf.over.merge(&f.attrs);
     for k in &f.cleared {
