@@ -24,6 +24,12 @@ use parse::{
     tile,
 };
 
+pub(crate) use parse::fingerprint_from;
+
+pub(crate) fn fingerprint_from_path(path: &str) -> Option<designcraft_doc::Fingerprint> {
+    fingerprint_of(Path::new(path))
+}
+
 const PARENT_WARNING: &str = "A parent-page placeholder was left unfilled.";
 
 pub fn specs() -> Vec<CommandSpec> {

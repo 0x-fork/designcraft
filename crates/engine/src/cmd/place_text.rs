@@ -144,9 +144,12 @@ fn fill(story: &mut Story, from: &Story) {
 }
 
 /// The link a story placed from `path` keeps (Create Links When Placing Text Files).
+/// `before`: the file's size and time before `bytes` were read (its time is kept only when the
+/// size matches what was read).
 fn text_link(
     path: &str,
     bytes: &[u8],
+    before: Option<designcraft_doc::Fingerprint>,
     map: std::collections::HashMap<String, String>,
     conflict: Conflict,
     remove: bool,
@@ -156,6 +159,7 @@ fn text_link(
         path: path.to_string(),
         size: bytes.len() as u64,
         hash: super::links::fnv_hex(bytes),
+        mtime: before.filter(|f| f.size == bytes.len() as u64).map_or(0, |f| f.mtime),
         style_map: map.into_iter().collect(),
         style_conflicts: conflict.name().into(),
         remove_styles: remove,
@@ -165,7 +169,13 @@ fn text_link(
 
 /// Update Link of a linked text file: `bytes` (read from `path`) imported again into the story
 /// with the import options it was placed with, keeping its frames. Returns the import's warnings.
-pub(crate) fn reimport(d: &mut Document, sid: StoryId, path: &str, bytes: &[u8]) -> Result<Vec<String>> {
+pub(crate) fn reimport(
+    d: &mut Document,
+    sid: StoryId,
+    path: &str,
+    bytes: &[u8],
+    before: Option<designcraft_doc::Fingerprint>,
+) -> Result<Vec<String>> {
     let link =
         d.story(sid).and_then(|s| s.file_link.clone()).ok_or_else(|| bad("links.update", format!("story {} isn't linked to a file", sid.0)))?;
     let name = std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string());
@@ -183,7 +193,7 @@ pub(crate) fn reimport(d: &mut Document, sid: StoryId, path: &str, bytes: &[u8])
     add_styles(d, &imp, conflict);
     let story = d.story_mut(sid).ok_or(designcraft_doc::DocError::NoStory(sid))?;
     fill(story, &imp.story);
-    story.file_link = Some(text_link(path, bytes, map, conflict, link.remove_styles, story));
+    story.file_link = Some(text_link(path, bytes, before, map, conflict, link.remove_styles, story));
     Ok(imp.warnings)
 }
 
@@ -308,7 +318,14 @@ fn add_flow_frame(
     Ok(fid)
 }
 
-pub(super) fn place_text(s: &mut Session, p: &Value, name: &str, bytes: &[u8], path: Option<String>) -> Result<Value> {
+pub(super) fn place_text(
+    s: &mut Session,
+    p: &Value,
+    name: &str,
+    bytes: &[u8],
+    path: Option<String>,
+    before: Option<designcraft_doc::Fingerprint>,
+) -> Result<Value> {
     let mut imp = designcraft_textimport::import(name, bytes).map_err(|e| bad("file.place", e.to_string()))?;
     let remove = p.get("removeStyles").and_then(Value::as_bool).unwrap_or(false);
     if remove {
@@ -386,7 +403,7 @@ pub(super) fn place_text(s: &mut Session, p: &Value, name: &str, bytes: &[u8], p
             };
             let story = d.story_mut(sid).ok_or(designcraft_doc::DocError::NoStory(sid))?;
             fill(story, &imp.story);
-            story.file_link = link.as_deref().map(|path| text_link(path, bytes, map.clone(), conflict, remove, story));
+            story.file_link = link.as_deref().map(|path| text_link(path, bytes, before, map.clone(), conflict, remove, story));
             *sel = designcraft_doc::Selection::items(vec![fid]);
             sid
         };

@@ -479,9 +479,12 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
+    // The file's size and time before it is read (a linked text file remembers them).
+    let mut before = None;
     let (bytes, name, link) = if let Some(b) = str_param(p, "base64") {
         (base64_decode(b), str_param(p, "name").unwrap_or("image").to_string(), None)
     } else if let Some(path) = str_param(p, "path") {
+        before = super::datamerge::fingerprint_from_path(path);
         #[cfg(not(target_arch = "wasm32"))]
         let b = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
         #[cfg(target_arch = "wasm32")]
@@ -510,7 +513,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Text files (plain, Word, RTF) flow into frames.
     if designcraft_textimport::is_text_file(&name) {
-        return super::place_text::place_text(s, p, &name, &bytes, link);
+        return super::place_text::place_text(s, p, &name, &bytes, link, before);
     }
     let want_w = p
         .get("width")

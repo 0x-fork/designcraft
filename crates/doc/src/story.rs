@@ -169,6 +169,10 @@ pub struct TextFileLink {
     /// The file's size and FNV-1a hash (hex) when it was placed or last updated.
     pub size: u64,
     pub hash: String,
+    /// Its modification time then (seconds since 1970; 0: unknown), as Data Merge keeps for its
+    /// source: while size and time are unchanged, the Links panel doesn't read the file.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub mtime: i64,
     /// Imported style name → document style (`styleMap`), including the names Auto Rename chose.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub style_map: BTreeMap<String, String>,
@@ -181,6 +185,10 @@ pub struct TextFileLink {
     /// was edited in the layout (an update replaces those edits).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub story_hash: String,
+}
+
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
 }
 
 impl Story {

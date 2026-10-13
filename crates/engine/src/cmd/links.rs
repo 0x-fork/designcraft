@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use designcraft_doc::{AssetId, Content, Document, ItemId, Selection, Story, StoryId, TextFileLink};
+use designcraft_doc::{AssetId, Content, Document, Fingerprint, ItemId, Selection, Story, StoryId, TextFileLink};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, cmd, has_doc, str_param};
@@ -19,7 +19,11 @@ use crate::{EngineError, Result, Session};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "links.list", "Links", [], None, "{} → [{asset, name, path, status: ok|modified|missing|embedded, pixels, pdfCrop (placed PDFs: the box shown), uses: [{id, page, ppi}]}], then linked text files: [{story, name, path, status (also tooLarge: unchanged size, too big to check), edited (the story was changed in the layout), uses: [{id, page}]}]", has_doc, |s, _| {
-            Ok(Value::Array(list(&s.doc()?.doc)))
+            // Taken out for the call so the document needn't be cloned on every poll.
+            let mut checks = std::mem::take(&mut s.text_link_checks);
+            let links = s.doc().map(|d| list(&d.doc, &mut checks));
+            s.text_link_checks = checks;
+            Ok(Value::Array(links?))
         }),
         cmd!(
             "links.relink",
@@ -154,26 +158,45 @@ pub(crate) fn checkable_size(len: usize) -> bool {
     len as u64 <= MAX_TEXT_LINK_BYTES
 }
 
+/// Checked linked text files: path → (size and time, hash of the contents then).
+pub(crate) type TextChecks = std::collections::HashMap<String, (Fingerprint, String)>;
+
 /// Link status of a linked text file: `tooLarge` when it is the recorded size but over
-/// [`MAX_TEXT_LINK_BYTES`], so its contents aren't checked.
-pub fn text_status(l: &TextFileLink) -> &'static str {
+/// [`MAX_TEXT_LINK_BYTES`], so its contents aren't checked. The file is read only when its size
+/// is the recorded one but its time isn't, and then once per new time (`checks`): a file saved
+/// or synced again without changes stays OK.
+pub(crate) fn text_status(l: &TextFileLink, checks: &mut TextChecks) -> &'static str {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match std::fs::metadata(&l.path) {
-            Err(_) => "missing",
-            Ok(m) if !m.is_file() => "missing",
-            Ok(m) if m.len() != l.size => "modified",
-            Ok(m) if m.len() > MAX_TEXT_LINK_BYTES => "tooLarge",
-            Ok(_) => match read_text(&l.path) {
-                Ok(b) if fnv_hex(&b) == l.hash => "ok",
-                Ok(_) => "modified",
-                Err(_) => "missing",
-            },
+        let now = match std::fs::metadata(&l.path) {
+            Err(_) => return "missing",
+            Ok(m) if !m.is_file() => return "missing",
+            Ok(m) => super::datamerge::fingerprint_from(&m),
+        };
+        if now.size != l.size {
+            return "modified";
         }
+        if l.mtime != 0 && now.mtime == l.mtime {
+            return "ok";
+        }
+        let hash = match checks.get(&l.path) {
+            Some((at, hash)) if *at == now => hash.clone(),
+            _ if now.size > MAX_TEXT_LINK_BYTES => return "tooLarge",
+            _ => match read_text(&l.path) {
+                Ok((b, at)) => {
+                    let hash = fnv_hex(&b);
+                    // The time from before the read: a change during it is seen next time.
+                    checks.insert(l.path.clone(), (at, hash.clone()));
+                    hash
+                }
+                Err(_) => return "missing",
+            },
+        };
+        if hash == l.hash { "ok" } else { "modified" }
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = l;
+        let _ = (l, checks);
         "ok"
     }
 }
@@ -182,11 +205,11 @@ fn file_name(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string())
 }
 
-fn list(d: &Document) -> Vec<Value> {
+fn list(d: &Document, checks: &mut TextChecks) -> Vec<Value> {
     let texts = d.stories.values().filter_map(|st| {
         let l = st.file_link.as_ref()?;
         let uses: Vec<Value> = st.frames.iter().map(|id| json!({"id": id.0, "page": d.page_of_item(*id).map(|p| d.page_name(p))})).collect();
-        Some(json!({"story": st.id.0, "name": file_name(&l.path), "path": l.path, "status": text_status(l), "edited": story_hash(st) != l.story_hash, "uses": uses}))
+        Some(json!({"story": st.id.0, "name": file_name(&l.path), "path": l.path, "status": text_status(l, checks), "edited": story_hash(st) != l.story_hash, "uses": uses}))
     });
     let used = d.used_assets();
     d.assets
@@ -221,8 +244,9 @@ fn list(d: &Document) -> Vec<Value> {
         .collect()
 }
 
+/// A linked text file's bytes, with its size and time from before they were read.
 #[cfg(not(target_arch = "wasm32"))]
-fn read_text(path: &str) -> Result<Vec<u8>> {
+fn read_text(path: &str) -> Result<(Vec<u8>, Fingerprint)> {
     use std::io::Read;
     let err = |e: std::io::Error| EngineError::Other(format!("{path}: {e}"));
     let m = std::fs::metadata(path).map_err(err)?;
@@ -239,18 +263,18 @@ fn read_text(path: &str) -> Result<Vec<u8>> {
     if b.len() as u64 > MAX_TEXT_LINK_BYTES {
         return Err(too_large());
     }
-    Ok(b)
+    Ok((b, super::datamerge::fingerprint_from(&m)))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn read_text(path: &str) -> Result<Vec<u8>> {
+fn read_text(path: &str) -> Result<(Vec<u8>, Fingerprint)> {
     Err(EngineError::Other(format!("{path}: files can't be read on the web")))
 }
 
 /// Import a linked text file again; a warning says when edits made in the layout were replaced.
-fn reimport(d: &mut Document, sid: StoryId, path: &str, bytes: &[u8]) -> Result<Vec<String>> {
+fn reimport(d: &mut Document, sid: StoryId, path: &str, bytes: &[u8], before: Fingerprint) -> Result<Vec<String>> {
     let edited = d.story(sid).is_some_and(|st| st.file_link.as_ref().is_some_and(|l| story_hash(st) != l.story_hash));
-    let mut warnings = super::place_text::reimport(d, sid, path, bytes)?;
+    let mut warnings = super::place_text::reimport(d, sid, path, bytes, Some(before))?;
     if edited {
         warnings.insert(0, format!("{}: edits made to story {} in the layout were replaced by the file's text", file_name(path), sid.0));
     }
@@ -272,10 +296,10 @@ fn reload(path: &str) -> Result<(Vec<u8>, (u32, u32))> {
 fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("links.relink", "missing path"))?.to_string();
     if let Some(sid) = story_param(p) {
-        let bytes = read_text(&path)?;
+        let (bytes, before) = read_text(&path)?;
         let name = file_name(&path);
         return s.edit(|d, _| {
-            let warnings = reimport(d, sid, &path, &bytes)?;
+            let warnings = reimport(d, sid, &path, &bytes, before)?;
             Ok(json!({"name": name, "warnings": warnings}))
         });
     }
@@ -333,7 +357,8 @@ fn relink_folder(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn update(s: &mut Session, p: &Value) -> Result<Value> {
-    let d = &s.doc()?.doc;
+    let d = s.doc()?.doc.clone();
+    let checks = &mut s.text_link_checks;
     let (only_asset, only_story) = (p.get("asset").and_then(Value::as_u64), story_param(p));
     let all = only_asset.is_none() && only_story.is_none();
     let which: Vec<(AssetId, String)> = d
@@ -347,7 +372,7 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         .stories
         .values()
         .filter(|st| all || only_story == Some(st.id))
-        .filter_map(|st| st.file_link.as_ref().filter(|l| text_status(l) == "modified").map(|l| (st.id, l.path.clone())))
+        .filter_map(|st| st.file_link.as_ref().filter(|l| text_status(l, checks) == "modified").map(|l| (st.id, l.path.clone())))
         .collect();
     let mut fresh = Vec::new();
     for (aid, path) in which {
@@ -355,8 +380,8 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut fresh_texts = Vec::new();
     for (sid, path) in texts {
-        let bytes = read_text(&path)?;
-        fresh_texts.push((sid, path, bytes));
+        let (bytes, before) = read_text(&path)?;
+        fresh_texts.push((sid, path, bytes, before));
     }
     let n = fresh.len() + fresh_texts.len();
     if n == 0 {
@@ -372,8 +397,8 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         let mut warnings = Vec::new();
-        for (sid, path, bytes) in &fresh_texts {
-            warnings.extend(reimport(d, *sid, path, bytes)?);
+        for (sid, path, bytes, before) in &fresh_texts {
+            warnings.extend(reimport(d, *sid, path, bytes, *before)?);
         }
         Ok(json!({"updated": n, "warnings": warnings}))
     })
@@ -768,7 +793,7 @@ mod text_link_tests {
         // Saved and opened again: the link and its options are kept.
         let back = designcraft_format::load(&designcraft_format::save(&s.doc().unwrap().doc).unwrap()).unwrap();
         assert_eq!(back.story(sid).unwrap().file_link, story(&s, sid).file_link);
-        assert_eq!(super::text_status(back.story(sid).unwrap().file_link.as_ref().unwrap()), "ok");
+        assert_eq!(super::text_status(back.story(sid).unwrap().file_link.as_ref().unwrap(), &mut Default::default()), "ok");
 
         // The file moves: Missing; Relink to it imports it into the story.
         let moved = dir.join("moved").join("chapter.docx");
@@ -786,6 +811,52 @@ mod text_link_tests {
         s.execute("links.embed", &json!({"story": sid.0})).unwrap();
         assert!(text_rows(&mut s).is_empty());
         assert_eq!(story(&s, sid).text, "Head\nMoved draft.");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unchanged_linked_text_files_are_not_read_again() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("dc-text-link-poll-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("note.txt");
+        std::fs::write(&path, "Hello").unwrap();
+        // Unreadable: a status that reads the file would say missing.
+        let readable = |on: bool| std::fs::set_permissions(&path, std::fs::Permissions::from_mode(if on { 0o644 } else { 0o000 })).unwrap();
+        let touch = |secs: u64| {
+            let f = std::fs::File::options().write(true).open(&path).unwrap();
+            f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(secs)).unwrap();
+        };
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("file.place", &json!({"path": path.to_string_lossy(), "link": true})).unwrap();
+        let status = |s: &mut Session| text_rows(s)[0]["status"].as_str().unwrap().to_string();
+
+        // Size and time as placed: not read.
+        readable(false);
+        if std::fs::read(&path).is_ok() {
+            // Running as root: permissions don't stop reads, so this can't be observed.
+            return;
+        }
+        assert_eq!(status(&mut s), "ok");
+        // Saved again unchanged (a new time): read once, then not again.
+        readable(true);
+        touch(10);
+        assert_eq!(status(&mut s), "ok");
+        readable(false);
+        assert_eq!(status(&mut s), "ok", "the second poll doesn't read it");
+        // Changed, same size, new time: modified.
+        readable(true);
+        std::fs::write(&path, "Jello").unwrap();
+        touch(20);
+        assert_eq!(status(&mut s), "modified");
+        // Updated: the new size and time are kept, so the next poll doesn't read it.
+        s.execute("links.update", &json!({})).unwrap();
+        readable(false);
+        assert_eq!(status(&mut s), "ok");
+        readable(true);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -846,12 +917,12 @@ mod text_link_read_tests {
 
     fn status_of(path: &std::path::Path, size: u64) -> &'static str {
         let l = TextFileLink { path: path.to_string_lossy().to_string(), size, hash: "0".into(), ..Default::default() };
-        promptly(move || text_status(&l))
+        promptly(move || text_status(&l, &mut Default::default()))
     }
 
     fn read(path: &std::path::Path) -> Result<usize, String> {
         let p = path.to_string_lossy().to_string();
-        promptly(move || read_text(&p).map(|b| b.len()).map_err(|e| e.to_string()))
+        promptly(move || read_text(&p).map(|(b, _)| b.len()).map_err(|e| e.to_string()))
     }
 
     #[test]
