@@ -752,6 +752,15 @@ pub fn ui_label(id: &str) -> Option<(&'static str, Option<&'static str>)> {
 
 /// Run a UI command; `None` if `id` isn't one.
 pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    let was_find = app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange");
+    let result = run_ui_inner(app, id, p);
+    if was_find && app.ui.dialog.as_ref().is_none_or(|d| d.id != "findChange") {
+        app.session.reset_find_scope();
+    }
+    result
+}
+
+fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = crate::panel_docking::command(app, id, p) {
         return Some(result);
     }
@@ -957,6 +966,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
         }
         "app.findChange" => {
+            app.session.reset_find_scope();
             app.ui.dialog = Some(crate::dialogs::Dialog::new("findChange", json!({})));
             Ok(Value::Null)
         }
@@ -1880,6 +1890,14 @@ pub fn close_document(app: &mut DesignApp, index: Option<usize>) {
 /// A menu item was chosen. An engine command whose label ends in "…" and that takes parameters
 /// opens a dialog built from its parameter documentation (see [`crate::dialogs::command_fields`]).
 pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
+    let was_find = app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange");
+    activate_inner(app, id, params);
+    if was_find && app.ui.dialog.as_ref().is_none_or(|d| d.id != "findChange") {
+        app.session.reset_find_scope();
+    }
+}
+
+fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
     if params.is_null() && id == "file.close" {
         close_document(app, None);
         return;

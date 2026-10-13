@@ -29,6 +29,8 @@ pub fn specs() -> Vec<CommandSpec> {
             let text = &st.doc.text_story(t.story, t.cell).map(|x| x.text.clone()).unwrap_or_default();
             let (a, b) = word_bounds(text, t.focus);
             st.selection.text = Some(TextSel { anchor: a, focus: b, ..t });
+            // A word reselection is external even when place kept the same range for dragging.
+            st.revision = st.revision.wrapping_add(1);
             ok()
         }),
         cmd!(noundo "text.selectSentence", "Select Sentence", [], None, "{frame, point} — the sentence under the point (triple click)", has_doc, |s, p| {

@@ -288,13 +288,19 @@ pub fn handle(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest) ->
         "ui.dialog.set" => match app.ui.dialog.as_mut() {
             Some(d) => {
                 let Some(f) = s("field") else { return err("missing `field`") };
-                d.fields.insert(f.to_string(), p.get("value").cloned().unwrap_or(Value::Null));
+                let value = p.get("value").cloned().unwrap_or(Value::Null);
+                if d.set_field(f, value) {
+                    app.session.reset_find_scope();
+                }
                 ok(serde_json::to_value(&*d).unwrap_or_default())
             }
             None => err("no dialog open"),
         },
         "ui.dialog.open" => {
             let Some(id) = s("id") else { return err("missing `id`") };
+            if id == "findChange" || app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange") {
+                app.session.reset_find_scope();
+            }
             let d = crate::dialogs::Dialog::new(id, p.get("fields").cloned().unwrap_or(Value::Null));
             let v = serde_json::to_value(&d).unwrap_or_default();
             app.ui.dialog = Some(d);
