@@ -15,8 +15,8 @@ use std::io::Write;
 
 use designcraft_doc::geom::{Affine, Rect};
 use designcraft_doc::{
-    Align, AnchorPosition, AnchoredObject, CharAttrs, CharProps, Content, Document, ENDNOTE_REF, FOOTNOTE_REF, Item, ItemId, OBJECT_MARK, ParaProps, SpreadRef, Story, StoryId, Styles, Table,
-    story,
+    Align, AnchorPosition, AnchoredObject, CharAttrs, CharProps, Content, Document, ENDNOTE_REF, FOOTNOTE_REF, Item, ItemId, OBJECT_MARK, ParaProps,
+    SpreadRef, Story, StoryId, Styles, Table, story,
 };
 
 #[derive(Clone, Debug)]
@@ -861,7 +861,8 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
             self.images.insert(name.clone(), (mime, a.data.as_slice()));
             let m = it.media.clone().unwrap_or_default();
             let mut attrs = String::new();
-            for (on, attr) in [(m.controls, " controls=\"controls\""), (m.play_on_page_load, " autoplay=\"autoplay\""), (m.looping, " loop=\"loop\"")] {
+            for (on, attr) in [(m.controls, " controls=\"controls\""), (m.play_on_page_load, " autoplay=\"autoplay\""), (m.looping, " loop=\"loop\"")]
+            {
                 if on {
                     attrs.push_str(attr);
                 }
@@ -1733,11 +1734,23 @@ mod tests {
         let e = |t: &str, l: u8| (t.to_string(), t.to_string(), l);
         assert_eq!(
             nav_list(&[e("A", 1), e("B", 3), e("C", 2), e("D", 1)], &files),
-            format!("<li>{}<ol><li>{}</li><li>{}</li></ol></li><li>{}</li>", link("A", "A", "A"), link("B", "B", "B"), link("C", "C", "C"), link("D", "D", "D"))
+            format!(
+                "<li>{}<ol><li>{}</li><li>{}</li></ol></li><li>{}</li>",
+                link("A", "A", "A"),
+                link("B", "B", "B"),
+                link("C", "C", "C"),
+                link("D", "D", "D")
+            )
         );
         assert_eq!(
             nav_list(&[e("A", 1), e("B", 2), e("C", 3), e("D", 1)], &files),
-            format!("<li>{}<ol><li>{}<ol><li>{}</li></ol></li></ol></li><li>{}</li>", link("A", "A", "A"), link("B", "B", "B"), link("C", "C", "C"), link("D", "D", "D"))
+            format!(
+                "<li>{}<ol><li>{}<ol><li>{}</li></ol></li></ol></li><li>{}</li>",
+                link("A", "A", "A"),
+                link("B", "B", "B"),
+                link("C", "C", "C"),
+                link("D", "D", "D")
+            )
         );
     }
 
@@ -1907,7 +1920,16 @@ mod tests {
             let aid = AssetId(d.alloc());
             d.assets.insert(
                 aid,
-                Arc::new(Asset { page: 0, id: aid, name: name.into(), mime: mime.into(), link: None, data: Arc::new(vec![1]), pixels: Some((1, 1)), ..Default::default() }),
+                Arc::new(Asset {
+                    page: 0,
+                    id: aid,
+                    name: name.into(),
+                    mime: mime.into(),
+                    link: None,
+                    data: Arc::new(vec![1]),
+                    pixels: Some((1, 1)),
+                    ..Default::default()
+                }),
             );
             let mut item = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(Rect::new(36.0, y, 72.0, y + 36.0)));
             item.alt_text = alt.into();
