@@ -163,6 +163,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("window.panel.close", "Close Panel", None, "{panel} — hide a panel"),
     ("window.dockPanel", "Dock Panel", None, "{panel} — back into the dock's icon column"),
     ("window.controlBar", "Control", Some("Cmd+Alt+6"), "{}"),
+    // Object › Fitting with InDesign's shortcuts (one `object.fit` mode each).
+    ("fit.fillFrameProportionally", "Fill Frame Proportionally", Some("Cmd+Alt+Shift+C"), "{} — object.fit {mode: fillProportionally}"),
+    ("fit.contentProportionally", "Fit Content Proportionally", Some("Cmd+Alt+Shift+E"), "{} — object.fit {mode: fitProportionally}"),
+    ("fit.frameToContent", "Fit Frame to Content", Some("Cmd+Alt+C"), "{} — object.fit {mode: fitFrameToContent}"),
+    ("fit.contentToFrame", "Fit Content to Frame", Some("Cmd+Alt+E"), "{} — object.fit {mode: fitContentToFrame}"),
+    ("fit.centerContent", "Center Content", Some("Cmd+Shift+E"), "{} — object.fit {mode: centerContent}"),
     ("window.split", "Split Window", None, "{on?: bool} — two views of the document side by side, each with its own zoom and scroll"),
     ("window.newWindow", "New Window", None, "{on?: bool} — another view of the active document in its own window"),
     ("window.taskBar", "Contextual Task Bar", None, "{}"),
@@ -552,11 +558,11 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:anchored.release",
             "<",
             ">Fitting",
-            "cmd:object.fit|Fill Frame Proportionally|{\"mode\":\"fillProportionally\"}",
-            "cmd:object.fit|Fit Content Proportionally|{\"mode\":\"fitProportionally\"}",
-            "cmd:object.fit|Fit Frame to Content|{\"mode\":\"fitFrameToContent\"}",
-            "cmd:object.fit|Fit Content to Frame|{\"mode\":\"fitContentToFrame\"}",
-            "cmd:object.fit|Center Content|{\"mode\":\"centerContent\"}",
+            "ui:fit.fillFrameProportionally",
+            "ui:fit.contentProportionally",
+            "ui:fit.frameToContent",
+            "ui:fit.contentToFrame",
+            "ui:fit.centerContent",
             "-",
             "ui:app.fittingOptions",
             "<",
@@ -1269,6 +1275,16 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
             Ok(Value::Null)
         }
+        "fit.fillFrameProportionally" | "fit.contentProportionally" | "fit.frameToContent" | "fit.contentToFrame" | "fit.centerContent" => {
+            let mode = match id {
+                "fit.fillFrameProportionally" => "fillProportionally",
+                "fit.contentProportionally" => "fitProportionally",
+                "fit.frameToContent" => "fitFrameToContent",
+                "fit.contentToFrame" => "fitContentToFrame",
+                _ => "centerContent",
+            };
+            app.run("object.fit", json!({"mode": mode}))
+        }
         "app.keyboardShortcuts" => {
             app.ui.dialog = Some(crate::dialogs::Dialog::new("keyboardShortcuts", json!({"query": "", "recording": ""})));
             Ok(Value::Null)
@@ -1856,6 +1872,9 @@ pub fn checked(app: &DesignApp, id: &str, params: &Value) -> Option<bool> {
 
 /// Enablement for menu display (UI commands need a document unless they're app/window-level).
 pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
+    if id.starts_with("fit.") {
+        return enabled(app, "object.fit");
+    }
     if ui_label(id).is_some() {
         return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.");
     }
@@ -2873,6 +2892,47 @@ mod tests {
     }
 
     #[test]
+    fn fitting_has_indesigns_shortcuts() {
+        // LYH Studio episode 6 (7:00): "Fit Content to Frame (Ctrl + Shift + Alt + C)" fills the
+        // photo frames proportionally.
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
+        let f = app.run("frame.create", json!({"rect": [100, 100, 300, 300]})).unwrap()["id"].as_u64().unwrap();
+        app.run("file.place", json!({"base64": designcraft_engine::cmd::base64_encode(&png), "name": "a.png", "frame": f})).unwrap();
+        app.run("selection.set", json!({"ids": [f]})).unwrap();
+        let width = |app: &crate::DesignApp| {
+            let it = app.session.doc().unwrap().doc.item(designcraft_doc::ItemId(f)).unwrap().clone();
+            let designcraft_doc::Content::Graphic(g) = &it.content else { panic!("graphic") };
+            it.xf.transform_rect_bbox(g.xf.transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1))).width()
+        };
+        for (id, keys) in [
+            ("fit.fillFrameProportionally", "Cmd+Alt+Shift+C"),
+            ("fit.contentProportionally", "Cmd+Alt+Shift+E"),
+            ("fit.frameToContent", "Cmd+Alt+C"),
+            ("fit.contentToFrame", "Cmd+Alt+E"),
+            ("fit.centerContent", "Cmd+Shift+E"),
+        ] {
+            assert_eq!(shortcut_of(&app, id).as_deref(), Some(keys));
+        }
+        let ctx = egui::Context::default();
+        let press = |app: &mut crate::DesignApp, key: egui::Key| {
+            let modifiers =
+                egui::Modifiers { alt: true, ctrl: !cfg!(target_os = "macos"), shift: true, mac_cmd: cfg!(target_os = "macos"), command: true };
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }],
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| shortcuts(app, &ui.ctx().clone()));
+            out.textures_delta.clear();
+        };
+        press(&mut app, egui::Key::C);
+        assert!((width(&app) - 400.0).abs() < 1e-6, "filled: {}", width(&app));
+        press(&mut app, egui::Key::E);
+        assert!((width(&app) - 200.0).abs() < 1e-6, "fitted: {}", width(&app));
+    }
+
+    #[test]
     fn tab_hides_panels_and_documents_cycle() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         assert_eq!(shortcut_of(&app, "window.hidePanels").as_deref(), Some("Tab"));
@@ -3358,7 +3418,7 @@ mod tests {
         });
         assert!(special.is_some_and(|c| c.iter().any(|i| matches!(i, Item::Sub(n, _) if n == "Symbols"))));
         // Fixed-parameter variants keep their own labels.
-        assert!(all.iter().any(|(l, id, p)| l == "Fill Frame Proportionally" && id == "object.fit" && p["mode"] == "fillProportionally"));
+        assert!(all.iter().any(|(l, id, _)| l == "Fill Frame Proportionally" && id == "fit.fillFrameProportionally"));
     }
 
     #[test]
