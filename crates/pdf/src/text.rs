@@ -41,6 +41,22 @@ impl Exporter<'_> {
     }
 }
 
+/// The box a gradient on a cell's or a note's text spans: its lines, each padded by its ascent as
+/// the screen renderer pads them, so both lay the gradient out alike.
+fn lines_area(ft: &FrameText) -> Option<Rect> {
+    ft.lines
+        .iter()
+        .filter_map(|l| {
+            let first = l.glyphs.first()?;
+            let x0 = l.glyphs.iter().map(|g| g.x).fold(first.x, f64::min);
+            let x1 = l.glyphs.iter().map(|g| g.x + g.adv.max(0.0)).fold(l.end_x, f64::max);
+            let pad = l.ascent.max(1.0);
+            let bottom = l.drop_cap.map_or(l.baseline + l.descent.max(0.0), |dc| dc.rect.y1.max(l.baseline + l.descent.max(0.0)));
+            Some(Rect::new(x0 - pad, l.baseline - l.ascent - pad, x1 + pad, bottom + pad))
+        })
+        .reduce(|a, b| a.union(b))
+}
+
 /// An opaque nonzero fill with `paint`.
 fn paint_fill(paint: Paint) -> Fill {
     Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }
@@ -279,7 +295,9 @@ impl Exporter<'_> {
             for n in &ft.notes {
                 if let Some(nft) = n.text.frames.first() {
                     s.push_transform(&tf(Affine::translate(n.origin.to_vec2())));
+                    let area = std::mem::replace(&mut me.text_area, lines_area(nft));
                     me.frame_text(s, &n.text, nft, &n.source);
+                    me.text_area = area;
                     s.pop();
                 }
             }
@@ -307,7 +325,9 @@ impl Exporter<'_> {
                     }
                 } else if let Some(cft) = c.text.frames.first() {
                     s.push_transform(&tf(Affine::translate(c.origin.to_vec2())));
+                    let area = std::mem::replace(&mut self.text_area, lines_area(cft));
                     self.frame_text(s, &c.text, cft, &c.source);
+                    self.text_area = area;
                     s.pop();
                 }
             }
