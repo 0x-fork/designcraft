@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · Colour management runs on craft-libs' `craft-cms`. The default CMYK working space is its Coated FOGRA39 profile (Generic CMYK and Device CMYK stay selectable); CMYK swatches show relative colorimetric with the settings' black point compensation, and PDF/X-4 output intents embed the working CMYK profile (FOGRA39 by default). Profile names the built-in stands in for resolve to it; other unknown names are an error, and saved settings naming one start with the default. No readiness percentage change.
 - **2026-10-13** · Command scripts look up only a well-formed `$N.path` / `$last.path` reference; other strings starting with `$`, such as a GREP replacement of `$1` and a nonbreaking space, stay as written, and `$$` writes a literal `$` (#749). No readiness percentage change.
 - **2026-10-13** · Dialogs and the About window move when you drag their title row, so the page behind them can be seen. A dragged dialog may go partly off-screen, but its title row stays reachable; each dialog opens centred, and again after the window is resized. No readiness percentage change.
 - **2026-10-12** · Placed Excel tables and Excel data-merge records keep numeric precision, including small values, and preserve numeric-looking cached formula strings as text. No readiness percentage change.

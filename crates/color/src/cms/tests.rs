@@ -38,7 +38,7 @@ fn shown(c: &Cms, [cy, m, y, k]: [f32; 4]) -> [f32; 3] {
 }
 
 /// Swatches in the default CMYK space (Coated FOGRA39), shown relative colorimetric with black
-/// point compensation, and the sRGB they print as on that press.
+/// point compensation, and the sRGB reference values they show as (u8, within 2).
 const FOGRA39_ANCHORS: [([f32; 4], [f32; 3]); 4] = [
     ([0.0, 50.0, 100.0, 0.0], [243.0, 146.0, 0.0]),
     ([0.0, 60.0, 100.0, 0.0], [239.0, 123.0, 0.0]),
@@ -65,8 +65,8 @@ fn saved_cmyk_names_still_load() {
         assert_eq!(s.with_known_profiles(), s);
     }
     // The names of the profiles the built-in stands in for show the same colours.
-    let adobe = Cms::new(&ColorSettings { cmyk: "Coated FOGRA39 (ISO 12647-2:2004)".into(), ..Default::default() }).unwrap();
-    assert_eq!(shown(&adobe, [0.0, 50.0, 100.0, 0.0]), shown(&cms(), [0.0, 50.0, 100.0, 0.0]));
+    let stand_in = Cms::new(&ColorSettings { cmyk: "Coated FOGRA39 (ISO 12647-2:2004)".into(), ..Default::default() }).unwrap();
+    assert_eq!(shown(&stand_in, [0.0, 50.0, 100.0, 0.0]), shown(&cms(), [0.0, 50.0, 100.0, 0.0]));
     // A related press condition with a different ink limit has no stand-in.
     let iso300 = ColorSettings { cmyk: "ISO Coated v2 300% (ECI)".into(), ..Default::default() };
     assert!(matches!(Cms::new(&iso300), Err(CmsError::UnknownProfile(_))));
