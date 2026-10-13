@@ -227,6 +227,9 @@ pub struct Renderer {
     /// Pixels the last ink pass covered (tests).
     #[cfg(test)]
     cmyk_pass_pixels: usize,
+    /// Items the last ink pass drew (tests).
+    #[cfg(test)]
+    cmyk_pass_items: usize,
     pub threads: u16,
     pub stats: FrameStats,
 }
@@ -278,6 +281,8 @@ impl Renderer {
             cmyk_passes: 0,
             #[cfg(test)]
             cmyk_pass_pixels: 0,
+            #[cfg(test)]
+            cmyk_pass_items: 0,
             threads: default_threads(),
             stats: FrameStats::default(),
         }
