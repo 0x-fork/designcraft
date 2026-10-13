@@ -21,7 +21,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Guide",
             [],
             None,
-            "{orientation: horizontal|vertical, position (spread coordinate), spread?, page? (index in the spread; default: the page under `at` or the position), at? (the other coordinate), spreadGuide?: bool} → {page, index}; {orientation: both, point: [x, y], …} adds a horizontal guide through y and a vertical guide through x as one undo step → {guides: [{page, index}, {page, index}]}",
+            "{orientation: horizontal|vertical, position (spread coordinate), spread?, page? (index in the spread; default: the page under `at` or the position), at? (the other coordinate), spreadGuide?: bool} or {orientation: both, point: [x, y], spread?, page?, spreadGuide?: bool} → {page, index}; `both` adds a horizontal guide through y and a vertical guide through x as one undo step → {guides: [{page, index}, {page, index}]}",
             has_doc,
             add
         ),

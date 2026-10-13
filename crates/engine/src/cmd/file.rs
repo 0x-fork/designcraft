@@ -27,7 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(Value::Array(presets))
         }),
         cmd!(noundo "file.savePreset", "Save Document Preset", [], None,
-            "{name, …the settings file.new takes} — kept with the preferences; `file.new {preset: name}` uses it. A saved preset of that name is replaced; built-in names are refused",
+            "{name, …the settings as file.new} — kept with the preferences; `file.new {preset: name}` uses it. A saved preset of that name is replaced; built-in names are refused",
             always, save_preset),
         cmd!(noundo "file.deletePreset", "Delete Document Preset", [], None, "{name} — a saved document preset", always, |s, p| {
             let name = str_param(p, "name").unwrap_or_default().trim().to_string();
