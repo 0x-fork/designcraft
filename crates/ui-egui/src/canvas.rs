@@ -1268,8 +1268,60 @@ fn draw_tool_overlays(app: &mut DesignApp, painter: &egui::Painter, xf: &Xf) {
                 painter.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_rgb(79, 153, 255)), StrokeKind::Inside);
                 painter.galley(r.min + vec2(4.0, 2.0), g, tok.measure_text);
             }
+            Overlay::Tip { p, text } => {
+                let text = crate::i18n::tr(&app.ui.language, &text).to_owned();
+                let s = xf.to_screen(p) + vec2(14.0, 14.0);
+                let g = painter.layout(text, egui::FontId::proportional(11.0), tok.measure_text, 260.0);
+                let r = Rect::from_min_size(s, g.size() + vec2(10.0, 6.0));
+                painter.rect_filled(r, 3.0, tok.measure_bg);
+                painter.galley(r.min + vec2(5.0, 3.0), g, tok.measure_text);
+            }
+            Overlay::LiquidPins { object, page, pins, resize } => draw_liquid_pins(painter, xf.rect(object), xf.rect(page), pins, resize),
             Overlay::Path { .. } => {}
         }
+    }
+}
+
+/// An object's liquid controls on an object-based page, as InDesign draws them in orange: a
+/// dashed line across the object for width and height with a padlock (closed: locked), and a pin
+/// outside each edge (pinned: a line to the page edge).
+fn draw_liquid_pins(painter: &egui::Painter, o: Rect, page: Rect, pins: [bool; 4], resize: [bool; 2]) {
+    let col = Color32::from_rgb(178, 88, 18);
+    let st = Stroke::new(1.5, col);
+    let c = o.center();
+    let mids = [pos2(c.x, o.min.y), pos2(o.max.x, c.y), pos2(c.x, o.max.y), pos2(o.min.x, c.y)];
+    // The width and height lines between the edges' middles.
+    for (a, b) in [(mids[3], mids[1]), (mids[0], mids[2])] {
+        dashed(painter, a, b, Stroke::new(1.0, col), 3.0, 3.0);
+    }
+    for m in mids {
+        painter.circle_filled(m, 3.5, col);
+    }
+    let (po, lo) = (designcraft_tools::PIN_OFFSET_PX as f32, designcraft_tools::LOCK_OFFSET_PX as f32);
+    let outward = [vec2(0.0, -1.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(-1.0, 0.0)];
+    let edge = [pos2(c.x, page.min.y), pos2(page.max.x, c.y), pos2(c.x, page.max.y), pos2(page.min.x, c.y)];
+    for i in 0..4 {
+        if pins[i] {
+            painter.line_segment([mids[i], edge[i]], st);
+            painter.circle_filled(edge[i], 4.0, col);
+        } else {
+            painter.circle_stroke(mids[i] + outward[i] * po, 4.0, st);
+        }
+    }
+    // Padlocks: the width lock right of the centre, the height lock above it.
+    for (at, locked) in [(c + vec2(lo, 0.0), !resize[0]), (c + vec2(0.0, -lo), !resize[1])] {
+        let body = Rect::from_center_size(at + vec2(0.0, 2.0), vec2(8.0, 6.0));
+        painter.rect_filled(body.expand(1.0), 1.0, Color32::WHITE);
+        painter.rect_filled(body, 1.0, col);
+        // The shackle: over the body when locked, swung open when not.
+        let base = if locked { body.center().x } else { body.center().x + 3.0 };
+        let pts: Vec<_> = (0..=8)
+            .map(|k| {
+                let a = std::f32::consts::PI * k as f32 / 8.0;
+                pos2(base - 2.6 * a.cos(), body.min.y - 3.0 * a.sin())
+            })
+            .collect();
+        painter.add(egui::Shape::line(pts, Stroke::new(1.3, col)));
     }
 }
 

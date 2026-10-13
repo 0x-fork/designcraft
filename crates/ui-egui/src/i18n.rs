@@ -2530,6 +2530,66 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ["Durch übergeordnete Seite gesteuert", "Contrôlé par le parent", "Controlado por principal", "親ページで制御", "由父页面控制"],
     ),
     ("US Business Card", ["US-Visitenkarte", "Carte de visite US", "Tarjeta de visita EE. UU.", "US 名刺", "美国名片"]),
+    (
+        "Object is pinned relative to the page edge. Click to release.",
+        [
+            "Das Objekt ist relativ zum Seitenrand fixiert. Zum Lösen klicken.",
+            "L’objet est épinglé par rapport au bord de la page. Cliquez pour le libérer.",
+            "El objeto está fijado respecto al borde de la página. Haga clic para soltarlo.",
+            "オブジェクトはページの端を基準に固定されています。クリックすると解除します。",
+            "对象已相对于页面边缘固定。单击可释放。",
+        ],
+    ),
+    (
+        "Click to pin the object relative to the page edge.",
+        [
+            "Klicken, um das Objekt relativ zum Seitenrand zu fixieren.",
+            "Cliquez pour épingler l’objet par rapport au bord de la page.",
+            "Haga clic para fijar el objeto respecto al borde de la página.",
+            "クリックすると、オブジェクトをページの端を基準に固定します。",
+            "单击可将对象相对于页面边缘固定。",
+        ],
+    ),
+    (
+        "The object changes width as the page changes width. Click to lock the object width.",
+        [
+            "Die Objektbreite ändert sich mit der Seitenbreite. Zum Sperren der Breite klicken.",
+            "La largeur de l’objet suit celle de la page. Cliquez pour verrouiller la largeur.",
+            "El ancho del objeto cambia con el de la página. Haga clic para bloquear el ancho.",
+            "オブジェクトの幅はページの幅に合わせて変わります。クリックすると幅をロックします。",
+            "对象宽度随页面宽度变化。单击可锁定对象宽度。",
+        ],
+    ),
+    (
+        "The object's width is locked. Click to let the object change width as the page changes width.",
+        [
+            "Die Objektbreite ist gesperrt. Klicken, damit sie sich mit der Seitenbreite ändert.",
+            "La largeur de l’objet est verrouillée. Cliquez pour qu’elle suive celle de la page.",
+            "El ancho del objeto está bloqueado. Haga clic para que cambie con el de la página.",
+            "オブジェクトの幅はロックされています。クリックすると、ページの幅に合わせて変わります。",
+            "对象宽度已锁定。单击可让其随页面宽度变化。",
+        ],
+    ),
+    (
+        "The object changes height as the page changes height. Click to lock the object height.",
+        [
+            "Die Objekthöhe ändert sich mit der Seitenhöhe. Zum Sperren der Höhe klicken.",
+            "La hauteur de l’objet suit celle de la page. Cliquez pour verrouiller la hauteur.",
+            "El alto del objeto cambia con el de la página. Haga clic para bloquear el alto.",
+            "オブジェクトの高さはページの高さに合わせて変わります。クリックすると高さをロックします。",
+            "对象高度随页面高度变化。单击可锁定对象高度。",
+        ],
+    ),
+    (
+        "The object's height is locked. Click to let the object change height as the page changes height.",
+        [
+            "Die Objekthöhe ist gesperrt. Klicken, damit sie sich mit der Seitenhöhe ändert.",
+            "La hauteur de l’objet est verrouillée. Cliquez pour qu’elle suive celle de la page.",
+            "El alto del objeto está bloqueado. Haga clic para que cambie con el de la página.",
+            "オブジェクトの高さはロックされています。クリックすると、ページの高さに合わせて変わります。",
+            "对象高度已锁定。单击可让其随页面高度变化。",
+        ],
+    ),
     ("Loop", ["Loop", "Loop", "Loop", "Loop", "循环播放"]),
     ("Object-based", ["Object-based", "Object-based", "Object-based", "Object-based", "基于对象"]),
     ("Off", ["Off", "Off", "Off", "Off", "关闭"]),

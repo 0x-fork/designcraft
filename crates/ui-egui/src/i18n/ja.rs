@@ -1299,6 +1299,24 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Show Parent Page Overlay", "親ページオーバーレイを表示"),
     ("Controlled by Parent", "親ページで制御"),
     ("US Business Card", "US 名刺"),
+    ("Object is pinned relative to the page edge. Click to release.", "オブジェクトはページの端を基準に固定されています。クリックすると解除します。"),
+    ("Click to pin the object relative to the page edge.", "クリックすると、オブジェクトをページの端を基準に固定します。"),
+    (
+        "The object changes width as the page changes width. Click to lock the object width.",
+        "オブジェクトの幅はページの幅に合わせて変わります。クリックすると幅をロックします。",
+    ),
+    (
+        "The object's width is locked. Click to let the object change width as the page changes width.",
+        "オブジェクトの幅はロックされています。クリックすると、ページの幅に合わせて変わります。",
+    ),
+    (
+        "The object changes height as the page changes height. Click to lock the object height.",
+        "オブジェクトの高さはページの高さに合わせて変わります。クリックすると高さをロックします。",
+    ),
+    (
+        "The object's height is locked. Click to let the object change height as the page changes height.",
+        "オブジェクトの高さはロックされています。クリックすると、ページの高さに合わせて変わります。",
+    ),
     ("Loop", "繰り返し再生"),
     ("Object-based", "オブジェクト基準"),
     ("Off", "オフ"),

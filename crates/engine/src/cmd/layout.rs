@@ -389,20 +389,35 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             page_options
         ),
-        cmd!(noundo "layout.selectPage", "Select Page", [], None, "{page: 1-based | null} — the page the Page tool selects (its handles, the Control panel)", has_doc, |s, p| {
+        cmd!(
+            noundo "layout.selectPage",
+            "Select Page",
+            [],
+            None,
+            "{page: 1-based | null, ids?: [item ids] (objects selected with it: the Page tool on an object-based page)} — the page the Page tool selects (its handles, the Control panel)",
+            has_doc,
+            |s, p| {
             let n = s.doc()?.doc.page_count();
             let page = match p.get("page") {
                 None | Some(Value::Null) => None,
                 Some(v) => Some(v.as_u64().filter(|v| *v >= 1 && *v as usize <= n).ok_or_else(|| bad("layout.selectPage", format!("`page`: 1–{n}")))? as usize - 1),
             };
+            let ids: Vec<designcraft_doc::ItemId> = {
+                let d = &s.doc()?.doc;
+                p.get("ids")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_u64).map(designcraft_doc::ItemId).filter(|id| d.item(*id).is_some()).collect())
+                    .unwrap_or_default()
+            };
             let st = s.doc_mut()?;
             if page.is_some() {
-                st.selection = Default::default();
+                st.selection = designcraft_doc::Selection::items(ids);
             }
             st.selection.page = page;
             st.revision += 1;
             Ok(json!({"page": page.map(|p| p + 1)}))
-        }),
+        }
+        ),
         cmd!(
             "layout.section",
             "Numbering & Section Options…",
