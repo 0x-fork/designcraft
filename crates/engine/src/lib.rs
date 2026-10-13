@@ -26,6 +26,7 @@ use designcraft_compose::Cache;
 use designcraft_doc::{Document, LayerId, Selection};
 use serde_json::Value;
 
+pub use cmd::params::{check_keys, check_params};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use designcraft_compose as compose;
 pub use designcraft_doc as doc;
@@ -236,6 +237,31 @@ pub struct Prefs {
     /// Preferences › File Handling › Create Links When Placing Text Files: placed text files are
     /// linked (Links panel) unless `file.place` says otherwise.
     pub link_text_files: bool,
+    /// File › Open Recent: documents opened or saved, most recent first.
+    pub recent_files: Vec<String>,
+    /// Preferences › File Handling › Number of Recent Items to Display (0 keeps no list).
+    pub recent_files_max: u32,
+}
+
+/// The most recent files Preferences lets File › Open Recent keep.
+pub const MAX_RECENT_FILES: u32 = 100;
+
+impl Prefs {
+    /// Move `path` to the front of File › Open Recent (no duplicates, at most `recent_files_max`).
+    pub fn note_recent_file(&mut self, path: &str) {
+        if path.is_empty() {
+            return;
+        }
+        self.recent_files.retain(|p| p != path);
+        self.recent_files.insert(0, path.to_string());
+        self.trim_recent_files();
+    }
+
+    /// Drop the entries beyond `recent_files_max` (capped at `MAX_RECENT_FILES`).
+    pub fn trim_recent_files(&mut self) {
+        self.recent_files_max = self.recent_files_max.min(MAX_RECENT_FILES);
+        self.recent_files.truncate(self.recent_files_max as usize);
+    }
 }
 
 /// A starter autocorrect list (common English typing slips).
@@ -287,6 +313,8 @@ impl Default for Prefs {
             show_note_anchors: true,
             recovery_minutes: 0.5,
             link_text_files: false,
+            recent_files: Vec::new(),
+            recent_files_max: 20,
         }
     }
 }
@@ -481,6 +509,10 @@ impl Session {
 
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // The crate's own tests are the audit of the params descriptions (#776): a key a test
+        // passes that its command's description doesn't name fails the test.
+        #[cfg(test)]
+        check_params(id, params)?;
         if let Err(e) = (spec.enabled)(self) {
             // A command that takes `ids` acts on the objects the call names, so the selection
             // doesn't matter: with a text caret, nothing selected, or a selection the command
@@ -675,5 +707,7 @@ mod tests_autosize;
 mod tests_idml;
 #[cfg(test)]
 mod tests_ime;
+#[cfg(test)]
+mod tests_params;
 #[cfg(test)]
 mod tests_table;

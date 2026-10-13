@@ -13,7 +13,7 @@ use crate::{DocState, EngineError, Result, Session};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "file.new", "Document…", ["File", "New"], Some("Cmd+N"),
-            "{preset?: \"Letter\"|\"A4\"|… or a saved preset (file.savePreset), intent?: print|web|mobile, units?: points|picas|millimeters|…, width?, height?, pages?, startPage?, facingPages?, columns?, gutter?, margins?: number|{top,bottom,inside,outside}, bleed?, slug?: n | [top, bottom, inside, outside], title?}",
+            "{preset?: \"Letter\"|\"A4\"|… or a saved preset (file.savePreset), intent?: print|web|mobile, units?: points|picas|millimeters|…, width?, height?, pages?, startPage?, facingPages?, columns?, gutter?, margins?: number|{top,bottom,inside,outside}, bleed?, slug?: n | [top, bottom, inside, outside], title?, primaryTextFrame?: bool}",
             always, file_new),
         cmd!(noundo "file.newSample", "Sample Document", ["Help"], None, "{} — a multi-page magazine sample", always, file_sample),
         cmd!(query "file.presets", "Document Presets", [], None, "{} → the built-in presets [{name, intent, width, height, units}], then the saved ones (with `saved: true`)", always, |s, _| {
@@ -27,7 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(Value::Array(presets))
         }),
         cmd!(noundo "file.savePreset", "Save Document Preset", [], None,
-            "{name, …the settings file.new takes} — kept with the preferences; `file.new {preset: name}` uses it. A saved preset of that name is replaced; built-in names are refused",
+            "{name, …the settings as file.new} — kept with the preferences; `file.new {preset: name}` uses it. A saved preset of that name is replaced; built-in names are refused",
             always, save_preset),
         cmd!(noundo "file.deletePreset", "Delete Document Preset", [], None, "{name} — a saved document preset", always, |s, p| {
             let name = str_param(p, "name").unwrap_or_default().trim().to_string();
@@ -42,6 +42,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "{path} — a DesignCraft or IDML file (recognised by its content, so the extension may be missing), or an InDesign .indd/.indt (recognised by its signature or extension, converted to IDML; its conversion warnings join `warnings`); the fonts in a `Document Fonts` folder beside it load first → {index, documentFonts: faces loaded, warnings: font files skipped, GREP styles whose pattern can't compile, Based on Parent links cleared and, for IDML and InDesign files, package parts missing}",
             always, file_open),
         cmd!(noundo "file.openBytes", "Open Bytes", [], None, "{name, base64} — DesignCraft JSON, an IDML package or an InDesign .indd/.indt → {index, warnings}", always, file_open_bytes),
+        cmd!(noundo "file.openRecent", "Open Recent File", [], None,
+            "{index} — reopen entry `index` of File › Open Recent (as file.open); a file that is gone is an error and stays listed",
+            has_recent, file_open_recent),
+        cmd!(query "file.recentFiles", "Recent Files", [], None, "{} → [{path, name, exists}] File › Open Recent, most recent first", always, |s, _| {
+            Ok(Value::Array(s.prefs.recent_files.iter().map(|p| recent_entry(p)).collect()))
+        }),
+        cmd!(noundo "file.clearRecent", "Clear Recent Files", ["File", "Open Recent"], None, "{} — empty File › Open Recent", has_recent, |s, _| {
+            s.prefs.recent_files.clear();
+            ok()
+        }),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} — a `path` without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} — a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
         cmd!(noundo "file.saveACopy", "Save a Copy…", ["File"], None, "{path} — writes the document without changing which file it is or its unsaved state; a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, |s, p| {
@@ -49,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let path = with_document_extension(path);
             let mut copy = (*s.doc()?.doc).clone();
             super::datamerge::refresh_relative_paths(&mut copy, std::path::Path::new(&path));
-            let bytes = to_bytes(&copy)?;
+            let bytes = to_bytes_with_preview(&copy, &s.cache)?;
             #[cfg(not(target_arch = "wasm32"))]
             crate::atomic::write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -124,7 +134,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Place…",
             ["File"],
             Some("Cmd+D"),
-            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?: finite number > 0 (null: absent), pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), loadCursor?: with no frame to fill and no x/y, an image loads into the place cursor (File › Place), layoutPage?: n (IDML / .designcraft: that page's objects as a group)} — places an image into `frame` when given; otherwise any explicit x/y/spread/width creates a new frame; otherwise uses the selected empty or graphic frame, or creates a new frame; text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect` — {autoflow?: threads one frame per page column (from the first frame on), adding pages until the text fits, removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename, link?: keep the file linked (Links panel; default: the linkTextFiles preference)}",
+            "{path?|base64?, name?, frame?: id (place into), spread?, x?, y?, width?: finite number > 0 (null: absent), height? (video/audio), pdfPage?: n (1-based, Image Import Options), pdfCrop?: crop|art|trim|bleed|media|contentVisible|contentAll (the box the graphic shows; `width` is the whole page's), loadCursor? (with no frame to fill and no x/y, an image loads into the place cursor, as File › Place), layoutPage?: n (IDML / .designcraft: that page's objects as a group), page?, rect?: [x0,y0,x1,y1] (text: a new frame there), autoflow? (threads one frame per page column from the first frame on, adding pages until the text fits), removeStyles?, styleMap?: {imported name: document style}, styleConflicts?: useExisting|redefine|autoRename, link? (keep the file linked in the Links panel; default: the linkTextFiles preference)} — places an image into `frame` when given; otherwise any explicit x/y/spread/width creates a new frame; otherwise uses the selected empty or graphic frame, or creates a new frame; text files (.txt, .docx, .rtf, .md) and Excel workbooks (.xlsx, as a table) go into the insertion point, the selected frame or a new frame on `page`/`rect`",
             has_doc,
             file_place
         ),
@@ -139,11 +149,16 @@ thread_local! {
 
 /// The document as `.designcraft` bytes, or an error when it can't be written; never an empty file.
 pub fn to_bytes(d: &Document) -> Result<Vec<u8>> {
+    save_bytes(d, None)
+}
+
+/// [`to_bytes`] with `preview` (PNG bytes) stored as the file's first-page picture.
+fn save_bytes(d: &Document, preview: Option<&[u8]>) -> Result<Vec<u8>> {
     #[cfg(test)]
     if FAIL_TO_BYTES.with(std::cell::Cell::get) {
         return Err(EngineError::Other("could not write the document: injected failure".into()));
     }
-    designcraft_format::save(d).map_err(|e| EngineError::Other(format!("could not write the document: {e}")))
+    designcraft_format::save_with_preview(d, preview).map_err(|e| EngineError::Other(format!("could not write the document: {e}")))
 }
 
 /// `path` ending in `.designcraft`: the extension is added when it is missing or another one, so
@@ -160,6 +175,22 @@ pub fn with_document_extension(path: &str) -> String {
 /// Whether `bytes` are a document `file.open` reads: a DesignCraft package or an IDML package.
 pub fn is_document(bytes: &[u8]) -> bool {
     designcraft_idml::is_idml(bytes) || designcraft_format::is_designcraft(bytes)
+}
+
+/// The longer side of the first-page picture saved in the file, in pixels.
+const PREVIEW_PX: f64 = 320.0;
+
+/// [`to_bytes`] with a picture of the first page, which the start screen shows next to the file
+/// in its recent files. A page that can't be drawn just leaves the picture out.
+fn to_bytes_with_preview(d: &Document, cache: &crate::Cache) -> Result<Vec<u8>> {
+    let preview = d.page_loc(0).and_then(|(si, pi)| {
+        let b = d.spreads.get(si)?.pages.get(pi)?.bounds();
+        let side = b.width().max(b.height());
+        (side.is_finite() && side > 0.0).then_some(PREVIEW_PX / side)
+    });
+    let png =
+        preview.and_then(|scale| designcraft_render::Renderer::new().render_page(d, cache, 0, scale, false, &Default::default())).map(|r| r.to_png());
+    save_bytes(d, png.as_deref())
 }
 
 pub fn from_bytes(b: &[u8]) -> Result<Document> {
@@ -361,7 +392,71 @@ fn file_sample(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({"index": i}))
 }
 
+fn has_recent(s: &Session) -> std::result::Result<(), String> {
+    if s.prefs.recent_files.is_empty() { Err("no recent files".into()) } else { Ok(()) }
+}
+
+/// A recent file's first-page picture as straight RGBA, for the start screen.
+pub struct RecentPreview {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// The picture a `.designcraft` file saved of its first page; None when the file is gone, isn't
+/// ours, or was saved before files had one (it gets one when saved again).
+pub fn recent_preview(path: &str) -> Option<RecentPreview> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let file = std::fs::File::open(path).ok()?;
+        let png = designcraft_format::read_preview(std::io::BufReader::new(file))?;
+        let img = designcraft_images::decode_rgba(&png)?;
+        let (width, height) = img.dimensions();
+        Some(RecentPreview { width, height, rgba: img.into_raw() })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// One File › Open Recent row: the path, its file name and whether it is still there.
+fn recent_entry(path: &str) -> Value {
+    let name = std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string());
+    #[cfg(not(target_arch = "wasm32"))]
+    let exists = std::path::Path::new(path).is_file();
+    #[cfg(target_arch = "wasm32")]
+    let exists = false;
+    json!({"path": path, "name": name, "exists": exists})
+}
+
+fn file_open_recent(s: &mut Session, p: &Value) -> Result<Value> {
+    let index =
+        p.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad("file.openRecent", "missing `index`"))?;
+    let path = s
+        .prefs
+        .recent_files
+        .get(index)
+        .cloned()
+        .ok_or_else(|| bad("file.openRecent", format!("no recent file {index} (the list has {})", s.prefs.recent_files.len())))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    if !std::path::Path::new(&path).is_file() {
+        return Err(EngineError::Other(format!("{path} can't be found: it was moved, renamed or deleted, or its disk isn't connected")));
+    }
+    file_open(s, &json!({"path": path}))
+}
+
+/// `file.open`: the document opens and moves to the front of File › Open Recent.
 fn file_open(s: &mut Session, p: &Value) -> Result<Value> {
+    let r = open_path(s, p)?;
+    if let Some(path) = str_param(p, "path") {
+        s.prefs.note_recent_file(path);
+    }
+    Ok(r)
+}
+
+fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -459,9 +554,10 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
     super::datamerge::refresh_relative_paths(&mut saved, std::path::Path::new(&path));
     let paths_changed = saved.data_merge != st.doc.data_merge;
     let saved = if paths_changed { Arc::new(saved) } else { st.doc.clone() };
-    let bytes = to_bytes(&saved)?;
+    let bytes = to_bytes_with_preview(&saved, &s.cache)?;
     #[cfg(not(target_arch = "wasm32"))]
     crate::atomic::write_file(&path, &bytes)?;
+    let st = s.doc_mut()?;
     if paths_changed {
         st.doc = saved;
         st.bump_revision();
@@ -474,6 +570,7 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
         let recovery_dir = s.recovery_dir.clone();
         let index = s.active_index().ok_or(EngineError::NoDocument)?;
         crate::recovery::discard_document(s, index, recovery_dir.as_deref());
+        s.prefs.note_recent_file(&path);
     }
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
@@ -1485,6 +1582,7 @@ mod save_tests {
         super::FAIL_TO_BYTES.with(|f| f.set(true));
         let save = s.execute("file.save", &json!({}));
         let copy = s.execute("file.saveACopy", &json!({"path": dir.join("copy.designcraft").to_string_lossy()}));
+        let save_as = s.execute("file.saveAs", &json!({"path": dir.join("other.designcraft").to_string_lossy()}));
         let serialized = s.execute("file.serialize", &json!({}));
         super::FAIL_TO_BYTES.with(|f| f.set(false));
 
@@ -1493,6 +1591,8 @@ mod save_tests {
         assert!(copy.is_err() && serialized.is_err(), "no empty copy and no empty download");
         assert_eq!(std::fs::read(&path).unwrap(), before, "the saved file is untouched");
         assert!(!dir.join("copy.designcraft").exists());
+        assert!(save_as.is_err() && !dir.join("other.designcraft").exists());
+        assert!(!s.prefs.recent_files.iter().any(|p| p.ends_with("other.designcraft")), "a failed Save As isn't a recent file");
         assert!(s.doc().unwrap().is_dirty(), "the document still has unsaved changes");
         assert!(checkpoint.exists(), "the recovery checkpoint stays");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1795,5 +1895,119 @@ mod extension_tests {
         let e = t.execute("file.open", &json!({"path": notes.to_string_lossy()})).unwrap_err();
         assert!(e.to_string().contains("not a DesignCraft or IDML file"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod recent_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("dc-recent-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn saved(s: &mut Session, path: &std::path::Path) -> String {
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    /// Opening and saving put a file at the front once; Save a Copy doesn't count.
+    #[test]
+    fn open_and_save_order_the_list_without_duplicates() {
+        let dir = temp_dir("order");
+        let mut s = Session::new();
+        let a = saved(&mut s, &dir.join("a.designcraft"));
+        let b = saved(&mut s, &dir.join("b.designcraft"));
+        assert_eq!(s.prefs.recent_files, [b.clone(), a.clone()]);
+        s.execute("file.open", &json!({"path": a})).unwrap();
+        assert_eq!(s.prefs.recent_files, [a.clone(), b.clone()], "reopening moves it to the front, once");
+        s.execute("file.saveACopy", &json!({"path": dir.join("copy.designcraft").to_string_lossy()})).unwrap();
+        assert_eq!(s.prefs.recent_files, [a.clone(), b.clone()], "a copy isn't a recent file");
+        let rows = s.execute("file.recentFiles", &json!({})).unwrap();
+        assert_eq!(rows[0], json!({"path": a, "name": "a.designcraft", "exists": true}));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn open_recent_reopens_and_a_missing_file_is_an_error_that_keeps_it_listed() {
+        let dir = temp_dir("open");
+        let mut s = Session::new();
+        let a = saved(&mut s, &dir.join("a.designcraft"));
+        let b = saved(&mut s, &dir.join("b.designcraft"));
+        let r = s.execute("file.openRecent", &json!({"index": 1})).unwrap();
+        assert_eq!(s.documents()[r["index"].as_u64().unwrap() as usize].path.as_deref(), Some(a.as_str()));
+        assert_eq!(s.prefs.recent_files, [a.clone(), b.clone()]);
+        std::fs::remove_file(&b).unwrap();
+        let e = s.execute("file.openRecent", &json!({"index": 1})).unwrap_err();
+        assert!(e.to_string().contains("can't be found"), "{e}");
+        assert_eq!(s.prefs.recent_files, [a.clone(), b.clone()], "a disk that isn't connected comes back");
+        assert_eq!(s.execute("file.recentFiles", &json!({})).unwrap()[1]["exists"], false);
+        // Hostile indices are errors, never panics.
+        for index in [json!(2), json!(u64::MAX), json!(-1), json!("0"), json!(null)] {
+            assert!(s.execute("file.openRecent", &json!({"index": index})).is_err(), "{index}");
+        }
+        s.execute("file.clearRecent", &json!({})).unwrap();
+        assert!(s.prefs.recent_files.is_empty());
+        assert!(s.execute("file.openRecent", &json!({"index": 0})).is_err(), "disabled when empty");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Saving puts a small picture of the first page in the file, which the start screen reads
+    /// without opening the document.
+    #[test]
+    fn saved_files_carry_a_first_page_preview() {
+        let dir = temp_dir("preview");
+        let mut s = Session::new();
+        let a = saved(&mut s, &dir.join("a.designcraft"));
+        let p = super::recent_preview(&a).expect("a preview");
+        assert_eq!(p.width.max(p.height), super::PREVIEW_PX as u32);
+        assert_eq!(p.rgba.len(), (p.width * p.height * 4) as usize);
+        assert!(p.rgba.as_chunks::<4>().0.iter().any(|px| px[3] == 255), "the page is drawn, not left transparent");
+        let copy = dir.join("copy.designcraft");
+        s.execute("file.saveACopy", &json!({"path": copy.to_string_lossy()})).unwrap();
+        assert!(super::recent_preview(&copy.to_string_lossy()).is_some(), "Save a Copy has one too");
+        // Files without one (saved before previews), missing files and other files have none.
+        let old = dir.join("old.designcraft");
+        std::fs::write(&old, super::to_bytes(&s.doc().unwrap().doc).unwrap()).unwrap();
+        for path in [old, dir.join("gone.designcraft"), dir.clone()] {
+            assert!(super::recent_preview(&path.to_string_lossy()).is_none(), "{path:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_list_keeps_at_most_the_preferred_count() {
+        let mut s = Session::new();
+        for i in 0..30 {
+            s.prefs.note_recent_file(&format!("/work/{i}.designcraft"));
+        }
+        assert_eq!(s.prefs.recent_files.len(), 20, "default: 20");
+        assert_eq!(s.prefs.recent_files[0], "/work/29.designcraft");
+        s.execute("prefs.set", &json!({"recentFilesMax": 3})).unwrap();
+        assert_eq!(s.prefs.recent_files, ["/work/29.designcraft", "/work/28.designcraft", "/work/27.designcraft"]);
+        assert_eq!(s.execute("prefs.set", &json!({"recentFilesMax": 4_000_000_000u64})).unwrap()["recentFilesMax"], crate::MAX_RECENT_FILES);
+        assert!(s.execute("prefs.set", &json!({"recentFilesMax": -1})).is_err());
+        s.execute("prefs.set", &json!({"recentFilesMax": 0})).unwrap();
+        s.prefs.note_recent_file("/work/new.designcraft");
+        assert!(s.prefs.recent_files.is_empty(), "0 keeps no list");
+    }
+
+    /// The list is a preference: it survives the round trip through prefs.json.
+    #[test]
+    fn the_list_survives_a_restart() {
+        let mut s = Session::new();
+        s.prefs.note_recent_file("/work/a.designcraft");
+        let saved = serde_json::to_vec(&s.prefs).unwrap();
+        let back: crate::Prefs = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(back.recent_files, ["/work/a.designcraft"]);
+        assert_eq!(back.recent_files_max, 20);
+        let old: crate::Prefs = serde_json::from_slice(br#"{"recoveryMinutes": 2.0}"#).unwrap();
+        assert!(old.recent_files.is_empty(), "older prefs.json without the list still load");
     }
 }

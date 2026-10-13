@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create Frame",
             [],
             None,
-            "{spread?: index | {kind: doc|parent, index} (a parent spread: index into `parents` of document.inspect), rect: [x0,y0,x1,y1] (spread coords), shape?: rectangle|ellipse|polygon, content?: graphic|text|unassigned, sides?: 6, text?: string, caret?: bool, vertical?: bool (text: a new vertical story)}",
+            "{spread?: index | {kind: doc|parent, index} (a parent spread: index into `parents` of document.inspect), rect: [x0,y0,x1,y1] (spread coords), shape?: rectangle|ellipse|polygon, content?: graphic|text|unassigned, sides?: 6, starInset?: 0–100 (%), text?: string, caret?: bool, vertical?: bool (text: a new vertical story)}",
             has_doc,
             frame_create
         ),
@@ -579,7 +579,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             fitting_options
         ),
-        cmd!("object.rename", "Rename", [], None, "{id, name}", has_doc, |s, p| {
+        cmd!("object.rename", "Rename", [], None, "{id | ids?, name}", has_doc, |s, p| {
             let name = str_param(p, "name").unwrap_or("").to_string();
             set_flag(s, p, move |i| i.name = name.clone(), false)
         }),
@@ -662,7 +662,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Move Gap",
             [],
             None,
-            "{at: [x, y] (spread), delta | dx/dy, spread?} — Gap tool: the gap at `at` between objects (or an object and the page edge) moves by `delta`; the objects on both sides resize → {axis, changed}",
+            "{at: [x, y] (spread), delta?: pt | dx? | dy?: a drag (the part along the gap's axis counts), spread?} — Gap tool: the gap at `at` between objects (or an object and the page edge) moves by `delta`; the objects on both sides resize → {axis, changed}",
             has_doc,
             gap_move
         ),

@@ -1050,6 +1050,9 @@ impl DesignApp {
             ctx.set_zoom_factor(scale);
         }
         if !self.styled {
+            // The UI scale is a preference (applied above); egui's own Cmd+Plus/Minus/0 would rescale the
+            // whole window instead of the canvas, only to be reset next frame.
+            ctx.options_mut(|o| o.zoom_with_keyboard = false);
             self.fonts_system = theme::install_fonts(ctx, &self.ui.language);
             self.fonts_lang = self.ui.language.clone();
             self.styled = true;
@@ -1254,9 +1257,13 @@ impl DesignApp {
         }
     }
 
-    /// A file dropped on the window: documents open, anything else is placed. A file without an
-    /// extension opens when its content is a DesignCraft or IDML document.
+    /// A file dropped on the window: documents open, the swatches in a swatch exchange (.ase) file
+    /// are loaded, and anything else is placed. A file without an extension opens when its content
+    /// is a DesignCraft or IDML document.
     pub fn open_dropped(&mut self, path: &str) -> Result<Value, String> {
+        if path.to_ascii_lowercase().ends_with(".ase") {
+            return self.run("swatch.load", json!({"path": path}));
+        }
         let document = opens_as_document(path)
             || (std::path::Path::new(path).extension().is_none() && std::fs::read(path).is_ok_and(|b| designcraft_engine::cmd::is_document(&b)));
         let cmd = if document { "file.open" } else { "file.place" };
@@ -1295,6 +1302,12 @@ impl DesignApp {
             Some(path) => std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string()),
             None => params.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
         };
+        self.open_named_file(cmd, params, file)
+    }
+
+    /// [`Self::open_file`] for a command whose params don't name the file: `file` is shown in the
+    /// alert or warnings.
+    pub fn open_named_file(&mut self, cmd: &str, params: Value, file: String) -> Result<Value, String> {
         let r = self.run(cmd, params);
         if let Err(e) = &r {
             let title = if cmd == "file.place" { "Can't Place the File" } else { "Can't Open the File" };
@@ -2345,6 +2358,28 @@ mod tests {
         assert!(e.contains("InDesign file"), "{e}");
         assert_eq!(alert(&app), ("Can't Open the File".to_string(), e));
         assert!(app.session.documents().is_empty());
+    }
+
+    #[test]
+    fn dropping_an_ase_file_loads_its_swatches() {
+        let mut source = Session::new();
+        source.execute("file.new", &json!({})).unwrap();
+        source.execute("swatch.create", &json!({"name": "Dropped Teal", "color": "#108080"})).unwrap();
+        let data = source.execute("swatch.save", &json!({"names": ["Dropped Teal"]})).unwrap();
+        let bytes = designcraft_engine::cmd::base64_decode(data["base64"].as_str().unwrap());
+        for name in ["palette.ase", "PALETTE.ASE"] {
+            let path = std::env::temp_dir().join(format!("designcraft-ui-{}-{name}", std::process::id()));
+            std::fs::write(&path, &bytes).unwrap();
+            let mut app = DesignApp::new(Session::new(), Services::default());
+            app.run("file.new", json!({})).unwrap();
+            let r = app.open_dropped(&path.to_string_lossy());
+            let _ = std::fs::remove_file(&path);
+            assert!(app.ui.dialog.is_none(), "{name}: {:?}", app.ui.dialog.as_ref().map(|d| &d.fields));
+            assert_eq!(r, Ok(json!({"added": 1, "replaced": 0})), "{name}");
+            let doc = &app.session.doc().unwrap().doc;
+            assert!(doc.swatches.iter().any(|s| s.name == "Dropped Teal"), "{name}");
+            assert!(doc.assets.is_empty(), "{name} isn't placed");
+        }
     }
 
     #[test]

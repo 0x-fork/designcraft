@@ -18,6 +18,7 @@ pub fn shown(app: &DesignApp, id: &str) -> bool {
 pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.newDocumentDialog", "New Document…", Some("Cmd+N"), "{}"),
     ("app.openDialog", "Open…", Some("Cmd+O"), "{}"),
+    ("app.openRecent", "Open Recent File", None, "{index} — file.openRecent, with an alert when the file can't be opened"),
     ("app.placeDialog", "Place…", Some("Cmd+D"), "{}"),
     ("app.saveDialog", "Save As…", Some("Cmd+Shift+S"), "{}"),
     ("app.save", "Save", Some("Cmd+S"), "{}"),
@@ -281,6 +282,9 @@ pub const MENUS: &[(&str, &[&str])] = &[
         &[
             "ui:app.newDocumentDialog",
             "ui:app.openDialog",
+            ">Open Recent",
+            "cmd:file.clearRecent",
+            "<",
             "-",
             "cmd:file.close",
             "ui:app.save",
@@ -931,6 +935,16 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             Ok(Value::Null)
         }
         "app.openDialog" => app.pick_and_open("open"),
+        "app.openRecent" => {
+            let index = p.get("index").cloned().unwrap_or(Value::Null);
+            let name = index
+                .as_u64()
+                .and_then(|i| usize::try_from(i).ok())
+                .and_then(|i| app.session.prefs.recent_files.get(i))
+                .map(|path| recent_label(path))
+                .unwrap_or_default();
+            app.open_named_file("file.openRecent", json!({"index": index}), name)
+        }
         "app.placeDialog" => app.pick_and_open("place"),
         "app.placeWithOptions" => {
             // Word/RTF Import Options: style mapping and conflicts before the text lands.
@@ -2648,6 +2662,9 @@ fn menu_items(app: &mut DesignApp, ui: &mut egui::Ui, items: &[Item], path: &str
                 let sub = format!("{path}/{name}");
                 let shown = crate::i18n::tr(&app.ui.language, name).to_owned();
                 menu_button(ui, crate::rtl::widget(ui, shown), |ui| {
+                    if sub == OPEN_RECENT {
+                        recent_menu_items(app, ui);
+                    }
                     hidden += menu_items(app, ui, children, &sub);
                 });
             }
@@ -2677,6 +2694,55 @@ fn menu_items(app: &mut DesignApp, ui: &mut egui::Ui, items: &[Item], path: &str
         }
     }
     hidden
+}
+
+/// The File › Open Recent submenu, whose files come before its fixed items.
+pub const OPEN_RECENT: &str = "File/Open Recent";
+
+/// A recent file's menu label: its file name.
+pub fn recent_label(path: &str) -> String {
+    std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string())
+}
+
+/// File › Open Recent's files (`app.openRecent {index}`), then a separator; nothing when empty.
+pub fn recent_items(app: &DesignApp) -> Vec<Item> {
+    let mut out: Vec<Item> = app
+        .session
+        .prefs
+        .recent_files
+        .iter()
+        .enumerate()
+        .map(|(i, path)| Item::Cmd { label: recent_label(path), id: "app.openRecent".into(), params: json!({"index": i}), shortcut: None })
+        .collect();
+    if !out.is_empty() {
+        out.push(Item::Sep);
+    }
+    out
+}
+
+/// The recent files at the top of File › Open Recent: file names (not translated), the full path
+/// as tooltip, dimmed when the file is gone (choosing it then says so).
+fn recent_menu_items(app: &mut DesignApp, ui: &mut egui::Ui) {
+    let dim = crate::theme::Tokens::get(ui.ctx()).text_dim;
+    for it in recent_items(app) {
+        match it {
+            Item::Cmd { label, id, params, .. } => {
+                let path = params["index"].as_u64().and_then(|i| app.session.prefs.recent_files.get(i as usize)).cloned().unwrap_or_default();
+                let mut text = egui::RichText::new(label);
+                if !crate::chrome::recent_file_stat(ui.ctx(), &path).exists {
+                    text = text.color(dim);
+                }
+                if ui.button(crate::rtl::widget(ui, text)).on_hover_text(&path).clicked() {
+                    activate(app, &id, &params);
+                    ui.close();
+                }
+            }
+            Item::Sep => {
+                ui.separator();
+            }
+            Item::Sub(..) => {}
+        }
+    }
 }
 
 /// Every menu item as (menu path, label), for Edit › Menus.
@@ -2726,6 +2792,18 @@ fn parse_shortcut(sc: &str) -> Option<(egui::Modifiers, egui::Key)> {
     key.map(|k| (m, k))
 }
 
+/// Whether a key press matches a parsed shortcut `m`+`k`: `None` when it doesn't, `Some(true)` for
+/// the shortcut's own key and modifiers, `Some(false)` for the Plus key standing in for `=`. On
+/// layouts with a dedicated + key (German) or Shift+= (US), Cmd+= arrives as Plus.
+fn key_matches(m: egui::Modifiers, k: egui::Key, key: egui::Key, modifiers: egui::Modifiers) -> Option<bool> {
+    let plus_for_equals = key == egui::Key::Plus;
+    let matches = (k == key || (plus_for_equals && k == egui::Key::Equals))
+        && m.command == modifiers.command
+        && (m.shift == modifiers.shift || (plus_for_equals && !m.shift))
+        && m.alt == modifiers.alt;
+    matches.then_some(k == key && m.shift == modifiers.shift)
+}
+
 /// Global keyboard shortcuts: menu commands and single-key tool shortcuts.
 pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
     // Only a focused text field takes the keys: the canvas (or a button) having focus after a click
@@ -2753,15 +2831,12 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
             continue;
         }
         // Command shortcuts.
-        let mut fired: Option<String> = None;
+        let mut fired: Option<(String, bool)> = None;
         let all = effective_shortcuts(app);
         for (id, sc) in &all {
             let id = id.as_str();
             if let Some((m, k)) = parse_shortcut(sc)
-                && k == key
-                && m.command == modifiers.command
-                && m.shift == modifiers.shift
-                && m.alt == modifiers.alt
+                && let Some(exact) = key_matches(m, k, key, modifiers)
                 && (m.command || m.alt || !typing)
                 && !(id == "edit.clear" && typing)
             {
@@ -2772,12 +2847,14 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
                 if id == "edit.clear" || (typing && matches!(id, "edit.copy" | "edit.cut" | "edit.paste" | "edit.pasteInPlace")) {
                     continue; // Handled by the active tool / text clipboard events.
                 }
-                fired = Some(id.to_string());
+                fired = Some((id.to_string(), exact));
                 break;
             }
         }
-        if let Some(id) = fired {
-            if app.native_shortcuts.contains(&id) && !app.ui.shortcuts.contains_key(&id) {
+        if let Some((id, exact)) = fired {
+            // The native menu's accelerator fires only for the shortcut's own key and modifiers; the
+            // Plus key standing in for = never reaches it.
+            if exact && app.native_shortcuts.contains(&id) && !app.ui.shortcuts.contains_key(&id) {
                 continue; // The native menu handles it.
             }
             // The key press belongs to the shortcut: what it opens (Quick Apply's list, a dialog's
@@ -3839,6 +3916,63 @@ mod tests {
     }
 
     #[test]
+    fn cmd_plus_zooms_the_canvas_not_the_window() {
+        // A German keyboard has its own + key, so Cmd+= arrives as Plus; it must zoom the canvas like
+        // Cmd+- does, not hand the key to egui's whole-window zoom.
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let key = |k: egui::Key, modifiers: egui::Modifiers| {
+            vec![
+                egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers },
+                egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers },
+            ]
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        let scale = ctx.zoom_factor();
+        for (k, m, zooms_in) in [
+            (egui::Key::Plus, egui::Modifiers::COMMAND, true),
+            (egui::Key::Plus, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, true),
+            (egui::Key::Equals, egui::Modifiers::COMMAND, true),
+            (egui::Key::Minus, egui::Modifiers::COMMAND, false),
+        ] {
+            let z0 = app.view().unwrap().zoom;
+            frame(&mut app, key(k, m));
+            frame(&mut app, vec![]);
+            let z = app.view().unwrap().zoom;
+            assert!(if zooms_in { z > z0 } else { z < z0 }, "{k:?} {m:?}: {z0} -> {z}");
+            assert_eq!(ctx.zoom_factor(), scale, "{k:?} {m:?} leaves the UI scale alone");
+        }
+        // With a native menu (macOS) its accelerator takes Cmd+= itself, but never sees the Plus key
+        // standing in for = (#781).
+        app.native_shortcuts.insert("view.zoomIn".to_string());
+        for (k, m, zooms_in) in [
+            (egui::Key::Plus, egui::Modifiers::COMMAND, true),
+            (egui::Key::Plus, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, true),
+            (egui::Key::Equals, egui::Modifiers::COMMAND, false),
+        ] {
+            let z0 = app.view().unwrap().zoom;
+            frame(&mut app, key(k, m));
+            frame(&mut app, vec![]);
+            let z = app.view().unwrap().zoom;
+            assert_eq!(z > z0, zooms_in, "native menu, {k:?} {m:?}: {z0} -> {z}");
+        }
+    }
+
+    #[test]
     fn the_quick_apply_shortcut_opens_it_without_running_an_entry() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", &json!({})).unwrap();
@@ -4744,5 +4878,73 @@ mod tests {
         fails.set(false);
         app.run("app.save", json!({})).unwrap();
         assert!(!app.session.active().unwrap().is_dirty());
+    }
+
+    fn start_screen_texts(app: &mut crate::DesignApp) -> Vec<String> {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "");
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+            shapes = out.shapes;
+        }
+        shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// File › Open Recent: the files first (`app.openRecent {index}`), then Clear Recent Files.
+    #[test]
+    fn open_recent_lists_the_files_then_clear() {
+        let tree = menu_tree();
+        let file = &tree.iter().find(|(m, _)| *m == "File").unwrap().1;
+        let Some(Item::Sub(name, children)) = file.get(2) else { panic!("Open Recent after Open…: {:?}", file.get(2)) };
+        assert_eq!(format!("File/{name}"), OPEN_RECENT);
+        assert!(matches!(children.as_slice(), [Item::Cmd { id, .. }] if id == "file.clearRecent"));
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        assert!(recent_items(&app).is_empty());
+        assert!(!menu_enabled(&app, "file.clearRecent"));
+        app.session.prefs.note_recent_file("/work/a.designcraft");
+        app.session.prefs.note_recent_file("/work/b.idml");
+        let items = recent_items(&app);
+        let labels: Vec<_> = items
+            .iter()
+            .map(|i| match i {
+                Item::Cmd { label, id, params, .. } => format!("{label} {id} {params}"),
+                Item::Sep => "-".into(),
+                Item::Sub(..) => "sub".into(),
+            })
+            .collect();
+        assert_eq!(labels, ["b.idml app.openRecent {\"index\":0}", "a.designcraft app.openRecent {\"index\":1}", "-"]);
+        assert!(menu_enabled(&app, "file.clearRecent"));
+        assert!(menu_enabled(&app, "app.openRecent"));
+    }
+
+    /// A recent file that is gone says so in an alert (and the start screen still lists it).
+    #[test]
+    fn open_recent_of_a_missing_file_alerts_and_the_start_screen_lists_recent_files() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        assert!(!start_screen_texts(&mut app).iter().any(|t| t == "Recent files"), "no section without recent files");
+        app.session.prefs.note_recent_file("/nonexistent/dc-recent/gone.designcraft");
+        assert!(app.run("app.openRecent", json!({"index": 0})).is_err());
+        let d = app.ui.dialog.take().expect("an alert");
+        assert_eq!(d.fields["title"], "Can't Open the File");
+        assert_eq!(d.fields["file"], "gone.designcraft");
+        assert!(d.fields["message"].as_str().unwrap().contains("can't be found"));
+        assert!(app.run("app.openRecent", json!({"index": 9})).is_err(), "out of range: an error, not a panic");
+        app.ui.dialog = None;
+        let texts = start_screen_texts(&mut app);
+        assert!(texts.iter().any(|t| t == "Recent files"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "gone"), "the card names it without `.designcraft`: {texts:?}");
     }
 }

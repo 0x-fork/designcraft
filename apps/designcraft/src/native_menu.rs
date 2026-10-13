@@ -25,6 +25,16 @@ pub struct NativeMenu {
     /// The interface language the titles are in and whether CJK features are shown: the menu is
     /// rebuilt when either changes.
     shown_for: (String, bool),
+    /// File › Open Recent, rebuilt when the list of recent files changes.
+    recent: Option<RecentMenu>,
+}
+
+struct RecentMenu {
+    submenu: Submenu,
+    /// The files shown, and the native items standing for them (with their trailing separator).
+    shown: Vec<String>,
+    ids: Vec<String>,
+    separator: Option<PredefinedMenuItem>,
 }
 
 /// Accelerator for "Cmd+Shift+]" (modifier-less shortcuts stay in the app so typing works).
@@ -53,6 +63,7 @@ impl NativeMenu {
         let menu = Menu::new();
         let mut items = HashMap::new();
         let mut counter = 0usize;
+        let mut recent = None;
         // Application menu: our own About splash (with the community links) instead of the stock
         // panel, and Settings… (Edit › Preferences… on the other platforms).
         let app_menu = Submenu::new("DesignCraft", true);
@@ -75,7 +86,7 @@ impl NativeMenu {
         let _ = menu.append(&app_menu);
         for (title, entries) in menus::native_menu_tree() {
             let sub = Submenu::new(designcraft_ui_egui::i18n::tr(&app.ui.language, title), true);
-            build(app, &sub, &entries, &mut items, &mut counter);
+            build(app, &sub, &entries, &mut items, &mut counter, title, &mut recent);
             let _ = menu.append(&sub);
         }
         menu.init_for_nsapp();
@@ -87,7 +98,44 @@ impl NativeMenu {
                 (p.is_null() && accel(sc).is_some()).then(|| id.clone())
             })
             .collect();
-        Self { _menu: menu, items, events, last_refresh: 0.0, shown_for: (app.ui.language.clone(), designcraft_ui_egui::cjk_features(app)) }
+        let recent = recent.map(|submenu| RecentMenu { submenu, shown: Vec::new(), ids: Vec::new(), separator: None });
+        Self { _menu: menu, items, events, last_refresh: 0.0, shown_for: (app.ui.language.clone(), designcraft_ui_egui::cjk_features(app)), recent }
+    }
+
+    /// Put the current recent files at the top of File › Open Recent when they changed.
+    fn refresh_recent(&mut self, app: &DesignApp) {
+        let Some(r) = self.recent.as_mut() else { return };
+        if r.shown == app.session.prefs.recent_files {
+            return;
+        }
+        for id in r.ids.drain(..) {
+            if let Some((_, _, Handle::Plain(item))) = self.items.remove(&id) {
+                let _ = r.submenu.remove(&item);
+            }
+        }
+        if let Some(sep) = r.separator.take() {
+            let _ = r.submenu.remove(&sep);
+        }
+        let mut position = 0;
+        for it in menus::recent_items(app) {
+            match it {
+                Item::Cmd { label, id, params, .. } => {
+                    let mid = format!("dc-recent{position}");
+                    let item = MenuItem::with_id(mid.clone(), label, true, None);
+                    let _ = r.submenu.insert(&item, position);
+                    self.items.insert(mid.clone(), (id, params, Handle::Plain(item)));
+                    r.ids.push(mid);
+                }
+                Item::Sep => {
+                    let sep = PredefinedMenuItem::separator();
+                    let _ = r.submenu.insert(&sep, position);
+                    r.separator = Some(sep);
+                }
+                Item::Sub(..) => continue,
+            }
+            position += 1;
+        }
+        r.shown = app.session.prefs.recent_files.clone();
     }
 
     pub fn poll(&mut self, app: &mut DesignApp, ctx: &egui::Context) {
@@ -107,6 +155,7 @@ impl NativeMenu {
             return;
         }
         self.last_refresh = now;
+        self.refresh_recent(app);
         for (cmd, params, h) in self.items.values() {
             let en = menus::native_menu_enabled(app, ctx, cmd);
             match h {
@@ -120,7 +169,15 @@ impl NativeMenu {
     }
 }
 
-fn build(app: &DesignApp, parent: &Submenu, entries: &[Item], items: &mut HashMap<String, (String, Value, Handle)>, counter: &mut usize) {
+fn build(
+    app: &DesignApp,
+    parent: &Submenu,
+    entries: &[Item],
+    items: &mut HashMap<String, (String, Value, Handle)>,
+    counter: &mut usize,
+    path: &str,
+    recent: &mut Option<Submenu>,
+) {
     for e in entries {
         match e {
             Item::Sep => {
@@ -128,7 +185,11 @@ fn build(app: &DesignApp, parent: &Submenu, entries: &[Item], items: &mut HashMa
             }
             Item::Sub(label, children) => {
                 let sub = Submenu::new(designcraft_ui_egui::i18n::tr(&app.ui.language, label), true);
-                build(app, &sub, children, items, counter);
+                let path = format!("{path}/{label}");
+                build(app, &sub, children, items, counter, &path, recent);
+                if path == menus::OPEN_RECENT {
+                    *recent = Some(sub.clone());
+                }
                 let _ = parent.append(&sub);
             }
             // Hidden CJK commands; `NativeMenu::poll` rebuilds the bar when Show CJK Features changes.

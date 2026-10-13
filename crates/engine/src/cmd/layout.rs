@@ -246,7 +246,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Margins and Columns…",
             ["Layout"],
             None,
-            "{pages?: [index] (default all), margins?: number|{top,bottom,inside,outside}, columns?, gutter?, adjustLayout?: bool (objects follow the margins)} — document pages take these as their own margins; with `parent` (a parent's prefix, label or index) the parent's pages change instead (`pages` then indexes them), and so do the document pages without their own",
+            "{pages?: [index] (default all), margins?: number|{top,bottom,inside,outside}, columns?, gutter?, adjustLayout?: bool (objects follow the margins), parent? (a parent's prefix, label or index)} — document pages take these as their own margins; with `parent` the parent's pages change instead (`pages` then indexes them), and so do the document pages without their own",
             has_doc,
             |s, p| {
                 let pages: Option<Vec<usize>> =
@@ -508,7 +508,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply Numbering & Section Options",
             [],
             None,
-            "{page, …layout.section's settings, chapter?: {…layout.chapterNumbering's settings}} — the section and the document's chapter numbering in one undo step; if either is refused nothing changes",
+            "{page, …the settings as layout.section, chapter?: {…the settings as layout.chapterNumbering}} — the section and the document's chapter numbering in one undo step; if either is refused nothing changes",
             has_doc,
             |s, p| {
                 let section = SectionEdit::parse("layout.numberingOptions", s, p)?;
