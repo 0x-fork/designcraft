@@ -544,6 +544,17 @@ pub fn reading_order(doc: &Document) -> Vec<Block> {
     keyed.into_iter().map(|(_, b)| b).collect()
 }
 
+/// Package path of an asset: `{dir}/{name}-{id}.{ext}`, the name from its original file name
+/// (lowercase ASCII, so the package stays readable) and the id keeping two assets of the same
+/// name apart.
+fn asset_path(dir: &str, a: &designcraft_doc::Asset, mime: &str) -> String {
+    let stem = a.name.rsplit(['/', '\\']).next().unwrap_or("");
+    let stem = stem.rsplit_once('.').map_or(stem, |(s, _)| s);
+    let name: String = stem.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    let name: String = name.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-").chars().take(40).collect();
+    if name.is_empty() { format!("{dir}/{}.{}", a.id.0, ext(mime)) } else { format!("{dir}/{name}-{}.{}", a.id.0, ext(mime)) }
+}
+
 fn ext(mime: &str) -> &'static str {
     match mime {
         "image/jpeg" => "jpg",
@@ -598,7 +609,7 @@ fn body_html<'a>(
                 let mime = safe_mime(&a.mime);
                 // Video and sound: an HTML5 player (with the poster, when there is one).
                 if let Some(kind) = designcraft_doc::media_kind(mime) {
-                    let name = format!("media/{}.{}", g.asset.0, ext(mime));
+                    let name = asset_path("media", a, mime);
                     images.insert(name.clone(), (mime, a.data.as_slice()));
                     let m = doc.item(*iid).and_then(|i| i.media.clone()).unwrap_or_default();
                     let mut attrs = String::new();
@@ -611,7 +622,7 @@ fn body_html<'a>(
                     }
                     if let Some(pa) = m.poster.and_then(|p| doc.assets.get(&p)) {
                         let poster_mime = safe_mime(&pa.mime);
-                        let pn = format!("images/{}.{}", pa.id.0, ext(poster_mime));
+                        let pn = asset_path("images", pa, poster_mime);
                         images.insert(pn.clone(), (poster_mime, pa.data.as_slice()));
                         if kind == "video" {
                             attrs.push_str(&format!(" poster=\"{}\"", xml_attr(&img_src(&pn, poster_mime, &pa.data))));
@@ -625,10 +636,11 @@ fn body_html<'a>(
                     );
                     continue;
                 }
-                let name = format!("images/{}.{}", g.asset.0, ext(mime));
+                let name = asset_path("images", a, mime);
                 images.insert(name.clone(), (mime, a.data.as_slice()));
-                // Alt text from Object Export Options, else the file name.
-                let alt = doc.item(*iid).map(|i| i.alt_text.as_str()).filter(|t| !t.is_empty()).unwrap_or(&a.name);
+                // Alt text from Object Export Options; without one the image counts as decorative
+                // (`alt=""`): a file name read aloud helps nobody.
+                let alt = doc.item(*iid).map_or("", |i| i.alt_text.as_str());
                 // Object Export Options: alignment and a page break before.
                 let eo = doc.item(*iid).map(|i| i.export_options.clone()).unwrap_or_default();
                 let mut css = String::new();
@@ -645,6 +657,22 @@ fn body_html<'a>(
         }
     }
     (body, images, toc)
+}
+
+/// Placed images (not video or sound) without alt text, by asset name: they are exported as
+/// decorative (`alt=""`), which an export can report.
+pub fn images_without_alt(doc: &Document) -> Vec<String> {
+    let mut out = Vec::new();
+    for b in reading_order(doc) {
+        let Block::Image(iid) = b else { continue };
+        let Some(it) = doc.item(iid) else { continue };
+        let Content::Graphic(g) = &it.content else { continue };
+        let Some(a) = doc.assets.get(&g.asset) else { continue };
+        if !a.data.is_empty() && designcraft_doc::media_kind(safe_mime(&a.mime)).is_none() && it.alt_text.trim().is_empty() {
+            out.push(a.name.clone());
+        }
+    }
+    out
 }
 
 /// Options for [`export_html`].
@@ -843,6 +871,44 @@ mod tests {
         assert_eq!(base64(b"Man"), "TWFu");
         assert_eq!(base64(b"Ma"), "TWE=");
         assert_eq!(base64(b"M"), "TQ==");
+    }
+
+    /// #774: an image without alt text is decorative (`alt=""`) and reported, and package names
+    /// come from the original file names.
+    #[test]
+    fn images_get_readable_names_and_no_file_name_alt() {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let place = |d: &mut Document, name: &str, mime: &str, alt: &str, y: f64| {
+            let aid = AssetId(d.alloc());
+            d.assets.insert(
+                aid,
+                Arc::new(Asset { page: 0, id: aid, name: name.into(), mime: mime.into(), link: None, data: Arc::new(vec![1]), pixels: Some((1, 1)) }),
+            );
+            let mut item = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(Rect::new(36.0, y, 72.0, y + 36.0)));
+            item.alt_text = alt.into();
+            item.content = Content::Graphic(Graphic {
+                asset: aid,
+                size: (1.0, 1.0),
+                xf: Affine::IDENTITY,
+                auto_fit: Default::default(),
+                fit_align: 4,
+                crop: [0.0; 4],
+            });
+            d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
+            aid.0
+        };
+        let a = place(&mut d, "/tmp/Anim Frame (1).GIF", "image/gif", "", 36.0);
+        let b = place(&mut d, "photo.jpg", "image/jpeg", "A heron", 120.0);
+        let c = place(&mut d, "???.png", "image/png", "Mark", 200.0);
+        assert_eq!(images_without_alt(&d), vec!["/tmp/Anim Frame (1).GIF".to_string()]);
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(export_epub(&d, &EpubOptions::default()).unwrap())).unwrap();
+        let mut x = String::new();
+        z.by_name("OEBPS/content.xhtml").unwrap().read_to_string(&mut x).unwrap();
+        assert!(x.contains(&format!("<img src=\"images/anim-frame-1-{a}.gif\" alt=\"\"/>")), "{x}");
+        assert!(x.contains(&format!("<img src=\"images/photo-{b}.jpg\" alt=\"A heron\"/>")), "{x}");
+        assert!(x.contains(&format!("<img src=\"images/{c}.png\" alt=\"Mark\"/>")), "{x}");
+        assert!(z.by_name(&format!("OEBPS/images/anim-frame-1-{a}.gif")).is_ok());
     }
 
     #[test]
