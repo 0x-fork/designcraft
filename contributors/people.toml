@@ -40,3 +40,8 @@ sync_github_name = true
 
 [people.webdevtodayjason]
 display_name = "Jason Brashear"
+
+[people.switch87]
+real_name = "Gert Pellin"
+display_name = "Gert Pellin"
+sync_github_name = false
