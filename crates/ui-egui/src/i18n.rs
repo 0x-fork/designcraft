@@ -3907,6 +3907,9 @@ mod tests {
         for (key, expected) in cs::TABLE {
             assert_eq!(tr("cs", key), *expected, "cs: {key}");
         }
+        for (key, expected) in fr::TABLE {
+            assert_eq!(tr("fr", key), *expected, "fr: {key}");
+        }
         let unknown = String::from("A user-defined untranslated label");
         for lang in ["cs", "uk", "ru", "ar", "pt-br", "it", "zh", "ja", "de", "fr", "es", "", "unknown"] {
             assert!(std::ptr::eq(tr(lang, &unknown), unknown.as_str()));
@@ -3950,6 +3953,35 @@ mod tests {
             assert!(TABLE[..i].iter().all(|(e, _)| e != en), "duplicate {en}");
             assert!(t.iter().all(|x| !x.is_empty()), "{en}");
         }
+    }
+
+    #[test]
+    fn french_catalog_has_no_duplicate_or_stale_keys_and_keeps_placeholders() {
+        let catalog: HashMap<_, _> = fr::TABLE.iter().copied().collect();
+        assert_eq!(catalog.len(), fr::TABLE.len(), "duplicate French keys");
+        let shared: std::collections::HashSet<_> = TABLE.iter().map(|(key, _)| *key).collect();
+        // `fr::TABLE` is looked up first: a key there would hide the shared table's French column.
+        let both: Vec<_> = catalog.keys().filter(|k| shared.contains(*k)).collect();
+        assert!(both.is_empty(), "French keys also in the shared table: {both:?}");
+        let mut keys = std::collections::HashSet::new();
+        for table in [ar::TABLE, de::TABLE, it::TABLE, ja::TABLE, pt_br::TABLE, uk::TABLE, ru::TABLE, cs::TABLE] {
+            keys.extend(table.iter().map(|(key, _)| *key));
+        }
+        let stale: Vec<_> = catalog.keys().filter(|k| !keys.contains(*k)).collect();
+        assert!(stale.is_empty(), "French entries for unknown keys: {stale:?}");
+        let placeholders = |s: &str| {
+            let mut names = s.split('{').skip(1).filter_map(|part| part.split_once('}').map(|(name, _)| name.to_owned())).collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+        let shared_french = TABLE.iter().filter_map(|(key, row)| row.get(1).map(|text| (*key, *text)));
+        for (key, translation) in fr::TABLE.iter().copied().chain(shared_french) {
+            assert!(!translation.trim().is_empty(), "empty {key}");
+            assert_eq!(key.starts_with(' '), translation.starts_with(' '), "leading space: {key}");
+            assert_eq!(key.ends_with(' '), translation.ends_with(' '), "trailing space: {key}");
+            assert_eq!(placeholders(key), placeholders(translation), "placeholders: {key}");
+        }
+        assert_eq!(tr("fr", "Group"), "Associer");
     }
 
     #[test]
