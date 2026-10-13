@@ -1027,7 +1027,12 @@ impl Tool for SelectionTool {
                 let release = self.shift_release.take();
                 let d = std::mem::replace(&mut self.drag, Drag::None);
                 match d {
-                    Drag::Move { .. } | Drag::Resize { .. } | Drag::Anchor { .. } | Drag::Rotate { .. } | Drag::Corner { .. } | Drag::Bracket { .. } => {
+                    Drag::Move { .. }
+                    | Drag::Resize { .. }
+                    | Drag::Anchor { .. }
+                    | Drag::Rotate { .. }
+                    | Drag::Corner { .. }
+                    | Drag::Bracket { .. } => {
                         vec![Action::Commit]
                     }
                     Drag::Pending { .. } => match release {
