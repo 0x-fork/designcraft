@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · Reflowable EPUB and HTML export include tables (header and footer rows, merged cells), footnotes (a linked note after the paragraph that refers to it) and endnotes (a linked section at the end of the book). No readiness percentage change.
 - **2026-10-13** · Word import: table cells read text by the same rules as body text, so deleted text, moved-away text and field codes stay out (#721). Word's Normal comes in as its own paragraph style "Normal" over the document defaults, so text formatted only by Normal keeps its look; it conflicts only with a document's own Normal, and the style map can send it to [Basic Paragraph] (#722). No readiness percentage change.
 - **2026-10-13** · Text recomposes when the document baseline grid changes, when a layer holding a text-wrap object is shown or hidden, or when a section's start number, numbering style, prefix or marker changes; the composition cache keyed only on the section count and item identities and kept the old layout. No readiness percentage change.
 - **2026-10-13** · Path edits (`path.setAnchor`, `path.moveAnchors`, `path.appendAnchor`, `path.reverse`, `path.close`, anchor add/delete/convert, Erase, Smooth and Scissors) refuse a path that is locked, sits in a locked group or on a locked layer (#735). Properties links to the Stroke, Character, Paragraph, Effects, Text Wrap and Info panels open them in a customized panel layout too (#736). No readiness percentage change.
