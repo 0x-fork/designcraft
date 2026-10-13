@@ -645,7 +645,7 @@ fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
         Some(o) => return Err(bad("table.setCell", format!("unknown vj `{o}`"))),
         None => None,
     };
-    let text = str_param(p, "text").map(str::to_string);
+    let text = str_param(p, "text").map(|_| super::text_param(p, "text"));
     let stroke = p.get("stroke").cloned();
     edit_table(s, &g, "table.setCell", |t| {
         let owners = t.owners();
