@@ -494,7 +494,7 @@ impl Session {
         if id != "data.preview" && (spec.undoable || spec.journal) {
             self.stop_data_preview();
         }
-        let before = self.active().map(|d| (d.uid, d.doc.clone()));
+        let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
         // What an undoable command runs is part of its undo step.
         let nested = self.in_undo_step;
         self.in_undo_step = nested || spec.undoable;
@@ -534,7 +534,7 @@ impl Session {
         if spec.undoable
             && let Some(st) = self.active_mut()
         {
-            let prev = before.as_ref().filter(|(uid, _)| *uid == st.uid).map(|(_, d)| d.as_ref());
+            let prev = before.as_ref().filter(|(uid, _, _)| *uid == st.uid).map(|(_, d, _)| d.as_ref());
             if prev.is_none_or(|p| !std::ptr::eq(p, st.doc.as_ref())) {
                 let todo = autosize::candidates(&st.doc, prev);
                 if !todo.is_empty() {
@@ -553,17 +553,18 @@ impl Session {
         Ok(r)
     }
 
-    /// Record undo if the document changed (and we're not previewing an interaction). A command
-    /// run by an undoable one leaves the step to it: one command is one undo step.
-    fn record_undo_step(&mut self, spec: &CommandSpec, before: Option<(u64, Arc<Document>)>, nested: bool) {
-        if let (Some((uid, old)), Some(st)) = (before, self.active_mut())
+    /// Record undo if the document changed (and we're not previewing an interaction), with the
+    /// selection from before the command. A command run by an undoable one leaves the step to it:
+    /// one command is one undo step.
+    fn record_undo_step(&mut self, spec: &CommandSpec, before: Option<(u64, Arc<Document>, Selection)>, nested: bool) {
+        if let (Some((uid, old, selection)), Some(st)) = (before, self.active_mut())
             && st.uid == uid
             && !Arc::ptr_eq(&old, &st.doc)
             && st.interaction.is_none()
             && spec.undoable
             && !nested
         {
-            let entry = HistoryEntry { label: spec.label.to_string(), doc: old, selection: st.selection.clone() };
+            let entry = HistoryEntry { label: spec.label.to_string(), doc: old, selection };
             push_undo(st, entry);
         }
     }
