@@ -56,6 +56,8 @@ References to earlier results (in string parameters):
                 comments and blank lines are not steps. `$last` is the previous step.
                 Paths go through result fields and array indices: "$1.story", "$3.ids.0".
   "${N.path}"   inside a longer string, replaced by the value's text: "Frame ${0.id}".
+  Any other string starting with `$` stays as written ("$1-$2", "$5 off").
+  "$$"          a literal `$` anywhere: "$$1" passes `$1` (a GREP group), "$${0.id}" passes `${0.id}`.
 
 Text parameters: "\n" starts a new paragraph, "\u2028" is a forced line break, "\t" a tab.
 Most commands ignore parameters they do not know instead of rejecting them: check names

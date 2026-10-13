@@ -118,7 +118,8 @@ pub fn tool_definitions() -> Vec<Value> {
              and message (earlier commands stay applied; use edit.undo to revert them). Later steps can use earlier results: a \
              parameter string \"$N.path\" is replaced by that value of step N's result (0-based; \"$last.path\" for the previous \
              step), e.g. after frame.create → {\"id\": 8, \"story\": 9}, {\"story\": \"$0.story\"} passes 9; \"${N.path}\" \
-             interpolates into longer strings. Give `commands`, or `script` text (one `command.id {json}` per line).",
+             interpolates into longer strings. Other strings starting with $ stay as written; \"$$\" is a literal $ \
+             (\"$$1\" passes the GREP group $1). Give `commands`, or `script` text (one `command.id {json}` per line).",
             obj(
                 json!({
                     "commands": {
