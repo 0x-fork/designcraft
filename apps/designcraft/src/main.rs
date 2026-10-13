@@ -45,7 +45,7 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         {
             if self.menu.is_none() && std::env::var_os("DESIGNCRAFT_NO_NATIVE_MENU").is_none() {
-                self.menu = Some(native_menu::NativeMenu::install(&mut self.app));
+                self.menu = Some(native_menu::NativeMenu::install(&mut self.app, ctx));
             }
             if let Some(m) = &mut self.menu {
                 m.poll(&mut self.app, ctx);
