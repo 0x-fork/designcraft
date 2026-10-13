@@ -1638,3 +1638,37 @@ fn the_selection_tool_drags_a_path_type_bracket_along_its_path() {
     let [Action::Preview(_, p)] = a.as_slice() else { panic!("{a:?}") };
     assert!((p["end"].as_f64().unwrap() - 350.0).abs() < 1e-6, "{p}");
 }
+
+#[test]
+fn direct_selection_drags_the_end_anchors_of_type_on_a_path() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let id = ItemId(d.alloc());
+    let line = designcraft_geom::PathData::single(designcraft_geom::SubPath::new(
+        vec![designcraft_geom::Anchor::corner(Point::new(100.0, 300.0)), designcraft_geom::Anchor::corner(Point::new(500.0, 300.0))],
+        false,
+    ));
+    let mut it = Item::new(id, lid, Shape::GraphicLine, line);
+    let sid = designcraft_doc::StoryId(d.alloc());
+    let mut tf = designcraft_doc::TextFrame { story: sid, options: Default::default() };
+    // The default brackets: on the first and last anchors.
+    tf.options.path = Some(designcraft_doc::PathType::default());
+    it.content = designcraft_doc::Content::Text(tf);
+    let mut st = designcraft_doc::Story::with_text(sid, "On the line", Default::default());
+    st.frames = vec![id];
+    d.stories.insert(sid, Arc::new(st));
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let s = Selection { items: vec![id], content: true, ..Default::default() };
+    let cx = ctx(&d, &s, &c, &l);
+    for (x, end) in [(100.0, false), (500.0, true)] {
+        let p = Point::new(x + off.x, 300.0 + off.y);
+        let mut direct = create("directSelection");
+        assert_ne!(direct.cursor(&cx, p, Mods::default()), Cursor::PathBracket, "anchor at {x}");
+        assert_eq!(direct.pointer(&cx, &PointerEvent::new(PointerKind::Down, p.x, p.y)), vec![Action::Begin("Move Anchor".into())]);
+        // The Selection tool still takes the bracket there.
+        let mut sel = create("selection");
+        assert_eq!(sel.pointer(&cx, &PointerEvent::new(PointerKind::Down, p.x, p.y)), vec![Action::Begin("Move Bracket".into())], "end {end}");
+    }
+}

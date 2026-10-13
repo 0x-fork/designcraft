@@ -187,6 +187,15 @@ impl SelectionTool {
         Self { direct, drag: Drag::None, hover_handle: None, guides: vec![], shift_release: None, loaded: None, live: None }
     }
 
+    /// [`bracket_at`] for this tool. With Direct Selection an anchor under the pointer wins: the
+    /// default brackets sit on the path's end anchors.
+    fn bracket_at(&self, cx: &ToolContext, p: Point) -> Option<(ItemId, bool)> {
+        if self.direct && anchor_at(cx, p).is_some() {
+            return None;
+        }
+        bracket_at(cx, p)
+    }
+
     /// The frame in live-corner editing, while it is still the selection.
     fn live_corners(&self, cx: &ToolContext) -> Option<LiveFrame> {
         let id = self.live?;
@@ -649,7 +658,7 @@ impl Tool for SelectionTool {
                 self.shift_release = None;
                 // Type on a path: a bracket moves where the text starts or ends.
                 if !ev.mods.shift
-                    && let Some((id, end)) = bracket_at(cx, p)
+                    && let Some((id, end)) = self.bracket_at(cx, p)
                 {
                     self.drag = Drag::Bracket { id, end };
                     return vec![Action::Begin("Move Bracket".into())];
@@ -1105,7 +1114,7 @@ impl Tool for SelectionTool {
         if let Drag::Move { content: true, .. } = self.drag {
             return Cursor::HandGrab;
         }
-        if matches!(self.drag, Drag::Bracket { .. }) || (matches!(self.drag, Drag::None) && bracket_at(cx, p).is_some()) {
+        if matches!(self.drag, Drag::Bracket { .. }) || (matches!(self.drag, Drag::None) && self.bracket_at(cx, p).is_some()) {
             return Cursor::PathBracket;
         }
         if self.direct {
