@@ -28,5 +28,8 @@ display_name = "insanityxoff"
 [people.moppeeer]
 sync_github_name = true
 
+[people.PiMinusMax]
+display_name = "PiMinusMax"
+
 [people.thaynej]
 real_name = "Jeffrey Thayne"
