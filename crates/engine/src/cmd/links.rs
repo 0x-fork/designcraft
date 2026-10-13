@@ -158,6 +158,21 @@ pub(crate) fn checkable_size(len: usize) -> bool {
     len as u64 <= MAX_TEXT_LINK_BYTES
 }
 
+/// Can a size and time be trusted to change when the file does? Times are whole seconds, so not
+/// while the file was changed in the last two: another change in that second keeps the time.
+pub(crate) fn settled(f: &Fingerprint) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+        now.saturating_sub(f.mtime) >= 2
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = f;
+        false
+    }
+}
+
 /// Checked linked text files: path → (size and time, hash of the contents then).
 pub(crate) type TextChecks = std::collections::HashMap<String, (Fingerprint, String)>;
 
@@ -186,7 +201,9 @@ pub(crate) fn text_status(l: &TextFileLink, checks: &mut TextChecks) -> &'static
                 Ok((b, at)) => {
                     let hash = fnv_hex(&b);
                     // The time from before the read: a change during it is seen next time.
-                    checks.insert(l.path.clone(), (at, hash.clone()));
+                    if settled(&at) {
+                        checks.insert(l.path.clone(), (at, hash.clone()));
+                    }
                     hash
                 }
                 Err(_) => return "missing",
@@ -825,10 +842,12 @@ mod text_link_tests {
         std::fs::write(&path, "Hello").unwrap();
         // Unreadable: a status that reads the file would say missing.
         let readable = |on: bool| std::fs::set_permissions(&path, std::fs::Permissions::from_mode(if on { 0o644 } else { 0o000 })).unwrap();
+        // A time `secs` ago (a file changed in the last two seconds is always read).
         let touch = |secs: u64| {
             let f = std::fs::File::options().write(true).open(&path).unwrap();
-            f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(secs)).unwrap();
+            f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs)).unwrap();
         };
+        touch(60);
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
         s.execute("file.place", &json!({"path": path.to_string_lossy(), "link": true})).unwrap();
@@ -843,7 +862,7 @@ mod text_link_tests {
         assert_eq!(status(&mut s), "ok");
         // Saved again unchanged (a new time): read once, then not again.
         readable(true);
-        touch(10);
+        touch(30);
         assert_eq!(status(&mut s), "ok");
         readable(false);
         assert_eq!(status(&mut s), "ok", "the second poll doesn't read it");
@@ -852,6 +871,12 @@ mod text_link_tests {
         std::fs::write(&path, "Jello").unwrap();
         touch(20);
         assert_eq!(status(&mut s), "modified");
+        // Changed again in the same second, same size: still seen (just-changed files are read).
+        std::fs::write(&path, "Hello").unwrap();
+        assert_eq!(status(&mut s), "ok");
+        std::fs::write(&path, "Jello").unwrap();
+        assert_eq!(status(&mut s), "modified");
+        touch(10);
         // Updated: the new size and time are kept, so the next poll doesn't read it.
         s.execute("links.update", &json!({})).unwrap();
         readable(false);
