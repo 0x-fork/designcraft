@@ -9,7 +9,17 @@ use designcraft_geom::{Point, Rect, Unit};
 use super::*;
 
 fn ctx<'a>(d: &'a Document, s: &'a Selection, c: &'a Cache, l: &'a CanvasLayout) -> ToolContext<'a> {
-    ToolContext { doc: d, selection: s, cache: c, layout: l, zoom: 1.0, layer: d.default_layer(), snap: SnapView::OFF, unit: Unit::Points }
+    ToolContext {
+        doc: d,
+        selection: s,
+        cache: c,
+        layout: l,
+        zoom: 1.0,
+        layer: d.default_layer(),
+        snap: SnapView::OFF,
+        unit: Unit::Points,
+        stroke_in_front: false,
+    }
 }
 
 #[test]
@@ -1434,6 +1444,17 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
     assert_eq!(a, vec![sample(120.0, 130.0)]);
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 180.0 + off.x, 180.0 + off.y));
     assert_eq!(a, vec![sample(180.0, 180.0)], "through the text frame");
+    // With the toolbox's Stroke box in front, the colour goes to the stroke (a line has no fill).
+    let mut cx_stroke = ctx(&d, &s, &c, &l);
+    cx_stroke.stroke_in_front = true;
+    let a = t.pointer(&cx_stroke, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+    assert_eq!(
+        a,
+        vec![Action::Exec(
+            "color.sample".into(),
+            serde_json::json!({"at": [120.0, 130.0], "spread": {"kind": "doc", "index": 0}, "target": "stroke"})
+        )]
+    );
     // A filled object is matched as before (here on a locked layer: not reachable, so nothing).
     assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 320.0 + off.x, 120.0 + off.y)).is_empty());
     let mut d2 = d.clone();
