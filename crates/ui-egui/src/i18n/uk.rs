@@ -31,6 +31,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Вирізати"),
     ("Copy", "Копіювати"),
     ("Paste", "Вставити"),
+    ("Reverse Path", "Розвернути контур"),
+    ("Set Anchor", "Задати прив’язку"),
     ("Clear", "Очистити"),
     ("Duplicate", "Дублювати"),
     ("Select All", "Виділити все"),

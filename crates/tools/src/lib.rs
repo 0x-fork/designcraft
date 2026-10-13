@@ -335,6 +335,8 @@ pub enum Cursor {
     ResizeNeSw,
     Rotate,
     Pen,
+    /// The Pen over an open path's end point: a click continues the path.
+    PenContinue,
     Text,
     Hand,
     HandGrab,
