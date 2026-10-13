@@ -138,8 +138,8 @@ fn a_threaded_frame_before_the_last_does_not_auto_size() {
 }
 
 #[test]
-fn idml_import_fits_height_only_frames() {
-    // A 36 pt label in a frame 0.8 × its size tall: overset until auto-size grows it.
+fn opening_leaves_auto_size_frames_as_they_are() {
+    // A 36 pt label in a frame 0.8 × its size tall: overset until an edit fits it.
     let mut s = session();
     let r = s.execute("frame.create", &json!({"rect": [36.0, 36.0, 300.0, 64.8], "content": "text"})).unwrap();
     let (id, sid) = (ItemId(r["id"].as_u64().unwrap()), StoryId(r["story"].as_u64().unwrap()));
@@ -160,9 +160,14 @@ fn idml_import_fits_height_only_frames() {
     s.execute("file.openIdml", &json!({"base64": idml, "name": "labels.idml"})).unwrap();
     let d = &s.doc().unwrap().doc;
     let (fid, story) = d.stories.values().find(|st| st.text == "Brand Bible").map(|st| (st.frames[0], st.id)).unwrap();
-    let cs = designcraft_compose::compose_story(d, story, &Default::default());
-    assert!(!cs.is_overset(), "the label shows after import");
-    let b = d.item(fid).unwrap().bounds();
+    let b = bounds(&s, fid);
+    assert!((b.height() - orig.height()).abs() < 1e-3 && (b.y0 - orig.y0).abs() < 1e-3, "{b:?}");
+    assert!(overset(&s, story));
+    // The first edit to the story fits the frame.
+    s.execute("text.select", &json!({"story": story.0, "anchor": 11, "focus": 11})).unwrap();
+    s.execute("text.insert", &json!({"text": "!"})).unwrap();
+    assert!(!overset(&s, story));
+    let b = bounds(&s, fid);
     assert!(b.height() > 36.0 && (b.y0 - orig.y0).abs() < 1e-3, "{b:?}");
 }
 
