@@ -1792,7 +1792,7 @@ impl<'a> Ex<'a> {
                     .attr("TextAlignment", names::path_align_out(pt.align))
                     .attr("FlipPathEffect", if pt.flip { "Flipped" } else { "NotFlipped" })
                     .attr("StartBracket", num(pt.start))
-                    .attr("EndBracket", num(len)),
+                    .attr("EndBracket", num(pt.end.map_or(len, |e| e.min(len)))),
             );
         } else if let Content::Text(t) = &it.content {
             let (prev, next) = self.threads.get(&it.id.0).copied().unwrap_or((None, None));

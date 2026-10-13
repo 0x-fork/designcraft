@@ -23,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Type on a Path Options…",
             ["Type", "Type on a Path"],
             None,
-            "{id?, start?, flip?, align?: baseline|ascender|descender|center, delete?: true (Delete Type from Path)}",
+            "{id?, start?, end?: distance along the path or null (the path's end), flip?, align?: baseline|ascender|descender|center, delete?: true (Delete Type from Path)} — start and end are the brackets: start ≤ end, both on the path",
             has_doc,
             path_options
         ),
@@ -86,6 +86,7 @@ fn path_options(s: &mut Session, p: &Value) -> Result<Value> {
     let p = p.clone();
     s.edit(|d, sel| {
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
+        let len = designcraft_geom::warp::PathWarp::new(&it.path.to_bezpath(), false).length();
         let Content::Text(tf) = &mut it.content else { return Err(bad("type.pathOptions", "not type on a path")) };
         let Some(pt) = tf.options.path.as_mut() else { return Err(bad("type.pathOptions", "not type on a path")) };
         if delete {
@@ -95,8 +96,26 @@ fn path_options(s: &mut Session, p: &Value) -> Result<Value> {
             sel.text = None;
             return Ok(json!({"deleted": true}));
         }
-        if let Some(v) = p.get("start").and_then(Value::as_f64) {
-            pt.start = v.max(0.0);
+        if let Some(v) = p.get("start").and_then(Value::as_f64).filter(|v| v.is_finite()) {
+            pt.start = v.clamp(0.0, len);
+        }
+        match p.get("end") {
+            Some(Value::Null) => pt.end = None,
+            Some(v) => {
+                let e = v.as_f64().filter(|v| v.is_finite()).ok_or_else(|| bad("type.pathOptions", "end: a distance or null"))?;
+                pt.end = (e < len - 0.01).then_some(e.max(0.0));
+            }
+            None => {}
+        }
+        // The brackets can't cross: the one being moved stops at the other.
+        if let Some(e) = pt.end
+            && pt.start > e
+        {
+            if p.get("end").is_some() {
+                pt.end = Some(pt.start);
+            } else {
+                pt.start = e;
+            }
         }
         if let Some(v) = p.get("flip").and_then(Value::as_bool) {
             pt.flip = v;
@@ -104,7 +123,7 @@ fn path_options(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(a) = align {
             pt.align = a;
         }
-        Ok(json!({"start": pt.start, "flip": pt.flip, "align": pt.align}))
+        Ok(json!({"start": pt.start, "end": pt.end, "flip": pt.flip, "align": pt.align}))
     })
 }
 
@@ -159,5 +178,40 @@ mod tests {
         assert_eq!((100..200).filter(|&x| img.pixel(x, 306)[0] < 128).count(), 0, "nothing hangs below the baseline");
         let pdf = designcraft_pdf::export_pdf(&d, &s2.cache, &Default::default()).unwrap();
         assert!(pdf.len() > 1000);
+    }
+
+    #[test]
+    fn the_brackets_set_where_the_text_starts_and_ends() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [100, 300], "b": [500, 300]})).unwrap()["id"].as_u64().unwrap();
+        let r = s.execute("type.onPath", &json!({"id": id, "text": "Sixteen letters!"})).unwrap();
+        let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
+        let overset = |s: &Session| designcraft_compose::compose_story(&s.doc().unwrap().doc, sid, &Default::default()).overset_at.is_some();
+        let undo = s.doc().unwrap().history.undo.len();
+        assert!(!overset(&s));
+        // The end bracket close to the start: the text no longer fits, and is overset.
+        let r = s.execute("type.pathOptions", &json!({"id": id, "start": 50, "end": 70})).unwrap();
+        assert_eq!((r["start"].as_f64(), r["end"].as_f64()), (Some(50.0), Some(70.0)));
+        assert!(overset(&s));
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1, "one undo step");
+        // Brackets can't cross: the start stops at the end, the end at the start.
+        let r = s.execute("type.pathOptions", &json!({"id": id, "start": 90})).unwrap();
+        assert_eq!(r["start"].as_f64(), Some(70.0));
+        let r = s.execute("type.pathOptions", &json!({"id": id, "start": 10, "end": 5})).unwrap();
+        assert_eq!((r["start"].as_f64(), r["end"].as_f64()), (Some(10.0), Some(10.0)));
+        // Past the path, or null: the path's end again; the start stays on the path.
+        let r = s.execute("type.pathOptions", &json!({"id": id, "end": 1000})).unwrap();
+        assert!(r["end"].is_null());
+        let r = s.execute("type.pathOptions", &json!({"id": id, "end": 200})).unwrap();
+        assert_eq!(r["end"].as_f64(), Some(200.0));
+        let r = s.execute("type.pathOptions", &json!({"id": id, "end": null, "start": 5000})).unwrap();
+        assert_eq!((r["start"].as_f64(), r["end"].is_null()), (Some(400.0), true));
+        assert!(s.execute("type.pathOptions", &json!({"id": id, "end": "far"})).is_err());
+        // Saved with the document.
+        let d = s.doc().unwrap().doc.clone();
+        let back = crate::cmd::file_from(&crate::cmd::file_bytes(&d)).unwrap();
+        let path = |d: &designcraft_doc::Document| d.item(designcraft_doc::ItemId(id)).unwrap().text_frame().unwrap().options.path.clone();
+        assert_eq!(path(&back), path(&d));
     }
 }

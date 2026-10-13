@@ -2520,7 +2520,7 @@ fn path_text_keeps_the_original_vertical_fit_limit() {
             it.shape = designcraft_doc::Shape::Path;
             it.path = designcraft_geom::shapes::line(Point::ZERO, Point::new(200.0, 0.0));
             it.text_frame_mut().unwrap().options.path =
-                Some(designcraft_doc::PathType { start: 0.0, flip: false, align: designcraft_doc::PathAlign::Baseline });
+                Some(designcraft_doc::PathType { start: 0.0, end: None, flip: false, align: designcraft_doc::PathAlign::Baseline });
             d.story_mut(sid).unwrap().format_chars(0..text.len(), |f| {
                 f.over.font_family = Some("Source Serif 4".into());
                 f.over.size = Some(20.0);

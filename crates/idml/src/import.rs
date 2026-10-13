@@ -2593,6 +2593,11 @@ impl<'r> Importer<'r> {
                 let options = TextFrameOptions {
                     path: Some(designcraft_doc::PathType {
                         start: tp.num("StartBracket").unwrap_or(0.0).max(0.0),
+                        // At (or past) the path's length it is the path's end: no end bracket.
+                        end: tp
+                            .num("EndBracket")
+                            .filter(|e| e.is_finite() && *e >= 0.0)
+                            .filter(|e| *e < designcraft_geom::warp::PathWarp::new(&it.path.to_bezpath(), false).length() - 0.01),
                         flip: tp.get("FlipPathEffect") == Some("Flipped"),
                         align: names::path_align_in(tp.get("TextAlignment").unwrap_or("")),
                     }),

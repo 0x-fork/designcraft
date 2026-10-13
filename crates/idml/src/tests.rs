@@ -3432,3 +3432,27 @@ fn vertical_balance_columns_balances_the_imported_frame() {
     let off = per_column(&d);
     assert!(off[0] > off[1] + 1, "unbalanced: {off:?}");
 }
+
+#[test]
+fn type_on_a_path_keeps_its_start_and_end_brackets() {
+    use designcraft_geom::{Anchor, PathData, Point, SubPath};
+    for end in [Some(250.0), None] {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let id = designcraft_doc::ItemId(d.alloc());
+        let line = PathData::single(SubPath::new(vec![Anchor::corner(Point::new(100.0, 300.0)), Anchor::corner(Point::new(500.0, 300.0))], false));
+        let mut it = designcraft_doc::Item::new(id, lid, Shape::GraphicLine, line);
+        let sid = designcraft_doc::StoryId(d.alloc());
+        let mut tf = designcraft_doc::TextFrame { story: sid, options: Default::default() };
+        tf.options.path = Some(designcraft_doc::PathType { start: 30.0, end, ..Default::default() });
+        it.content = designcraft_doc::Content::Text(tf);
+        let mut story = designcraft_doc::Story::with_text(sid, "Along", Default::default());
+        story.frames = vec![id];
+        d.stories.insert(sid, std::sync::Arc::new(story));
+        d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+        let back = import_idml(&export_idml(&d)).unwrap();
+        let pt = back.spreads[0].items[0].text_frame().unwrap().options.path.clone().unwrap();
+        assert!((pt.start - 30.0).abs() < 1e-6, "{pt:?}");
+        assert_eq!(pt.end.map(|e| e.round()), end, "an end bracket at the path's end is no end bracket");
+    }
+}
