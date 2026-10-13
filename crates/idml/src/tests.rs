@@ -3634,3 +3634,40 @@ fn feather_choke_and_corners_round_trip() {
     let style = back.styles.object.iter().find(|s| s.name == "Soft").and_then(|s| s.effects.clone()).unwrap();
     assert_eq!((style.feather, style.feather_options), (styled.feather, styled.feather_options));
 }
+
+#[test]
+fn style_names_ending_in_a_space_and_partial_rule_overrides_import() {
+    // Nested style "Decimals " (a name with a trailing space, as InDesign allows) and a label
+    // style that only recolours the rule of the style it is based on.
+    let styles = STYLES
+        .replace(
+            r#"  </RootCharacterStyleGroup>"#,
+            r#"    <CharacterStyle Self="CharacterStyle/Decimals " Name="Decimals " Position="Superscript"/>
+  </RootCharacterStyleGroup>"#,
+        )
+        .replace(
+            r#"  </RootParagraphStyleGroup>"#,
+            r#"    <ParagraphStyle Self="ParagraphStyle/Price" Name="Price">
+      <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn>
+        <AllNestedStyles type="list"><ListItem type="record"><AppliedCharacterStyle type="object">CharacterStyle/Decimals </AppliedCharacterStyle><Delimiter type="enumeration">AnyCharacter</Delimiter><Repetition type="long">2</Repetition><Inclusive type="boolean">true</Inclusive></ListItem></AllNestedStyles>
+      </Properties>
+    </ParagraphStyle>
+    <ParagraphStyle Self="ParagraphStyle/Label white" Name="Label white" RuleAbove="true" RuleAboveLineWeight="16" RuleAboveOffset="-3">
+      <Properties><BasedOn type="string">$ID/[No paragraph style]</BasedOn><RuleAboveColor type="object">Color/Paper</RuleAboveColor></Properties>
+    </ParagraphStyle>
+    <ParagraphStyle Self="ParagraphStyle/Label black" Name="Label black">
+      <Properties><BasedOn type="object">ParagraphStyle/Label white</BasedOn><RuleAboveColor type="object">Color/Black</RuleAboveColor></Properties>
+    </ParagraphStyle>
+  </RootParagraphStyleGroup>"#,
+        );
+    let d = import_idml(&fixture_with_table_styles(&styles, STORY)).unwrap();
+    let style = |n: &str| d.styles.paragraph.iter().find(|s| s.name == n).unwrap();
+    let nested = style("Price").para.nested_styles.clone().unwrap();
+    assert_eq!(nested[0].style, "Decimals ", "the trailing space is part of the name");
+    let white = style("Label white").para.rule_above.clone().unwrap();
+    let black = style("Label black").para.rule_above.clone().unwrap();
+    assert!(black.on, "the rule stays on");
+    assert_eq!((black.weight, black.offset), (16.0, -3.0), "weight and offset come from the base style");
+    assert_ne!(black.color, white.color, "only the colour is overridden");
+}
+

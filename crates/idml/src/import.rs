@@ -236,6 +236,8 @@ struct Importer<'r> {
     table_names: HashMap<String, String>,
     /// Object style Self → element (attribute fallback for page items).
     object_els: HashMap<String, El>,
+    /// Paragraph style Self → element (attribute fallback for partly overridden settings).
+    para_els: HashMap<String, El>,
     layers: Vec<Layer>,
     layer_ids: HashMap<String, LayerId>,
     stories: BTreeMap<StoryId, Story>,
@@ -431,6 +433,7 @@ impl<'r> Importer<'r> {
             cell_names: HashMap::new(),
             table_names: HashMap::new(),
             object_els: HashMap::new(),
+            para_els: HashMap::new(),
             layers: Vec::new(),
             layer_ids: HashMap::new(),
             stories: BTreeMap::new(),
@@ -1046,6 +1049,9 @@ impl<'r> Importer<'r> {
             self.object_names.insert(id.clone(), n);
             self.object_els.insert(id.clone(), e.clone());
         }
+        for (id, e) in &paras {
+            self.para_els.insert(id.clone(), e.clone());
+        }
         for (_, e) in &paras {
             let name = names::style_name_in(PARA_BUILTINS, e.get("Name").unwrap_or(""));
             let based_on = if name == designcraft_doc::NO_PARA_STYLE { None } else { self.based_on(e, true) };
@@ -1380,6 +1386,13 @@ impl<'r> Importer<'r> {
     fn para_style_ref(&self, r: &str) -> String {
         self.para_names.get(r).cloned().unwrap_or_else(|| names::style_name_in(PARA_BUILTINS, &unescape_id(r.trim_start_matches("ParagraphStyle/"))))
     }
+    /// A character style reference written as an element's text (nested, line and GREP styles).
+    /// A style name may end in a space, so the reference is used as written when it names a
+    /// style; only otherwise is surrounding whitespace dropped.
+    fn listed_char_style_ref(&self, r: &str) -> String {
+        if self.char_names.contains_key(r) { self.char_style_ref(r) } else { self.char_style_ref(r.trim()) }
+    }
+
     fn char_style_ref(&self, r: &str) -> String {
         self.char_names.get(r).cloned().unwrap_or_else(|| names::style_name_in(CHAR_BUILTINS, &unescape_id(r.trim_start_matches("CharacterStyle/"))))
     }
@@ -1575,7 +1588,7 @@ impl<'r> Importer<'r> {
                     let t = |k: &str| it.find(k).map(|x| x.text_content()).unwrap_or_default();
                     let d = it.find("Delimiter");
                     designcraft_doc::NestedStyle {
-                        style: self.char_style_ref(t("AppliedCharacterStyle").trim()),
+                        style: self.listed_char_style_ref(&t("AppliedCharacterStyle")),
                         through: t("Inclusive").trim() != "false",
                         count: t("Repetition").trim().parse().unwrap_or(1),
                         until: names::nested_until_in(d.and_then(|d| d.get("type")).unwrap_or("enumeration"), &t("Delimiter")),
@@ -1593,7 +1606,7 @@ impl<'r> Importer<'r> {
                 .map(|it| {
                     let t = |k: &str| it.find(k).map(|x| x.text_content()).unwrap_or_default();
                     designcraft_doc::NestedLineStyle {
-                        style: self.char_style_ref(t("AppliedCharacterStyle").trim()),
+                        style: self.listed_char_style_ref(&t("AppliedCharacterStyle")),
                         lines: t("LineCount").trim().parse().unwrap_or(1),
                     }
                 })
@@ -1605,7 +1618,7 @@ impl<'r> Importer<'r> {
                 .find_all("ListItem")
                 .map(|it| {
                     let t = |k: &str| it.find(k).map(|x| x.text_content()).unwrap_or_default();
-                    designcraft_doc::GrepStyle { style: self.char_style_ref(t("AppliedCharacterStyle").trim()), pattern: t("GrepExpression") }
+                    designcraft_doc::GrepStyle { style: self.listed_char_style_ref(&t("AppliedCharacterStyle")), pattern: t("GrepExpression") }
                 })
                 .collect();
             a.grep_styles = Some(v);
@@ -1772,14 +1785,30 @@ impl<'r> Importer<'r> {
     }
 
     fn rule(&mut self, e: &El, k: &str) -> Option<Rule> {
-        let on = e.boolean(k);
-        let weight = e.num(&format!("{k}LineWeight"));
+        // A style or range can set some of a rule's settings (such as only its colour); the others
+        // come from its paragraph style chain, so the rule is whole.
+        let fields = ["", "LineWeight", "Color", "Tint", "Width", "Offset", "LeftIndent", "RightIndent"];
+        if !fields.iter().any(|f| e.prop(&format!("{k}{f}")).is_some()) {
+            return None;
+        }
+        let v: Vec<Option<String>> = fields.iter().map(|f| self.para_setting(e, &format!("{k}{f}"))).collect();
+        let get = |i: usize| v.get(i).cloned().flatten();
+        let num = |i: usize| get(i).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite());
+        let on = get(0).map(|v| v.trim() == "true");
+        let weight = num(1);
         on.or(weight.map(|_| false))?;
         let mut r = Rule { on: on.unwrap_or(false), ..Rule::default() };
         if let Some(w) = weight {
             r.weight = w;
         }
-        if let Some(c) = e.prop(&format!("{k}Color")) {
+        if let Some(t) = tint(num(3)) {
+            r.tint = t;
+        }
+        r.column_width = get(4).is_none_or(|w| w.trim() != "TextWidth");
+        r.offset = num(5).unwrap_or(0.0);
+        r.left_indent = num(6).unwrap_or(0.0);
+        r.right_indent = num(7).unwrap_or(0.0);
+        if let Some(c) = get(2) {
             let c = c.trim();
             if c == designcraft_doc::TEXT_COLOR {
                 r.color = c.to_string();
@@ -1787,14 +1816,27 @@ impl<'r> Importer<'r> {
                 r.color = self.swatch_ref(c);
             }
         }
-        if let Some(t) = tint(e.num(&format!("{k}Tint"))) {
-            r.tint = t;
-        }
-        r.column_width = e.prop(&format!("{k}Width")).is_none_or(|w| w.trim() != "TextWidth");
-        r.offset = e.num(&format!("{k}Offset")).unwrap_or(0.0);
-        r.left_indent = e.num(&format!("{k}LeftIndent")).unwrap_or(0.0);
-        r.right_indent = e.num(&format!("{k}RightIndent")).unwrap_or(0.0);
         Some(r)
+    }
+
+    /// Paragraph setting `k` of `e` (a paragraph style or a range): its own, else from its
+    /// paragraph style chain (`BasedOn` of a style, the applied style of a range).
+    fn para_setting(&self, e: &El, k: &str) -> Option<String> {
+        if let Some(v) = e.prop(k) {
+            return Some(v);
+        }
+        let style_ref = |r: String| if r.starts_with("ParagraphStyle/") { r } else { format!("ParagraphStyle/{}", names::escape_id(&r)) };
+        let mut next =
+            if e.local() == "ParagraphStyle" { e.prop("BasedOn") } else { e.get("AppliedParagraphStyle").map(str::to_string) }.map(style_ref);
+        for _ in 0..16 {
+            let Some(id) = next else { break };
+            let s = self.para_els.get(&id)?;
+            if let Some(v) = s.prop(k) {
+                return Some(v);
+            }
+            next = s.prop("BasedOn").map(style_ref);
+        }
+        None
     }
 
     fn cell_style_ref(&self, reference: &str) -> String {
