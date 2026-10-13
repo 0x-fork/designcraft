@@ -156,7 +156,7 @@ fn embedded_fonts(d: &designcraft_doc::Document, warnings: &mut Vec<String>) -> 
         let face = db.face(&family, &style);
         if !face.family.eq_ignore_ascii_case(&family) {
             warnings.push(format!("font `{family} {style}` is not available; not embedded"));
-        } else if face.restricted_licence() {
+        } else if face.restricted_licence() || face.bitmap_only() {
             warnings.push(format!("font `{family} {style}`: its licence doesn't allow embedding; not embedded"));
         } else if face.data().starts_with(b"ttcf") {
             warnings.push(format!("font `{family} {style}` is part of a font collection; not embedded"));
@@ -809,6 +809,36 @@ mod text_tests {
         assert!(warnings.iter().any(|w| w.as_str().unwrap().contains("No Such Font Family")), "{warnings:?}");
         let html = s.execute("file.exportHtml", &json!({})).unwrap()["text"].as_str().unwrap().to_string();
         assert!(html.contains("\"Source Sans 3\", sans-serif;"));
+    }
+
+    /// A font whose licence allows embedding bitmaps only (fsType bit 9) is not packaged whole,
+    /// and a Semibold style asks for the Semibold face's weight, not Bold's.
+    #[test]
+    fn epub_embedding_follows_bitmap_only_licences_and_weights() {
+        use designcraft_fonts::testing::{font_with, with_fs_type};
+        const BITMAP: &str = "DocFont Epub Bitmap Only";
+        for fs_type in [0x0200, 0x0208] {
+            designcraft_fonts::FontDb::global()
+                .add_font(with_fs_type(font_with(&format!("{BITMAP} {fs_type:04x}"), &['W']).unwrap(), fs_type).unwrap());
+        }
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1})).unwrap();
+        for fs_type in [0x0200, 0x0208] {
+            let family = format!("{BITMAP} {fs_type:04x}");
+            s.execute("style.paragraph.create", &json!({"name": family, "chars": {"fontFamily": family, "fontStyle": "Regular"}})).unwrap();
+        }
+        s.execute("style.paragraph.create", &json!({"name": "Semi", "chars": {"fontFamily": "Source Sans 3", "fontStyle": "Semibold"}})).unwrap();
+        s.execute("frame.create", &json!({"rect": [72, 72, 400, 200], "content": "text", "text": "Words", "caret": false})).unwrap();
+        let r = s.execute("file.exportEpub", &json!({"embedFonts": true})).unwrap();
+        let mut z = unzip(r["base64"].as_str().unwrap());
+        let css = read(&mut z, "OEBPS/style.css");
+        assert!(!css.contains(&format!("@font-face {{ font-family: \"{BITMAP}")), "{css}");
+        let warnings = r["warnings"].to_string();
+        for fs_type in [0x0200, 0x0208] {
+            assert!(warnings.contains(&format!("{BITMAP} {fs_type:04x} Regular`: its licence doesn't allow embedding")), "{warnings}");
+        }
+        let semi = css.lines().find(|l| l.contains(".semi {")).unwrap_or_default();
+        assert!(semi.contains("font-weight: 600;"), "{css}");
     }
 
     #[test]
