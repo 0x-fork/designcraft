@@ -4425,6 +4425,51 @@ pub fn adjacent_row(l: &Line, x: f64, caret_y: f64, up: bool) -> Option<f64> {
 #[cfg(test)]
 mod tests;
 
+/// Type on a path: between the composed line (x along it, y as composed) and the frame's path
+/// space, as `path_glyphs` places the glyphs.
+pub struct PathTextMap {
+    warp: designcraft_geom::warp::PathWarp,
+    start: f64,
+    /// Line y that sits on the path (the alignment), and the line's baseline.
+    on: f64,
+    baseline: f64,
+}
+
+impl PathTextMap {
+    /// The map of `item` (type on a path) for its composed frame `ft`; None for other frames.
+    pub fn new(item: &designcraft_doc::Item, ft: &FrameText) -> Option<Self> {
+        let pt = item.text_frame()?.options.path.as_ref()?;
+        let warp = designcraft_geom::warp::PathWarp::new(&item.path.to_bezpath(), pt.flip);
+        let (on, baseline) = match ft.lines.first() {
+            Some(l) => (
+                match pt.align {
+                    designcraft_doc::PathAlign::Baseline => l.baseline,
+                    designcraft_doc::PathAlign::Ascender => l.baseline - l.ascent,
+                    designcraft_doc::PathAlign::Descender => l.baseline + l.descent,
+                    designcraft_doc::PathAlign::Center => l.baseline - (l.ascent - l.descent) / 2.0,
+                },
+                l.baseline,
+            ),
+            None => (0.0, 0.0),
+        };
+        Some(PathTextMap { warp, start: pt.start, on, baseline })
+    }
+
+    /// A point of the composed line, on the path: along it by x, across it by y.
+    pub fn to_path(&self, p: Point) -> Point {
+        match self.warp.at(self.start + p.x) {
+            Some((q, a)) => q + designcraft_geom::Vec2::new(-a.sin(), a.cos()) * (p.y - self.on),
+            None => p,
+        }
+    }
+
+    /// A point of the path space, on the composed line: how far along the path its nearest point
+    /// is, at the baseline (for hit testing).
+    pub fn to_line(&self, p: Point) -> Point {
+        Point::new(self.warp.nearest(p) - self.start, self.baseline)
+    }
+}
+
 /// Each visible glyph of a type-on-a-path frame placed on the path: its outline in frame space
 /// (grouped by run style).
 pub fn path_glyphs(
