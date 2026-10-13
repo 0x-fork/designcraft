@@ -2927,8 +2927,7 @@ mod gradient_stroke_tests {
         let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
         let mut p = crate::Session::new();
         p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
-        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "line.pdf", "x": 0, "y": 0, "width": 200}))
-            .unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "line.pdf", "x": 0, "y": 0, "width": 200})).unwrap();
         let pd = p.doc().unwrap().doc.clone();
         let placed = rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap();
         (screen, placed)
@@ -2948,9 +2947,8 @@ mod gradient_stroke_tests {
 
     #[test]
     fn a_linear_gradient_across_a_straight_line_paints_its_stroke_alike_on_screen_and_in_pdf() {
-        let (screen, pdf) = line_with_stroke_gradient(
-            json!({"angle": 90, "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}),
-        );
+        let (screen, pdf) =
+            line_with_stroke_gradient(json!({"angle": 90, "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}));
         let (s, p) = (screen.pixel(100, 60), pdf.pixel(100, 60));
         assert!(s[1] < 60 && s[0].max(s[2]) > 150, "screen: the stroke is painted, {s:?}");
         assert!((0..3).all(|i| s[i].abs_diff(p[i]) < 40), "screen {s:?}, pdf {p:?}");
