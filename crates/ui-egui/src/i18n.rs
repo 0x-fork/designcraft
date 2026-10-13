@@ -4155,6 +4155,7 @@ pub fn tr_context<'a>(lang: &str, s: &'a str, context: &str) -> &'a str {
         "uk" => uk::CONTEXT,
         "ru" => ru::CONTEXT,
         "cs" => cs::CONTEXT,
+        "pl" => pl::CONTEXT,
         "ja" => ja::CONTEXT,
         _ => return tr(lang, s),
     };
@@ -4494,6 +4495,12 @@ mod tests {
         assert_eq!(tr("pl", "Unknown label"), "Unknown label");
         assert_eq!(style_name("pl", "[Basic Paragraph]"), "[Podstawowy akapit]");
         assert_eq!(workspace_name("pl", "Essentials"), "Podstawowe");
+        // A table's columns and grid columns aren't a text frame's; a selection's group isn't the action.
+        assert_eq!(tr("pl", "Columns"), "Łamy");
+        assert_eq!(tr_context("pl", "Columns", "table"), "Kolumny");
+        assert_eq!(tr_context("pl", "Columns:", "grid"), "Łamy:");
+        assert_eq!(tr("pl", "Group"), "Grupuj");
+        assert_eq!(tr_context("pl", "Group", "selection"), "Grupa");
     }
 
     #[test]
