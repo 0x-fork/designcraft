@@ -468,7 +468,7 @@ fn color_json(c: &designcraft_color::Color) -> serde_json::Value {
     match *c {
         // Fractions: every component is within 0–1, so they're read back as fractions.
         Color::Cmyk { c, m, y, k } => json!({"c": c, "m": m, "y": y, "k": k}),
-        Color::Gray { k } => json!({"gray": k as f64 * 100.0}),
+        Color::Gray { k } => json!({"model": "gray", "k": k}),
         Color::Rgb { .. } => json!(c.to_hex()),
     }
 }
@@ -513,6 +513,25 @@ fn thumbnail(p: &egui::Painter, r: egui::Rect, g: &designcraft_color::Gradient, 
 enum RampSel {
     Stop(usize),
     Mid(usize),
+}
+
+/// A marker being dragged: what, where (0–1), off the panel (stops only).
+type RampDrag = (RampSel, f32, bool);
+
+/// The drag kept from the last frame, if it still names a marker of a gradient with `n` stops
+/// (the selection or its gradient may have changed since).
+fn live_drag(d: Option<RampDrag>, n: usize) -> Option<RampDrag> {
+    d.filter(|(h, _, _)| match *h {
+        RampSel::Stop(i) => i < n,
+        RampSel::Mid(i) => i.saturating_add(1) < n,
+    })
+}
+
+/// Sets `key` of stop `i` in `object.gradient` stops; nothing if there's no such stop.
+fn set_stop(stops: &mut [serde_json::Value], i: usize, key: &str, v: serde_json::Value) {
+    if let Some(o) = stops.get_mut(i).and_then(serde_json::Value::as_object_mut) {
+        o.insert(key.to_string(), v);
+    }
 }
 
 /// Gradient panel, laid out as InDesign's: thumbnail, Type, Location and Angle, Reverse, and the
@@ -575,8 +594,8 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                     if let Some(v) = crate::widgets::number(ui, "grad_loc", loc.filter(|_| is_gradient), "", 50.0, 3) {
                         let mut stops = stops_json(&g);
                         match sel {
-                            RampSel::Stop(i) => stops[i]["location"] = json!(v.clamp(0.0, 100.0)),
-                            RampSel::Mid(i) => stops[i]["midpoint"] = json!(v.clamp(13.0, 87.0)),
+                            RampSel::Stop(i) => set_stop(&mut stops, i, "location", json!(v.clamp(0.0, 100.0))),
+                            RampSel::Mid(i) => set_stop(&mut stops, i, "midpoint", json!(v.clamp(13.0, 87.0))),
                         }
                         send = Some(json!({"stops": stops}));
                     }
@@ -638,17 +657,16 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                     .map(|(i, _)| RampSel::Stop(i))
             }
         };
-        // A marker being dragged: what, where (0–1), off the panel (stops only).
-        let mut dragging: Option<(RampSel, f32, bool)> = ui.data(|d| d.get_temp(drag_id));
+        let mut dragging = live_drag(ui.data(|d| d.get_temp(drag_id)), g.stops.len());
         if resp.drag_started()
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(h) = hit(p)
+            && let Some(o) = match h {
+                RampSel::Stop(i) => g.stops.get(i).map(|s| s.offset),
+                RampSel::Mid(i) => g.stops.get(i).map(|s| s.midpoint),
+            }
         {
             sel = h;
-            let o = match h {
-                RampSel::Stop(i) => g.stops[i].offset,
-                RampSel::Mid(i) => g.stops[i].midpoint,
-            };
             dragging = Some((h, o, false));
         }
         if resp.dragged()
@@ -657,8 +675,10 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             dragging = Some(match h {
                 RampSel::Stop(_) => (h, o_of(p.x), p.y > area.bottom() + 16.0 && g.stops.len() > 2),
                 RampSel::Mid(i) => {
-                    let (a, b) = (g.stops[i].offset, g.stops[i + 1].offset);
-                    let m = if b - a > 1e-6 { ((o_of(p.x) - a) / (b - a)).clamp(0.13, 0.87) } else { 0.5 };
+                    let m = match (g.stops.get(i), g.stops.get(i + 1)) {
+                        (Some(a), Some(b)) if b.offset - a.offset > 1e-6 => ((o_of(p.x) - a.offset) / (b.offset - a.offset)).clamp(0.13, 0.87),
+                        _ => 0.5,
+                    };
                     (h, m, false)
                 }
             });
@@ -669,11 +689,13 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             let mut stops = stops_json(&g);
             match h {
                 RampSel::Stop(i) if off => {
-                    stops.remove(i);
+                    if i < stops.len() {
+                        stops.remove(i);
+                    }
                     sel = RampSel::Stop(0);
                 }
-                RampSel::Stop(i) => stops[i]["location"] = json!(o as f64 * 100.0),
-                RampSel::Mid(i) => stops[i]["midpoint"] = json!(o as f64 * 100.0),
+                RampSel::Stop(i) => set_stop(&mut stops, i, "location", json!(o as f64 * 100.0)),
+                RampSel::Mid(i) => set_stop(&mut stops, i, "midpoint", json!(o as f64 * 100.0)),
             }
             send = Some(json!({"stops": stops}));
         }
@@ -710,7 +732,7 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                     let mut rgb = [(r * 255.0) as u8, (gg * 255.0) as u8, (bb * 255.0) as u8];
                     if egui::color_picker::color_edit_button_srgb(ui, &mut rgb).changed() {
                         let mut stops = stops_json(&g);
-                        stops[i]["color"] = json!(format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]));
+                        set_stop(&mut stops, i, "color", json!(format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])));
                         send = Some(json!({"stops": stops}));
                     }
                 });
@@ -719,16 +741,16 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         // A swatch dropped from the Swatches panel: on a stop it colours that stop, elsewhere on
         // the ramp it's a new stop there.
         let drop_at = |p: egui::Pos2| match hit(egui::pos2(p.x, ramp.bottom() + 4.0)) {
-            Some(RampSel::Stop(i)) => (Some(i), g.stops[i].offset),
+            Some(RampSel::Stop(i)) => match g.stops.get(i) {
+                Some(s) => (Some(i), s.offset),
+                None => (None, o_of(p.x)),
+            },
             _ => (None, o_of(p.x)),
         };
         if resp.dnd_hover_payload::<SwatchDrag>().is_some()
             && let Some(p) = ui.ctx().pointer_hover_pos()
         {
-            let x = match drop_at(p) {
-                (Some(i), _) => x_of(g.stops[i].offset),
-                (None, o) => x_of(o),
-            };
+            let x = x_of(drop_at(p).1);
             painter.line_segment([egui::pos2(x, ramp.top() - 3.0), egui::pos2(x, ramp.bottom() + 14.0)], egui::Stroke::new(2.0, t.accent));
         }
         if let Some(sw) = resp.dnd_release_payload::<SwatchDrag>()
@@ -737,8 +759,8 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             let mut stops = stops_json(&g);
             match drop_at(p) {
                 (Some(i), _) => {
-                    stops[i]["swatch"] = json!(sw.0);
-                    if let Some(o) = stops[i].as_object_mut() {
+                    if let Some(o) = stops.get_mut(i).and_then(serde_json::Value::as_object_mut) {
+                        o.insert("swatch".to_string(), json!(sw.0));
                         o.remove("color");
                     }
                     sel = RampSel::Stop(i);
@@ -753,7 +775,10 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         // Diamonds.
         for i in 0..last {
             let x = match dragging {
-                Some((RampSel::Mid(j), m, _)) if j == i => x_of(g.stops[i].offset + (g.stops[i + 1].offset - g.stops[i].offset) * m),
+                Some((RampSel::Mid(j), m, _)) if j == i => match (g.stops.get(i), g.stops.get(i + 1)) {
+                    (Some(a), Some(b)) => x_of(a.offset + (b.offset - a.offset) * m),
+                    _ => ramp.left(),
+                },
                 _ => mid_x(i).unwrap_or(ramp.left()),
             };
             let (cy, r) = (ramp.top() - 6.0, 4.0);
@@ -789,7 +814,7 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 Some(v) => {
                     d.insert_temp(drag_id, v);
                 }
-                None => d.remove::<(RampSel, f32, bool)>(drag_id),
+                None => d.remove::<RampDrag>(drag_id),
             }
         });
     });
@@ -822,8 +847,11 @@ mod gradient_panel_tests {
     #[test]
     fn panel_edits_keep_cmyk_and_grey_stops() {
         let mut app = app_with_frame();
-        app.run("object.gradient", json!({"stops": [{"location": 0, "swatch": "C=0 M=100 Y=0 K=0"}, {"location": 100, "color": {"gray": 60}}]}))
-            .unwrap();
+        app.run(
+            "object.gradient",
+            json!({"stops": [{"location": 0, "swatch": "C=0 M=100 Y=0 K=0"}, {"location": 50, "color": {"gray": 60}}, {"location": 100, "color": {"model": "gray", "k": 0.01}}]}),
+        )
+        .unwrap();
         let g = gradient(&app).unwrap();
         // What the panel sends when a stop moves: the colours come back exactly.
         let mut stops = stops_json(&g);
@@ -833,6 +861,20 @@ mod gradient_panel_tests {
         assert_eq!(g.stops[0].color, Color::cmyk(0.0, 1.0, 0.0, 0.0));
         assert_eq!(g.stops[1].color, Color::gray(0.6));
         assert!((g.stops[1].offset - 0.8).abs() < 1e-6);
+        assert_eq!(g.stops[2].color, Color::gray(0.01), "a 1 % grey stays 1 %");
+    }
+
+    #[test]
+    fn a_drag_kept_from_a_longer_gradient_is_dropped() {
+        let d = |h| Some((h, 0.5, false));
+        assert_eq!(live_drag(d(RampSel::Stop(1)), 2), d(RampSel::Stop(1)));
+        assert_eq!(live_drag(d(RampSel::Stop(2)), 2), None);
+        assert_eq!(live_drag(d(RampSel::Mid(0)), 2), d(RampSel::Mid(0)));
+        assert_eq!(live_drag(d(RampSel::Mid(1)), 2), None);
+        assert_eq!(live_drag(d(RampSel::Mid(usize::MAX)), 2), None);
+        let mut stops = vec![json!({"location": 0})];
+        set_stop(&mut stops, 3, "location", json!(50));
+        assert_eq!(stops, vec![json!({"location": 0})]);
     }
 
     #[test]
