@@ -79,7 +79,12 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             egui::RichText::new(crate::i18n::tr(&app.ui.language, "Right-click: stroke, groups")).size(10.5).color(t.text_disabled),
         ));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons::button(ui, "plus", 20.0, false, crate::i18n::tr(&app.ui.language, "New Swatch")).clicked() {
+            // As InDesign's: the selection's colour or gradient becomes a swatch (a gradient made in
+            // the Gradient panel: "New Gradient Swatch"), a named one is duplicated; with nothing
+            // selected, a new colour.
+            if icons::button(ui, "plus", 20.0, false, crate::i18n::tr(&app.ui.language, "New Swatch")).clicked()
+                && app.run("swatch.new", json!({})).is_err()
+            {
                 let _ = app.run("swatch.create", json!({"color": {"c": 0, "m": 50, "y": 100, "k": 0}}));
             }
             crate::menus::menu_button(ui, "☰", |ui| {
