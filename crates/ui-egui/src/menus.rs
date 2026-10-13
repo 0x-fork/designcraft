@@ -2297,6 +2297,10 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
         crate::dialogs::open_document_setup(app);
         return;
     }
+    if params.is_null() && id == "toc.generate" {
+        crate::dialogs::open_toc(app);
+        return;
+    }
     if params.is_null() && id == "file.print" {
         crate::dialogs::open_print(app);
         return;

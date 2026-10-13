@@ -2458,8 +2458,13 @@ mod delete_tests {
             d.footnote_options.para_style = "Table Body".into();
             d.endnote_options.para_style = "Table Body".into();
             d.endnote_options.heading_style = "Table Body".into();
-            d.toc =
-                Some(Toc { story, title: "Contents".into(), entries: vec![TocEntry { style: "Table Body".into(), level: 1 }], page_numbers: false });
+            d.toc = Some(Toc {
+                story,
+                title: "Contents".into(),
+                entries: vec![TocEntry::new("Table Body", 1)],
+                page_numbers: false,
+                title_style: None,
+            });
             Ok(())
         })
         .unwrap();
