@@ -1,7 +1,8 @@
 //! Text frame auto-size (Text Frame Options › Auto-Size): frames grow and shrink to fit their text.
 //!
-//! [`apply`] runs after every undoable command (so the resize is part of the same undo step) and
-//! after IDML import. It measures each auto-size frame whose story, styles or own item changed,
+//! [`apply`] runs after every undoable command (so the resize is part of the same undo step). Opening
+//! a file leaves frames at the sizes it gives them: those were fitted to the document's own fonts,
+//! and a substitute font would otherwise move frames around text nobody edited. It measures each auto-size frame whose story, styles or own item changed,
 //! with the frame opened to [`MAX_SIDE`], and resizes it in its inner space around its reference
 //! point, so that point stays put in spread space whatever the frame's transform.
 //!
