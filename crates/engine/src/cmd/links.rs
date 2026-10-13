@@ -615,6 +615,40 @@ mod shared_asset_tests {
         assert_ne!(g.asset, missing);
         assert!(!dst.assets.contains_key(&g.asset));
     }
+
+    #[test]
+    fn pasted_missing_graphic_never_takes_an_asset_placed_later() {
+        use designcraft_doc::build::NewDocument;
+        use designcraft_doc::{Graphic, Item, ItemId, Shape, SpreadRef};
+        let mut src = Document::new(&NewDocument::default());
+        let mut dst = Document::new(&NewDocument::default());
+        // The source's missing id is ahead of the target's counter: the target would allocate it to its next image.
+        for _ in 0..50 {
+            src.alloc();
+        }
+        let missing = AssetId(src.alloc());
+        let iid = ItemId(src.alloc());
+        let mut it = Item::new(
+            iid,
+            src.default_layer(),
+            Shape::Rectangle,
+            designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(0.0, 0.0, 9.0, 9.0)),
+        );
+        it.content = Content::Graphic(Graphic {
+            asset: missing,
+            size: (4.0, 4.0),
+            xf: designcraft_geom::Affine::IDENTITY,
+            clip: None,
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [1.0; 4],
+            wrap: Default::default(),
+        });
+        src.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+        let ids = super::super::object::duplicate_from(&mut dst, &src, &[iid], SpreadRef::Doc(0), designcraft_geom::Vec2::ZERO).unwrap();
+        let g = dst.item(ids[0]).and_then(|i| i.graphic()).unwrap().asset;
+        assert!((0..100).all(|_| AssetId(dst.alloc()) != g), "a later image in the target takes the pasted graphic's id");
+    }
 }
 
 #[cfg(test)]

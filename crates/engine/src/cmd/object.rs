@@ -948,15 +948,11 @@ pub fn duplicate_from(dst: &mut Document, src: &Document, ids: &[ItemId], to: Sp
     Ok(out)
 }
 
-/// The id to reference in `dst` for asset `id` of `src`. When `src` lacks the asset (a missing graphic), an id that `dst`
-/// already uses for a different asset is swapped for a fresh unused one so the reference stays missing instead of showing
-/// an unrelated image.
+/// The id to reference in `dst` for asset `id` of `src`. When `src` lacks the asset (a missing graphic), the reference
+/// gets a fresh id from `dst`, so it stays missing: `src`'s id may already name, or later be allocated to, another
+/// image in `dst`.
 fn adopt_or_dangle(dst: &mut Document, src: &Document, id: AssetId) -> AssetId {
-    match dst.adopt_asset(src, id) {
-        Some(a) => a,
-        None if dst.assets.contains_key(&id) => AssetId(dst.alloc()),
-        None => id,
-    }
+    dst.adopt_asset(src, id).unwrap_or_else(|| AssetId(dst.alloc()))
 }
 
 fn renumber(dst: &mut Document, src: &Document, it: &mut Item, stories: &mut HashMap<StoryId, StoryId>) {
