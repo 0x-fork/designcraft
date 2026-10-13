@@ -480,39 +480,9 @@ impl Renderer {
         }
         let xf = parent * it.xf;
         let vb = xf.transform_rect_bbox(it.inner_bounds()).inflate(it.stroke.extent() + 2.0, it.stroke.extent() + 2.0);
-        if it.has_nested_items() {
-            // A frame with items pasted into it: fill, the items clipped to the frame, stroke.
-            if !rect_overlaps(vb, f.visible) {
-                return;
-            }
-            let bp = if it.corners.is_none() { it.path.to_bezpath() } else { corners::apply(&it.path, &it.corners) };
-            let layered = it.opacity < 0.999 || it.blend != DcBlend::Normal;
-            if layered {
-                ctx.set_transform(Affine::IDENTITY);
-                ctx.push_layer(None, Some(blend_mode(it.blend)), Some(it.opacity), None, None);
-            }
-            if !it.fill.is_none() {
-                ctx.set_transform(f.view * xf);
-                if set_fill_paint(ctx, f.doc, &it.fill, bp.bounding_box()) {
-                    ctx.fill_path(&bp);
-                }
-                ctx.reset_paint_transform();
-            }
-            ctx.set_transform(f.view * xf);
-            ctx.push_clip_layer(&bp);
-            for c in it.children() {
-                self.draw_item(ctx, f, c, xf, page);
-            }
-            ctx.pop_layer();
-            if !it.stroke.is_none() {
-                self.draw_stroke(ctx, f, it, &bp, xf);
-            }
-            if layered {
-                ctx.pop_layer();
-            }
-            return;
-        }
-        if !it.children().is_empty() {
+        // A frame with items pasted into it draws like any other object (draw_body: fill, the items
+        // clipped to the frame, stroke), so its effects apply to all of it.
+        if !it.children().is_empty() && !it.has_nested_items() {
             // Groups: children carry their own transforms relative to the group.
             // Isolate Blending / Knockout: the group is its own layer (blend modes stop at it).
             let layered = it.opacity < 0.999 || it.blend != DcBlend::Normal || it.isolate || it.knockout;
@@ -624,6 +594,15 @@ impl Renderer {
                 self.draw_graphic(ctx, f, g, xf);
                 if !it.pdf_hidden_layers.is_empty() {
                     HIDDEN_LAYERS.with(|h| h.borrow_mut().clear());
+                }
+                ctx.pop_layer();
+            }
+            // Items pasted into the frame, clipped by it.
+            Content::Group { items } if it.has_nested_items() => {
+                ctx.set_transform(f.view * xf);
+                ctx.push_clip_layer(bp);
+                for c in items {
+                    self.draw_item(ctx, f, c, xf, page);
                 }
                 ctx.pop_layer();
             }
