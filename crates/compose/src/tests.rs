@@ -2929,3 +2929,47 @@ fn empty_paragraphs_get_no_bullet_or_number() {
         assert_eq!(list_labels(&cs, LABEL_CHARS), ["1.", "", "2.", ""], "list `{name}`");
     }
 }
+
+#[test]
+fn cache_recomposes_when_the_baseline_grid_changes() {
+    let para = ParaAttrs { grid_align: Some(GridAlign::AllLines), ..Default::default() };
+    let (mut d, sid, _) = doc_with(LOREM, Rect::new(0.0, 0.0, 200.0, 600.0), para);
+    let cache = Cache::new();
+    let a = cache.get(&d, sid, None);
+    d.settings.baseline_grid.increment = 30.0;
+    let b = cache.get(&d, sid, None);
+    assert!(!Arc::ptr_eq(&a, &b));
+    let (la, lb) = (&a.frames[0].lines[1], &b.frames[0].lines[1]);
+    assert!((la.baseline - lb.baseline).abs() > 1.0, "{} {}", la.baseline, lb.baseline);
+}
+
+#[test]
+fn cache_recomposes_when_a_wrap_layer_is_hidden() {
+    let (mut d, sid, _) = doc_with(&[LOREM; 2].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
+    let lid = d.default_layer();
+    let id = ItemId(d.alloc());
+    let mut it =
+        designcraft_doc::Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(0.0, 0.0, 120.0, 60.0)));
+    it.wrap.mode = WrapMode::BoundingBox;
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    let cache = Cache::new();
+    let a = cache.get(&d, sid, None);
+    assert!(a.frames[0].lines[0].x0 >= 120.0 - 1e-6);
+    d.layer_mut(lid).unwrap().visible = false;
+    let b = cache.get(&d, sid, None);
+    assert!(!Arc::ptr_eq(&a, &b));
+    assert!(b.frames[0].lines[0].x0 < 1.0, "{}", b.frames[0].lines[0].x0);
+}
+
+#[test]
+fn cache_recomposes_page_numbers_when_a_section_is_renumbered() {
+    let text = story::PAGE_NUMBER.to_string();
+    let (mut d, sid, _) = doc_with(&text, Rect::new(0.0, 0.0, 300.0, 100.0), ParaAttrs::default());
+    let cache = Cache::new();
+    let a = cache.get(&d, sid, None);
+    assert_eq!(a.frames[0].lines[0].glyphs.len(), 1);
+    d.sections[0].start_number = Some(1000);
+    let b = cache.get(&d, sid, None);
+    assert!(!Arc::ptr_eq(&a, &b));
+    assert_eq!(b.frames[0].lines[0].glyphs.len(), 4);
+}
