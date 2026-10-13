@@ -99,14 +99,7 @@ impl NativeMenu {
             })
             .collect();
         let recent = recent.map(|submenu| RecentMenu { submenu, shown: Vec::new(), ids: Vec::new(), separator: None });
-        Self {
-            _menu: menu,
-            items,
-            events,
-            last_refresh: 0.0,
-            shown_for: (app.ui.language.clone(), designcraft_ui_egui::cjk_features(app)),
-            recent,
-        }
+        Self { _menu: menu, items, events, last_refresh: 0.0, shown_for: (app.ui.language.clone(), designcraft_ui_egui::cjk_features(app)), recent }
     }
 
     /// Put the current recent files at the top of File › Open Recent when they changed.
