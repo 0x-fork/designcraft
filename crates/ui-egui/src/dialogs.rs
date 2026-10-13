@@ -4833,10 +4833,10 @@ mod tests {
         drag(&mut h, body, body + vec2(-150.0, 80.0));
         assert_eq!(rect(&h), moved, "a drag in the body leaves the dialog in place");
 
-        // The dialog stays inside the window.
+        // The title row stays inside the top edge.
         let title = h.get_by_label("Create Table").rect().center();
         drag(&mut h, title, title - vec2(0.0, 1000.0));
-        assert!(rect(&h).top() >= 0.0, "{:?}", rect(&h));
+        assert!(rect(&h).top().abs() < 1.0, "{:?}", rect(&h));
 
         // Opened again, the dialog starts centred.
         h.state_mut().ui.dialog = None;
@@ -4844,5 +4844,10 @@ mod tests {
         h.state_mut().ui.dialog = Some(Dialog::new("insertTable", Value::Null));
         h.run_steps(4);
         assert!((rect(&h).center() - centred.center()).length() < 1.0, "{:?}", rect(&h));
+
+        // Past the left edge, about 100 px of the title row stays inside.
+        let title = h.get_by_label("Create Table").rect().center();
+        drag(&mut h, title, title - vec2(900.0, 0.0));
+        assert!((rect(&h).right() - 100.0).abs() < 2.0, "{:?}", rect(&h));
     }
 }
