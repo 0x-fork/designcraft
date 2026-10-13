@@ -655,6 +655,12 @@ fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &
         let (fo, eo) = (&mut d.footnote_options, &mut d.endnote_options);
         [&mut fo.para_style, &mut eo.para_style, &mut eo.heading_style].into_iter().for_each(rename);
         d.toc.iter_mut().flat_map(|t| t.entries.iter_mut().map(|e| &mut e.style)).for_each(rename);
+        for t in d.toc.iter_mut() {
+            let formats = t.entries.iter_mut().map(|e| &mut e.entry_style).chain([&mut t.title_style]);
+            for r in formats.filter(|r| r.as_deref() == Some(from)) {
+                *r = Some(to.to_string());
+            }
+        }
     } else {
         for s in &mut st.character {
             if s.name == from {
@@ -2461,9 +2467,9 @@ mod delete_tests {
             d.toc = Some(Toc {
                 story,
                 title: "Contents".into(),
-                entries: vec![TocEntry::new("Table Body", 1)],
+                entries: vec![TocEntry { entry_style: Some("Table Body".into()), ..TocEntry::new("Table Body", 1) }],
                 page_numbers: false,
-                title_style: None,
+                title_style: Some("Table Body".into()),
             });
             Ok(())
         })
