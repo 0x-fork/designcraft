@@ -1034,6 +1034,9 @@ impl DesignApp {
             ctx.set_zoom_factor(scale);
         }
         if !self.styled {
+            // The UI scale is a preference (applied above); egui's own Cmd+Plus/Minus/0 would rescale the
+            // whole window instead of the canvas, only to be reset next frame.
+            ctx.options_mut(|o| o.zoom_with_keyboard = false);
             self.fonts_system = theme::install_fonts(ctx, &self.ui.language);
             self.fonts_lang = self.ui.language.clone();
             self.styled = true;
