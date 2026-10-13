@@ -122,13 +122,15 @@ fn to_srgb(src: &Profile, options: TransformOptions) -> Option<Arc<Transform>> {
 }
 
 /// Convert interleaved pixels (`src_stride` / `dst_stride` values per pixel, colour channels
-/// first; the rest of `dst` is left alone). `false` when the strides don't fit the transform.
+/// first; the rest of `dst` is left alone). `false` when the buffers don't fit the transform.
 fn convert(x: &Transform, src: &[u8], src_stride: usize, dst: &mut [u8], dst_stride: usize) -> bool {
-    if x.inputs() == 0 || x.inputs() > src_stride || x.outputs() == 0 || x.outputs() > dst_stride {
-        return false;
+    match x.convert_u8(src, src_stride, dst, dst_stride, false) {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!("image ICC conversion: {e}; profile ignored");
+            false
+        }
     }
-    x.convert_u8(src, src_stride, dst, dst_stride, false);
-    true
 }
 
 /// Whether an RGB transform leaves every value within 1 of where it was (an sRGB profile): the

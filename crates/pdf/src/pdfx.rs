@@ -46,7 +46,7 @@ pub fn make_pdfx4(pdf: &[u8], title: &str) -> Option<Vec<u8>> {
         out.extend_from_slice(b"\nendobj\n");
     };
     // The output profile and the output intent.
-    let intent = designcraft_color::cms::active().output_intent();
+    let intent = designcraft_color::cms::active().output_intent().ok()?;
     let (icc_id, oi_id) = (size, size + 1);
     let mut s = format!("<</N 4/Length {}>>\nstream\n", intent.icc.len()).into_bytes();
     s.extend_from_slice(&intent.icc);

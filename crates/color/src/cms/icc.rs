@@ -53,7 +53,7 @@ fn eval(x: &Transform, src: &[f32], outputs: usize) -> Option<Vec<f32>> {
     }
     let src: Vec<f32> = src.iter().map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }).collect();
     let mut out = vec![0.0f32; outputs];
-    x.eval(&src, &mut out);
+    x.eval(&src, &mut out).ok()?;
     out.iter().all(|o| o.is_finite()).then(|| out.into_iter().map(|v| v.clamp(0.0, 1.0)).collect())
 }
 
@@ -118,19 +118,9 @@ impl IccProfile {
         eval3(&*self.to_xf(intent, bpc)?, &src)
     }
 
-    /// Device values of the medium's white: no ink, or full RGB / grey.
-    fn device_white(&self) -> Vec<f32> {
-        vec![if self.kind == ProfileKind::Cmyk { 0.0 } else { 1.0 }; self.channels()]
-    }
-
-    /// sRGB → device values. White is the medium's white (no ink) in every intent but absolute
-    /// colorimetric, exactly: craft-cms's exact evaluation leaves a few tenths of a percent of
-    /// ink there.
+    /// sRGB → device values.
     pub fn from_srgb(&self, rgb: [f32; 3], intent: Intent, bpc: bool) -> Option<Vec<f32>> {
         let x = self.inverse_xf(intent, bpc)?;
-        if intent != Intent::AbsoluteColorimetric && rgb.iter().all(|v| *v >= 1.0) {
-            return Some(self.device_white());
-        }
         eval(&x, &rgb, self.channels())
     }
 
@@ -148,9 +138,6 @@ impl IccProfile {
     /// Lab (D50) → device values with `intent`.
     pub fn from_lab(&self, lab: Lab, intent: Intent, bpc: bool) -> Option<Vec<f32>> {
         let x = slot(&self.from_lab, intent, bpc).get_or_init(|| build(Builtin::LabD50.profile(), &self.profile, intent, bpc)).clone()?;
-        if intent != Intent::AbsoluteColorimetric && lab.l >= 100.0 && lab.a.abs() < 1e-3 && lab.b.abs() < 1e-3 {
-            return Some(self.device_white());
-        }
         eval(&x, &[lab.l / 100.0, (lab.a + 128.0) / 255.0, (lab.b + 128.0) / 255.0], self.channels())
     }
 

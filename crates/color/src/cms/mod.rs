@@ -327,8 +327,8 @@ impl Cms {
     pub fn cmyk_icc_profile(&self) -> Option<Arc<craft_cms::Profile>> {
         match &self.cmyk {
             CmykSpace::Generic(_) => {
-                static P: OnceLock<Arc<craft_cms::Profile>> = OnceLock::new();
-                Some(P.get_or_init(|| Arc::new(icc_out::generic_cmyk_profile().clone())).clone())
+                static P: OnceLock<Option<Arc<craft_cms::Profile>>> = OnceLock::new();
+                P.get_or_init(|| icc_out::generic_cmyk_profile().ok().map(|p| Arc::new(p.clone()))).clone()
             }
             CmykSpace::Device => None,
             CmykSpace::Icc(p) => Some(p.profile().clone()),
@@ -337,16 +337,16 @@ impl Cms {
 
     /// The PDF/X output intent for the working CMYK space. Device CMYK has no profile and is
     /// described by the Generic CMYK one.
-    pub fn output_intent(&self) -> OutputIntent {
-        match &self.cmyk {
+    pub fn output_intent(&self) -> Result<OutputIntent, CmsError> {
+        Ok(match &self.cmyk {
             CmykSpace::Icc(p) if p.name == COATED_FOGRA39 => {
                 OutputIntent { icc: Cow::Borrowed(craft_cms::builtin::COATED_FOGRA39_ICC), identifier: "FOGRA39", condition: COATED_FOGRA39.into() }
             }
             CmykSpace::Icc(p) => OutputIntent { icc: Cow::Owned(p.profile().to_bytes().to_vec()), identifier: "Custom", condition: p.name.clone() },
             CmykSpace::Generic(_) | CmykSpace::Device => {
-                OutputIntent { icc: Cow::Borrowed(icc_out::generic_cmyk_icc()), identifier: "Custom", condition: GENERIC_CMYK.into() }
+                OutputIntent { icc: Cow::Borrowed(icc_out::generic_cmyk_icc()?), identifier: "Custom", condition: GENERIC_CMYK.into() }
             }
-        }
+        })
     }
 
     /// Working RGB → display sRGB.

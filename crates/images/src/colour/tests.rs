@@ -184,7 +184,7 @@ fn cmyk_uses_its_own_profile_before_the_working_space() {
     assert_eq!(img.get_pixel(0, 0).0, [0, 255, 255, 255]);
     assert_eq!(img.get_pixel(1, 0).0, [0, 0, 0, 128]);
     // An embedded profile wins over it.
-    let icc = cms::icc_out::generic_cmyk_icc();
+    let icc = cms::icc_out::generic_cmyk_icc().unwrap();
     let img = to_display_rgba(Pixels::Cmyk(raster()), Some(icc), &device).unwrap();
     assert_eq!(img.get_pixel(0, 0).0, shown([255, 0, 0, 0], &DisplayColour::of(&generic(true))));
     assert_eq!(img.get_pixel(1, 0).0[3], 128, "alpha kept");
@@ -227,7 +227,7 @@ fn gray_with_an_embedded_profile_is_converted() {
 fn unusable_profiles_leave_the_pixels_alone() {
     let px = [64, 192, 64, 255];
     let adobe = adobe_rgb_icc();
-    let cmyk = cms::icc_out::generic_cmyk_icc().to_vec();
+    let cmyk = cms::icc_out::generic_cmyk_icc().unwrap().to_vec();
     let mut huge = adobe.clone();
     huge.resize(MAX_ICC_BYTES + 1, 0);
     let mut lying = adobe.clone();

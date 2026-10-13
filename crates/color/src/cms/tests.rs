@@ -77,13 +77,13 @@ fn saved_cmyk_names_still_load() {
 
 #[test]
 fn output_intent_follows_the_working_cmyk_space() {
-    let fogra = cms().output_intent();
+    let fogra = cms().output_intent().unwrap();
     assert_eq!((fogra.identifier, fogra.condition.as_str()), ("FOGRA39", COATED_FOGRA39));
     assert_eq!(&*fogra.icc, craft_cms::builtin::COATED_FOGRA39_ICC);
     for name in [GENERIC_CMYK, DEVICE_CMYK] {
-        let g = Cms::new(&ColorSettings { cmyk: name.into(), ..Default::default() }).unwrap().output_intent();
+        let g = Cms::new(&ColorSettings { cmyk: name.into(), ..Default::default() }).unwrap().output_intent().unwrap();
         assert_eq!((g.identifier, g.condition.as_str()), ("Custom", GENERIC_CMYK), "{name}");
-        assert_eq!(&*g.icc, icc_out::generic_cmyk_icc());
+        assert_eq!(&*g.icc, icc_out::generic_cmyk_icc().unwrap());
     }
 }
 
@@ -91,6 +91,9 @@ fn output_intent_follows_the_working_cmyk_space() {
 fn paper_white_and_rich_black() {
     let c = cms();
     assert_eq!(c.srgb_to_cmyk([1.0, 1.0, 1.0], Intent::RelativeColorimetric), [0.0; 4]);
+    for intent in [Intent::Perceptual, Intent::RelativeColorimetric, Intent::Saturation] {
+        assert_eq!(c.lab_to_cmyk(lab::Lab::new(100.0, 0.0, 0.0), intent), [0.0; 4], "{intent:?}");
+    }
     let k = c.srgb_to_cmyk([0.0, 0.0, 0.0], Intent::RelativeColorimetric);
     assert!(k[3] > 0.8, "black generation puts most of the black in K: {k:?}");
     assert!(k.iter().sum::<f32>() <= 3.3 + 1e-3, "Coated FOGRA39 total ink limit (330 %): {k:?}");
