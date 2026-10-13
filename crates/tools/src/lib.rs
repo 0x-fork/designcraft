@@ -314,6 +314,14 @@ pub enum Overlay {
         b: Point,
         label: String,
     },
+    /// A page selected with the Page tool (canvas rect): its outline and eight handles.
+    PageHandles(Rect),
+    /// A small tag whose bottom-left is at `p` (the Page tool's liquid page rule; English, the UI
+    /// translates it).
+    Tag {
+        p: Point,
+        text: String,
+    },
 }
 
 /// Correction from a snap, in spread coordinates for `delta`.
@@ -400,7 +408,7 @@ pub fn create(id: &str) -> Box<dyn Tool> {
         "hand" => Box::new(nav::HandTool::default()),
         "placeGun" => Box::new(nav::PlaceGun::default()),
         "zoom" => Box::new(nav::ZoomTool::default()),
-        "page" => Box::new(nav::PageTool),
+        "page" => Box::new(nav::PageTool::default()),
         "typeOnPath" => Box::new(nav::PathTypeTool),
         "gap" => Box::new(nav::GapTool::default()),
         "contentCollector" => Box::new(nav::ConveyorTool::new(false)),
