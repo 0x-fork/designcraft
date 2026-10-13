@@ -452,6 +452,16 @@ pub struct Asset {
     pub page: u32,
 }
 
+impl Asset {
+    /// A raster image (PNG, JPEG, GIF, WebP, TIFF, BMP, PSD), as opposed to a PDF, EPS or SVG.
+    pub fn is_raster(&self) -> bool {
+        matches!(
+            self.mime.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/tiff" | "image/bmp" | "image/vnd.adobe.photoshop"
+        )
+    }
+}
+
 fn is_zero(v: &u32) -> bool {
     *v == 0
 }

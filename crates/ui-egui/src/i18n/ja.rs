@@ -428,6 +428,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Knockout Group", "グループの抜き"),
     ("Object:", "オブジェクト:"),
     ("Group:", "グループ:"),
+    ("Sample Color (Eyedropper)", "カラーを抽出 (スポイト)"),
     ("Apply Condition", "条件を適用"),
     ("Apply Parent to Pages…", "ページに親ページを適用…"),
     ("ArtCraft App Page…", "ArtCraft アプリページ…"),
