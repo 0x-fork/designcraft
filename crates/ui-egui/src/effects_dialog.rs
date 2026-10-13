@@ -161,16 +161,15 @@ fn num(d: &Dialog, path: &[&str]) -> f64 {
 }
 
 fn set(d: &mut Dialog, path: &[&str], value: Value) {
+    let Some((last, parents)) = path.split_last() else { return };
     let Some(mut v) = d.fields.get_mut("fx") else { return };
-    for k in &path[..path.len() - 1] {
+    for k in parents {
         if !v[*k].is_object() {
             v[*k] = json!({});
         }
         v = &mut v[*k];
     }
-    if let Some(last) = path.last() {
-        v[*last] = value;
-    }
+    v[*last] = value;
 }
 
 /// A distance in the document's unit (stored in points).
@@ -567,6 +566,15 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setting_an_empty_path_changes_nothing() {
+        let mut d = Dialog::new(ID, json!({"fx": {"dropShadow": {"distance": 7.0}}}));
+        set(&mut d, &[], json!(1));
+        assert_eq!(d.fields.get("fx"), Some(&json!({"dropShadow": {"distance": 7.0}})));
+        set(&mut d, &["dropShadow", "size"], json!(3.0));
+        assert_eq!(num(&d, &["dropShadow", "size"]), 3.0);
+    }
 
     fn app_with_frame() -> (DesignApp, u64) {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
