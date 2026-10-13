@@ -67,6 +67,9 @@ fn saved_cmyk_names_still_load() {
     // The names of the profiles the built-in stands in for show the same colours.
     let adobe = Cms::new(&ColorSettings { cmyk: "Coated FOGRA39 (ISO 12647-2:2004)".into(), ..Default::default() }).unwrap();
     assert_eq!(shown(&adobe, [0.0, 50.0, 100.0, 0.0]), shown(&cms(), [0.0, 50.0, 100.0, 0.0]));
+    // A related press condition with a different ink limit has no stand-in.
+    let iso300 = ColorSettings { cmyk: "ISO Coated v2 300% (ECI)".into(), ..Default::default() };
+    assert!(matches!(Cms::new(&iso300), Err(CmsError::UnknownProfile(_))));
     // A name that isn't available falls back to the default, keeping the other settings.
     let saved = ColorSettings { rgb: ADOBE_RGB.into(), cmyk: "Some Press (gone)".into(), bpc: false, ..Default::default() };
     assert!(Cms::new(&saved).is_err());

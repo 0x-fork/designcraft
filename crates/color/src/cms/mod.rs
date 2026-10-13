@@ -228,7 +228,7 @@ fn cmyk_space(name: &str) -> Result<CmykSpace, CmsError> {
             Some(p) if p.kind == ProfileKind::Cmyk => Ok(CmykSpace::Icc(p)),
             Some(_) => Err(CmsError::Unsupported(format!("{name} is not a CMYK profile"))),
             // Names of the profiles the built-in stands in for (Coated FOGRA39 (ISO 12647-2:2004), ISO Coated v2 (ECI) …).
-            None if craft_cms::Builtin::from_profile_name(name) == Some(craft_cms::Builtin::CoatedFogra39) => Ok(default_cmyk()),
+            None if craft_cms::Builtin::stand_in_for(name) == Some(craft_cms::Builtin::CoatedFogra39) => Ok(default_cmyk()),
             None => Err(CmsError::UnknownProfile(name.into())),
         },
     }

@@ -811,7 +811,7 @@ dependencies = [
 [[package]]
 name = "craft-cms"
 version = "0.1.0"
-source = "git+https://github.com/aiongg/craft-libs.git?rev=ace3622d427387cb197e7997ce116241ea290ed9#ace3622d427387cb197e7997ce116241ea290ed9"
+source = "git+https://github.com/aiongg/craft-libs.git?rev=fea1712934921c5718fbcf5fef8928d020354ad1#fea1712934921c5718fbcf5fef8928d020354ad1"
 dependencies = [
  "rayon",
 ]
