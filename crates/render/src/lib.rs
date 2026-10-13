@@ -220,8 +220,13 @@ pub struct Renderer {
     /// Composed stories looked up during the current render.
     stories: HashMap<(StoryId, Option<usize>), Arc<ComposedStory>>,
     cmyk_view: Option<blendspace::CachedView>,
+    /// Whether the last render ran the CMYK ink passes (only then is its view worth keeping).
+    cmyk_ran: bool,
     #[cfg(test)]
     cmyk_passes: usize,
+    /// Pixels the last ink pass covered (tests).
+    #[cfg(test)]
+    cmyk_pass_pixels: usize,
     pub threads: u16,
     pub stats: FrameStats,
 }
@@ -268,8 +273,11 @@ impl Renderer {
             glyphs: text::GlyphCache::default(),
             stories: HashMap::new(),
             cmyk_view: None,
+            cmyk_ran: false,
             #[cfg(test)]
             cmyk_passes: 0,
+            #[cfg(test)]
+            cmyk_pass_pixels: 0,
             threads: default_threads(),
             stats: FrameStats::default(),
         }
@@ -309,11 +317,10 @@ impl Renderer {
         }
         // Release the old snapshot before rendering an edited document or resized viewport.
         self.cmyk_view = None;
+        self.cmyk_ran = false;
         let image = self.render_uncached(doc, cache, spreads, width, height, view, opts);
-        if opts.blend_space_view
-            && doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk
-            && image.pixels.len() <= blendspace::CachedView::MAX_BYTES
-        {
+        // Kept only when the ink passes ran: other views render at their usual cost anyway.
+        if self.cmyk_ran && image.pixels.len() <= blendspace::CachedView::MAX_BYTES {
             self.cmyk_view = Some(blendspace::CachedView::new(doc, spreads, view, opts, &image, self.stats, self.threads));
         }
         self.stats.micros = now().saturating_sub(start);

@@ -11,7 +11,7 @@
 use crate::{Frame, Placed, RenderOptions, Rendered, Renderer};
 use designcraft_color::BlendMode as DcBlend;
 use designcraft_doc::{Document, Item, SpreadRef};
-use designcraft_geom::{Affine, Rect};
+use designcraft_geom::{Affine, Rect, Shape};
 use vello_cpu::{RenderContext, peniko};
 
 /// At most one viewport, capped at 64 MiB. The snapshot shares the document's large Arcs;
@@ -280,30 +280,108 @@ fn srgb_in(table: &[[f32; 3]], cmyk: [f32; 4]) -> [f32; 3] {
 }
 
 impl Renderer {
-    /// Two channel passes across the viewport, including bleed and pasteboard. Paper has
-    /// already been painted in `ctx`; it must never be a blend backdrop.
+    /// The view pixels the spread's transparency can change: the union of its transparent
+    /// objects (opacity, blend, effects, knockout, also nested or anchored) with their effects'
+    /// reach. None: the whole view (a transparent parent-page item, placed through the parent
+    /// page). Empty: nothing transparent is visible.
+    fn transparent_area(&self, f: &Frame, sr: SpreadRef) -> Option<Rect> {
+        let doc = f.doc;
+        let sp = doc.spread(sr)?;
+        let visible = |item: &Item| doc.layer(item.layer).is_some_and(|l| l.visible && (!f.opts.printing_only || l.printable));
+        let transparent = |item: &Item| {
+            let mut t = false;
+            inspect_item(doc, item, f.opts, 0, &mut t);
+            t
+        };
+        if let SpreadRef::Doc(si) = sr {
+            let first = doc.first_page_of_spread(si);
+            for (pi, page) in sp.pages.iter().enumerate() {
+                if !page.show_parent_items {
+                    continue;
+                }
+                let Some((ppi, _)) = doc.parent_page_for(first.saturating_add(pi)) else { continue };
+                if doc
+                    .parents
+                    .get(ppi)
+                    .is_some_and(|parent| parent.items.iter().any(|it| visible(it) && !page.overridden.contains(&it.id) && transparent(it)))
+                {
+                    return None;
+                }
+            }
+        }
+        // What an object can paint on the spread: its bounds with its (and its children's)
+        // strokes and effects.
+        let reach = |it: &Item| {
+            let mut o: f64 = 0.0;
+            it.walk(&mut |c| o = o.max(crate::fx::outset(c) + c.stroke.extent()));
+            it.bounds().inflate(o + 2.0, o + 2.0)
+        };
+        let items: Vec<(Rect, bool)> = sp.items.iter().filter(|it| visible(it)).map(|it| (reach(it), transparent(it))).collect();
+        let mut area: Option<Rect> = None;
+        for (r, _) in items.iter().filter(|(_, t)| *t) {
+            area = Some(area.map_or(*r, |a| a.union(*r)));
+        }
+        // Objects the area touches join it whole, so none is drawn partly through the ink passes
+        // and partly through the ordinary drawing (their colour conversions differ slightly).
+        let Some(mut area) = area else { return Some(Rect::ZERO) };
+        for _ in 0..items.len() {
+            let grown = items.iter().filter(|(r, _)| r.intersect(area).area() > 0.0).fold(area, |a, (r, _)| a.union(*r));
+            if grown == area {
+                break;
+            }
+            area = grown;
+        }
+        Some(f.view.transform_rect_bbox(area))
+    }
+
+    /// The spread with its transparency blended in CMYK. Paper has already been painted in `ctx`;
+    /// it must never be a blend backdrop. Only the area transparent objects can change takes the
+    /// two ink passes (C/M/Y complements, then K); the rest of the view is drawn once, as usual.
     pub(crate) fn draw_cmyk_spread(&mut self, ctx: &mut RenderContext, f: &Frame, sr: SpreadRef) {
         let (w, h) = (ctx.width(), ctx.height());
+        let view = Rect::new(0.0, 0.0, w as f64, h as f64);
+        let area = self.transparent_area(f, sr).unwrap_or(view);
+        let area = Rect::new(area.x0.floor() - 1.0, area.y0.floor() - 1.0, area.x1.ceil() + 1.0, area.y1.ceil() + 1.0).intersect(view);
+        let rgb = RenderOptions { paper: false, background: None, page_shadow: false, blend_space_view: false, ..f.opts.clone() };
+        if area.width() < 1.0 || area.height() < 1.0 {
+            // Nothing transparent in view: the ordinary drawing is exact.
+            self.draw_spread(ctx, &Frame { opts: &rgb, ..*f }, sr);
+            return;
+        }
+        // Outside the area: the ordinary drawing (an even-odd clip of the view minus the area).
+        if area != view {
+            let mut outside = view.to_path(0.1);
+            outside.extend(area.to_path(0.1).iter());
+            ctx.set_transform(Affine::IDENTITY);
+            ctx.set_fill_rule(peniko::Fill::EvenOdd);
+            ctx.push_clip_layer(&outside);
+            ctx.set_fill_rule(peniko::Fill::NonZero);
+            self.draw_spread(ctx, &Frame { opts: &rgb, ..*f }, sr);
+            ctx.pop_layer();
+        }
+        // Inside it: the two ink passes, with the render threads, over just the area.
+        let (aw, ah) = (area.width() as u16, area.height() as u16);
+        let shifted = Affine::translate((-area.x0, -area.y0)) * f.view;
         let stats = self.stats;
+        let threads = self.threads;
         let mut pass = |plate| {
-            let opts =
-                RenderOptions { paper: false, background: None, page_shadow: false, blend_space_view: false, plate: Some(plate), ..f.opts.clone() };
+            let opts = RenderOptions { plate: Some(plate), ..rgb.clone() };
             crate::PLATE.with(|p| p.set(opts.plate));
-            // Render filter layers directly in both ink passes, keeping their coverage on
-            // the same single-threaded path even when the outer viewport uses render workers.
-            let mut off = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
-            self.draw_spread(&mut off, &Frame { opts: &opts, mt: false, ..*f }, sr);
+            let mut off = RenderContext::new_with(aw, ah, vello_cpu::RenderSettings { num_threads: threads, ..Default::default() });
+            self.draw_spread(&mut off, &Frame { opts: &opts, view: shifted, mt: threads > 0, ..*f }, sr);
             off.flush();
-            let mut pm = vello_cpu::Pixmap::new(w, h);
+            let mut pm = vello_cpu::Pixmap::new(aw, ah);
             off.render(&mut pm, &mut self.resources);
             #[cfg(test)]
             {
                 self.cmyk_passes += 1;
+                self.cmyk_pass_pixels = aw as usize * ah as usize;
             }
             pm
         };
         let mut cmy = pass(4);
         let black = pass(3);
+        self.cmyk_ran = true;
         crate::PLATE.with(|p| p.set(f.opts.plate));
         self.stats.items = (self.stats.items - stats.items) / 2 + stats.items;
         self.stats.glyphs = (self.stats.glyphs - stats.glyphs) / 2 + stats.glyphs;
@@ -318,9 +396,10 @@ impl Renderer {
             let [r, g, b] = rgb.map(|v| (v.clamp(0.0, 1.0) * a).round() as u8);
             (c.r, c.g, c.b) = (r, g, b);
         }
-        ctx.set_transform(Affine::IDENTITY);
+        ctx.set_transform(Affine::translate((area.x0, area.y0)));
         ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(std::sync::Arc::new(cmy)), sampler: peniko::ImageSampler::default() });
-        ctx.fill_rect(&Rect::new(0.0, 0.0, w as f64, h as f64));
+        ctx.fill_rect(&Rect::new(0.0, 0.0, aw as f64, ah as f64));
+        ctx.set_transform(Affine::IDENTITY);
     }
 }
 
@@ -473,6 +552,51 @@ mod tests {
         let text_after = draw(&doc, &mut renderer);
         assert_ne!(text_before.pixels, text_after.pixels, "story edits invalidate the viewport");
         assert_eq!(renderer.cmyk_passes, 10);
+    }
+
+    #[test]
+    fn cmyk_passes_cover_only_what_transparency_can_change() {
+        // A 200×140 view; one small Multiply object in a corner, a solid one far from it.
+        let mut doc = document();
+        rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(100.0, 70.0, 150.0, 110.0), "C=100 M=0 Y=0 K=0", DcBlend::Normal);
+        rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(5.0, 5.0, 25.0, 25.0), "C=0 M=100 Y=0 K=0", DcBlend::Multiply);
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        let image = draw(&doc, &mut renderer);
+        assert_eq!(renderer.cmyk_passes, 2);
+        assert!(renderer.cmyk_pass_pixels < 200 * 140 / 8, "{} px", renderer.cmyk_pass_pixels);
+        // The solid object is drawn as before, its colour exact.
+        let cyan = RenderOptions { blend_space_view: false, background: Some([180, 180, 180, 255]), ..Default::default() };
+        let plain = renderer.render(
+            &doc,
+            &Cache::new(),
+            &[Placed { spread: SpreadRef::Doc(0), xf: Affine::IDENTITY }],
+            200,
+            140,
+            Affine::translate((30.0, 10.0)),
+            &cyan,
+        );
+        assert_eq!(image.pixel(150, 100), plain.pixel(150, 100));
+        // An object the area touches is drawn whole in the ink passes (no seam across it).
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(15.0, 15.0, 90.0, 60.0), "C=0 M=0 Y=100 K=0", DcBlend::Normal);
+        draw(&doc, &mut renderer);
+        assert!(renderer.cmyk_pass_pixels >= 75 * 45, "{} px", renderer.cmyk_pass_pixels);
+    }
+
+    #[test]
+    fn the_view_is_kept_only_when_the_ink_passes_ran() {
+        let mut doc = document();
+        doc.settings.blend_space = designcraft_doc::BlendSpace::Cmyk;
+        let id = rectangle(&mut doc, SpreadRef::Doc(0), Rect::new(20.0, 20.0, 100.0, 100.0), "C=100 M=0 Y=0 K=0", DcBlend::Normal);
+        let mut renderer = Renderer::new();
+        renderer.threads = 0;
+        draw(&doc, &mut renderer);
+        assert!(renderer.cmyk_view.is_none(), "nothing transparent: no ink passes, nothing kept");
+        doc.item_mut(id).unwrap().blend = DcBlend::Multiply;
+        draw(&doc, &mut renderer);
+        assert!(renderer.cmyk_view.is_some());
     }
 
     #[test]
