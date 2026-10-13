@@ -375,7 +375,7 @@ mod tests {
     }
 
     fn file_of(s: &Session) -> String {
-        super::super::file::base64_encode(&super::super::file::to_bytes(&s.doc().unwrap().doc))
+        super::super::file::base64_encode(&super::super::file::to_bytes(&s.doc().unwrap().doc).unwrap())
     }
 
     /// A client's document: Body in the brand colour with a GREP style, Head and Quote based on
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn styles_load_from_a_path() {
         let path = std::env::temp_dir().join(format!("dc-load-styles-{}.designcraft", std::process::id()));
-        std::fs::write(&path, super::super::file::to_bytes(&client().doc().unwrap().doc)).unwrap();
+        std::fs::write(&path, super::super::file::to_bytes(&client().doc().unwrap().doc).unwrap()).unwrap();
         let mut s = new_doc();
         let r = s.execute("style.load", &json!({"path": path.to_str().unwrap(), "paragraph": [], "character": ["Small"]}));
         std::fs::remove_file(&path).unwrap();

@@ -1727,7 +1727,7 @@ mod parent_base_tests {
         let (a, b) = (d.parents[0].id, d.parents[1].id);
         std::sync::Arc::make_mut(&mut d.parents[0]).parent.as_mut().unwrap().based_on = Some(b);
         std::sync::Arc::make_mut(&mut d.parents[1]).parent.as_mut().unwrap().based_on = Some(a);
-        let b64 = crate::cmd::base64_encode(&crate::cmd::to_bytes(&d));
+        let b64 = crate::cmd::base64_encode(&crate::cmd::to_bytes(&d).unwrap());
         let r = s.execute("file.openBytes", &json!({"name": "cycle", "base64": b64})).unwrap();
         assert!(r["warnings"].to_string().contains("cycle"), "{r}");
         let d = &s.doc().unwrap().doc;

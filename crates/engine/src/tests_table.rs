@@ -170,7 +170,7 @@ fn file_roundtrip_keeps_tables() {
     s.execute("table.insert", &json!({"rows": 2, "cols": 2})).unwrap();
     s.execute("text.insert", &json!({"text": "A1"})).unwrap();
     let d = s.doc().unwrap().doc.clone();
-    let bytes = crate::cmd::file_bytes(&d);
+    let bytes = crate::cmd::file_bytes(&d).unwrap();
     let back = crate::cmd::file_from(&bytes).unwrap();
     back.check().unwrap();
     let st = back.story(designcraft_doc::StoryId(sid)).unwrap();
@@ -182,7 +182,7 @@ fn backspace_and_paste_between_tables_keep_both_and_the_file_reopens() {
     let n = designcraft_doc::TABLE_ANCHOR.len_utf8();
     let anchor_of = |s: &Session, sid: u64, tid: u64| s.doc().unwrap().doc.story(doc::StoryId(sid)).unwrap().table_anchor(tid).unwrap();
     let reopens_with = |s: &Session, sid: u64, ids: &[u64]| {
-        let back = crate::cmd::file_from(&crate::cmd::file_bytes(&s.doc().unwrap().doc)).unwrap();
+        let back = crate::cmd::file_from(&crate::cmd::file_bytes(&s.doc().unwrap().doc).unwrap()).unwrap();
         let st = back.story(doc::StoryId(sid)).unwrap();
         assert!(ids.iter().all(|id| st.table_anchor(*id).is_some()), "{:?}", st.tables.keys());
         assert_eq!(st.tables.len(), ids.len());
@@ -267,7 +267,7 @@ fn explicit_cell_edges_win_imported_priorities_and_keep_undo_and_file_roundtrip(
             assert_eq!(table_for(&s, sid, tid), &before);
             s.execute("edit.redo", &json!({})).unwrap();
             assert_eq!(table_for(&s, sid, tid), &after);
-            let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc);
+            let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc).unwrap();
             let back = crate::cmd::file_from(&bytes).unwrap();
             assert_eq!(back.story(doc::StoryId(sid)).unwrap().tables.get(&tid).unwrap().as_ref(), &after);
             check(&s);
@@ -468,7 +468,7 @@ fn cell_stroke_gap_colour_on_inner_horizontal_edges_of_a_selection_undoes_and_sa
         assert!(s.execute("table.setCell", &json!({ "stroke": bad })).is_err(), "{bad}");
         assert_eq!(table_for(&s, sid, tid), &t);
     }
-    let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc);
+    let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc).unwrap();
     let back = crate::cmd::file_from(&bytes).unwrap();
     assert_eq!(back.story(doc::StoryId(sid)).unwrap().tables.get(&tid).unwrap().as_ref(), &t);
     s.execute("edit.undo", &json!({})).unwrap();
@@ -682,7 +682,7 @@ fn split_selected_block_and_merged_cells_preserves_geometry_and_history() {
             s.execute("edit.redo", &json!({})).unwrap();
             assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &after_doc));
             assert_eq!(s.doc().unwrap().selection, after_selection);
-            let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc);
+            let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc).unwrap();
             let reopened = crate::cmd::file_from(&bytes).unwrap();
             reopened.check().unwrap();
             assert_eq!(reopened.story(doc::StoryId(sid)).unwrap().tables.get(&tid).unwrap().as_ref(), &after);
