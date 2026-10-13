@@ -2643,3 +2643,40 @@ mod sample_color_tests {
         assert!(it.fill.is_none(), "the fill stays empty");
     }
 }
+
+#[cfg(test)]
+mod radial_gradient_tests {
+    use serde_json::json;
+
+    /// White at the side and the top of a 100×200 radial (black → white) rectangle at (50, 20) on
+    /// a 200×240 page, rendered at 1 px/pt.
+    fn sides(img: &designcraft_render::Rendered) -> (u8, u8, u8) {
+        (img.pixel(100, 120)[0], img.pixel(52, 120)[0], img.pixel(100, 22)[0])
+    }
+
+    #[test]
+    fn a_radial_gradient_is_the_objects_ellipse_on_screen_and_in_pdf() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 240, "facingPages": false})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [50, 20, 150, 220], "content": "unassigned"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "swatch": "[None]"})).unwrap();
+        s.execute(
+            "object.gradient",
+            &json!({"ids": [id], "kind": "radial", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+        )
+        .unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut r = designcraft_render::Renderer::new();
+        let (c, side, top) = sides(&r.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(c < 30 && side > 220 && top > 220, "screen: centre {c}, side {side}, top {top}");
+        // The PDF, placed back and drawn: the same ellipse.
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 240, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "radial.pdf", "x": 0, "y": 0, "width": 200}))
+            .unwrap();
+        let d = p.doc().unwrap().doc.clone();
+        let (c, side, top) = sides(&r.render_page(&d, &p.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(c < 30 && side > 220 && top > 220, "pdf: centre {c}, side {side}, top {top}");
+    }
+}
