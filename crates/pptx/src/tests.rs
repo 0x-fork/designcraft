@@ -269,3 +269,21 @@ fn fonts_embed_as_embedded_opentype() {
     let ct = part(&mut z, "[Content_Types].xml");
     assert!(ct.contains("application/x-fontdata"));
 }
+
+#[test]
+fn fonts_whose_licence_forbids_outline_embedding_are_not_embedded() {
+    use designcraft_fonts::testing::{font_with, with_fs_type};
+    let db = designcraft_fonts::FontDb::with_font_dirs(vec![]);
+    // Restricted (0x0002, 0x0003 with reserved bit 0) and Bitmap embedding only (bit 9, with any
+    // other bits) refuse; Installable, Preview & Print and Editable embed.
+    for (fs_type, embeds) in [(0x0000, true), (0x0004, true), (0x0008, true), (0x0002, false), (0x0003, false), (0x0200, false), (0x0208, false)] {
+        let family = format!("PPTX Licence {fs_type:04x}");
+        assert_eq!(db.add_font(with_fs_type(font_with(&family, &['l']).unwrap(), fs_type).unwrap()), 1);
+        let r = crate::fonts::eot(&db.face(&family, "Regular"));
+        if embeds {
+            assert!(r.is_ok(), "fsType {fs_type:#06x}");
+        } else {
+            assert!(matches!(r, Err(crate::fonts::NoEmbed::Restricted)), "fsType {fs_type:#06x}");
+        }
+    }
+}

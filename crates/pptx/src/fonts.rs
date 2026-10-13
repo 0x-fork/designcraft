@@ -158,7 +158,7 @@ fn utf16_name(out: &mut Vec<u8>, s: &str) {
 /// Why a face can't be embedded.
 #[derive(Debug, PartialEq, Eq)]
 pub enum NoEmbed {
-    /// The font's licence (OS/2 `fsType`) forbids embedding.
+    /// The font's licence (OS/2 `fsType`) forbids embedding it, or embedding its outlines.
     Restricted,
     /// PowerPoint embeds TrueType outlines only (not CFF, collections or variable instances).
     Format,
@@ -180,8 +180,9 @@ pub fn eot(face: &FontFace) -> Result<Vec<u8>, NoEmbed> {
     let os2 = f.table_data(Tag::new(b"OS/2")).map(|t| t.as_bytes().to_vec()).unwrap_or_default();
     let head = f.table_data(Tag::new(b"head")).map(|t| t.as_bytes().to_vec()).unwrap_or_default();
     let fs_type = be16(&os2, 8).unwrap_or(0);
-    // Restricted License embedding (bit 1 alone): may not be embedded.
-    if fs_type & 0x000F == 0x0002 {
+    // Restricted License embedding, or Bitmap embedding only (bit 9): PowerPoint embeds the
+    // outlines, so neither may be embedded.
+    if face.restricted_licence() || fs_type & 0x0200 != 0 {
         return Err(NoEmbed::Restricted);
     }
     let mut h: Vec<u8> = Vec::with_capacity(256);

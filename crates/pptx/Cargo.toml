@@ -21,4 +21,5 @@ thiserror = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
+designcraft-fonts = { workspace = true, features = ["testing"] }
 quick-xml = { workspace = true }
