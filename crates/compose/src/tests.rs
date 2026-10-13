@@ -7052,3 +7052,18 @@ fn cache_recomposes_page_numbers_when_a_section_is_renumbered() {
     assert!(!Arc::ptr_eq(&a, &b));
     assert_eq!(b.frames[0].lines[0].glyphs.len(), 4);
 }
+
+#[test]
+fn spaces_at_the_end_of_a_paragraph_take_no_room() {
+    // A frame as wide as "2 VOOR" also holds "2 VOOR " on one line: the trailing space hangs.
+    let (d, sid, _) = doc_with("2 VOOR", Rect::new(0.0, 0.0, 500.0, 100.0), ParaAttrs::default());
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let l = all_lines(&cs)[0];
+    let width = l.end_x - l.x0;
+    for text in ["2 VOOR ", "2 VOOR  ", "2 VOOR \u{2028}more"] {
+        let (d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, width + 0.02, 100.0), ParaAttrs::default());
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        let first = all_lines(&cs)[0];
+        assert_eq!(&text[first.range.clone()].trim_end(), &"2 VOOR", "{text:?}");
+    }
+}
