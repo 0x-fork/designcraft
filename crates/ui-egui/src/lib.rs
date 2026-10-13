@@ -287,6 +287,10 @@ pub struct UiState {
     pub palette: Option<String>,
     #[serde(skip)]
     pub flyout: Option<usize>,
+    /// Fill/Stroke proxy (Tools and Color panels): the stroke is in front, so Apply None and the
+    /// Color panel act on it (X toggles).
+    #[serde(skip)]
+    pub stroke_front: bool,
 }
 
 impl Default for UiState {
@@ -362,6 +366,7 @@ impl Default for UiState {
             dialog: None,
             palette: None,
             flyout: None,
+            stroke_front: false,
         }
     }
 }

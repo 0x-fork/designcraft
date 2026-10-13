@@ -335,7 +335,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
         let st = s.active()?;
         st.selection.items.iter().copied().find(|i| st.doc.item(*i).is_some_and(|it| matches!(it.content, Content::Unassigned | Content::Graphic(_))))
     });
-    let spread = super::spread_param(p, "spread");
+    let spread = super::spread_param(p, "file.place")?;
     let lid = s.doc()?.active_layer;
     let px = p.get("x").and_then(Value::as_f64);
     let py = p.get("y").and_then(Value::as_f64);
@@ -458,7 +458,7 @@ fn place_load(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
     let (aid, (nw, nh)) = s.loaded.ok_or_else(|| bad("place.drop", "nothing loaded in the place cursor"))?;
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, "place.drop")?;
     let lid = s.doc()?.active_layer;
     let frame = super::id_param(p, "frame");
     let rect = super::rect_param(p, "rect");
@@ -550,7 +550,7 @@ fn place_layout_page(s: &mut Session, p: &Value, name: &str, bytes: &[u8]) -> Re
     if ids.is_empty() {
         return Err(bad(ID, format!("page {page} has no objects")));
     }
-    let to = super::spread_param(p, "spread");
+    let to = super::spread_param(p, ID)?;
     let off = match (p.get("x").and_then(Value::as_f64), p.get("y").and_then(Value::as_f64)) {
         (Some(x), Some(y)) => designcraft_geom::Vec2::new(x - pr.x0, y - pr.y0),
         _ => designcraft_geom::Vec2::new(-pr.x0, -pr.y0),
@@ -586,7 +586,7 @@ pub(crate) fn snippet_place(s: &mut Session, p: &Value) -> Result<Value> {
     if ids.is_empty() {
         return Err(bad("snippet.place", "the snippet is empty"));
     }
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, "snippet.place")?;
     let bounds = ids.iter().filter_map(|i| src.item(*i).map(|it| it.bounds())).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO);
     let off = match (p.get("x").and_then(Value::as_f64), p.get("y").and_then(Value::as_f64)) {
         (Some(x), Some(y)) => designcraft_geom::Vec2::new(x - bounds.x0, y - bounds.y0),
