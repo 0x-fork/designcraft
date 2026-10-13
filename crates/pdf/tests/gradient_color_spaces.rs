@@ -78,15 +78,14 @@ fn mixed_gradient_export_survives_in_subprocess() {
             }
         }
     }
-    // Expansion inserts an RGB midpoint even when the authoring stops share CMYK or Gray.
+    // A midpoint's expanded stop blends in the stops' own space: CMYK or Gray stays homogeneous.
     for colors in [[cmyk, Color::cmyk(0.0, 1.0, 0.0, 0.0)], [gray, Color::gray(0.8)]] {
         for kind in [GradientKind::Linear, GradientKind::Radial] {
             for standard in [Standard::None, Standard::PdfX4, Standard::PdfA2b] {
                 let report =
                     export_pdf_with_report(&document(&colors, kind, 0.25, 1.0), &Cache::new(), &PdfOptions { standard, ..Default::default() })
                         .unwrap();
-                let archival_cmyk = standard == Standard::PdfA2b && matches!(colors[0], Color::Cmyk { .. });
-                assert_eq!(conversion_warnings(&report.warnings), usize::from(!archival_cmyk), "{standard:?}: {:?}", report.warnings);
+                assert_eq!(conversion_warnings(&report.warnings), 0, "{standard:?}: {:?}", report.warnings);
                 assert_eq!(Pdf::new(report.bytes).unwrap().pages().len(), 1);
             }
         }
