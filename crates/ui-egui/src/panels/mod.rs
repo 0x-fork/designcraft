@@ -43,6 +43,8 @@ pub struct SelInfo {
     /// Uniform corner (shape, size) — the first corner.
     pub corner: (designcraft_geom::corners::CornerShape, f64),
     pub wrap_invert: bool,
+    /// Text wrap offsets: top, left, bottom, right.
+    pub wrap_offsets: [f64; 4],
     pub locked: bool,
 }
 
@@ -98,6 +100,7 @@ pub fn sel_info(app: &DesignApp) -> Option<SelInfo> {
             .unwrap_or_else(|| "solid".into()),
         corner: (first.corners.corners[0].shape, first.corners.corners[0].size),
         wrap_invert: first.wrap.invert,
+        wrap_offsets: first.wrap.offsets,
         locked: first.locked,
     })
 }
