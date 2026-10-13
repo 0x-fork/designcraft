@@ -2,7 +2,7 @@
 title: DesignCraft closes right after it starts
 description: On Windows, DesignCraft shows a brief spinner and then closes with no message. Update, or force the DirectX 12 graphics backend.
 order: 10
-verified: 0.6.0
+verified: 0.7.1
 ---
 
 If DesignCraft flashes a spinner and closes, update to the [latest release](https://github.com/storytold/designcraft/releases/latest). If it still closes, set the environment variable `WGPU_BACKEND` to `dx12` and start it again.

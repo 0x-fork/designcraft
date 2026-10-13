@@ -2,7 +2,7 @@
 title: Export a PDF
 description: Export your DesignCraft document as a PDF for desktop printing, a print shop, screen or archive.
 order: 40
-verified: 0.6.0
+verified: 0.7.1
 ---
 
 Choose **File**, then **Export PDF…**, pick a **Preset**, click **OK** and name the file.

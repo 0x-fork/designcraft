@@ -2,7 +2,7 @@
 title: Place images, PDFs and text
 description: Bring images, PDF pages, Word and plain text files into a DesignCraft document with File, Place.
 order: 30
-verified: 0.6.0
+verified: 0.7.1
 ---
 
 Choose **File**, then **Place…** (Ctrl+D), pick a file, and DesignCraft puts it into your document.
@@ -13,7 +13,7 @@ Shortcuts on this page use Ctrl. On macOS, use Cmd instead of Ctrl.
 
 1. Open the **File** menu and choose **Place…**.
 2. Pick a file. The dialog's **Graphics and text** filter covers the file types below.
-3. For an image, DesignCraft places it in the selected empty frame if there is one.
+3. For an image, DesignCraft places it in the selected empty frame if there is one. The image fills the frame once and keeps its proportions. **Auto-Fit** stays off, so resizing the frame later crops the image instead of scaling it.
 4. For a text file, it goes into the insertion point, the selected frame, or a new frame.
 
 ## File types

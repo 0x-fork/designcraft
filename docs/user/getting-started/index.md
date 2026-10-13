@@ -2,7 +2,7 @@
 title: Getting started
 description: Install DesignCraft, then open the sample magazine or start a new document.
 order: 10
-verified: 0.6.0
+verified: 0.7.1
 ---
 
 Install DesignCraft first, then start a document.

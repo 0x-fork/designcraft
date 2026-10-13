@@ -2,7 +2,7 @@
 title: Report a problem
 description: What to include and where to post when DesignCraft misbehaves or crashes.
 order: 20
-verified: 0.6.0
+verified: 0.7.1
 ---
 
 Post in the [issue tracker](https://github.com/storytold/designcraft/issues) or in [Discord](https://discord.gg/artcraft), and attach the log file. The log is the most useful thing you can send after a crash.

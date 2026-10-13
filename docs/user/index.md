@@ -1,7 +1,7 @@
 ---
 title: DesignCraft
 description: DesignCraft is a free, open-source page layout app for print and screen, an alternative to Adobe InDesign.
-verified: 0.6.0
+verified: 0.7.1
 ---
 
 DesignCraft is a page layout and publishing app. It is an open-source alternative to Adobe InDesign, built from scratch by the ArtCraft team. If you know InDesign's tools, menus and panels, you will find them here.

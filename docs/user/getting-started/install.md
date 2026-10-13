@@ -1,11 +1,11 @@
 ---
 title: Install DesignCraft
-description: Download DesignCraft 0.6.0 for Windows 11, macOS or Linux, or install it from ArtCraft Launcher.
+description: Download DesignCraft 0.7.1 for Windows 11, macOS or Linux, or install it from ArtCraft Launcher.
 order: 20
-verified: 0.6.0
+verified: 0.7.1
 ---
 
-Download the file for your system from the [latest release](https://github.com/storytold/designcraft/releases/latest) and install it. In the file names, `<version>` stands for the version number, for example `0.6.0`. The release also has `SHA256SUMS.txt`, which lists a checksum for every file. The [DesignCraft page on getartcraft.com](https://getartcraft.com/apps/designcraft) links to the download as well.
+Download the file for your system from the [latest release](https://github.com/storytold/designcraft/releases/latest) and install it. In the file names, `<version>` stands for the version number, for example `0.7.1`. The release also has `SHA256SUMS.txt`, which lists a checksum for every file. The [DesignCraft page on getartcraft.com](https://getartcraft.com/apps/designcraft) links to the download as well.
 
 ## Windows 11
 
@@ -14,7 +14,7 @@ Download the file for your system from the [latest release](https://github.com/s
 3. Run the file and follow the installer.
 4. Start **DesignCraft** from the Start menu.
 
-The release also has an `arm64` installer for ARM PCs such as Snapdragon. To run without installing, download `designcraft-<version>-windows-x64-portable.zip` (or the `arm64` version), unzip it and start the program inside. The installers and executables are code-signed.
+The release also has an `arm64` installer for ARM PCs such as Snapdragon, and a 32-bit `x86` installer. To run without installing, download `designcraft-<version>-windows-x64-portable.zip` (or the `arm64` or `x86` version), unzip it and start the program inside. The installers and executables are code-signed.
 
 ## macOS
 
@@ -35,7 +35,7 @@ Pick one file from the release. Replace `x86_64` with `aarch64` on ARM.
 | `designcraft-<version>-linux-x86_64.rpm`      | Fedora, RHEL and openSUSE.                               |
 | `designcraft-<version>-linux-x86_64.tar.gz`   | Unpack anywhere.                                         |
 
-For RISC-V there is only `designcraft-<version>-linux-riscv64.tar.gz`. It needs glibc 2.39 or newer (Ubuntu 24.04 or newer). A FreeBSD build (`designcraft-<version>-freebsd-x86_64.tar.gz`) is on the release page too.
+For RISC-V there is a `.deb`, an `.rpm` and a tarball, named with `riscv64` in place of `x86_64`. There is no AppImage or Flatpak for RISC-V. The RISC-V build needs glibc 2.39 or newer (Ubuntu 24.04 or newer). A FreeBSD build (`designcraft-<version>-freebsd-x86_64.tar.gz`) is on the release page too.
 
 ## Install with ArtCraft Launcher
 

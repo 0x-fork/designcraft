@@ -2,7 +2,7 @@
 title: Open a DesignCraft or InDesign (IDML) file
 description: Open a .designcraft document or an InDesign Markup (.idml) file, and what to do about missing fonts and incomplete IDML packages.
 order: 20
-verified: 0.6.0
+verified: 0.7.1
 ---
 
 Choose **File**, then **Open…** (Ctrl+O), and pick a `.designcraft` or `.idml` file. The file opens as a new document.
@@ -27,7 +27,9 @@ Text that uses a font DesignCraft cannot find is highlighted in pink. This is th
 
 ## Import warnings
 
-If an IDML package is missing some of its parts, 0.6.0 may not open it. Opening such files with an **Import Warnings** alert that names the missing parts was added after 0.6.0 and is not in a release yet.
+If an IDML package is missing some of its parts, DesignCraft still opens it and shows an **Import Warnings** alert that names each missing part. The contents of those parts are not in the document, so check your layout.
+
+If the package has none of its spreads, there is nothing to open. DesignCraft then shows a **Can't Open the File** alert that names the missing parts.
 
 ## Save it again
 
