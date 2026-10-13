@@ -1523,6 +1523,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "swatchOptions" => crate::i18n::tr(&app.ui.language, "Swatch Options"),
         "colorGroupOptions" => crate::i18n::tr(&app.ui.language, "Color Group Options"),
         "layerSettings" => crate::i18n::tr(&app.ui.language, "Layer Options"),
+        crate::effects_dialog::ID => crate::i18n::tr(&app.ui.language, "Effects"),
         id => match id.strip_prefix("cmd:").and_then(designcraft_engine::find_command) {
             Some(c) => crate::i18n::tr(&app.ui.language, c.label.trim_end_matches('…')),
             None => crate::i18n::tr(&app.ui.language, "Dialog"),
@@ -1537,6 +1538,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             "closeDocument" | "updateLink" => 380.0,
             "newDocument" => 960.0,
             "numberingSection" => 560.0,
+            crate::effects_dialog::ID => 720.0,
             _ => 640.0,
         };
         let width = preferred_width.min(available.x);
@@ -1741,6 +1743,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             "swatchOptions" => options::swatch_options(app, ui, &mut d),
             "colorGroupOptions" => options::color_group_options(app, ui, &mut d),
             "layerSettings" => options::layer_options(app, ui, &mut d),
+            crate::effects_dialog::ID => crate::effects_dialog::show(app, ui, &mut d),
             "preferences" => preferences(app, ui, &mut d, body_height),
             "print" => print_dialog(app, ui, &mut d),
             "pdfImport" => {
@@ -2732,6 +2735,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.run("footnote.options", p)
         }
         "alert" => Ok(Value::Null),
+        crate::effects_dialog::ID => crate::effects_dialog::confirm(app, &d),
         "findChange" if d.b("objectMode") => Ok(Value::Null),
         "findChange" => app.run("find.change", json!({"find": d.s("find"), "change": d.s("change"), "grep": d.b("grep"), "caseSensitive": d.b("caseSensitive"), "wholeWord": d.b("wholeWord"), "scope": d.s("scope")})),
         STEP_AND_REPEAT => {
