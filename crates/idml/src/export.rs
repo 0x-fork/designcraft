@@ -1769,11 +1769,12 @@ impl<'a> Ex<'a> {
         for (i, pg) in sp.pages.iter().enumerate() {
             let name = if master { sp.parent.as_ref().map(|i| i.prefix.clone()).unwrap_or_default() } else { d.page_name(first_page + i) };
             let applied = if master { based_on } else { pg.parent };
+            let overrides: Vec<String> = pg.overridden.iter().map(|i| uid(i.0)).collect();
             let pe = El::new("Page")
                 .attr("Self", uid(pg.id.0))
                 .attr("Name", name)
                 .attr("AppliedMaster", applied.map(|s| uid(s.0)).unwrap_or_else(|| "n".into()))
-                .attr("OverrideList", "")
+                .attr("OverrideList", overrides.join(" "))
                 .attr("GeometricBounds", format!("0 0 {} {}", num(pg.height), num(pg.width)))
                 .attr("ItemTransform", format!("1 0 0 1 {} {}", num(pg.x - ox), num(-oy)))
                 .child(margin_el(pg));
@@ -1805,6 +1806,9 @@ impl<'a> Ex<'a> {
             _ => "Rectangle",
         };
         let mut el = El::new(tag).attr("Self", uid(it.id.0));
+        if let Some(o) = it.overrides {
+            el.set("OverriddenPageItem", uid(o.0));
+        }
         if let Content::Text(t) = &it.content
             && let Some(pt) = &t.options.path
         {

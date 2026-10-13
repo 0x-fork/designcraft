@@ -2586,6 +2586,7 @@ impl<'r> Importer<'r> {
         it.name = e.get("Name").filter(|n| *n != "$ID/").unwrap_or("").to_string();
         it.locked = e.get("Locked") == Some("true");
         it.hidden = e.get("Visible") == Some("false");
+        it.overrides = e.get("OverriddenPageItem").and_then(|s| self.item_ids.get(s)).copied().filter(|i| self.is_parent_item(*i));
         it.nonprinting = e.get("Nonprinting") == Some("true");
         it.object_style = e
             .get("AppliedObjectStyle")
