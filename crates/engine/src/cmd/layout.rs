@@ -1005,6 +1005,13 @@ mod parent_base_tests {
         assert!(cyan(img.pixel(150, 150)), "B's item over A's: {:?}", img.pixel(150, 150));
         assert!(paper(img.pixel(170, 20)), "the page's item over B's: {:?}", img.pixel(170, 20));
         assert!(black(page(&s, 0).pixel(50, 100)) && !cyan(page(&s, 0).pixel(250, 100)), "page 1 uses A only");
+        // Parent B itself shows A's items under its own.
+        let mut rr = designcraft_render::Renderer::new();
+        rr.threads = 0;
+        let placed = [designcraft_render::Placed { spread: designcraft_doc::SpreadRef::Parent(1), xf: designcraft_geom::Affine::IDENTITY }];
+        let opts = designcraft_render::RenderOptions { background: Some([255, 255, 255, 255]), ..Default::default() };
+        let img = rr.render(&s.doc().unwrap().doc, &s.cache, &placed, 400, 400, designcraft_geom::Affine::IDENTITY, &opts);
+        assert!(black(img.pixel(50, 100)) && cyan(img.pixel(150, 150)), "{:?} {:?}", img.pixel(50, 100), img.pixel(150, 150));
         let inspect = s.execute("document.inspect", &json!({})).unwrap();
         assert_eq!(inspect["parents"][1]["basedOn"], "A-Parent");
         assert_eq!(inspect["parents"][0]["basedOn"], Value::Null);
@@ -1019,6 +1026,27 @@ mod parent_base_tests {
         s.execute("edit.redo", &json!({})).unwrap();
         s.execute("layout.parents.options", &json!({"parent": "B", "basedOn": null})).unwrap();
         assert_eq!(s.execute("document.inspect", &json!({})).unwrap()["parents"][1]["basedOn"], Value::Null);
+    }
+
+    /// A's page-number marker shown on parent XYZ (based on A) reads XYZ, as markers on XYZ's own items do.
+    #[test]
+    fn base_parent_markers_read_the_showing_parent() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"pages": 1, "facingPages": false})).unwrap();
+        s.execute("layout.parents.new", &json!({"prefix": "XYZ"})).unwrap();
+        s.execute("layout.parents.options", &json!({"parent": "XYZ", "basedOn": "A"})).unwrap();
+        let marker = designcraft_doc::story::PAGE_NUMBER.to_string();
+        let r = s
+            .execute("frame.create", &json!({"spread": {"kind": "parent", "index": 0}, "rect": [72, 30, 500, 60], "content": "text", "text": marker}))
+            .unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let sid = d.item(designcraft_doc::ItemId(r["id"].as_u64().unwrap())).unwrap().text_frame().unwrap().story;
+        let glyphs = |on| -> usize {
+            let cs = s.cache.get_on(&d, sid, on);
+            cs.frames.iter().flat_map(|f| f.lines.iter()).map(|l| l.glyphs.iter().filter(|g| g.visible && g.adv > 0.0).count()).sum()
+        };
+        assert_eq!(glyphs(designcraft_compose::ShownOn::Own), 1, "A");
+        assert_eq!(glyphs(designcraft_compose::ShownOn::Parent(1)), 3, "XYZ");
     }
 
     /// A file whose parents are based on each other opens, with the cycle broken and reported.

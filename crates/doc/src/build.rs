@@ -588,7 +588,20 @@ impl Document {
 
     /// Whether basing parent `pi` on `base` would make a `based_on` cycle (or names no parent).
     pub fn parent_base_cycles(&self, pi: usize, base: SpreadId) -> bool {
-        self.parent_index(base).is_none_or(|bi| bi == pi || self.parent_chain(bi).contains(&pi))
+        let Some(mut cur) = self.parent_index(base) else { return true };
+        // Not `parent_chain`: its depth cap would miss a long cycle. Every parent is visited at most once.
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            if cur == pi {
+                return true;
+            }
+            if !seen.insert(cur) || seen.len() > self.parents.len() {
+                return false;
+            }
+            let next = self.parents.get(cur).and_then(|ps| ps.parent.as_ref()).and_then(|info| info.based_on).and_then(|b| self.parent_index(b));
+            let Some(n) = next else { return false };
+            cur = n;
+        }
     }
 
     /// Clear `based_on` links that name a missing parent or close a cycle (hand-edited or damaged
@@ -746,5 +759,24 @@ mod tests {
         assert_eq!(d.parents[0].parent.as_ref().unwrap().based_on, None);
         assert_eq!(d.parents[1].parent.as_ref().unwrap().based_on, Some(a));
         assert_eq!(d.parents[2].parent.as_ref().unwrap().based_on, None);
+    }
+
+    /// A cycle longer than the drawing depth cap is still found and broken.
+    #[test]
+    fn fix_parent_bases_breaks_a_long_cycle() {
+        let mut d = Document::new(&NewDocument { pages: 1, facing_pages: false, ..Default::default() });
+        for i in 1..65 {
+            d.add_parent(&format!("P{i}"), "Parent", 1, 12.0, Margins::uniform(36.0));
+        }
+        assert_eq!(d.parents.len(), 65);
+        let ids: Vec<SpreadId> = d.parents.iter().map(|p| p.id).collect();
+        for i in 0..65 {
+            base(&mut d, i, Some(ids[(i + 1) % 65]));
+        }
+        assert_eq!(d.parent_chain(0).len(), MAX_PARENT_DEPTH);
+        let w = d.fix_parent_bases();
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(d.parents[0].parent.as_ref().unwrap().based_on, None);
+        assert!((0..65).all(|i| d.parent_base_cycles(i, ids[(i + 1) % 65]) == (i == 0)), "only the cleared link would close it again");
     }
 }

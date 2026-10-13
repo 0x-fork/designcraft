@@ -216,4 +216,38 @@ mod tests {
         assert_eq!(rest.iter().map(|i| d.item(*i).unwrap().overrides).collect::<Vec<_>>(), vec![Some(b_item)]);
         d.check().unwrap();
     }
+
+    /// Facing pages: 2-page B based on 2-page A. Each document page offers only the items on its
+    /// side of A, and the copy lands where the item showed: page 1 (a single right page at x 0)
+    /// shows A's right-page items 612 pt to the left.
+    #[test]
+    fn override_base_items_on_facing_pages_keeps_their_place() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 3, "facingPages": true})).unwrap();
+        s.execute("layout.parents.new", &json!({"prefix": "B"})).unwrap();
+        s.execute("layout.parents.options", &json!({"parent": "B", "basedOn": "A"})).unwrap();
+        s.execute("layout.pages.applyParent", &json!({"pages": [0, 1, 2], "parent": "B"})).unwrap();
+        let on_a = |s: &mut Session, rect: [f64; 4]| {
+            let r = s.execute("frame.create", &json!({"spread": {"kind": "parent", "index": 0}, "rect": rect, "content": "unassigned"})).unwrap();
+            ItemId(r["id"].as_u64().unwrap())
+        };
+        let left = on_a(&mut s, [72.0, 72.0, 200.0, 200.0]);
+        let right = on_a(&mut s, [684.0, 72.0, 812.0, 200.0]);
+        let copy_of = |s: &mut Session, page: usize, id: ItemId| -> Option<ItemId> {
+            let r = s.execute("layout.overrideParentItems", &json!({"page": page, "ids": [id.0]})).unwrap();
+            r["ids"].as_array().unwrap().first().map(|v| ItemId(v.as_u64().unwrap()))
+        };
+        assert_eq!(copy_of(&mut s, 0, left), None, "A's left-page item does not show on a right page");
+        let c = copy_of(&mut s, 0, right).unwrap();
+        let x0 = |s: &Session, id: ItemId| s.doc().unwrap().doc.item(id).unwrap().bounds().x0;
+        assert!((x0(&s, c) - 72.0).abs() < 1e-9, "{}", x0(&s, c));
+        // Page 2 is the left page of the second spread, page 3 its right page at x 612.
+        let c = copy_of(&mut s, 1, left).unwrap();
+        assert!((x0(&s, c) - 72.0).abs() < 1e-9, "{}", x0(&s, c));
+        assert_eq!(s.doc().unwrap().doc.page_of_item(c), Some(1));
+        let c = copy_of(&mut s, 2, right).unwrap();
+        assert!((x0(&s, c) - 684.0).abs() < 1e-9, "{}", x0(&s, c));
+        assert_eq!(s.doc().unwrap().doc.page_of_item(c), Some(2));
+        s.doc().unwrap().doc.check().unwrap();
+    }
 }
