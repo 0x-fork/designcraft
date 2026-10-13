@@ -446,7 +446,7 @@ pub fn story_html(doc: &Document, sid: StoryId) -> String {
         if !continues_pre && pre.take().is_some() {
             out.push_str("</pre>\n");
         }
-        let list_tag = (tag == "li").then(|| match props.list_type {
+        let list_tag = (tag == "li").then_some(match props.list_type {
             designcraft_doc::ListType::Numbers => "ol",
             designcraft_doc::ListType::Bullets => "ul",
             designcraft_doc::ListType::None => "ul style=\"list-style:none\"",
