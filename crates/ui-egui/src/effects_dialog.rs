@@ -167,17 +167,18 @@ fn num(d: &Dialog, path: &[&str]) -> f64 {
     v.as_f64().unwrap_or(0.0)
 }
 
+/// Set the value at `path` in the dialog's effects, making the objects on the way (an empty path
+/// sets nothing).
 fn set(d: &mut Dialog, path: &[&str], value: Value) {
+    let Some((last, parents)) = path.split_last() else { return };
     let Some(mut v) = d.fields.get_mut("fx") else { return };
-    for k in &path[..path.len() - 1] {
+    for k in parents {
         if !v[*k].is_object() {
             v[*k] = json!({});
         }
         v = &mut v[*k];
     }
-    if let Some(last) = path.last() {
-        v[*last] = value;
-    }
+    v[*last] = value;
 }
 
 /// A distance in the document's unit (stored in points).
@@ -605,6 +606,16 @@ mod tests {
             }
         }
         texts
+    }
+
+    #[test]
+    fn set_makes_the_path_and_ignores_an_empty_one() {
+        let mut d = Dialog::new(ID, json!({"fx": {}}));
+        set(&mut d, &["featherOptions", "choke"], json!(20));
+        assert_eq!(d.fields["fx"]["featherOptions"]["choke"], json!(20));
+        let before = d.fields.clone();
+        set(&mut d, &[], json!(1));
+        assert_eq!(d.fields, before, "an empty path changes nothing (and doesn't panic)");
     }
 
     #[test]
