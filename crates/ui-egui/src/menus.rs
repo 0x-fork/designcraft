@@ -190,7 +190,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "window.workspace",
         "Workspace",
         None,
-        "{name: Essentials|Advanced|Book|Digital Publishing|Interactive for PDF|Printing and Proofing|Typography}",
+        "{name: Advanced|Book|Digital Publishing|Essentials|Essentials Classic|Interactive for PDF|Printing and Proofing|Typography or a saved workspace}",
     ),
     ("window.newWorkspace", "New Workspace…", None, "{name} — saves the current bars and panel arrangement"),
     ("window.deleteWorkspace", "Delete Workspace…", None, "{name}"),
@@ -682,49 +682,76 @@ pub const MENUS: &[(&str, &[&str])] = &[
     ),
     (
         "Window",
+        // InDesign's order: Arrange, Workspace, then the panels alphabetically with their groups.
         &[
             ">Arrange",
             "ui:window.newWindow",
             "ui:window.split",
+            "-",
+            "ui:window.nextDocument",
+            "ui:window.previousDocument",
+            "<",
+            "ui:window.workspace",
+            "-",
+            "ui:window.panel|Articles|{\"panel\": \"articles\"}",
+            ">Color",
+            "ui:window.panel|Color|{\"panel\": \"color\"}",
+            "ui:window.panel|Gradient|{\"panel\": \"gradient\"}",
+            "ui:window.panel|Swatches|{\"panel\": \"swatches\"}",
+            "<",
+            "ui:window.taskBar",
+            "ui:window.controlBar",
+            ">Editorial",
+            "ui:window.panel|Notes|{\"panel\": \"notes\"}",
+            "ui:window.panel|Track Changes|{\"panel\": \"trackChanges\"}",
+            "<",
+            "ui:window.panel|Effects|{\"panel\": \"effects\"}",
+            "ui:window.panel|Info|{\"panel\": \"info\"}",
+            ">Interactive",
+            "ui:window.panel|Bookmarks|{\"panel\": \"bookmarks\"}",
+            "ui:window.panel|Buttons and Forms|{\"panel\": \"buttons\"}",
+            "ui:window.panel|Hyperlinks|{\"panel\": \"hyperlinks\"}",
+            "ui:window.panel|Liquid Layout|{\"panel\": \"liquid\"}",
+            "ui:window.panel|Media|{\"panel\": \"media\"}",
+            "ui:window.panel|Object States|{\"panel\": \"states\"}",
+            "ui:window.panel|Page Transitions|{\"panel\": \"transitions\"}",
+            "<",
+            "ui:window.panel|Layers|{\"panel\": \"layers\"}",
+            "ui:window.panel|Links|{\"panel\": \"links\"}",
+            ">Object & Layout",
+            "ui:window.panel|Align|{\"panel\": \"align\"}",
+            "ui:window.panel|Pathfinder|{\"panel\": \"pathfinder\"}",
+            "<",
+            ">Output",
+            "ui:window.panel|Attributes|{\"panel\": \"attributes\"}",
+            "ui:window.panel|Preflight|{\"panel\": \"preflight\"}",
+            "<",
+            "ui:window.panel|Pages|{\"panel\": \"pages\"}",
+            "ui:window.panel|Properties|{\"panel\": \"properties\"}",
+            "ui:window.panel|Stroke|{\"panel\": \"stroke\"}",
+            ">Styles",
+            "ui:window.panel|Character Styles|{\"panel\": \"characterStyles\"}",
+            "ui:window.panel|Paragraph Styles|{\"panel\": \"paragraphStyles\"}",
+            "<",
+            "ui:window.panel|Text Wrap|{\"panel\": \"textWrap\"}",
+            ">Type & Tables",
+            "ui:window.panel|Character|{\"panel\": \"character\"}",
+            "ui:window.panel|Conditional Text|{\"panel\": \"conditions\"}",
+            "ui:window.panel|Glyphs|{\"panel\": \"glyphs\"}",
+            "ui:window.panel|Paragraph|{\"panel\": \"paragraph\"}",
+            "ui:window.panel|Table|{\"panel\": \"table\"}",
+            "<",
+            ">Utilities",
+            "ui:window.panel|Book|{\"panel\": \"book\"}",
+            "ui:window.panel|Data Merge|{\"panel\": \"dataMerge\"}",
+            "ui:window.panel|Library|{\"panel\": \"library\"}",
+            "ui:window.panel|Scripts|{\"panel\": \"scripts\"}",
+            "ui:window.panel|Tags|{\"panel\": \"tags\"}",
             "<",
             "-",
             "ui:window.hidePanels",
             "ui:window.hidePanelsExceptTools",
-            "ui:window.nextDocument",
-            "ui:window.previousDocument",
-            "-",
-            "ui:window.controlBar",
-            "ui:window.taskBar",
             "ui:window.toolsDoubleColumn",
-            "-",
-            "ui:window.panel",
-            "-",
-            ">Type & Tables",
-            "ui:window.panel|Conditional Text|{\"panel\": \"conditions\"}",
-            "ui:window.panel|Notes|{\"panel\": \"notes\"}",
-            "ui:window.panel|Glyphs|{\"panel\": \"glyphs\"}",
-            "<",
-            ">Interactive",
-            "ui:window.panel|Hyperlinks|{\"panel\": \"hyperlinks\"}",
-            "ui:window.panel|Bookmarks|{\"panel\": \"bookmarks\"}",
-            "ui:window.panel|Articles|{\"panel\": \"articles\"}",
-            "ui:window.panel|Object States|{\"panel\": \"states\"}",
-            "ui:window.panel|Buttons and Forms|{\"panel\": \"buttons\"}",
-            "ui:window.panel|Media|{\"panel\": \"media\"}",
-            "ui:window.panel|Page Transitions|{\"panel\": \"transitions\"}",
-            "ui:window.panel|Track Changes|{\"panel\": \"trackChanges\"}",
-            "ui:window.panel|Scripts|{\"panel\": \"scripts\"}",
-            "ui:window.panel|Liquid Layout|{\"panel\": \"liquid\"}",
-            "ui:window.panel|Tags|{\"panel\": \"tags\"}",
-            "ui:window.panel|Book|{\"panel\": \"book\"}",
-            "<",
-            ">Utilities",
-            "ui:window.panel|Data Merge|{\"panel\":\"dataMerge\"}",
-            "<",
-            ">Output",
-            "ui:window.panel|Attributes|{\"panel\": \"attributes\"}",
-            "cmd:preflight.run",
-            "<",
             "-",
             "ui:window.brightness",
         ],
@@ -744,6 +771,22 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:help.about",
         ],
     ),
+];
+
+/// The built-in workspaces, in InDesign's order.
+pub const WORKSPACES: &[&str] =
+    &["Advanced", "Book", "Digital Publishing", "Essentials", "Essentials Classic", "Interactive for PDF", "Printing and Proofing", "Typography"];
+
+/// Essentials Classic's icon column: InDesign's iconic panel groups, top to bottom.
+pub const CLASSIC_GROUPS: &[&[&str]] = &[
+    &["pages", "layers", "links"],
+    &["stroke", "color"],
+    &["swatches"],
+    &["effects"],
+    &["paragraph"],
+    &["textWrap"],
+    &["characterStyles", "paragraphStyles"],
+    &["gradient"],
 ];
 
 pub fn ui_label(id: &str) -> Option<(&'static str, Option<&'static str>)> {
@@ -1260,7 +1303,9 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
         }
         "window.panel" => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("properties").to_string();
-            if crate::dock::DOCK_TABS.iter().any(|(id, _, _)| *id == panel) {
+            // A panel in the workspace's icon groups opens from there (Essentials Classic's Pages).
+            let iconic = app.ui.icon_groups.as_ref().is_some_and(|g| g.iter().flatten().any(|p| *p == panel));
+            if !iconic && crate::dock::DOCK_TABS.iter().any(|(id, _, _)| *id == panel) {
                 app.ui.dock_tab = panel;
                 app.ui.dock_expanded = true;
                 app.ui.open_panel = None;
@@ -1437,6 +1482,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                 floating: u.floating.clone(),
                 docking: u.docking.clone(),
                 docking_hidden: u.docking_hidden.clone(),
+                icon_groups: u.icon_groups.clone(),
             };
             app.ui.custom_workspaces.retain(|x| x.name != name);
             app.ui.custom_workspaces.push(w);
@@ -1475,6 +1521,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                 app.ui.floating = w.floating;
                 app.ui.docking = w.docking;
                 app.ui.docking_hidden = w.docking_hidden;
+                app.ui.icon_groups = w.icon_groups;
                 app.ui.workspace = w.name;
                 return Some(Ok(Value::Null));
             }
@@ -1484,7 +1531,12 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
             app.ui.docking = None;
             app.ui.docking_hidden.clear();
-            app.ui.control_bar = matches!(name, "Advanced" | "Typography" | "Printing and Proofing" | "Book");
+            app.ui.control_bar = matches!(name, "Advanced" | "Typography" | "Printing and Proofing" | "Book" | "Essentials Classic");
+            // Essentials Classic: the Control panel and an icon column of grouped panels, no
+            // Properties stack.
+            let classic = name == "Essentials Classic";
+            app.ui.icon_groups = classic.then(|| CLASSIC_GROUPS.iter().map(|g| g.iter().map(|p| p.to_string()).collect()).collect());
+            app.ui.dock_expanded = !classic;
             let dock_tab = match name {
                 "Typography" => Some("properties"),
                 "Interactive for PDF" | "Digital Publishing" => Some("pages"),
@@ -1753,6 +1805,16 @@ fn parse_entries(entries: &[&str]) -> Vec<Item> {
                 .map(|(id, label, _)| Item::Cmd { label: label.to_string(), id: "window.panel".into(), params: json!({"panel": id}), shortcut: None })
                 .collect();
             out.push(Item::Sub("Panels".into(), items));
+        } else if e == "ui:window.workspace" {
+            // Shown as InDesign's "[Essentials]"; Reset names the current workspace (see `menu_items`).
+            let mut items: Vec<Item> = WORKSPACES
+                .iter()
+                .map(|w| Item::Cmd { label: w.to_string(), id: "window.workspace".into(), params: json!({"name": w}), shortcut: None })
+                .collect();
+            items.push(Item::Sep);
+            items.push(cmd_item("window.resetWorkspace", Value::Null));
+            items.push(cmd_item("window.newWorkspace", Value::Null));
+            out.push(Item::Sub("Workspace".into(), items));
         } else if e == "ui:window.brightness" {
             let items = crate::theme::Brightness::ALL
                 .iter()
@@ -1792,6 +1854,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
 /// Check state of a toggle command (None = not a toggle).
 pub fn checked(app: &DesignApp, id: &str, params: &Value) -> Option<bool> {
     Some(match id {
+        "window.workspace" => params.get("name").and_then(Value::as_str) == Some(app.ui.workspace.as_str()),
         "view.rulers" => app.ui.rulers,
         "view.frameEdges" => app.ui.frame_edges,
         "view.overprintPreview" => app.ui.overprint_preview,
@@ -2089,7 +2152,12 @@ fn menu_items(app: &mut DesignApp, ui: &mut egui::Ui, items: &[Item], path: &str
             }
             Item::Cmd { label, .. } if !app.ui.show_full_menus && app.ui.hidden_menu_items.contains(&menu_key(path, label)) => hidden += 1,
             Item::Cmd { label, id, params, shortcut: _ } => {
-                let label = crate::i18n::tr(&app.ui.language, label);
+                let lang = &app.ui.language;
+                let label = match id.as_str() {
+                    "window.workspace" => format!("[{}]", crate::i18n::workspace_name(lang, label)),
+                    "window.resetWorkspace" => format!("{} {}", crate::i18n::tr(lang, "Reset"), crate::i18n::workspace_name(lang, &app.ui.workspace)),
+                    _ => crate::i18n::tr(lang, label).to_owned(),
+                };
                 let text = match checked(app, id, params) {
                     Some(true) => format!("✓ {label}"),
                     Some(false) => format!("   {label}"),
@@ -3377,6 +3445,74 @@ mod tests {
         run_ui(&mut app, "window.deleteWorkspace", &json!({"name": "Mine"})).unwrap().unwrap();
         assert!(app.ui.custom_workspaces.is_empty());
         assert_eq!(app.ui.workspace, "Essentials");
+    }
+
+    #[test]
+    fn essentials_classic_is_the_control_panel_and_iconic_groups() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        run_ui(&mut app, "window.workspace", &json!({"name": "Essentials Classic"})).unwrap().unwrap();
+        assert!(app.ui.control_bar && !app.ui.dock_expanded);
+        let groups = app.ui.icon_groups.clone().unwrap();
+        assert_eq!(groups[0], ["pages", "layers", "links"]);
+        assert_eq!(groups.last().unwrap(), &["gradient"]);
+        assert_eq!(checked(&app, "window.workspace", &json!({"name": "Essentials Classic"})), Some(true));
+        assert_eq!(checked(&app, "window.workspace", &json!({"name": "Essentials"})), Some(false));
+        // Window › Pages opens Pages from its icon group, not the Properties stack.
+        run_ui(&mut app, "window.panel", &json!({"panel": "pages"})).unwrap().unwrap();
+        assert_eq!((app.ui.open_panel.as_deref(), app.ui.dock_expanded), (Some("pages"), false));
+        // A workspace saved from it keeps the groups.
+        run_ui(&mut app, "window.newWorkspace", &json!({"name": "Mine"})).unwrap().unwrap();
+        run_ui(&mut app, "window.workspace", &json!({"name": "Essentials"})).unwrap().unwrap();
+        assert_eq!((app.ui.icon_groups.as_ref(), app.ui.dock_expanded, app.ui.control_bar), (None, true, false));
+        run_ui(&mut app, "window.workspace", &json!({"name": "Mine"})).unwrap().unwrap();
+        assert_eq!(app.ui.icon_groups, Some(groups));
+    }
+
+    #[test]
+    fn the_window_menu_is_in_indesigns_order_and_reaches_every_panel() {
+        let window = menu_tree().into_iter().find(|(m, _)| *m == "Window").unwrap().1;
+        let names: Vec<&str> = window
+            .iter()
+            .filter_map(|i| match i {
+                Item::Sub(n, _) => Some(n.as_str()),
+                Item::Cmd { label, .. } => Some(label.as_str()),
+                Item::Sep => None,
+            })
+            .collect();
+        assert_eq!(&names[..4], ["Arrange", "Workspace", "Articles", "Color"]);
+        let sub = |name: &str| {
+            window
+                .iter()
+                .find_map(|i| match i {
+                    Item::Sub(n, c) if n == name => Some(c.clone()),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        // Window › Workspace › Essentials Classic, Window › Color › Gradient & Swatches.
+        assert!(
+            sub("Workspace")
+                .iter()
+                .any(|i| matches!(i, Item::Cmd { id, params, .. } if id == "window.workspace" && params["name"] == "Essentials Classic"))
+        );
+        let color: Vec<String> =
+            sub("Color").iter().filter_map(|i| if let Item::Cmd { label, .. } = i { Some(label.clone()) } else { None }).collect();
+        assert_eq!(color, ["Color", "Gradient", "Swatches"]);
+        // Every panel is in the menu.
+        fn panels(items: &[Item], out: &mut Vec<String>) {
+            for i in items {
+                match i {
+                    Item::Sub(_, c) => panels(c, out),
+                    Item::Cmd { id, params, .. } if id == "window.panel" => out.extend(params["panel"].as_str().map(str::to_string)),
+                    _ => {}
+                }
+            }
+        }
+        let mut found = Vec::new();
+        panels(&window, &mut found);
+        for (id, _, _) in crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS) {
+            assert!(found.iter().any(|p| p == id), "Window menu misses the {id} panel");
+        }
     }
 
     #[test]
