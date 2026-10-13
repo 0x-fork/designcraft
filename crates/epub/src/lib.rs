@@ -716,11 +716,16 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
                 } else {
                     let _ = writeln!(out, "</{tag}>");
                 }
-                out.push_str(&after);
+                // Footnotes follow the paragraph outside any list or preformatted block.
+                if !after.is_empty() {
+                    close_blocks(&mut list, &mut pre, out);
+                    out.push_str(&after);
+                }
             }
             if let Some(t) = table
                 && depth < MAX_DEPTH
             {
+                close_blocks(&mut list, &mut pre, out);
                 self.table(t, depth + 1, out);
             }
         }
@@ -1761,6 +1766,38 @@ mod tests {
         let page = export_html(&d, &HtmlOptions::default());
         assert!(page.contains("<aside role=\"doc-footnote\" id=\"fn-1\">") && page.contains("Cell B2") && page.contains("End note text"));
         assert!(!page.contains("epub:type"), "plain HTML has no EPUB namespace");
+    }
+
+    /// A footnote or a table after a list paragraph or a preformatted line closes the list or
+    /// block first: `aside` and `table` can't sit inside `ul` or `pre`.
+    #[test]
+    fn notes_and_tables_close_an_open_list_or_pre_block() {
+        for (tag, list, open, close) in [("li", Some(designcraft_doc::ListType::Bullets), "<ul>", "</ul>"), ("pre", None, "<pre", "</pre>")] {
+            let mut d = tables_and_notes();
+            let para = designcraft_doc::ParaAttrs { list_type: list, ..Default::default() };
+            d.styles_mut().paragraph.push(designcraft_doc::ParagraphStyle {
+                name: "Grouped".into(),
+                based_on: None,
+                next_style: None,
+                para,
+                chars: CharAttrs::default(),
+                shortcut: String::new(),
+            });
+            d.styles_mut().export_tags.insert("p:Grouped".into(), designcraft_doc::ExportTag { tag: tag.into(), class: String::new() });
+            let sid = d.stories.keys().copied().find(|sid| d.story(*sid).is_some_and(|st| !st.notes.is_empty())).unwrap();
+            for p in &mut d.story_mut(sid).unwrap().paras {
+                p.style = "Grouped".into();
+            }
+            let html = story_html(&d, sid);
+            let mut rest = html.as_str();
+            while let Some(at) = rest.find(open) {
+                let block = &rest[at..];
+                let end = block.find(close).unwrap_or_else(|| panic!("{open} is closed:\n{html}"));
+                assert!(!block[..end].contains("<aside") && !block[..end].contains("<table"), "{html}");
+                rest = &block[end..];
+            }
+            assert!(html.contains("<aside") && html.contains("<table>"), "{html}");
+        }
     }
 
     #[test]
