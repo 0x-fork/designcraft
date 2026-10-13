@@ -58,7 +58,7 @@ fn actual_texts(bytes: &[u8]) -> Vec<String> {
         let Object::Dict(props) = op.1 else { continue };
         let props: &Dict<'_> = props;
         let Some(s) = props.get::<hayro_syntax::object::String>(b"ActualText") else { continue };
-        let units: Vec<u16> = s.as_bytes().chunks_exact(2).map(|b| u16::from_be_bytes([b[0], b[1]])).collect();
+        let units: Vec<u16> = s.as_bytes().as_chunks::<2>().0.iter().map(|&b| u16::from_be_bytes(b)).collect();
         let text = String::from_utf16(&units).expect("UTF-16");
         out.push(text.trim_start_matches('\u{FEFF}').to_string());
     }
