@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · Dialogs and the About window move when you drag their title row, so the page behind them can be seen. A dragged dialog may go partly off-screen, but its title row stays reachable; each dialog opens centred, and again after the window is resized. No readiness percentage change.
 - **2026-10-12** · Placed Excel tables and Excel data-merge records keep numeric precision, including small values, and preserve numeric-looking cached formula strings as text. No readiness percentage change.
 - **2026-10-13** · Links rows show their source paths; selecting a link shows its full path wrapped inside the panel, so same-named files from different folders can be distinguished. No readiness percentage change.
 - **2026-10-13** · HTML and reflowable EPUB order grouped stories and graphics by their transformed spread position, including nested groups and rotated frames. Explicit Article order is unchanged. No readiness percentage change.

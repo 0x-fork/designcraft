@@ -18,6 +18,7 @@ pub mod effects_dialog;
 pub mod i18n;
 pub mod icons;
 pub mod menus;
+mod modal_drag;
 mod new_document;
 mod object_control;
 mod panel_docking;
