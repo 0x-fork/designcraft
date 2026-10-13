@@ -10,10 +10,10 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use designcraft_compose::Cache;
+use designcraft_doc::PdfCrop;
 use designcraft_doc::build::NewDocument;
 use designcraft_doc::{Asset, AssetId, Content, Document, Graphic, Item, ItemId, Shape, SpreadRef};
 use designcraft_geom::{Affine, Rect, shapes};
-use designcraft_doc::PdfCrop;
 use designcraft_render::{Rendered, Renderer, pdf_crop_box, pdf_page_size};
 use hayro::hayro_interpret::Function;
 use hayro::hayro_syntax::Pdf;
@@ -78,17 +78,16 @@ fn placed(size: f64, pdf: Vec<u8>) -> Rendered {
         let asset = d.add_asset(Asset { id, name: "art.pdf".into(), mime: "application/pdf".into(), data: Arc::new(pdf), ..Default::default() });
         let id = ItemId(d.alloc());
         let mut item = Item::new(id, d.default_layer(), Shape::Rectangle, shapes::rectangle(Rect::new(0.0, 0.0, size, size)));
-        item.content =
-            Content::Graphic(Graphic {
-                asset,
-                size: (size, size),
-                xf: Affine::IDENTITY,
-                clip: None,
-                auto_fit: Default::default(),
-                fit_align: 4,
-                crop: [0.0; 4],
-                wrap: Default::default(),
-            });
+        item.content = Content::Graphic(Graphic {
+            asset,
+            size: (size, size),
+            xf: Affine::IDENTITY,
+            clip: None,
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [0.0; 4],
+            wrap: Default::default(),
+        });
         d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
         let mut renderer = Renderer::new();
         renderer.threads = 0;

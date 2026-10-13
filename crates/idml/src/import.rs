@@ -2944,7 +2944,17 @@ impl<'r> Importer<'r> {
         let link_path = uri.filter(|p| p.contains('/') || p.contains('\\'));
         let id = designcraft_doc::insert_asset(
             &mut self.assets,
-            Asset { page, id: fresh, name, mime, link: link_path, data: preview.cloned().unwrap_or_else(|| Arc::new(data)), pixels, pdf_crop, ..Default::default() },
+            Asset {
+                page,
+                id: fresh,
+                name,
+                mime,
+                link: link_path,
+                data: preview.cloned().unwrap_or_else(|| Arc::new(data)),
+                pixels,
+                pdf_crop,
+                ..Default::default()
+            },
         );
         if let Some(p) = read_from {
             self.linked_assets.insert((p, page, pdf_crop), id);
