@@ -5,6 +5,7 @@
 //! - `assets/<id>.<ext>`: embedded placed files, byte-for-byte: one per distinct file, and only
 //!   the ones the document references (see [`Document::compact_assets`])
 //! - `meta.json`: format version and generator
+//! - `preview.png` (optional): a small picture of the first page, for the start screen's recent files
 //!
 //! Older single-file JSON documents (assets as base64 in `assetData`) still open. Documents
 //! from older format versions are upgraded on load so they lay out as they did.
@@ -47,14 +48,19 @@ fn ext_for(mime: &str) -> &'static str {
 /// Serialize a document to `.designcraft` bytes. The file holds each distinct placed file once
 /// and leaves out assets nothing references; `doc` itself keeps them (undo can bring them back).
 pub fn save(doc: &Document) -> Result<Vec<u8>, FormatError> {
-    save_with_large_entries_from(doc, LARGE_ENTRY)
+    save_with_preview(doc, None)
+}
+
+/// [`save`], plus `preview` (PNG bytes) as `preview.png`.
+pub fn save_with_preview(doc: &Document, preview: Option<&[u8]>) -> Result<Vec<u8>, FormatError> {
+    save_with_large_entries_from(doc, preview, LARGE_ENTRY)
 }
 
 /// Asset entries this size or larger are written with zip64 sizes. Zip rejects an entry over
 /// 4 GiB written without them; the margin covers deflate output that is larger than its input.
 const LARGE_ENTRY: usize = (u32::MAX as usize).saturating_sub(64 << 20);
 
-fn save_with_large_entries_from(doc: &Document, large_entry: usize) -> Result<Vec<u8>, FormatError> {
+fn save_with_large_entries_from(doc: &Document, preview: Option<&[u8]>, large_entry: usize) -> Result<Vec<u8>, FormatError> {
     let mut compact = doc.clone();
     compact.compact_assets();
     let doc = &compact;
@@ -69,6 +75,10 @@ fn save_with_large_entries_from(doc: &Document, large_entry: usize) -> Result<Ve
         z.start_file("meta.json", deflate).map_err(io)?;
         let meta = json!({"format": "designcraft", "version": VERSION, "generator": concat!("DesignCraft ", env!("CARGO_PKG_VERSION"))});
         z.write_all(meta.to_string().as_bytes()).map_err(|e| FormatError::Io(e.to_string()))?;
+        if let Some(png) = preview {
+            z.start_file(PREVIEW, stored).map_err(io)?;
+            z.write_all(png).map_err(|e| FormatError::Io(e.to_string()))?;
+        }
         z.start_file("document.json", deflate).map_err(io)?;
         let json = serde_json::to_vec_pretty(doc).map_err(|e| FormatError::Io(e.to_string()))?;
         z.write_all(&json).map_err(|e| FormatError::Io(e.to_string()))?;
@@ -95,6 +105,25 @@ pub const EXTENSION: &str = "designcraft";
 pub fn is_designcraft(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK") && zip::ZipArchive::new(Cursor::new(bytes)).is_ok_and(|z| z.index_for_name("document.json").is_some())
 }
+
+/// The zip entry holding the first page's picture.
+pub const PREVIEW: &str = "preview.png";
+
+/// The PNG bytes of a `.designcraft` file's preview, reading only the zip's directory and that
+/// entry. None for files without one (saved before previews, or legacy JSON) or that aren't ours.
+pub fn read_preview<R: Read + std::io::Seek>(file: R) -> Option<Vec<u8>> {
+    let mut z = zip::ZipArchive::new(file).ok()?;
+    let mut f = z.by_name(PREVIEW).ok()?;
+    // A preview is small; a huge entry is not one we wrote.
+    if f.size() > MAX_PREVIEW_BYTES {
+        return None;
+    }
+    let mut v = Vec::new();
+    f.read_to_end(&mut v).ok()?;
+    Some(v)
+}
+
+const MAX_PREVIEW_BYTES: u64 = 4 << 20;
 
 /// Read `.designcraft` bytes (zip, or the legacy single JSON file).
 pub fn load(bytes: &[u8]) -> Result<Document, FormatError> {
@@ -488,8 +517,8 @@ mod tests {
         let aid = png_asset(&mut d, &[5; 64]);
         place(&mut d, aid, 0.0);
         let normal = save(&d).unwrap();
-        assert_eq!(normal, save_with_large_entries_from(&d, 65).unwrap(), "an asset under the threshold is unchanged");
-        let large = save_with_large_entries_from(&d, 64).unwrap();
+        assert_eq!(normal, save_with_large_entries_from(&d, None, 65).unwrap(), "an asset under the threshold is unchanged");
+        let large = save_with_large_entries_from(&d, None, 64).unwrap();
         assert!(large.len() > normal.len(), "the asset entry carries zip64 sizes");
         assert_eq!(*load(&large).unwrap().assets[&aid].data, vec![5; 64]);
     }
@@ -626,6 +655,19 @@ mod tests {
         assert!(tabs.windows(2).all(|w| w[0].position < w[1].position), "sorted");
         assert!(tabs.iter().all(|t| t.position.is_finite() && t.position <= MAX_TAB_POSITION && t.leader.chars().count() <= MAX_TAB_LEADER));
         assert_eq!(tabs.last().map(|t| t.position), Some(3960.0), "the first stops by position");
+    }
+
+    #[test]
+    fn the_preview_is_read_back_without_the_document() {
+        let d = Document::new(&NewDocument::default());
+        let png = b"\x89PNG fake".to_vec();
+        let bytes = save_with_preview(&d, Some(&png)).unwrap();
+        assert_eq!(read_preview(Cursor::new(&bytes)), Some(png));
+        assert!(load(&bytes).is_ok(), "the preview doesn't get in the way of opening");
+        // Files without one, legacy JSON and garbage have none.
+        assert_eq!(read_preview(Cursor::new(save(&d).unwrap())), None);
+        assert_eq!(read_preview(Cursor::new(b"{}".to_vec())), None);
+        assert_eq!(read_preview(Cursor::new(Vec::new())), None);
     }
 
     #[test]

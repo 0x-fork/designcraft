@@ -685,6 +685,7 @@ pub fn start_screen(app: &mut DesignApp, ui: &mut egui::Ui) {
             });
             ui.add_space(20.0);
             community_card(app, ui);
+            recent_files(app, ui);
             ui.add_space(24.0);
             ui.label(crate::rtl::widget(
                 ui,
@@ -715,6 +716,85 @@ pub fn start_screen(app: &mut DesignApp, ui: &mut egui::Ui) {
         },
     );
     let _ = Content::Unassigned;
+}
+
+/// Recent files shown on the start screen (File › Open Recent has them all).
+const START_SCREEN_RECENT: usize = 8;
+
+/// Start screen: the most recent files as cards with the first page's picture (saved in the file)
+/// and the name; the full path is the tooltip. A file that is gone is dimmed and says so when
+/// clicked. Nothing when the list is empty.
+fn recent_files(app: &mut DesignApp, ui: &mut egui::Ui) {
+    if app.session.prefs.recent_files.is_empty() {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.add_space(24.0);
+    ui.label(crate::rtl::widget(
+        ui,
+        egui::RichText::new(crate::i18n::tr(&app.ui.language, "Recent files")).font(semibold(15.0)).color(t.text_strong),
+    ));
+    ui.add_space(8.0);
+    let rows: Vec<(usize, String)> = app.session.prefs.recent_files.iter().take(START_SCREEN_RECENT).cloned().enumerate().collect();
+    let mut open = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, path) in rows {
+            let modified = std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.modified().ok());
+            let there = modified.is_some();
+            let (cr, resp) = ui.allocate_exact_size(vec2(140.0, 170.0), Sense::click());
+            let resp = resp.on_hover_text(&path);
+            ui.painter().rect_filled(cr, 6.0, if resp.hovered() { t.hover } else { t.panel });
+            let area = egui::Rect::from_min_size(cr.min + vec2(20.0, 12.0), vec2(100.0, 108.0));
+            match modified.and_then(|m| recent_preview_texture(ui.ctx(), &path, m)) {
+                Some(tex) => {
+                    let size = tex.size_vec2();
+                    let k = (area.width() / size.x).min(area.height() / size.y);
+                    let pr = egui::Rect::from_center_size(area.center(), size * k);
+                    ui.painter().image(tex.id(), pr, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    ui.painter().rect_stroke(pr, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
+                }
+                // No picture (saved before files had one) or the file is gone: a blank page.
+                None => {
+                    let pr = egui::Rect::from_center_size(area.center(), vec2(62.0, 80.0));
+                    ui.painter().rect_filled(pr, 0.0, if there { Color32::from_gray(245) } else { Color32::from_gray(110) });
+                }
+            }
+            let color = if there { t.text_strong } else { t.text_dim };
+            // The name without `.designcraft`, on up to two lines (broken after a space or dash).
+            let label = crate::menus::recent_label(&path);
+            let name = label.strip_suffix(".designcraft").unwrap_or(&label).to_string();
+            let mut job = egui::text::LayoutJob::simple(name, semibold(12.0), color, cr.width() - 12.0);
+            job.wrap.max_rows = 2;
+            job.halign = egui::Align::Center;
+            let galley = ui.painter().layout_job(job);
+            ui.painter().galley(egui::pos2(cr.center().x, area.max.y + 8.0), galley, color);
+            if resp.clicked() {
+                open = Some(i);
+            }
+        }
+    });
+    if let Some(i) = open {
+        let _ = app.run("app.openRecent", json!({"index": i}));
+    }
+}
+
+/// The texture of a recent file's saved first-page picture, read again when the file changes.
+fn recent_preview_texture(ctx: &egui::Context, path: &str, modified: Option<std::time::SystemTime>) -> Option<egui::TextureHandle> {
+    type Cached = (Option<std::time::SystemTime>, Option<egui::TextureHandle>);
+    let key = egui::Id::new(("recent_preview", path));
+    if let Some((m, tex)) = ctx.data(|d| d.get_temp::<Cached>(key))
+        && m == modified
+    {
+        return tex;
+    }
+    let tex = designcraft_engine::cmd::recent_preview(path).and_then(|p| {
+        let size = [usize::try_from(p.width).ok()?, usize::try_from(p.height).ok()?];
+        (size[0].checked_mul(size[1])?.checked_mul(4)? == p.rgba.len()).then(|| {
+            ctx.load_texture(format!("recent_preview:{path}"), egui::ColorImage::from_rgba_unmultiplied(size, &p.rgba), egui::TextureOptions::LINEAR)
+        })
+    });
+    ctx.data_mut(|d| d.insert_temp::<Cached>(key, (modified, tex.clone())));
+    tex
 }
 
 /// Start screen: the ArtCraft community (Discord first) and project links.

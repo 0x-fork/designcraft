@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5–7 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (.indd and .indt open through indd-utils; text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects; table anchors keep their own paragraphs; grouped HTML/EPUB reading order; Links source paths; XLSX cached cell values retain numeric precision and text) · **Target:** Adobe InDesign 2026
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects; table anchors keep their own paragraphs; grouped HTML/EPUB reading order; Links source paths; XLSX cached cell values retain numeric precision and text) · **Target:** Adobe InDesign 2026
 
 DesignCraft aims at full Adobe InDesign parity, and to be better: faster, open (documented JSON
 format + IDML), scriptable by agents (MCP), and available on the web.
@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · File ▸ Open Recent lists the documents last opened or saved (newest first, no duplicates; Save a Copy and exports don't count), with Clear Recent Files; the start screen shows the last eight, below the community card, as cards with a picture of the first page: saving puts one in the file (`preview.png`), so the start screen reads it without opening the document. A file that is gone is dimmed and says so when chosen, and stays listed. Preferences ▸ File Handling sets how many are kept (default 20, 0–100). `file.openRecent {index}`, `file.recentFiles`, `file.clearRecent` (#706). No readiness percentage change.
 - **2026-10-13** · Dropping an `.ase` file on the window loads its swatches, as Load Swatches does (the drop failed with "Can't Place the File"). No readiness percentage change.
 - **2026-10-13** · Text takes gradient swatches: a gradient fill or stroke on characters spans the text frame's box (on a path: the path's), on screen and in PDF. No readiness percentage change.
 - **2026-10-13** · Gradient swatches work on strokes: drawn across the path's box on screen and in PDF (they drew nothing), set with `object.gradient {target: stroke}` and in the Gradient panel when the Stroke box is in front; the stroke's gradient vector moves with the shape and round-trips through IDML. No readiness percentage change.
