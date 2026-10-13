@@ -87,6 +87,21 @@ fn help_goes_to_stdout_and_unknown_args_to_stderr() {
     assert!(String::from_utf8_lossy(&out.stderr).starts_with("usage: designcraft-cli"));
 }
 
+/// `script --help` was "unknown script option `--help`"; the line syntax was only in
+/// `describe script.run` (#654).
+#[test]
+fn script_help_documents_the_syntax() {
+    for flag in ["--help", "-h"] {
+        let out = cli().args(["script", flag]).output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{flag}: {:?} {}", out.status, String::from_utf8_lossy(&out.stderr));
+        assert!(stdout.starts_with("usage: designcraft-cli script"), "{flag}: {stdout:?}");
+        for needle in ["0-based", "$1.story", "$3.ids.0", "\\u2028", "ignore"] {
+            assert!(stdout.contains(needle), "{flag}: no {needle:?} in {stdout:?}");
+        }
+    }
+}
+
 /// `designcraft-cli commands | head -1` panicked with "failed printing to
 /// stdout: Broken pipe (os error 32)" and exit status 101.
 #[test]
