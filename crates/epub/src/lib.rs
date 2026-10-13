@@ -36,6 +36,8 @@ pub struct EpubOptions {
     /// `dcterms:modified` (Unix seconds, UTC); the document's last save, else its creation, when
     /// absent.
     pub modified: Option<i64>,
+    /// Title of the navigation (table of contents); from `language` when absent.
+    pub toc_title: Option<String>,
 }
 
 /// A font file packaged with an EPUB: the face of `family` in `style` (`Bold Italic`…).
@@ -163,6 +165,22 @@ fn cover_file(data: &[u8]) -> (&'static str, &'static str) {
     if data.starts_with(&[0xFF, 0xD8, 0xFF]) { ("images/cover.jpg", "image/jpeg") } else { ("images/cover.png", "image/png") }
 }
 
+/// The table of contents' title in `language` (a BCP 47 tag or a language name's code), English
+/// for languages without one here.
+pub fn contents_title(language: &str) -> &'static str {
+    let code = language.split(['-', '_']).next().unwrap_or("").to_ascii_lowercase();
+    match code.as_str() {
+        "nl" => "Inhoud",
+        "de" => "Inhalt",
+        "fr" => "Table des matières",
+        "es" | "pt" => "Índice",
+        "it" => "Indice",
+        "ja" => "目次",
+        "zh" => "目录",
+        _ => "Contents",
+    }
+}
+
 /// A page of a fixed-layout EPUB: its image (PNG), size in points and text (kept for search,
 /// read-aloud and accessibility).
 #[derive(Clone, Debug)]
@@ -249,6 +267,7 @@ impl Default for EpubOptions {
             generic_families: BTreeMap::new(),
             fonts: Vec::new(),
             modified: None,
+            toc_title: None,
         }
     }
 }
@@ -626,6 +645,9 @@ struct StoryWriter<'a, 'f> {
     images: BTreeMap<String, (&'a str, &'a [u8])>,
     /// Asset names of the images written without alt text (decorative).
     no_alt: Vec<String>,
+    /// Prefix of the `id`s the current story's headings get (`{prefix}-p{paragraph index}`, the
+    /// targets of the table of contents); only top-level paragraphs get one.
+    heading_ids: Option<String>,
 }
 
 impl<'a, 'f> StoryWriter<'a, 'f> {
@@ -643,6 +665,7 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
             img_src,
             images: BTreeMap::new(),
             no_alt: Vec::new(),
+            heading_ids: None,
         }
     }
 
@@ -652,8 +675,9 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
 
     /// One document story: paragraphs, tables, and each footnote after the paragraph that refers
     /// to it.
-    fn story(&mut self, sid: StoryId) -> String {
+    fn story(&mut self, sid: StoryId, heading_ids: Option<&str>) -> String {
         let Some(st) = self.doc.story(sid) else { return String::new() };
+        self.heading_ids = heading_ids.map(str::to_string);
         self.next_footnote = self.doc.footnote_start(sid);
         self.next_endnote = self.doc.endnote_start(sid);
         let mut out = String::new();
@@ -671,7 +695,7 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
         let mut lead = lead;
         let mut list: Option<&str> = None;
         let mut pre: Option<(String, bool)> = None;
-        for (r, pf) in st.para_ranges().into_iter().zip(&st.paras) {
+        for (pi, (r, pf)) in st.para_ranges().into_iter().zip(&st.paras).enumerate() {
             let Some(text) = st.text.get(r.clone()) else { continue };
             let table = pf.table.and_then(|id| st.tables.get(&id)).filter(|_| text.contains(story::TABLE_ANCHOR));
             let only_table = table.is_some() && text.chars().all(|c| c == story::TABLE_ANCHOR || c.is_whitespace());
@@ -699,7 +723,11 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
                 if continues_pre {
                     out.push('\n');
                 } else {
-                    let _ = write!(out, "<{tag} class=\"{}\"{}>", xml_attr(&class), if rtl { " dir=\"rtl\"" } else { "" });
+                    let id = match &self.heading_ids {
+                        Some(prefix) if depth == 0 && heading_level(tag).is_some() => format!(" id=\"{prefix}-p{pi}\""),
+                        _ => String::new(),
+                    };
+                    let _ = write!(out, "<{tag}{id} class=\"{}\"{}>", xml_attr(&class), if rtl { " dir=\"rtl\"" } else { "" });
                 }
                 out.push_str(lead);
                 if lead.is_empty() && text.trim().is_empty() {
@@ -984,7 +1012,78 @@ fn run_text(doc: &Document, raw: &str) -> String {
 /// One story as XHTML: paragraphs, tables, and each footnote after the paragraph that refers to
 /// it. Endnote references link to the endnotes section that the full export ends with.
 pub fn story_html(doc: &Document, sid: StoryId) -> String {
-    StoryWriter::new(doc, true, None).story(sid)
+    StoryWriter::new(doc, true, None).story(sid, None)
+}
+
+/// The level of a heading element (`h1` → 1 … `h6` → 6).
+fn heading_level(tag: &str) -> Option<u8> {
+    tag.strip_prefix('h').and_then(|n| n.parse::<u8>().ok()).filter(|n| (1..=6).contains(n))
+}
+
+/// Table of contents entries (target, label, level): the `h1`–`h3` paragraphs of the stories in
+/// reading order, or, in a document without headings, each story's first paragraph (level 1).
+fn toc_entries(doc: &Document, order: &[Block]) -> Vec<(String, String, u8)> {
+    let pc = para_classes(&doc.styles);
+    let label = |t: &str| -> String { t.chars().filter(|c| !('\u{E000}'..='\u{E0FF}').contains(c)).take(80).collect::<String>().trim().to_string() };
+    let mut headings = Vec::new();
+    let mut firsts = Vec::new();
+    for (k, b) in order.iter().enumerate() {
+        let Block::Story(sid) = b else { continue };
+        // The endnote story isn't written (the endnotes section stands in for it).
+        if doc.endnote_story == Some(*sid) {
+            continue;
+        }
+        let Some(st) = doc.story(*sid) else { continue };
+        let first = label(st.text.split('\n').next().unwrap_or(""));
+        if !first.is_empty() {
+            firsts.push((format!("s{k}"), first, 1));
+        }
+        for (pi, r) in st.para_ranges().iter().enumerate() {
+            let Some(pf) = st.paras.get(pi) else { continue };
+            let (tag, _) = export_mapping(&doc.styles, &pf.style, false, &pc);
+            let Some(level) = heading_level(tag).filter(|l| *l <= 3) else { continue };
+            let text = label(st.text.get(r.clone()).unwrap_or(""));
+            if !text.is_empty() {
+                headings.push((format!("s{k}-p{pi}"), text, level));
+            }
+        }
+    }
+    if headings.is_empty() { firsts } else { headings }
+}
+
+/// The table of contents as nested `li`/`ol` items (the content of the navigation's outer
+/// `ol`): a deeper level goes into the previous item, skipped levels count as one.
+fn nav_list(entries: &[(String, String, u8)]) -> String {
+    let mut out = String::new();
+    let mut open: Vec<u8> = Vec::new();
+    for (target, label, level) in entries {
+        let item = format!("<li><a href=\"content.xhtml#{target}\">{}</a>", xml_text(label));
+        match open.last().copied() {
+            None => open.push(*level),
+            Some(top) if *level > top => {
+                out.push_str("<ol>");
+                open.push(*level);
+            }
+            Some(_) => {
+                while open.len() > 1 && open.last().is_some_and(|t| t > level) {
+                    open.pop();
+                    out.push_str("</li></ol>");
+                }
+                out.push_str("</li>");
+                if let Some(t) = open.last_mut() {
+                    *t = (*t).min(*level);
+                }
+            }
+        }
+        out.push_str(&item);
+    }
+    for i in (0..open.len()).rev() {
+        out.push_str("</li>");
+        if i > 0 {
+            out.push_str("</ol>");
+        }
+    }
+    out
 }
 
 /// Reading order of document content: (page, y, x) of each story's first frame and of graphics.
@@ -1096,8 +1195,8 @@ struct Body<'a> {
     html: String,
     /// Images, video and sound by package name: (media type, bytes).
     images: BTreeMap<String, (&'a str, &'a [u8])>,
-    /// Table of contents: (element id, label).
-    toc: Vec<(String, String)>,
+    /// Table of contents: (element id, label, level).
+    toc: Vec<(String, String, u8)>,
     /// Asset names of the images written without alt text.
     no_alt: Vec<String>,
 }
@@ -1108,7 +1207,7 @@ fn body_html<'a>(doc: &'a Document, epub: bool, img_src: &dyn Fn(&str, &str, &[u
     let order = reading_order(doc);
     let mut writer = StoryWriter::new(doc, epub, Some(img_src));
     let mut body = String::new();
-    let mut toc: Vec<(String, String)> = Vec::new();
+    let mut toc = toc_entries(doc, &order);
     for (k, b) in order.iter().enumerate() {
         match b {
             // The endnote frame's text is generated from the endnotes, which end the body as a
@@ -1116,15 +1215,7 @@ fn body_html<'a>(doc: &'a Document, epub: bool, img_src: &dyn Fn(&str, &str, &[u
             Block::Story(sid) if doc.endnote_story == Some(*sid) => {}
             Block::Story(sid) => {
                 let anchor = format!("s{k}");
-                // First paragraph text as the TOC label.
-                if let Some(st) = doc.story(*sid) {
-                    let first: String =
-                        st.text.split('\n').next().unwrap_or("").chars().filter(|c| !('\u{E000}'..='\u{E0FF}').contains(c)).take(60).collect();
-                    if !first.trim().is_empty() {
-                        toc.push((anchor.clone(), first));
-                    }
-                }
-                let _ = write!(body, "<section id=\"{anchor}\">\n{}</section>\n", writer.story(*sid));
+                let _ = write!(body, "<section id=\"{anchor}\">\n{}</section>\n", writer.story(*sid, epub.then_some(anchor.as_str())));
             }
             Block::Image(iid) => {
                 let Some(it) = doc.item(*iid) else { continue };
@@ -1151,7 +1242,7 @@ fn body_html<'a>(doc: &'a Document, epub: bool, img_src: &dyn Fn(&str, &str, &[u
     if !endnotes.is_empty() {
         let heading = &doc.endnote_options.heading;
         if !heading.trim().is_empty() {
-            toc.push(("endnotes".into(), heading.clone()));
+            toc.push(("endnotes".into(), heading.clone(), 1));
         }
         body.push_str(&endnotes);
     }
@@ -1212,16 +1303,14 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\" lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title><link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/></head>\n<body>\n{body}</body>\n</html>\n",
         xml_text(&title)
     );
-    let mut nav_items = String::new();
-    for (a, label) in &toc {
-        let _ = write!(nav_items, "<li><a href=\"content.xhtml#{a}\">{}</a></li>", xml_text(label));
-    }
+    let mut nav_items = nav_list(&toc);
     if nav_items.is_empty() {
         nav_items = format!("<li><a href=\"content.xhtml\">{}</a></li>", xml_text(&title));
     }
     let nav = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title></head>\n<body><nav epub:type=\"toc\" id=\"toc\"><h1>Contents</h1><ol>{nav_items}</ol></nav></body>\n</html>\n",
-        xml_text(&title)
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\">\n<head><meta charset=\"utf-8\"/><title>{}</title></head>\n<body><nav epub:type=\"toc\" id=\"toc\"><h1>{}</h1><ol>{nav_items}</ol></nav></body>\n</html>\n",
+        xml_text(&title),
+        xml_text(opts.toc_title.as_deref().filter(|t| !t.trim().is_empty()).unwrap_or(contents_title(&opts.language)))
     );
     let mut manifest = String::from(
         "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n<item id=\"content\" href=\"content.xhtml\" media-type=\"application/xhtml+xml\"/>\n",
@@ -1484,6 +1573,60 @@ mod tests {
         st_typed(&mut d, sid);
         let html = story_html(&d, sid);
         assert!(html.contains("<ul style=\"list-style:none\">\n<li class=\"typed\">• typed</li>\n</ul>\n"), "{html}");
+    }
+
+    /// #769, #770: the navigation lists the h1–h3 headings (nested by level) and links to them,
+    /// with its title in the book's language; without headings, each story's first paragraph.
+    #[test]
+    fn navigation_follows_the_headings() {
+        let mut d = Document::new(&NewDocument { pages: 2, ..Default::default() });
+        let lid = d.default_layer();
+        for (name, tag) in [("Chapter", "h1"), ("Section", "h2")] {
+            d.styles_mut().paragraph.push(designcraft_doc::ParagraphStyle {
+                name: name.into(),
+                based_on: None,
+                next_style: None,
+                para: Default::default(),
+                chars: CharAttrs::default(),
+                shortcut: String::new(),
+            });
+            d.styles_mut().export_tags.insert(format!("p:{name}"), designcraft_doc::ExportTag { tag: tag.into(), class: String::new() });
+        }
+        let text = "One\nBody\nOne point one\nMore\nTwo\nText";
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 300.0), lid, text, ParaFormat::default()).unwrap();
+        let st = d.story_mut(sid).unwrap();
+        for (i, style) in [(0, "Chapter"), (2, "Section"), (4, "Chapter")] {
+            st.paras[i].style = style.into();
+        }
+        // A story that starts with body text adds nothing to the table of contents.
+        d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 400.0, 300.0, 500.0), lid, "Text after the figure.", ParaFormat::default()).unwrap();
+        let read = |d: &Document, opts: &EpubOptions, path: &str| {
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(export_epub(d, opts).unwrap())).unwrap();
+            let mut s = String::new();
+            z.by_name(path).unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        let nl = EpubOptions { language: "nl".into(), ..Default::default() };
+        let nav = read(&d, &nl, "OEBPS/nav.xhtml");
+        let link = |t: &str, l: &str| format!("<a href=\"content.xhtml#{t}\">{l}</a>");
+        let want = format!(
+            "<h1>Inhoud</h1><ol><li>{}<ol><li>{}</li></ol></li><li>{}</li></ol>",
+            link("s0-p0", "One"),
+            link("s0-p2", "One point one"),
+            link("s0-p4", "Two")
+        );
+        assert!(nav.contains(&want), "{nav}");
+        assert!(!nav.contains("Text after the figure"), "{nav}");
+        let content = read(&d, &nl, "OEBPS/content.xhtml");
+        assert!(content.contains("<h1 id=\"s0-p0\" class=\"chapter\">One</h1>") && content.contains("<h2 id=\"s0-p2\""), "{content}");
+        let custom = EpubOptions { toc_title: Some("In dit boek".into()), ..Default::default() };
+        assert!(read(&d, &custom, "OEBPS/nav.xhtml").contains("<h1>In dit boek</h1>"));
+        // Without headings: one entry per story, its first paragraph.
+        let mut plain = Document::new(&NewDocument::default());
+        let lid = plain.default_layer();
+        plain.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 100.0), lid, "Opening\nrest", ParaFormat::default()).unwrap();
+        let nav = read(&plain, &EpubOptions::default(), "OEBPS/nav.xhtml");
+        assert!(nav.contains(&format!("<h1>Contents</h1><ol><li>{}</li></ol>", link("s0", "Opening"))), "{nav}");
     }
 
     #[test]
