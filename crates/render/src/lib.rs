@@ -394,21 +394,24 @@ impl Renderer {
                 }
             }
         }
-        // Layers back to front; within each layer parent items first (document spreads only).
+        // Layers back to front; within each layer parent items first.
         for layer in doc.layers.iter().rev() {
             if !layer.visible || f.opts.printing_only && !layer.printable {
                 continue;
             }
-            if let SpreadRef::Doc(si) = sr {
-                let first = doc.first_page_of_spread(si);
-                for (pi, page) in sp.pages.iter().enumerate() {
-                    if !page.show_parent_items {
-                        continue;
-                    }
-                    let Some((ppi, ppage)) = doc.parent_page_for(first + pi) else { continue };
-                    let parent = &doc.parents[ppi];
-                    let dx = page.x - parent.pages[ppage].x;
-                    let pr = parent.pages[ppage].bounds();
+            // Document pages show their parent and its bases; a parent spread shows its bases.
+            let first = match sr {
+                SpreadRef::Doc(si) => Some(doc.first_page_of_spread(si)),
+                SpreadRef::Parent(_) => None,
+            };
+            for (pi, page) in sp.pages.iter().enumerate() {
+                if !page.show_parent_items {
+                    continue;
+                }
+                for (ppi, ppage) in doc.shown_parent_pages(sr, pi) {
+                    let Some(parent) = doc.parents.get(ppi) else { continue };
+                    let Some(ppg) = parent.pages.get(ppage) else { continue };
+                    let dx = page.x - ppg.x;
                     for it in &parent.items {
                         if it.layer != layer.id || page.overridden.contains(&it.id) {
                             continue;
@@ -417,8 +420,7 @@ impl Renderer {
                         if parent.page_at_x(it.bounds().center().x) != Some(ppage) && parent.pages.len() > 1 {
                             continue;
                         }
-                        let _ = pr;
-                        self.draw_item(ctx, f, it, Affine::translate((dx, 0.0)), Some(first + pi));
+                        self.draw_item(ctx, f, it, Affine::translate((dx, 0.0)), first.map(|a| a + pi));
                     }
                 }
             }

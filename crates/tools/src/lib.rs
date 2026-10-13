@@ -223,16 +223,18 @@ impl ToolContext<'_> {
         let spread = self.doc.spreads.get(si)?;
         let pi = spread.page_at_x(sp.x)?;
         let page = self.doc.first_page_of_spread(si) + pi;
-        let (ppi, ppg) = self.doc.parent_page_for(page)?;
-        let parent = &self.doc.parents[ppi];
-        let pg = &spread.pages[pi];
-        let at = sp - designcraft_geom::Vec2::new(pg.x - parent.pages[ppg].x, 0.0);
-        parent
-            .items
-            .iter()
-            .rev()
-            .find(|it| !it.locked && !pg.overridden.contains(&it.id) && designcraft_doc::edit_hit(it, at, self.tol(4.0)))
-            .map(|it| (page, it.id))
+        let pg = spread.pages.get(pi)?;
+        // Front to back: the page's parent, then the parents it is based on.
+        self.doc.shown_parent_pages(SpreadRef::Doc(si), pi).into_iter().rev().find_map(|(ppi, ppg)| {
+            let parent = self.doc.parents.get(ppi)?;
+            let at = sp - designcraft_geom::Vec2::new(pg.x - parent.pages.get(ppg)?.x, 0.0);
+            parent
+                .items
+                .iter()
+                .rev()
+                .find(|it| !it.locked && !pg.overridden.contains(&it.id) && designcraft_doc::edit_hit(it, at, self.tol(4.0)))
+                .map(|it| (page, it.id))
+        })
     }
 
     fn hit_parent(&self, sr: SpreadRef, sp: Point) -> Option<(SpreadRef, ItemId)> {
