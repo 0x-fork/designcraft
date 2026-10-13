@@ -26,6 +26,7 @@ use designcraft_compose::Cache;
 use designcraft_doc::{Document, LayerId, Selection};
 use serde_json::Value;
 
+pub use cmd::params::{check_keys, check_params};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use designcraft_compose as compose;
 pub use designcraft_doc as doc;
@@ -504,6 +505,10 @@ impl Session {
 
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // The crate's own tests are the audit of the params descriptions (#776): a key a test
+        // passes that its command's description doesn't name fails the test.
+        #[cfg(test)]
+        check_params(id, params)?;
         if let Err(e) = (spec.enabled)(self) {
             // A command that takes `ids` acts on the objects the call names, so the selection
             // doesn't matter: with a text caret, nothing selected, or a selection the command
@@ -698,5 +703,7 @@ mod tests_autosize;
 mod tests_idml;
 #[cfg(test)]
 mod tests_ime;
+#[cfg(test)]
+mod tests_params;
 #[cfg(test)]
 mod tests_table;

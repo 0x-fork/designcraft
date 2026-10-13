@@ -36,6 +36,7 @@ mod object;
 mod overrides;
 mod package;
 mod paste_svg;
+pub mod params;
 mod path_type;
 mod paths;
 mod pdflayers;
