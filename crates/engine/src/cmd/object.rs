@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             transform_resize
         ),
-        cmd!("transform.rotate", "Rotate", ["Object", "Transform"], None, "{angle (degrees, CCW), ids?}", has_selection, transform_rotate),
+        cmd!("transform.rotate", "Rotate", ["Object", "Transform"], None, "{angle (degrees, CCW), ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}", has_selection, transform_rotate),
         cmd!("transform.scale", "Scale", ["Object", "Transform"], None, "{sx, sy, ids?} (about the selection centre)", has_selection, |s, p| {
             let sx = f64_or(p, "sx", 1.0);
             let sy = f64_or(p, "sy", sx);
@@ -94,9 +94,9 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             clear_transformations
         ),
-        cmd!("transform.shear", "Shear", ["Object", "Transform"], None, "{angle (degrees), ids?}", has_selection, |s, p| {
+        cmd!("transform.shear", "Shear", ["Object", "Transform"], None, "{angle (degrees), ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}", has_selection, |s, p| {
             let a = f64_or(p, "angle", 0.0).clamp(-85.0, 85.0).to_radians().tan();
-            apply_about_center(s, p, Affine::new([1.0, 0.0, a, 1.0, 0.0, 0.0]))
+            apply_about_ref(s, p, Affine::new([1.0, 0.0, a, 1.0, 0.0, 0.0]))
         }),
         cmd!(
             "object.matchAttributes",
@@ -107,9 +107,9 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             match_attributes
         ),
-        cmd!("transform.flip", "Flip", ["Object", "Transform"], None, "{axis: horizontal|vertical, ids?}", has_selection, |s, p| {
+        cmd!("transform.flip", "Flip", ["Object", "Transform"], None, "{axis: horizontal|vertical, ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}", has_selection, |s, p| {
             let h = str_param(p, "axis") != Some("vertical");
-            apply_about_center(s, p, if h { Affine::scale_non_uniform(-1.0, 1.0) } else { Affine::scale_non_uniform(1.0, -1.0) })
+            apply_about_ref(s, p, if h { Affine::scale_non_uniform(-1.0, 1.0) } else { Affine::scale_non_uniform(1.0, -1.0) })
         }),
         cmd!(
             "transform.set",
@@ -1233,16 +1233,12 @@ fn clear_transformations(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-fn apply_about_center(s: &mut Session, p: &Value, a: Affine) -> Result<Value> {
+/// Apply `a` to the targets about the `ref` point (0..8, default the centre) of their combined bounds.
+fn apply_about_ref(s: &mut Session, p: &Value, a: Affine) -> Result<Value> {
     let ids = targets(s, p)?;
+    let rf = p.get("ref").and_then(Value::as_u64).unwrap_or(4).min(8) as usize;
     s.edit(|d, _| {
-        let mut b: Option<Rect> = None;
-        for id in &ids {
-            if let Some(it) = d.item(*id) {
-                b = Some(b.map_or(it.bounds(), |r| r.union(it.bounds())));
-            }
-        }
-        let c = b.unwrap_or(Rect::ZERO).center();
+        let c = designcraft_geom::reference_point(union_bounds(d, &ids), rf);
         let m = Affine::translate(c.to_vec2()) * a * Affine::translate(-c.to_vec2());
         for id in &ids {
             if let Some(it) = d.item_mut(*id) {
@@ -1255,7 +1251,7 @@ fn apply_about_center(s: &mut Session, p: &Value, a: Affine) -> Result<Value> {
 
 fn transform_rotate(s: &mut Session, p: &Value) -> Result<Value> {
     let a = f64_or(p, "angle", 0.0);
-    apply_about_center(s, p, Affine::rotate(-a.to_radians()))
+    apply_about_ref(s, p, Affine::rotate(-a.to_radians()))
 }
 
 /// The transform an item's panel values are measured from: its own (relative to its container)
@@ -3524,6 +3520,29 @@ mod gradient_tests {
         s.execute("object.gradient", &json!({"angle": 90})).unwrap();
         assert_eq!(fill(&s).gradient_vector, None);
         assert_eq!(fill(&s).gradient_angle, Some(90.0));
+    }
+}
+
+#[cfg(test)]
+mod reference_point_tests {
+    use super::*;
+
+    #[test]
+    fn rotate_and_flip_turn_about_the_reference_point() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = ItemId(s.execute("frame.create", &json!({"rect": [100, 100, 200, 150]})).unwrap()["id"].as_u64().unwrap());
+        let item = |s: &Session| s.doc().unwrap().doc.item(id).unwrap().clone();
+        // 90° counterclockwise about the top-left: that corner stays, the frame swings up.
+        s.execute("transform.rotate", &json!({"angle": 90, "ref": 0, "ids": [id.0]})).unwrap();
+        let it = item(&s);
+        assert!((it.xf * Point::new(100.0, 100.0) - Point::new(100.0, 100.0)).hypot() < 1e-9, "{:?}", it.xf);
+        let b = it.bounds();
+        assert!((b.x0 - 100.0).abs() < 1e-9 && (b.y0 - 0.0).abs() < 1e-9 && (b.x1 - 150.0).abs() < 1e-9 && (b.y1 - 100.0).abs() < 1e-9, "{b:?}");
+        // Flip horizontally about the right edge's middle: the frame lands to the right of it.
+        s.execute("transform.flip", &json!({"axis": "horizontal", "ref": 5, "ids": [id.0]})).unwrap();
+        let b = item(&s).bounds();
+        assert!((b.x0 - 150.0).abs() < 1e-9 && (b.x1 - 200.0).abs() < 1e-9 && (b.y0 - 0.0).abs() < 1e-9, "{b:?}");
     }
 }
 
