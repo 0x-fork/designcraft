@@ -876,3 +876,54 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
     assert_eq!(a, vec![Action::Exec("object.matchAttributes".into(), serde_json::json!({"from": photo.0}))]);
 }
+
+#[test]
+fn eyedropper_ignores_inactive_states_of_a_multi_state_object() {
+    use designcraft_doc::{Asset, AssetId, Content, Graphic};
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    d.assets.insert(
+        AssetId(1),
+        std::sync::Arc::new(Asset {
+            id: AssetId(1),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            link: None,
+            data: std::sync::Arc::new(vec![]),
+            pixels: Some((100, 100)),
+            page: 0,
+        }),
+    );
+    let area = Rect::new(100.0, 100.0, 200.0, 200.0);
+    let raster = {
+        let mut it = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(area));
+        it.content = Content::Graphic(Graphic {
+            asset: AssetId(1),
+            size: (100.0, 100.0),
+            xf: designcraft_geom::Affine::translate((0.0, 0.0)),
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [0.0; 4],
+        });
+        it
+    };
+    let mut vector = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(area));
+    vector.fill.swatch = "[Black]".into();
+    let target = add_rect(&mut d, Rect::new(400.0, 100.0, 450.0, 150.0));
+    let s = Selection { items: vec![target], ..Default::default() };
+    let sample = Action::Exec("color.sample".into(), serde_json::json!({"at": [120.0, 130.0], "spread": {"kind": "doc", "index": 0}}));
+    // Children [vector, raster] with the raster on top: it samples only while it is the active state.
+    for (active, samples) in [(1, true), (0, false)] {
+        let mut group = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(area));
+        group.content = Content::Group { items: vec![std::sync::Arc::new(vector.clone()), std::sync::Arc::new(raster.clone())] };
+        group.states = vec!["a".into(), "b".into()];
+        group.active_state = active;
+        let mut d2 = d.clone();
+        d2.insert_item(SpreadRef::Doc(0), group, None).unwrap();
+        let (c, l) = (Cache::new(), CanvasLayout::new(&d2, false));
+        let off = l.xf(SpreadRef::Doc(0)).translation();
+        let cx = ctx(&d2, &s, &c, &l);
+        let a = create("eyedropper").pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
+        assert_eq!(a.contains(&sample), samples, "active state {active}: {a:?}");
+    }
+}
