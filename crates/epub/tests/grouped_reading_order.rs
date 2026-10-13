@@ -109,6 +109,8 @@ fn nested_and_item_rotations_are_combined_before_measuring_graphics() {
         crop: [0.0; 4],
         wrap: Default::default(),
     });
+    // The export writes the alt text, not the file name.
+    item.alt_text = "Grouped image".into();
     item.xf = Affine::rotate(std::f64::consts::FRAC_PI_4);
     doc.insert_item(SpreadRef::Doc(0), item, None).unwrap();
     let inner = group(&mut doc, 0, &[image], Affine::rotate(-std::f64::consts::FRAC_PI_4));
