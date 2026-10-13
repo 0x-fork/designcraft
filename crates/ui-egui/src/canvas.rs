@@ -301,7 +301,12 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                 designcraft_doc::Orientation::Horizontal => (pos2(rect.min.x, p.y), pos2(rect.max.x, p.y)),
                 designcraft_doc::Orientation::Vertical => (pos2(p.x, rect.min.y), pos2(p.x, rect.max.y)),
             };
-            painter.line_segment([a, b], Stroke::new(1.0, col));
+            // A new guide from the rulers with the Page tool is a liquid guide: dashed.
+            if g.from.is_none() && app.session.tool_id() == "page" {
+                dashed(&painter, a, b, Stroke::new(1.0, col), 6.0, 3.0);
+            } else {
+                painter.line_segment([a, b], Stroke::new(1.0, col));
+            }
         }
         draw_frames(app, &painter, &xf, &doc, &layout);
         if app.ui.hidden_characters {
@@ -1760,7 +1765,10 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
             let _ = app.run("guide.move", json!({"spread": r, "page": pi, "index": gi, "position": pos_of(sp)}));
         }
         (None, true, Some((r, sp, on_page))) => {
-            let mut params = json!({"spread": r, "orientation": orient, "position": pos_of(sp), "at": sp.x, "spreadGuide": on_page.is_none()});
+            // The Page tool draws liquid guides from the rulers.
+            let liquid = app.session.tool_id() == "page" && on_page.is_some();
+            let mut params =
+                json!({"spread": r, "orientation": orient, "position": pos_of(sp), "at": sp.x, "spreadGuide": on_page.is_none(), "liquid": liquid});
             if let Some(pi) = on_page {
                 params["page"] = json!(pi);
             }
@@ -1789,6 +1797,42 @@ mod tests {
         );
         h.run_steps(4);
         h
+    }
+
+    /// A primary-button drag from `a` to `b` over a few frames.
+    fn drag(h: &mut Harness<'_, DesignApp>, a: Pos2, b: Pos2) {
+        h.hover_at(a);
+        h.step();
+        h.event(egui::Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        h.step();
+        for k in 1..=4 {
+            h.hover_at(a + (b - a) * (k as f32 / 4.0));
+            h.step();
+        }
+        h.event(egui::Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        h.run_steps(3);
+    }
+
+    #[test]
+    fn the_page_tool_draws_liquid_guides_from_the_rulers() {
+        // Chris Cicchino's Page Tool and Liquid Layout video (11:00): with the Page tool, a guide
+        // dragged from the ruler is a liquid guide (dashed).
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.session.set_tool("page");
+        let mut h = harness(app);
+        let r = h.state().canvas_rect.unwrap();
+        let guides = |h: &Harness<'_, DesignApp>| h.state().session.doc().unwrap().doc.spreads[0].pages[0].guides.clone();
+        drag(&mut h, pos2(r.center().x, r.min.y - 8.0), r.center());
+        let g = guides(&h);
+        assert_eq!(g.len(), 1, "{g:?}");
+        assert!(g[0].liquid && g[0].orientation == designcraft_doc::Orientation::Horizontal);
+        // With the Selection tool it's a ruler guide.
+        h.state_mut().session.set_tool("selection");
+        drag(&mut h, pos2(r.center().x, r.min.y - 8.0), r.center() + vec2(0.0, 40.0));
+        let g = guides(&h);
+        assert_eq!(g.len(), 2);
+        assert!(!g[1].liquid);
     }
 
     fn right_click(h: &mut Harness<'_, DesignApp>, p: Pos2) {
