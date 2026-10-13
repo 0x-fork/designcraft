@@ -1492,6 +1492,43 @@ fn arrange(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let to = str_param(p, "to").unwrap_or("front").to_string();
     s.edit(|d, _| {
+        if matches!(to.as_str(), "forward" | "backward") {
+            let selected: HashSet<ItemId> = ids.iter().copied().collect();
+            let mut positions: Vec<_> = selected
+                .iter()
+                .filter_map(|id| {
+                    let loc = d.find(*id)?;
+                    match loc.path.as_slice() {
+                        [i] => Some((loc.spread, *i)),
+                        _ => None,
+                    }
+                })
+                .collect();
+            // Move the leading selected items first, independently of selection/click order.
+            // Swapping only with unselected siblings leaves the other selected indices valid.
+            positions.sort_by_key(|(_, i)| *i);
+            let forward = to == "forward";
+            if forward {
+                positions.reverse();
+            }
+            for (spread, i) in positions {
+                let Some(sp) = d.spread_mut(spread) else { continue };
+                let Some(it) = sp.items.get(i) else { continue };
+                let layer = it.layer;
+                let sibling = if forward {
+                    sp.items.iter().enumerate().skip(i.saturating_add(1)).find(|(_, it)| it.layer == layer)
+                } else {
+                    sp.items.iter().enumerate().take(i).rev().find(|(_, it)| it.layer == layer)
+                };
+                if let Some((j, it)) = sibling
+                    && !selected.contains(&it.id)
+                {
+                    // Keep every other layer's slots and relative stacking order untouched.
+                    sp.items.swap(i, j);
+                }
+            }
+            return ok();
+        }
         for id in &ids {
             let Some(loc) = d.find(*id) else { continue };
             if loc.path.len() != 1 {
@@ -1504,7 +1541,6 @@ fn arrange(s: &mut Session, p: &Value) -> Result<Value> {
             let j = match to.as_str() {
                 "front" => n - 1,
                 "back" => 0,
-                "forward" => (i + 1).min(n - 1),
                 _ => i.saturating_sub(1),
             };
             sp.items.insert(j, it);
@@ -3130,6 +3166,148 @@ fn step_and_repeat(s: &mut Session, p: &Value) -> Result<Value> {
         let copies: Vec<u64> = all.iter().skip(ids.len()).map(|i| i.0).collect();
         Ok(json!({"created": copies.len(), "ids": copies}))
     })
+}
+
+#[cfg(test)]
+mod arrange_tests {
+    use super::*;
+
+    fn fixture<const N: usize>(layers: [usize; N]) -> (Session, [ItemId; N]) {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1, "facingPages": false})).unwrap();
+        let first = s.doc().unwrap().doc.default_layer().0;
+        let second = s.execute("layer.new", &json!({"name": "Other layer"})).unwrap()["id"].as_u64().unwrap();
+        let layer_ids = [first, second];
+        let mut ids = [ItemId(0); N];
+        for (id, layer) in ids.iter_mut().zip(layers) {
+            // Overlap objects within each layer; separate layers spatially for hit testing.
+            let x = if layer == 0 { 0 } else { 200 };
+            *id = ItemId(s.execute("frame.create", &json!({"rect": [x, 0, x + 100, 100]})).unwrap()["id"].as_u64().unwrap());
+            s.execute("object.setLayer", &json!({"ids": [id.0], "layer": layer_ids[layer]})).unwrap();
+        }
+        (s, ids)
+    }
+
+    fn stack(s: &Session) -> Vec<ItemId> {
+        s.doc().unwrap().doc.spreads[0].items.iter().map(|it| it.id).collect()
+    }
+
+    fn snapshot(s: &Session) -> Value {
+        let st = s.doc().unwrap();
+        json!({"document": &*st.doc, "selection": &st.selection})
+    }
+
+    fn assert_items_unchanged(before: &Document, after: &Document) {
+        assert_eq!(serde_json::to_value(&before.layers).unwrap(), serde_json::to_value(&after.layers).unwrap());
+        for it in &before.spreads[0].items {
+            assert_eq!(serde_json::to_value(it).unwrap(), serde_json::to_value(after.item(it.id).unwrap()).unwrap());
+        }
+    }
+
+    #[test]
+    fn arrange_steps_past_other_layers_change_hit_order_and_undo() {
+        for direction in ["forward", "backward"] {
+            let (mut s, [a, x, y, b]) = fixture([0, 1, 1, 0]);
+            let selected = if direction == "forward" { a } else { b };
+            s.execute("selection.set", &json!({"ids": [selected.0]})).unwrap();
+            let before = snapshot(&s);
+            let doc = s.doc().unwrap().doc.clone();
+            let undo_len = s.doc().unwrap().history.undo.len();
+            let hit = |s: &Session| s.doc().unwrap().doc.hit_item(0, Point::new(50.0, 50.0), 0.0);
+            assert_eq!(hit(&s), Some(b));
+
+            s.execute("object.arrange", &json!({"to": direction})).unwrap();
+            assert_eq!(stack(&s), [b, x, y, a], "{direction}");
+            assert_eq!(hit(&s), Some(a), "the visible topmost object must change");
+            assert_items_unchanged(&doc, &s.doc().unwrap().doc);
+            assert_eq!(s.doc().unwrap().history.undo.len(), undo_len + 1);
+            assert_eq!(s.doc().unwrap().selection.items, [selected]);
+            let after = snapshot(&s);
+
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(snapshot(&s), before);
+            assert_eq!(hit(&s), Some(b));
+            s.execute("edit.redo", &json!({})).unwrap();
+            assert_eq!(snapshot(&s), after);
+            assert_eq!(hit(&s), Some(a));
+        }
+    }
+
+    #[test]
+    fn arrange_multiple_selection_preserves_order_independent_of_input_order() {
+        // Layer 0: a, b, c, d. Layer 1: x, y. Arrays name the original stack indices.
+        let cases = [
+            ("forward", [0, 2], [4, 1, 0, 3, 2, 5]),  // a,b cross c as a block
+            ("backward", [2, 4], [2, 1, 4, 3, 0, 5]), // b,c cross a as a block
+            ("forward", [0, 4], [2, 1, 0, 3, 5, 4]),  // separate selected blocks
+            ("backward", [2, 5], [2, 1, 0, 3, 5, 4]),
+            ("forward", [4, 5], [0, 1, 2, 3, 4, 5]),  // front block is already at its endpoint
+            ("backward", [0, 2], [0, 1, 2, 3, 4, 5]), // back block is already at its endpoint
+        ];
+        for (direction, selected, expected) in cases {
+            for reverse in [false, true] {
+                let (mut s, ids) = fixture([0, 1, 0, 1, 0, 0]);
+                let doc = s.doc().unwrap().doc.clone();
+                let mut selected = selected.map(|i| ids[i].0).to_vec();
+                if reverse {
+                    selected.reverse();
+                }
+                // Explicit command targets may contain duplicates: an item still moves once.
+                selected.push(selected[0]);
+                s.execute("object.arrange", &json!({"to": direction, "ids": selected})).unwrap();
+                assert_eq!(stack(&s), expected.map(|i| ids[i]), "{direction}, reverse={reverse}");
+                assert_items_unchanged(&doc, &s.doc().unwrap().doc);
+            }
+        }
+    }
+
+    #[test]
+    fn arrange_same_layer_steps_stop_at_layer_endpoints() {
+        let cases = [
+            ("forward", vec![1], [0, 2, 1, 3, 4]),
+            ("backward", vec![3], [0, 1, 3, 2, 4]),
+            ("forward", vec![3], [0, 1, 2, 3, 4]),
+            ("backward", vec![1], [0, 1, 2, 3, 4]),
+            ("forward", vec![3, 1, 2], [0, 1, 2, 3, 4]),
+            ("backward", vec![3, 1, 2], [0, 1, 2, 3, 4]),
+        ];
+        for (direction, selected, expected) in cases {
+            let (mut s, ids) = fixture([1, 0, 0, 0, 1]);
+            let selected: Vec<_> = selected.into_iter().map(|i| ids[i].0).collect();
+            s.execute("object.arrange", &json!({"to": direction, "ids": selected})).unwrap();
+            assert_eq!(stack(&s), expected.map(|i| ids[i]));
+        }
+        for direction in ["forward", "backward"] {
+            let (mut s, [x, a, y]) = fixture([1, 0, 1]);
+            s.execute("object.arrange", &json!({"to": direction, "ids": [a.0]})).unwrap();
+            assert_eq!(stack(&s), [x, a, y], "only object on its layer");
+        }
+    }
+
+    #[test]
+    fn arrange_selection_on_two_layers_moves_each_layer_independently() {
+        for direction in ["forward", "backward"] {
+            let (mut s, [a, x, b, y]) = fixture([0, 1, 0, 1]);
+            let selected = if direction == "forward" { [x.0, a.0] } else { [b.0, y.0] };
+            s.execute("object.arrange", &json!({"to": direction, "ids": selected})).unwrap();
+            assert_eq!(stack(&s), [b, y, a, x]);
+            let doc = &s.doc().unwrap().doc;
+            assert_eq!(doc.hit_item(0, Point::new(50.0, 50.0), 0.0), Some(a));
+            assert_eq!(doc.hit_item(0, Point::new(250.0, 50.0), 0.0), Some(x));
+        }
+    }
+
+    #[test]
+    fn arrange_menu_steps_use_same_layer_order() {
+        for command in ["object.bringForward", "object.sendBackward"] {
+            let (mut s, [a, x, b]) = fixture([0, 1, 0]);
+            let selected = if command == "object.bringForward" { a } else { b };
+            s.execute("selection.set", &json!({"ids": [selected.0]})).unwrap();
+            s.execute(command, &json!({})).unwrap();
+            assert_eq!(stack(&s), [b, x, a]);
+            assert_eq!(s.doc().unwrap().doc.hit_item(0, Point::new(50.0, 50.0), 0.0), Some(a));
+        }
+    }
 }
 
 #[cfg(test)]
