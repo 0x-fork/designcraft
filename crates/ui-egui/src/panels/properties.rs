@@ -2559,7 +2559,6 @@ mod tests {
 
     fn links_harness(app: DesignApp, width: f32) -> Harness<'static, DesignApp> {
         let builder = Harness::builder().with_size(vec2(width, 600.0));
-        let builder = if std::env::var_os("DESIGNCRAFT_LINKS_FIXTURES").is_some() { builder.wgpu() } else { builder };
         let mut ready = false;
         let mut h = builder.build_ui_state(
             move |ui, app: &mut DesignApp| {
@@ -2578,19 +2577,6 @@ mod tests {
         h
     }
 
-    fn capture_links(h: &mut Harness<'_, DesignApp>, name: &str) {
-        let Some(directory) = std::env::var_os("DESIGNCRAFT_LINKS_FIXTURES").map(std::path::PathBuf::from) else { return };
-        std::fs::create_dir_all(&directory).unwrap();
-        h.render().unwrap().save(directory.join(format!("round2-links569-{name}.png"))).unwrap();
-        if name == "same-named-sources" {
-            let doc = &h.state().session.active().unwrap().doc;
-            let mut value = serde_json::to_value(doc).unwrap();
-            value["assetData"] =
-                Value::Object(doc.assets.iter().map(|(id, a)| (id.0.to_string(), json!(designcraft_engine::cmd::base64_encode(&a.data)))).collect());
-            std::fs::write(directory.join("round2-links569-synthetic.designcraft"), serde_json::to_vec(&value).unwrap()).unwrap();
-        }
-    }
-
     #[test]
     fn links_panel_distinguishes_same_named_sources_and_keeps_link_actions() {
         let first = "/project/assets/studio-a/photo.svg";
@@ -2599,10 +2585,8 @@ mod tests {
         let mut h = links_harness(app, 320.0);
         assert_eq!(h.get_all_by_label("photo.svg").count(), 3);
         assert!(h.query_by_label(first).is_some(), "the first source path is visible in the row");
-        capture_links(&mut h, "same-named-sources");
         h.get_by_label(second).click();
         h.run_steps(3);
-        capture_links(&mut h, "selected-studio-b");
         h.get_by_label("Go To").click();
         h.run_steps(3);
         assert_eq!(h.state().session.active().unwrap().selection.items, vec![items[1]]);
@@ -2613,10 +2597,8 @@ mod tests {
         assert!(h.query_by_label(second).is_none(), "an embedded graphic no longer shows a source path");
         assert_eq!(h.get_all_by_label("Embedded").count(), 2);
         assert_eq!(h.get_all_by_label("photo.svg").count(), 3);
-        capture_links(&mut h, "embedded");
         h.get_by_label(first).click();
         h.run_steps(3);
-        capture_links(&mut h, "selected-studio-a");
         h.get_by_label("Go To").click();
         h.run_steps(3);
         assert_eq!(h.state().session.active().unwrap().selection.items, vec![items[0]]);
@@ -2634,7 +2616,6 @@ mod tests {
         h.get_by_label(path).click();
         h.run_steps(3);
         assert!(h.output().shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(text) if text.galley.job.text == path && !text.galley.elided && text.visual_bounding_rect().right() <= 240.0)), "the selected path is painted in full and wraps inside the panel");
-        capture_links(&mut h, "long-path-narrow");
     }
 
     #[test]
