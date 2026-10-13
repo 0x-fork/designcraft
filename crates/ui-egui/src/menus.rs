@@ -2612,6 +2612,18 @@ fn parse_shortcut(sc: &str) -> Option<(egui::Modifiers, egui::Key)> {
     key.map(|k| (m, k))
 }
 
+/// Whether a key press matches a parsed shortcut `m`+`k`: `None` when it doesn't, `Some(true)` for
+/// the shortcut's own key and modifiers, `Some(false)` for the Plus key standing in for `=`. On
+/// layouts with a dedicated + key (German) or Shift+= (US), Cmd+= arrives as Plus.
+fn key_matches(m: egui::Modifiers, k: egui::Key, key: egui::Key, modifiers: egui::Modifiers) -> Option<bool> {
+    let plus_for_equals = key == egui::Key::Plus;
+    let matches = (k == key || (plus_for_equals && k == egui::Key::Equals))
+        && m.command == modifiers.command
+        && (m.shift == modifiers.shift || (plus_for_equals && !m.shift))
+        && m.alt == modifiers.alt;
+    matches.then_some(k == key && m.shift == modifiers.shift)
+}
+
 /// Global keyboard shortcuts: menu commands and single-key tool shortcuts.
 pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
     // Only a focused text field takes the keys: the canvas (or a button) having focus after a click
@@ -2639,17 +2651,12 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
             continue;
         }
         // Command shortcuts.
-        let mut fired: Option<String> = None;
+        let mut fired: Option<(String, bool)> = None;
         let all = effective_shortcuts(app);
         for (id, sc) in &all {
             let id = id.as_str();
-            // On layouts with a dedicated + key (German) or Shift+= (US), Cmd+= arrives as Plus.
-            let plus_for_equals = key == egui::Key::Plus;
             if let Some((m, k)) = parse_shortcut(sc)
-                && (k == key || (plus_for_equals && k == egui::Key::Equals))
-                && m.command == modifiers.command
-                && (m.shift == modifiers.shift || (plus_for_equals && !m.shift))
-                && m.alt == modifiers.alt
+                && let Some(exact) = key_matches(m, k, key, modifiers)
                 && (m.command || m.alt || !typing)
                 && !(id == "edit.clear" && typing)
             {
@@ -2660,12 +2667,14 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
                 if id == "edit.clear" || (typing && matches!(id, "edit.copy" | "edit.cut" | "edit.paste" | "edit.pasteInPlace")) {
                     continue; // Handled by the active tool / text clipboard events.
                 }
-                fired = Some(id.to_string());
+                fired = Some((id.to_string(), exact));
                 break;
             }
         }
-        if let Some(id) = fired {
-            if app.native_shortcuts.contains(&id) && !app.ui.shortcuts.contains_key(&id) {
+        if let Some((id, exact)) = fired {
+            // The native menu's accelerator fires only for the shortcut's own key and modifiers; the
+            // Plus key standing in for = never reaches it.
+            if exact && app.native_shortcuts.contains(&id) && !app.ui.shortcuts.contains_key(&id) {
                 continue; // The native menu handles it.
             }
             // The key press belongs to the shortcut: what it opens (Quick Apply's list, a dialog's
@@ -3746,6 +3755,20 @@ mod tests {
             let z = app.view().unwrap().zoom;
             assert!(if zooms_in { z > z0 } else { z < z0 }, "{k:?} {m:?}: {z0} -> {z}");
             assert_eq!(ctx.zoom_factor(), scale, "{k:?} {m:?} leaves the UI scale alone");
+        }
+        // With a native menu (macOS) its accelerator takes Cmd+= itself, but never sees the Plus key
+        // standing in for = (#781).
+        app.native_shortcuts.insert("view.zoomIn".to_string());
+        for (k, m, zooms_in) in [
+            (egui::Key::Plus, egui::Modifiers::COMMAND, true),
+            (egui::Key::Plus, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, true),
+            (egui::Key::Equals, egui::Modifiers::COMMAND, false),
+        ] {
+            let z0 = app.view().unwrap().zoom;
+            frame(&mut app, key(k, m));
+            frame(&mut app, vec![]);
+            let z = app.view().unwrap().zoom;
+            assert_eq!(z > z0, zooms_in, "native menu, {k:?} {m:?}: {z0} -> {z}");
         }
     }
 
