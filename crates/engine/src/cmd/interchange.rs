@@ -40,6 +40,15 @@ pub fn import(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<Document> {
 
 /// [`import`], with the problems that did not stop it (parts missing from the package, …).
 pub fn import_report(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<(Document, Vec<String>)> {
+    import_report_with_previews(bytes, dir, &std::collections::HashMap::new())
+}
+
+/// [`import_report`], showing `previews` (graphic `Self` → image) for linked files that can't be read.
+fn import_report_with_previews(
+    bytes: &[u8],
+    dir: Option<&std::path::Path>,
+    previews: &std::collections::HashMap<String, Vec<u8>>,
+) -> Result<(Document, Vec<String>)> {
     #[cfg(not(target_arch = "wasm32"))]
     let resolved = std::cell::RefCell::new(std::collections::HashMap::new());
     let read = |link: &str| -> Option<Vec<u8>> {
@@ -56,7 +65,7 @@ pub fn import_report(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<(Doc
         }
     };
     let designcraft_idml::Imported { mut document, warnings } =
-        designcraft_idml::import_idml_report(bytes, &read).map_err(|e| EngineError::Other(e.to_string()))?;
+        designcraft_idml::import_idml_report_with_previews(bytes, &read, previews).map_err(|e| EngineError::Other(e.to_string()))?;
     resolve_pdf_crops(&mut document);
     #[cfg(not(target_arch = "wasm32"))]
     let document = {
@@ -229,14 +238,22 @@ pub(crate) fn open_idml(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("file.openIdml", "missing `path` or `base64`"));
     };
     let mut warnings = Vec::new();
+    // InDesign's previews of linked graphics show while their files are missing (graphic `Self` →
+    // preview), as InDesign shows them.
+    let mut previews = std::collections::HashMap::new();
     let bytes = if is_indd(&file, &bytes) {
         let conversion = indd::convert(&bytes, &file).map_err(|e| EngineError::Other(format!("can't convert the InDesign file: {e}")))?;
         warnings.extend(conversion.warnings.iter().map(|w| w.message().to_string()));
+        for p in conversion.previews {
+            for g in p.graphics {
+                previews.insert(g, p.data.clone());
+            }
+        }
         conversion.idml
     } else {
         bytes
     };
-    let (mut d, import_warnings) = import_report(&bytes, dir.as_deref())?;
+    let (mut d, import_warnings) = import_report_with_previews(&bytes, dir.as_deref(), &previews)?;
     warnings.extend(import_warnings);
     if !title.is_empty() {
         d.title = title;

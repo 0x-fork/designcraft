@@ -3670,3 +3670,19 @@ fn style_names_ending_in_a_space_and_partial_rule_overrides_import() {
     assert_eq!((black.weight, black.offset), (16.0, -3.0), "weight and offset come from the base style");
     assert_ne!(black.color, white.color, "only the colour is overridden");
 }
+
+#[test]
+fn missing_linked_graphics_show_their_preview_and_keep_their_link() {
+    // InDesign's preview of the missing photo (a PNG header is all the importer reads: 4 × 3).
+    let png: Vec<u8> = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0, 0, 0, 13], b"IHDR", &4u32.to_be_bytes(), &3u32.to_be_bytes()].concat();
+    let previews = std::collections::HashMap::from([("im".to_string(), png.clone())]);
+    let d = crate::import_idml_report_with_previews(&fixture(), &|_| None, &previews).unwrap().document;
+    let img = d.spreads.iter().flat_map(|sp| sp.items.iter()).find(|i| i.graphic().is_some()).unwrap();
+    let a = &d.assets[&img.graphic().unwrap().asset];
+    assert_eq!(a.data.as_slice(), png.as_slice(), "the preview shows");
+    assert_eq!(a.mime, "image/png");
+    assert_eq!(a.link.as_deref(), Some("/definitely/missing dir/photo.jpg"), "relinking still finds the file");
+    // Without a preview it stays empty, as before.
+    let d = import_idml(&fixture()).unwrap();
+    assert!(d.assets.values().all(|a| a.data.is_empty() || a.link.is_none()));
+}
