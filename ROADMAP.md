@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · PDF export leaves out form fields, buttons and video or sound that don't print: inside a hidden group, on a hidden or non-printing layer, or marked non-printing. Page content and interactive elements follow one inclusion rule. No readiness percentage change.
 - **2026-10-13** · IDML export keeps parent item overrides: each page lists its overridden parent items and the local copy keeps its link to the parent item, so a reopened IDML file shows only the local copy (#725). No readiness percentage change.
 - **2026-10-13** · Reflowable EPUB and HTML export include tables (header and footer rows, merged cells), footnotes (a linked note after the paragraph that refers to it) and endnotes (a linked section at the end of the book). No readiness percentage change.
 - **2026-10-13** · Word import: table cells read text by the same rules as body text, so deleted text, moved-away text and field codes stay out (#721). Word's Normal comes in as its own paragraph style "Normal" over the document defaults, so text formatted only by Normal keeps its look; it conflicts only with a document's own Normal, and the style map can send it to [Basic Paragraph] (#722). No readiness percentage change.
