@@ -4486,6 +4486,12 @@ mod spread_target_tests {
             assert!(s.execute("line.create", &json!({"spread": bad, "a": [0, 0], "b": [50, 50]})).is_err(), "line.create spread {bad}");
         }
         assert!(s.doc().unwrap().doc.spreads[0].items.is_empty());
+        // Null is absent: spread 0 (Paste in Place forwards its optional `spread`).
+        let r = s.execute("frame.create", &json!({"spread": null, "rect": [0, 0, 100, 100]})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.find(ItemId(r["id"].as_u64().unwrap())).unwrap().spread, SpreadRef::Doc(0));
+        s.execute("frame.create", &json!({"rect": [0, 0, 100, 100]})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.pasteInPlace", &json!({})).unwrap();
     }
 }
 

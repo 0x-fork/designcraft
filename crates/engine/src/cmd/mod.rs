@@ -273,13 +273,13 @@ pub(crate) fn rect_param(p: &Value, key: &str) -> Option<Rect> {
     Some(Rect::new(f(0)?, f(1)?, f(2)?, f(3)?))
 }
 /// The `spread` param: a body spread index (`0`), a spread reference (`{"kind":"doc"|"parent","index":0}`)
-/// or absent (= spread 0). Anything else is an error: read as spread 0, a script aiming at a parent
+/// or absent or null (= spread 0; commands that forward an optional `spread` pass null). Anything else is an error: read as spread 0, a script aiming at a parent
 /// spread got its items on the first page without a word.
 pub(crate) fn spread_param(p: &Value, command: &str) -> Result<SpreadRef> {
     let index = |v: &Value, key: &str| {
         v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad(command, format!("`{key}` must be a non-negative integer")))
     };
-    let Some(value) = p.get("spread") else { return Ok(SpreadRef::Doc(0)) };
+    let Some(value) = p.get("spread").filter(|v| !v.is_null()) else { return Ok(SpreadRef::Doc(0)) };
     if value.is_number() {
         return Ok(SpreadRef::Doc(index(value, "spread")?));
     }
