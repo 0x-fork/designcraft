@@ -1520,3 +1520,62 @@ fn fitting_handle_axes_follow_spread_and_frame_rotation() {
         }
     }
 }
+
+#[test]
+fn pen_continues_an_open_path_from_either_end_point() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let id = ItemId(d.alloc());
+    let anchors = vec![
+        designcraft_geom::Anchor::corner(Point::new(100.0, 100.0)),
+        designcraft_geom::Anchor {
+            p: Point::new(200.0, 100.0),
+            h_in: Point::new(170.0, 80.0),
+            h_out: Point::new(230.0, 120.0),
+            kind: designcraft_geom::AnchorKind::Smooth,
+        },
+    ];
+    let mut it = Item::new(id, lid, Shape::Path, designcraft_geom::PathData::single(designcraft_geom::SubPath::new(anchors, false)));
+    it.stroke = Stroke::default();
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    let (s, c, l) = (Selection::default(), Cache::new(), CanvasLayout::new(&d, false));
+    let cx = ctx(&d, &s, &c, &l);
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let at = |x: f64, y: f64| (x + off.x, y + off.y);
+    let ev = |k: PointerKind, (x, y): (f64, f64)| PointerEvent::new(k, x, y);
+    let mut t = create("pen");
+    // The cursor says the end point continues the path; elsewhere it's the plain pen.
+    assert_eq!(t.cursor(&cx, Point::new(at(200.0, 100.0).0, at(200.0, 100.0).1), Mods::default()), Cursor::PenContinue);
+    assert_eq!(t.cursor(&cx, Point::new(at(150.0, 300.0).0, at(150.0, 300.0).1), Mods::default()), Cursor::Pen);
+    // Clicking the last anchor adds nothing yet; the next click appends to that path.
+    assert!(t.pointer(&cx, &ev(PointerKind::Down, at(200.0, 100.0))).is_empty());
+    assert!(t.pointer(&cx, &ev(PointerKind::Up, at(200.0, 100.0))).is_empty(), "a click on the end point changes nothing");
+    t.pointer(&cx, &ev(PointerKind::Down, at(300.0, 200.0)));
+    let a = t.pointer(&cx, &ev(PointerKind::Up, at(300.0, 200.0)));
+    let [Action::Exec(cmd, p)] = a.as_slice() else { panic!("{a:?}") };
+    assert_eq!((cmd.as_str(), p["id"].as_u64(), p["subpath"].as_u64()), ("path.appendAnchor", Some(id.0), Some(0)));
+    assert_eq!((p["anchor"]["p"][0].as_f64(), p["anchor"]["p"][1].as_f64()), (Some(300.0), Some(200.0)));
+    // Clicking the first anchor of the other end closes it.
+    let a = t.pointer(&cx, &ev(PointerKind::Down, at(100.0, 100.0)));
+    assert_eq!(a, vec![Action::Exec("path.close".into(), serde_json::json!({"id": id.0, "subpath": 0}))]);
+    assert!(t.pointer(&cx, &ev(PointerKind::Up, at(100.0, 100.0))).is_empty());
+    // From the first anchor, the path is reversed first; a drag there sets its direction lines.
+    let mut t = create("pen");
+    let a = t.pointer(&cx, &ev(PointerKind::Down, at(100.0, 100.0)));
+    assert_eq!(a, vec![Action::Exec("path.reverse".into(), serde_json::json!({"ids": [id.0], "subpath": 0}))]);
+    t.pointer(&cx, &ev(PointerKind::Drag, at(80.0, 140.0)));
+    let a = t.pointer(&cx, &ev(PointerKind::Up, at(80.0, 140.0)));
+    assert_eq!(
+        a,
+        vec![Action::Exec(
+            "path.setAnchor".into(),
+            serde_json::json!({"id": id.0, "subpath": 0, "anchor": "last", "in": [120.0, 60.0], "out": [80.0, 140.0]})
+        )]
+    );
+    // Closed paths and locked paths aren't continued.
+    let mut d2 = d.clone();
+    d2.item_mut(id).unwrap().locked = true;
+    let cx = ctx(&d2, &s, &c, &l);
+    let t = create("pen");
+    assert_eq!(t.cursor(&cx, Point::new(at(200.0, 100.0).0, at(200.0, 100.0).1), Mods::default()), Cursor::Pen);
+}

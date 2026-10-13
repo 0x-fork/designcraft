@@ -31,6 +31,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Copy", "نسخ"),
     ("Paste", "لصق"),
     ("Paste Vector Art", "لصق رسم متجه"),
+    ("Reverse Path", "عكس المسار"),
+    ("Set Anchor", "تعيين نقطة الارتساء"),
     ("Clear", "مسح"),
     ("Delete", "حذف"),
     ("Duplicate", "تكرار"),

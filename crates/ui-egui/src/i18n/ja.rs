@@ -31,6 +31,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Copy", "コピー"),
     ("Paste", "ペースト"),
     ("Paste Vector Art", "ベクトルアートをペースト"),
+    ("Reverse Path", "パスの方向反転"),
+    ("Set Anchor", "アンカーポイントを設定"),
     ("Clear", "消去"),
     ("Duplicate", "複製"),
     ("Select All", "すべてを選択"),

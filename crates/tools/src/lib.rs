@@ -369,6 +369,8 @@ pub enum Cursor {
     PenClose,
     /// Convert Direction Point.
     PenConvert,
+    /// The Pen over an open path's end point: a click continues the path.
+    PenContinue,
     Text,
     Hand,
     HandGrab,
