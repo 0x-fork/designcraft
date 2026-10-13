@@ -12,7 +12,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "{path?, pages?: \"1-3,5\" | [1,3] (1-based positions; default all), flatten?: high|medium|low|ppi (Transparency Flattener: spreads with transparency are rasterised), spreads?: bool, fullScreen?: bool, bookmarksPanel?: bool, pageLayout?: single|continuous|twoUp|twoUpCover|twoUpContinuous, view?: fitPage|fitWidth|actual, advanceSeconds?: number (interactive PDF), bleed?: bool (document bleed), marks?: bool | {crop?, bleed?, pageInfo?, weight?, offset?}, standard?: \"none\"|\"x4\"|\"a2b\", compressImages?: bool, tagged?: bool (structure tree: stories as paragraphs, figures with alt text), media?: bool (interactive: embed placed video and sound), title?, author?} → {path, bytes, pages, warnings} (no path: {base64, …})",
         has_doc, export_pdf),
         cmd!(noundo "file.exportEpub", "Export EPUB (Reflowable)…", ["File"], None,
-        "{path?, title?, author?, language?: \"en\", cover?: bool (the first page as the cover image), fixedLayout?: bool (pre-paginated: each page as an image with its text)} → {path, bytes} (no path: {base64, bytes})",
+        "{path?, title?, author?, language?: \"en\", cover?: bool (the first page as the cover image), fixedLayout?: bool (pre-paginated: each page as an image with its text)} → {path, bytes, warnings} (no path: {base64, bytes, warnings}); warnings name images without alt text, exported as decorative",
         has_doc, export_epub),
         cmd!(noundo "file.exportFixedEpub", "Export EPUB (Fixed Layout)…", ["File"], None,
         "{path?, title?, author?, language?} — pre-paginated EPUB → {path, bytes} (no path: {base64, bytes})",
@@ -158,13 +158,17 @@ fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
         };
     }
     let bytes = designcraft_epub::export_epub(epub_doc, &opts).map_err(|e| crate::EngineError::Other(e.to_string()))?;
+    let warnings: Vec<String> = designcraft_epub::images_without_alt(epub_doc)
+        .into_iter()
+        .map(|name| format!("{name}: no alt text (Object Export Options); exported as decorative (alt=\"\")"))
+        .collect();
     match p.get("path").and_then(Value::as_str) {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
             crate::atomic::write_file(path, &bytes)?;
-            Ok(serde_json::json!({"path": path, "bytes": bytes.len()}))
+            Ok(serde_json::json!({"path": path, "bytes": bytes.len(), "warnings": warnings}))
         }
-        None => Ok(serde_json::json!({"base64": super::file::base64_encode(&bytes), "bytes": bytes.len()})),
+        None => Ok(serde_json::json!({"base64": super::file::base64_encode(&bytes), "bytes": bytes.len(), "warnings": warnings})),
     }
 }
 
@@ -711,6 +715,7 @@ mod text_tests {
         s.execute("file.new", &json!({"pages": 2})).unwrap();
         s.execute("frame.create", &json!({"rect": [72, 72, 400, 200], "content": "text", "text": "Page one words", "caret": false})).unwrap();
         let r = s.execute("file.exportEpub", &json!({"cover": true})).unwrap();
+        assert_eq!(r["warnings"], json!([]), "no images, nothing to report");
         let mut z = unzip(r["base64"].as_str().unwrap());
         let opf = read(&mut z, "OEBPS/content.opf");
         assert!(opf.contains("cover-image") && opf.contains("<itemref idref=\"cover\"/>"));
