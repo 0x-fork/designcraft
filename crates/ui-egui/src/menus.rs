@@ -11,6 +11,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.placeDialog", "Place…", Some("Cmd+D"), "{}"),
     ("app.saveDialog", "Save As…", Some("Cmd+Shift+S"), "{}"),
     ("app.save", "Save", Some("Cmd+S"), "{}"),
+    ("app.quit", "Quit DesignCraft", Some("Cmd+Q"), "{} — close the window; each document with unsaved changes asks first"),
     ("app.saveCopyDialog", "Save a Copy…", Some("Cmd+Alt+S"), "{} — choose where to write a copy (the document stays as it is)"),
     ("app.loadSwatches", "Load Swatches…", None, "{} — pick a swatch exchange (.ase) file"),
     ("app.packageDialog", "Package…", Some("Cmd+Alt+Shift+P"), "{} — choose the package folder to create (file.package)"),
@@ -85,6 +86,20 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.zoom", "Zoom To", None, "{zoom: 1.0 = 100%}"),
     ("view.screenMode", "Screen Mode", None, "{mode: normal|preview|bleed|slug|presentation}"),
     ("view.togglePreview", "Toggle Normal/Preview", Some("W"), "{}"),
+    (
+        "color.defaultFillStroke",
+        "Default Fill and Stroke",
+        Some("D"),
+        "{} — the selection gets no fill and a black stroke (object.defaultFillStroke)",
+    ),
+    (
+        "color.swapFillStroke",
+        "Swap Fill and Stroke",
+        Some("Shift+X"),
+        "{} — each selected object's fill and stroke colours (and tints) trade places (object.swapFillStroke)",
+    ),
+    ("color.toggleFillStroke", "Toggle Fill and Stroke", Some("X"), "{} → {strokeFront} — which of fill and stroke the proxy has in front"),
+    ("color.applyNone", "Apply None", Some("/"), "{} — [None] for the fill or stroke in front of the proxy"),
     ("view.frameEdges", "Show/Hide Frame Edges", Some("Cmd+H"), "{}"),
     ("view.rulers", "Show/Hide Rulers", Some("Cmd+R"), "{}"),
     ("view.guides", "Show/Hide Guides", Some("Cmd+;"), "{}"),
@@ -402,34 +417,6 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:type.sizeDown",
             "-",
             "ui:view.hiddenCharacters",
-            "ui:view.taggedFrames",
-            ">Rotate Spread",
-            "ui:view.rotateSpread|90° CW|{\"angle\": 90}",
-            "ui:view.rotateSpread|90° CCW|{\"angle\": -90}",
-            "ui:view.rotateSpread|180°|{\"angle\": 180}",
-            "ui:view.rotateSpread|Clear Rotation|{\"angle\": 0}",
-            "<",
-            ">Proof Setup",
-            "ui:view.proofSetup|Working CMYK|{\"target\": \"workingCmyk\"}",
-            "ui:view.proofSetup|Internet Standard RGB (sRGB)|{\"target\": \"srgb\"}",
-            "ui:view.proofSetup|Legacy Macintosh RGB|{\"target\": \"legacyMacRgb\"}",
-            "ui:view.proofSetup|Monitor RGB|{\"target\": \"monitorRgb\"}",
-            "ui:view.proofSetup|Color Blindness – Protanopia|{\"target\": \"protanopia\"}",
-            "ui:view.proofSetup|Color Blindness – Deuteranopia|{\"target\": \"deuteranopia\"}",
-            "-",
-            "ui:view.proofSetup|Simulate Paper Color|{\"simulatePaper\": \"toggle\"}",
-            "<",
-            "ui:view.proofColors",
-            "ui:view.flattenerPreview",
-            "ui:view.tagMarkers",
-            ">Separations Preview",
-            "ui:view.separations|Off|{\"plate\": null, \"inkLimit\": null}",
-            "ui:view.separations|Cyan|{\"plate\": \"cyan\"}",
-            "ui:view.separations|Magenta|{\"plate\": \"magenta\"}",
-            "ui:view.separations|Yellow|{\"plate\": \"yellow\"}",
-            "ui:view.separations|Black|{\"plate\": \"black\"}",
-            "ui:view.separations|Ink Limit 300%|{\"inkLimit\": 300}",
-            "<",
             "-",
             ">Hyperlinks & Cross-References",
             "cmd:hyperlink.create",
@@ -485,6 +472,8 @@ pub const MENUS: &[(&str, &[&str])] = &[
             ">Paths",
             "cmd:object.makeCompoundPath",
             "cmd:object.releaseCompoundPath",
+            "-",
+            "cmd:path.reverse",
             "<",
             ">Pathfinder",
             "cmd:object.pathfinder|Add|{\"op\": \"add\"}",
@@ -619,6 +608,28 @@ pub const MENUS: &[(&str, &[&str])] = &[
     (
         "View",
         &[
+            "ui:view.overprintPreview",
+            ">Proof Setup",
+            "ui:view.proofSetup|Working CMYK|{\"target\": \"workingCmyk\"}",
+            "ui:view.proofSetup|Internet Standard RGB (sRGB)|{\"target\": \"srgb\"}",
+            "ui:view.proofSetup|Legacy Macintosh RGB|{\"target\": \"legacyMacRgb\"}",
+            "ui:view.proofSetup|Monitor RGB|{\"target\": \"monitorRgb\"}",
+            "ui:view.proofSetup|Color Blindness – Protanopia|{\"target\": \"protanopia\"}",
+            "ui:view.proofSetup|Color Blindness – Deuteranopia|{\"target\": \"deuteranopia\"}",
+            "-",
+            "ui:view.proofSetup|Simulate Paper Color|{\"simulatePaper\": \"toggle\"}",
+            "<",
+            "ui:view.proofColors",
+            ">Separations Preview",
+            "ui:view.separations|Off|{\"plate\": null, \"inkLimit\": null}",
+            "ui:view.separations|Cyan|{\"plate\": \"cyan\"}",
+            "ui:view.separations|Magenta|{\"plate\": \"magenta\"}",
+            "ui:view.separations|Yellow|{\"plate\": \"yellow\"}",
+            "ui:view.separations|Black|{\"plate\": \"black\"}",
+            "ui:view.separations|Ink Limit 300%|{\"inkLimit\": 300}",
+            "<",
+            "ui:view.flattenerPreview",
+            "-",
             "ui:view.zoomIn",
             "ui:view.zoomOut",
             "ui:view.fitPage",
@@ -627,8 +638,20 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:view.actualSize",
             "ui:view.entirePasteboard",
             "-",
-            "ui:view.overprintPreview",
-            "ui:view.togglePreview",
+            ">Rotate Spread",
+            "ui:view.rotateSpread|90° CW|{\"angle\": 90}",
+            "ui:view.rotateSpread|90° CCW|{\"angle\": -90}",
+            "ui:view.rotateSpread|180°|{\"angle\": 180}",
+            "ui:view.rotateSpread|Clear Rotation|{\"angle\": 0}",
+            "<",
+            "-",
+            ">Screen Mode",
+            "ui:view.screenMode|Normal|{\"mode\": \"normal\"}",
+            "ui:view.screenMode|Preview|{\"mode\": \"preview\"}",
+            "ui:view.screenMode|Bleed|{\"mode\": \"bleed\"}",
+            "ui:view.screenMode|Slug|{\"mode\": \"slug\"}",
+            "ui:view.screenMode|Presentation|{\"mode\": \"presentation\"}",
+            "<",
             ">Display Performance",
             "ui:view.fastDisplay",
             "ui:view.typicalDisplay",
@@ -636,10 +659,11 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "<",
             "-",
             "ui:view.rulers",
+            "-",
+            ">Extras",
             "ui:view.frameEdges",
             "ui:view.textThreads",
-            "ui:view.hiddenCharacters",
-            "-",
+            "<",
             ">Grids & Guides",
             "ui:view.guides",
             "ui:view.snapToGuides",
@@ -648,6 +672,11 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:view.baselineGrid",
             "-",
             "ui:app.deleteAllGuides",
+            "<",
+            "-",
+            ">Structure",
+            "ui:view.taggedFrames",
+            "ui:view.tagMarkers",
             "<",
         ],
     ),
@@ -767,6 +796,10 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
                 return Some(app.run("file.saveAs", json!({"path": path})));
             }
+            Ok(Value::Null)
+        }
+        "app.quit" => {
+            app.request_quit();
             Ok(Value::Null)
         }
         "app.saveCopyDialog" => {
@@ -1109,6 +1142,10 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             app.ui.screen_mode = if app.ui.screen_mode == ScreenMode::Normal { ScreenMode::Preview } else { ScreenMode::Normal };
             Ok(Value::Null)
         }
+        "color.defaultFillStroke" => crate::toolbar::default_fill_stroke(app),
+        "color.swapFillStroke" => crate::toolbar::swap_fill_stroke(app),
+        "color.toggleFillStroke" => crate::toolbar::toggle_fill_stroke(app),
+        "color.applyNone" => crate::toolbar::apply_none(app),
         "view.frameEdges" => flag(&mut app.ui.frame_edges),
         "view.overprintPreview" => {
             app.canvas.shown = None;
@@ -1776,6 +1813,17 @@ pub fn checked(app: &DesignApp, id: &str, params: &Value) -> Option<bool> {
         "view.proofColors" => app.ui.proof_colors,
         "view.flattenerPreview" => app.ui.flattener_preview,
         "view.tagMarkers" => app.ui.tag_markers,
+        "view.screenMode" => {
+            let mode = match params.get("mode").and_then(Value::as_str) {
+                Some("normal") => crate::ScreenMode::Normal,
+                Some("preview") => crate::ScreenMode::Preview,
+                Some("bleed") => crate::ScreenMode::Bleed,
+                Some("slug") => crate::ScreenMode::Slug,
+                Some("presentation") => crate::ScreenMode::Presentation,
+                _ => return None,
+            };
+            app.ui.screen_mode == mode
+        }
         "view.rotateSpread" => match params.get("angle").and_then(Value::as_i64) {
             Some(0) => app.session.active().is_some_and(|st| st.doc.spreads.iter().all(|sp| sp.pages.first().is_none_or(|p| p.view_rotation == 0))),
             _ => return None,
@@ -2097,6 +2145,7 @@ fn parse_shortcut(sc: &str) -> Option<(egui::Modifiers, egui::Key)> {
             "," => key = Some(egui::Key::Comma),
             "." => key = Some(egui::Key::Period),
             "\\" => key = Some(egui::Key::Backslash),
+            "/" => key = Some(egui::Key::Slash),
             "Delete" => key = Some(egui::Key::Delete),
             k => key = egui::Key::from_name(k),
         }
@@ -2273,6 +2322,64 @@ pub fn quick_apply_items(session: &designcraft_engine::Session, query: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The entries (command ids) of a menu bar menu, submenus included.
+    fn menu_ids(title: &str) -> Vec<&'static str> {
+        let items = MENUS.iter().find(|(t, _)| *t == title).map(|(_, items)| *items).unwrap_or_default();
+        items.iter().filter_map(|e| e.split_once(':').map(|(_, rest)| rest.split('|').next().unwrap_or(rest))).collect()
+    }
+
+    #[test]
+    fn view_items_are_in_the_view_menu_as_in_indesign() {
+        let (view, typ) = (menu_ids("View"), menu_ids("Type"));
+        for id in [
+            "view.rotateSpread",
+            "view.proofSetup",
+            "view.proofColors",
+            "view.flattenerPreview",
+            "view.separations",
+            "view.taggedFrames",
+            "view.tagMarkers",
+        ] {
+            assert!(view.contains(&id), "{id} is in View");
+            assert!(!typ.contains(&id), "{id} isn't in Type");
+        }
+        // Screen Mode and Extras are View submenus; Show Hidden Characters stays in Type.
+        assert!(view.contains(&"view.screenMode") && view.contains(&"view.frameEdges"));
+        assert!(typ.contains(&"view.hiddenCharacters") && !view.contains(&"view.hiddenCharacters"));
+        // W still toggles Normal / Preview without a menu entry.
+        assert_eq!(ui_label("view.togglePreview").and_then(|c| c.1), Some("W"));
+    }
+
+    /// The submenu paths of a menu bar menu ("View/Screen Mode"), as Edit › Menus keys them.
+    fn submenu_paths(title: &str) -> Vec<String> {
+        let items = MENUS.iter().find(|(t, _)| *t == title).map(|(_, items)| *items).unwrap_or_default();
+        let mut stack = vec![title.to_string()];
+        let mut out = Vec::new();
+        for e in items {
+            if let Some(name) = e.strip_prefix('>') {
+                let path = format!("{}/{name}", stack.last().map_or("", String::as_str));
+                out.push(path.clone());
+                stack.push(path);
+            } else if *e == "<" {
+                stack.pop();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn screen_mode_shows_the_current_mode_and_view_submenus_are_translated() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let mode = |app: &DesignApp, m: &str| checked(app, "view.screenMode", &json!({ "mode": m }));
+        assert_eq!((mode(&app, "normal"), mode(&app, "preview")), (Some(true), Some(false)));
+        app.ui.screen_mode = crate::ScreenMode::Preview;
+        assert_eq!((mode(&app, "normal"), mode(&app, "preview")), (Some(false), Some(true)));
+        // Every View submenu has its Japanese path (Edit › Menus shows them).
+        for path in submenu_paths("View") {
+            assert_ne!(crate::i18n::tr("ja", &path), path, "{path} has no Japanese row");
+        }
+    }
 
     fn walk(items: &[Item], out: &mut Vec<(String, String, Value)>) {
         for it in items {
