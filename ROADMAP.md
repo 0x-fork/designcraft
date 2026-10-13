@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5–7 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill) · **Target:** Adobe InDesign 2026
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects) · **Target:** Adobe InDesign 2026
 
 DesignCraft aims at full Adobe InDesign parity, and to be better: faster, open (documented JSON
 format + IDML), scriptable by agents (MCP), and available on the web.
@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · Object styles carry effects (drop shadow, feather, inner and outer shadows and glows, bevel, satin, gradient and directional feather). New styles from a selection keep its effects, `style.object.edit` changes a style's effects and every item that follows them, `style.object.clearOverrides` returns items to their style, and new frames take their default style's effects. IDML carries only the drop shadow and feather, for ObjectStyles (with their effects category and BasedOn chain) as for items (#653). No readiness percentage change.
 - **2026-10-13** · A parent can be based on another parent (`layout.parents.options`). Pages draw the base parent's items, then the parent's, then their own, on screen and in PDF and image export; chains work, cycles are refused, overrides reach base items, `document.inspect` reports `basedOn`, and IDML round-trips it. No readiness percentage change.
 - **2026-10-12** · The Effects dialog, as in InDesign: Object › Effects (Transparency…, Drop Shadow… and the rest, and their shortcuts) and the Effects panel's fx button open it on the chosen effect, turned on. Transparency and every effect in one window, in the document's units, with X/Y offsets, Preview on the page, Cancel putting things back, and OK as one undo step (`object.effects`). Shadows default to InDesign's 120° light angle. No readiness percentage change.
 - **2026-10-12** · Editing type on a path: the Type tool clicks, drags and double-clicks along the curve (the character under the pointer, not one on the straightened line), a click on the letters themselves hits the frame, and the caret and highlight bend with the path. No readiness percentage change.
