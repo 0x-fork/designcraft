@@ -3322,6 +3322,50 @@ mod path_edit_tests {
         assert!(s.execute("path.appendAnchor", &json!({"id": id, "anchor": {"p": [0, 0]}})).is_err());
         assert!(s.execute("path.close", &json!({"id": id, "subpath": 4})).is_err());
     }
+
+    /// Every edit that `path_editable` guards, aimed at the path `id` of `session_with_path`.
+    fn path_edits(id: u64) -> Vec<(&'static str, serde_json::Value)> {
+        vec![
+            ("path.appendAnchor", json!({"id": id, "anchor": {"p": [400, 250]}})),
+            ("path.setAnchor", json!({"id": id, "anchor": 0, "p": [90, 110]})),
+            ("path.close", json!({"id": id})),
+            ("path.moveAnchors", json!({"id": id, "anchors": [[0, 0]], "dx": 10, "dy": 10})),
+            ("path.reverse", json!({"ids": [id]})),
+            ("path.addAnchor", json!({"id": id, "at": [150, 100]})),
+            ("path.deleteAnchor", json!({"id": id, "subpath": 0, "anchor": 0})),
+            ("path.convertAnchor", json!({"id": id, "subpath": 0, "anchor": 0})),
+            ("path.erase", json!({"id": id, "points": [[120, 100], [180, 100]]})),
+            ("path.smooth", json!({"id": id, "points": [[120, 100], [180, 100]]})),
+            ("path.split", json!({"id": id, "at": [150, 100]})),
+        ]
+    }
+
+    fn assert_no_path_edit(s: &mut crate::Session, id: u64, why: &str) {
+        let before = anchors(s, id);
+        for (cmd, p) in path_edits(id) {
+            assert!(s.execute(cmd, &p).is_err(), "{cmd} {why}");
+        }
+        assert_eq!(anchors(s, id), before, "{why}");
+        assert!(!s.doc().unwrap().doc.item(ItemId(id)).unwrap().path.subpaths[0].closed, "{why}");
+    }
+
+    #[test]
+    fn path_edits_leave_a_path_on_a_locked_layer_alone() {
+        let (mut s, id) = session_with_path();
+        let layer = s.doc().unwrap().doc.item(ItemId(id)).unwrap().layer;
+        s.execute("layer.set", &json!({"id": layer.0, "locked": true})).unwrap();
+        assert_no_path_edit(&mut s, id, "on a locked layer");
+    }
+
+    #[test]
+    fn path_edits_leave_a_path_in_a_locked_group_alone() {
+        let (mut s, id) = session_with_path();
+        let other = s.execute("frame.create", &json!({"rect": [400, 400, 450, 450]})).unwrap()["id"].as_u64().unwrap();
+        let group = s.execute("object.group", &json!({"ids": [id, other]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.lock", &json!({"ids": [group]})).unwrap();
+        assert!(!s.doc().unwrap().doc.item(ItemId(id)).unwrap().locked, "only the group is locked");
+        assert_no_path_edit(&mut s, id, "in a locked group");
+    }
 }
 
 #[cfg(test)]
