@@ -79,7 +79,7 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
 pub fn import_idml_report_with_previews(
     bytes: &[u8],
     read_link: &dyn Fn(&str) -> Option<Vec<u8>>,
-    previews: &HashMap<String, Vec<u8>>,
+    previews: &HashMap<String, Arc<Vec<u8>>>,
 ) -> Result<Imported> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
     let mut files: HashMap<String, Vec<u8>> = HashMap::new();
@@ -221,7 +221,7 @@ struct ItemCtx {
 struct Importer<'r> {
     read_link: &'r dyn Fn(&str) -> Option<Vec<u8>>,
     /// Graphic `Self` → stand-in image for a linked file that can't be read.
-    previews: &'r HashMap<String, Vec<u8>>,
+    previews: &'r HashMap<String, Arc<Vec<u8>>>,
     next_id: u64,
     settings: DocSettings,
     default_margins: Option<(Margins, Columns)>,
@@ -412,7 +412,7 @@ fn tint(v: Option<f64>) -> Option<f32> {
 }
 
 impl<'r> Importer<'r> {
-    fn new(read_link: &'r dyn Fn(&str) -> Option<Vec<u8>>, previews: &'r HashMap<String, Vec<u8>>) -> Self {
+    fn new(read_link: &'r dyn Fn(&str) -> Option<Vec<u8>>, previews: &'r HashMap<String, Arc<Vec<u8>>>) -> Self {
         let specials: Vec<Swatch> = designcraft_color::default_swatches().into_iter().filter(|s| s.locked).collect();
         let mut swatch_names = HashMap::new();
         swatch_names.insert("Swatch/None".to_string(), swatch::NONE.to_string());
@@ -2923,13 +2923,10 @@ impl<'r> Importer<'r> {
                 read_from = Some(p.clone());
             }
         }
-        // A linked file that can't be read shows the document's preview of it, if it has one.
-        if data.is_empty()
-            && let Some(preview) = g.get("Self").and_then(|s| self.previews.get(s))
-        {
-            data = preview.clone();
-        }
-        let (mime, px) = sniff_image(&data);
+        // A linked file that can't be read shows the document's preview of it, if it has one. The
+        // preview only stands in for the file: format and pixel size still describe the link.
+        let preview = data.is_empty().then(|| g.get("Self").and_then(|s| self.previews.get(s))).flatten();
+        let (mime, px) = if preview.is_some() { (None, None) } else { sniff_image(&data) };
         let mime = mime.map(str::to_string).unwrap_or_else(|| match link.and_then(|k| k.get("LinkResourceFormat")).unwrap_or("") {
             f if f.contains("JPEG") => "image/jpeg".into(),
             f if f.contains("TIFF") => "image/tiff".into(),
@@ -2947,7 +2944,7 @@ impl<'r> Importer<'r> {
         let link_path = uri.filter(|p| p.contains('/') || p.contains('\\'));
         let id = designcraft_doc::insert_asset(
             &mut self.assets,
-            Asset { page, id: fresh, name, mime, link: link_path, data: Arc::new(data), pixels, pdf_crop, ..Default::default() },
+            Asset { page, id: fresh, name, mime, link: link_path, data: preview.cloned().unwrap_or_else(|| Arc::new(data)), pixels, pdf_crop, ..Default::default() },
         );
         if let Some(p) = read_from {
             self.linked_assets.insert((p, page, pdf_crop), id);

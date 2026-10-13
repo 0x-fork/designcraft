@@ -3675,14 +3675,53 @@ fn style_names_ending_in_a_space_and_partial_rule_overrides_import() {
 fn missing_linked_graphics_show_their_preview_and_keep_their_link() {
     // InDesign's preview of the missing photo (a PNG header is all the importer reads: 4 × 3).
     let png: Vec<u8> = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0, 0, 0, 13], b"IHDR", &4u32.to_be_bytes(), &3u32.to_be_bytes()].concat();
-    let previews = std::collections::HashMap::from([("im".to_string(), png.clone())]);
+    let previews = std::collections::HashMap::from([("im".to_string(), std::sync::Arc::new(png.clone()))]);
     let d = crate::import_idml_report_with_previews(&fixture(), &|_| None, &previews).unwrap().document;
     let img = d.spreads.iter().flat_map(|sp| sp.items.iter()).find(|i| i.graphic().is_some()).unwrap();
     let a = &d.assets[&img.graphic().unwrap().asset];
     assert_eq!(a.data.as_slice(), png.as_slice(), "the preview shows");
-    assert_eq!(a.mime, "image/png");
+    assert_eq!(a.mime, "image/jpeg", "the link's format, not the preview's");
     assert_eq!(a.link.as_deref(), Some("/definitely/missing dir/photo.jpg"), "relinking still finds the file");
     // Without a preview it stays empty, as before.
     let d = import_idml(&fixture()).unwrap();
     assert!(d.assets.values().all(|a| a.data.is_empty() || a.link.is_none()));
+}
+
+#[test]
+fn a_preview_keeps_the_links_format_and_pixel_size_and_is_shared() {
+    let png: std::sync::Arc<Vec<u8>> =
+        std::sync::Arc::new([b"\x89PNG\r\n\x1a\n".as_slice(), &[0, 0, 0, 13], b"IHDR", &4u32.to_be_bytes(), &3u32.to_be_bytes()].concat());
+    let spread = SPREAD
+        .replace(r#"<Image Self="im" ItemTransform="1 0 0 1 0 0">"#, r#"<Image Self="im" ItemTransform="1 0 0 1 0 0" ActualPpi="300 300">"#)
+        .replace(
+            "  </Spread>",
+            r#"    <Rectangle Self="pf" ItemLayer="L1" ItemTransform="1 0 0 1 300 100" ContentType="GraphicType">
+      <Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>
+        <PathPointType Anchor="0 0"/><PathPointType Anchor="0 30"/><PathPointType Anchor="40 30"/><PathPointType Anchor="40 0"/>
+      </PathPointArray></GeometryPathType></PathGeometry></Properties>
+      <PDF Self="pd" ItemTransform="1 0 0 1 0 0">
+        <Properties><GraphicBounds Left="0" Top="0" Right="40" Bottom="30"/></Properties>
+        <Link Self="lp" LinkResourceURI="file:/definitely/missing%20dir/logo.pdf" StoredState="Normal"/>
+      </PDF>
+    </Rectangle>
+  </Spread>"#,
+        );
+    let idml = zip_files(&[
+        ("designmap.xml", DESIGNMAP),
+        ("Resources/Graphic.xml", GRAPHIC),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", PREFS),
+        ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+        ("Spreads/Spread_sp1.xml", &spread),
+        ("Stories/Story_s1.xml", STORY),
+    ]);
+    // One preview for both graphics, as indd-utils groups them.
+    let previews = std::collections::HashMap::from([("im".to_string(), png.clone()), ("pd".to_string(), png.clone())]);
+    let d = crate::import_idml_report_with_previews(&idml, &|_| None, &previews).unwrap().document;
+    let asset = |name: &str| d.assets.values().find(|a| a.name == name).unwrap();
+    let (photo, logo) = (asset("photo.jpg"), asset("logo.pdf"));
+    // 40 × 30 pt at 300 ppi, from the link, not the preview's 4 × 3.
+    assert_eq!((photo.mime.as_str(), photo.pixels), ("image/jpeg", Some((167, 125))));
+    assert_eq!(logo.mime, "application/pdf", "a placed PDF stays a PDF, for IDML export");
+    assert!(std::sync::Arc::ptr_eq(&photo.data, &png) && std::sync::Arc::ptr_eq(&logo.data, &png), "the preview's bytes are not copied");
 }

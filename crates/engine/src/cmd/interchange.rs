@@ -47,7 +47,7 @@ pub fn import_report(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<(Doc
 fn import_report_with_previews(
     bytes: &[u8],
     dir: Option<&std::path::Path>,
-    previews: &std::collections::HashMap<String, Vec<u8>>,
+    previews: &std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
 ) -> Result<(Document, Vec<String>)> {
     #[cfg(not(target_arch = "wasm32"))]
     let resolved = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -239,14 +239,16 @@ pub(crate) fn open_idml(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut warnings = Vec::new();
     // InDesign's previews of linked graphics show while their files are missing (graphic `Self` →
-    // preview), as InDesign shows them.
+    // preview), as InDesign shows them. One preview can stand for any number of graphics: they
+    // share its buffer.
     let mut previews = std::collections::HashMap::new();
     let bytes = if is_indd(&file, &bytes) {
         let conversion = indd::convert(&bytes, &file).map_err(|e| EngineError::Other(format!("can't convert the InDesign file: {e}")))?;
         warnings.extend(conversion.warnings.iter().map(|w| w.message().to_string()));
         for p in conversion.previews {
+            let data = std::sync::Arc::new(p.data);
             for g in p.graphics {
-                previews.insert(g, p.data.clone());
+                previews.insert(g, std::sync::Arc::clone(&data));
             }
         }
         conversion.idml
