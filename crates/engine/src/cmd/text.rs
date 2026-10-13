@@ -288,6 +288,8 @@ fn hit_byte(s: &Session, frame: ItemId, pt: Point) -> Option<(StoryId, usize, Op
     let inner = xf.inverse() * pt;
     let cs = s.cache.get(&st.doc, sid, None);
     let fi = cs.frames.iter().position(|f| f.frame == frame)?;
+    // Type on a path: the click lands on the line where it is along the path.
+    let inner = cs.frames.get(fi).and_then(|ft| compose::PathTextMap::new(it, ft)).map_or(inner, |m| m.to_line(inner));
     if let Some((table, row, col, b)) = compose::hit_cell(&cs, fi, inner) {
         return Some((sid, b, Some(CellAddr { table, row, col })));
     }

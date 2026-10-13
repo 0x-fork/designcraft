@@ -342,6 +342,8 @@ pub enum Cursor {
     Pen,
     /// The Pen over an open path's end point: a click continues the path.
     PenContinue,
+    /// Over a type-on-a-path bracket: dragging it moves where the text starts or ends.
+    PathBracket,
     Text,
     Hand,
     HandGrab,
