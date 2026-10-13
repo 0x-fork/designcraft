@@ -228,9 +228,7 @@ impl Renderer {
             let mix = crate::blend_mode(g.mode).mix;
             let paint = color_of(&c, g.opacity.clamp(0.0, 1.0));
             if g.center {
-                ctx.set_transform(Affine::IDENTITY);
-                ctx.push_layer(None, Some(BlendMode::new(mix, Compose::SrcOver)), None, None, None);
-                self.with_filters(ctx, f, reach, sigma, |_, c, fr| {
+                self.with_blended_filters(ctx, f, reach, sigma, mix, |_, c, fr| {
                     c.set_transform(fr.view * xf);
                     c.push_clip_layer(bp);
                     c.set_transform(fr.view);
@@ -249,7 +247,6 @@ impl Renderer {
                     c.pop_layer();
                     c.pop_layer();
                 });
-                ctx.pop_layer();
             } else {
                 self.inner_edge(ctx, f, reach, bp, xf, Vec2::ZERO, sigma, choke, paint, mix);
             }
@@ -263,11 +260,9 @@ impl Renderer {
             let sigma = st.size.max(0.0) / 2.0;
             let paint = color_of(&c, st.opacity.clamp(0.0, 1.0));
             let invert = st.invert;
-            self.with_filters(ctx, f, reach, sigma, |_, c, fr| {
+            self.with_blended_filters(ctx, f, reach, sigma, Mix::Multiply, |_, c, fr| {
                 c.set_transform(fr.view * xf);
                 c.push_clip_layer(bp);
-                c.set_transform(Affine::IDENTITY);
-                c.push_layer(None, Some(BlendMode::new(Mix::Multiply, Compose::SrcOver)), None, None, None);
                 c.set_transform(fr.view);
                 c.push_layer(None, None, None, None, Some(blur(sigma)));
                 if invert {
@@ -284,7 +279,6 @@ impl Renderer {
                 c.push_layer(None, Some(BlendMode::new(Mix::Normal, Compose::Xor)), None, None, None);
                 c.set_transform(fr.view * Affine::translate(-off) * xf);
                 c.fill_path(bp);
-                c.pop_layer();
                 c.pop_layer();
                 c.pop_layer();
                 c.pop_layer();
@@ -322,13 +316,7 @@ impl Renderer {
         paint: peniko::Color,
         mix: Mix,
     ) {
-        // The blend mode applies to the finished (clipped, blurred) edge against what's below it:
-        // inside the clip layer it would only meet that layer's transparent backdrop.
-        if mix != Mix::Normal {
-            ctx.set_transform(Affine::IDENTITY);
-            ctx.push_layer(None, Some(BlendMode::new(mix, Compose::SrcOver)), None, None, None);
-        }
-        self.with_filters(ctx, f, reach, sigma, |_, c, fr| {
+        self.with_blended_filters(ctx, f, reach, sigma, mix, |_, c, fr| {
             c.set_transform(fr.view * xf);
             c.push_clip_layer(bp);
             c.set_transform(fr.view);
@@ -351,6 +339,24 @@ impl Renderer {
             c.pop_layer();
             c.pop_layer();
         });
+    }
+
+    /// The effect's blend must see the object's backdrop, outside its clipping and offscreen
+    /// filter layers. Putting it inside the clip blends with transparent pixels instead.
+    fn with_blended_filters(
+        &mut self,
+        ctx: &mut RenderContext,
+        f: &Frame,
+        reach: Rect,
+        sigma: f64,
+        mix: Mix,
+        draw: impl FnOnce(&mut Self, &mut RenderContext, &Frame),
+    ) {
+        if mix != Mix::Normal {
+            ctx.set_transform(Affine::IDENTITY);
+            ctx.push_layer(None, Some(BlendMode::new(mix, Compose::SrcOver)), None, None, None);
+        }
+        self.with_filters(ctx, f, reach, sigma, draw);
         if mix != Mix::Normal {
             ctx.pop_layer();
         }

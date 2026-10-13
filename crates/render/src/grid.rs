@@ -81,7 +81,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, f: &Frame, sp: &Spread, grid: &Docum
 
 fn paints(grid: &DocumentGrid) -> [peniko::Color; 2] {
     let [r, g, b] = grid.color;
-    [peniko::Color::from_rgba8(r, g, b, 110), peniko::Color::from_rgba8(r, g, b, 255)]
+    [crate::screen_color([r, g, b], 110), crate::screen_color([r, g, b], 255)]
 }
 
 /// Vertical lines.
