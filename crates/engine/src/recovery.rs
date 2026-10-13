@@ -403,7 +403,8 @@ pub fn save(s: &Session, dir: &Path) -> Result<usize> {
     prepare_save(s, dir)?;
     let mut n = 0;
     for d in &s.docs {
-        if !d.is_dirty() {
+        // New Document's preview is not a document until Create makes it one.
+        if !d.is_dirty() || s.new_document_preview() == Some(d.uid) {
             discard(dir, d.uid);
             continue;
         }

@@ -172,18 +172,103 @@ fn find_preset(s: &Session, name: &str) -> Option<NewDocument> {
     NewDocument::from_preset(name).or_else(|| s.prefs.document_presets.iter().find(|p| p.title.eq_ignore_ascii_case(name.trim())).cloned())
 }
 
-fn file_new(s: &mut Session, p: &Value) -> Result<Value> {
+/// The settings `file.new` makes a document with for `p`: its preset, then the settings over it.
+fn new_document_settings(s: &Session, p: &Value) -> Result<NewDocument> {
     let mut nd = match str_param(p, "preset") {
         Some(name) => find_preset(s, name).ok_or_else(|| bad("file.new", format!("unknown preset `{name}`")))?,
         None => NewDocument::default(),
     };
     apply_settings(&mut nd, p);
     check_size("file.new", &nd)?;
+    Ok(nd)
+}
+
+fn file_new(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut nd = new_document_settings(s, p)?;
     s.untitled += 1;
     nd.title = str_param(p, "title").map(str::to_string).unwrap_or_else(|| format!("Untitled-{}", s.untitled));
     let d = Document::new(&nd);
     let i = s.add_document(DocState::new(d, None));
     Ok(json!({"index": i}))
+}
+
+impl Session {
+    /// New Document's Preview: a document made as `file.new` would make it with `p`, shown while
+    /// the New Document window is open. It replaces the previous preview document in its tab and
+    /// takes no Untitled number, no undo step and no recovery entry. Settings `file.new` refuses
+    /// leave the previous preview as it was. Returns the preview document's uid.
+    pub fn preview_new_document(&mut self, p: &Value) -> Result<u64> {
+        let mut nd = new_document_settings(self, p)?;
+        let previous = match self.new_document_preview {
+            Some((_, previous)) => previous,
+            None => self.active().map(|d| d.uid),
+        };
+        let shown = self.new_document_preview.and_then(|(old, _)| self.docs.iter().position(|d| d.uid == old));
+        // A preview edited or saved by a menu or script while the window is open has become a
+        // document of its own: it stays, and the preview gets a tab of its own.
+        let replace = shown.filter(|&i| self.docs.get(i).is_some_and(|d| !d.is_dirty() && d.path.is_none()));
+        if replace.is_none() && shown.is_some() {
+            self.untitled += 1;
+        }
+        nd.title = str_param(p, "title").map(str::to_string).unwrap_or_else(|| self.next_untitled_title());
+        let st = DocState::new(Document::new(&nd), None);
+        let uid = st.uid;
+        match replace.and_then(|i| self.docs.get_mut(i).map(|d| (i, d))) {
+            Some((i, d)) => {
+                *d = st;
+                self.active = Some(i);
+            }
+            None => {
+                // Pushed without `add_document`: the document that was active stays as it is.
+                self.docs.push(st);
+                self.active = Some(self.docs.len() - 1);
+            }
+        }
+        self.new_document_preview = Some((uid, previous));
+        Ok(uid)
+    }
+
+    /// The uid of New Document's preview document, while one is shown.
+    pub fn new_document_preview(&self) -> Option<u64> {
+        self.new_document_preview.map(|(uid, _)| uid)
+    }
+
+    /// End New Document's preview. Its document goes, and if it was still the active document,
+    /// the one that was active before it is active again. A preview that a menu or script has
+    /// edited or saved stays open as a document, with an Untitled number. Returns the uid of the
+    /// document removed. Without a preview it does nothing.
+    pub fn end_new_document_preview(&mut self) -> Option<u64> {
+        let (uid, previous) = self.new_document_preview.take()?;
+        let i = self.docs.iter().position(|d| d.uid == uid)?;
+        let d = self.docs.get(i)?;
+        if d.is_dirty() || d.path.is_some() {
+            self.untitled += 1;
+            return None;
+        }
+        self.docs.remove(i);
+        self.active = match self.active {
+            Some(a) if a == i => previous.and_then(|p| self.docs.iter().position(|d| d.uid == p)).or_else(|| self.docs.len().checked_sub(1)),
+            Some(a) if a > i => Some(a - 1),
+            a => a,
+        };
+        Some(uid)
+    }
+
+    /// Create in the New Document window, with the settings the preview shows: the preview
+    /// document becomes the new document, as `file.new` would make it (the next Untitled number,
+    /// no undo history). Returns its index, or `None` when there is no unedited preview to keep.
+    pub fn keep_new_document_preview(&mut self) -> Option<usize> {
+        let (uid, _) = self.new_document_preview?;
+        let i = self.docs.iter().position(|d| d.uid == uid && !d.is_dirty() && d.path.is_none())?;
+        self.new_document_preview = None;
+        self.untitled += 1;
+        if let Some(d) = self.docs.get_mut(i) {
+            d.history.undo.clear();
+            d.history.redo.clear();
+        }
+        self.active = Some(i);
+        Some(i)
+    }
 }
 
 fn save_preset(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1167,6 +1252,45 @@ mod new_document_tests {
         let d = &s.doc().unwrap().doc;
         assert_eq!(d.settings.bleed, [0.0; 4]);
         assert_eq!(d.settings.slug, [0.0, 1296.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_new_document_preview_replaces_itself_and_leaves_the_session_as_it_was() {
+        let dir = std::env::temp_dir().join(format!("dc-new-doc-preview-{}", std::process::id()));
+        let mut s = Session::new();
+        s.recovery_dir = Some(dir.clone());
+        s.execute("file.new", &json!({})).unwrap();
+        let first = s.doc().unwrap().uid;
+        let a = s.preview_new_document(&json!({"width": 300})).unwrap();
+        assert_eq!((s.doc().unwrap().uid, s.doc().unwrap().doc.title.as_str()), (a, "Untitled-2"));
+        let b = s.preview_new_document(&json!({"width": 400, "columns": 3})).unwrap();
+        assert_eq!(s.documents().len(), 2, "the preview replaces itself");
+        assert!(s.preview_new_document(&json!({"width": 0})).is_err());
+        let d = s.doc().unwrap();
+        assert_eq!((d.uid, d.doc.settings.page_width, d.doc.page(0).unwrap().columns.count), (b, 400.0, 3), "a refused size keeps it");
+        let listed = s.execute("document.list", &json!({})).unwrap();
+        assert_eq!((listed[0].get("preview"), &listed[1]["preview"]), (None, &json!(true)));
+        assert_eq!(s.end_new_document_preview(), Some(b));
+        let d = s.doc().unwrap();
+        assert_eq!((s.documents().len(), d.uid, d.is_dirty(), d.history.undo.len()), (1, first, false, 0));
+        assert_eq!(s.end_new_document_preview(), None, "without a preview it does nothing");
+        // Edited by a script while shown, it writes no recovery data while it is a preview, and
+        // stays as a document when the window closes, with its Untitled number.
+        let c = s.preview_new_document(&json!({})).unwrap();
+        s.execute("frame.create", &json!({"rect": [10, 10, 100, 100]})).unwrap();
+        assert_eq!(crate::recovery::save(&s, &dir).unwrap(), 0);
+        assert_eq!(s.end_new_document_preview(), None);
+        assert_eq!((s.documents().len(), s.doc().unwrap().uid, s.doc().unwrap().doc.title.as_str()), (2, c, "Untitled-2"));
+        s.execute("file.new", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.title, "Untitled-3");
+        // Create with the previewed settings keeps the preview as the document.
+        let d = s.preview_new_document(&json!({"pages": 2})).unwrap();
+        assert_eq!(s.keep_new_document_preview(), Some(3));
+        let st = s.doc().unwrap();
+        assert_eq!((st.uid, st.doc.title.as_str(), s.new_document_preview()), (d, "Untitled-4", None));
+        s.execute("file.new", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.title, "Untitled-5");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

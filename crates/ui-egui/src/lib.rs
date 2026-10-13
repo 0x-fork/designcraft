@@ -260,6 +260,9 @@ pub struct UiState {
     /// The font menus' sample text (a key of `panels::FONT_SAMPLES`) and size (0–2).
     pub font_sample: String,
     pub font_preview_size: u8,
+    /// File › New › Document › Preview, kept for the session.
+    #[serde(skip)]
+    pub new_document_preview: bool,
     /// Transform reference point (0..8, row-major; 0 = top-left).
     pub ref_point: u8,
     /// Align To target (`selection`, `keyObject`, `margins`, `page`, `spread`).
@@ -371,6 +374,7 @@ impl Default for UiState {
             recent_new_documents: Vec::new(),
             font_sample: "selected".into(),
             font_preview_size: 1,
+            new_document_preview: false,
             ref_point: 0,
             align_to: "selection".into(),
             text_style_tab: 0,
@@ -1061,6 +1065,7 @@ impl DesignApp {
         }
         self.last_time = now;
         self.drain_control(ctx);
+        new_document::end_stale_preview(self);
         if self.fonts_ready {
             self.drain_inbox();
             self.open_os_documents();

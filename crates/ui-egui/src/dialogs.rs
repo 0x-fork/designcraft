@@ -2096,6 +2096,14 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                 if cancel || (!popup_open && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
                     result = Some(false);
                 }
+                if d.id == "newDocument" {
+                    ui.add_space(8.0);
+                    check(ui, &mut d, "preview", crate::i18n::tr(&app.ui.language, "Preview"));
+                    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+                        ui.add_space(8.0);
+                        crate::rtl::label(ui, egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+                    }
+                }
                 if d.id == "closeDocument" && ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Don't Save"))).clicked() {
                     d.fields.insert("discard".into(), json!(true));
                     result = Some(true);
@@ -2108,6 +2116,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         && let Err(e) = app.run("app.language", json!({"lang": lang}))
     {
         d.fields.insert("status".into(), json!(e));
+    }
+    if d.id == "newDocument" && result.is_none() {
+        crate::new_document::preview(app, &mut d, ctx);
     }
     app.ui.dialog = Some(d);
     match result {
@@ -2228,6 +2239,7 @@ fn confirm_cell_options(app: &mut DesignApp, d: &Dialog) -> Result<Value, String
 /// opened with, since choosing one previews it at once.
 pub fn cancel(app: &mut DesignApp) {
     let d = app.ui.dialog.take();
+    crate::new_document::end_preview(app);
     if d.as_ref().is_some_and(|d| d.fields.contains_key(PREVIEWED)) {
         app.session.cancel_interaction();
     }
@@ -2248,14 +2260,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         app.cancel_pdf_import();
     }
     match d.id.as_str() {
-        "newDocument" => {
-            let p = crate::new_document::params(&d);
-            let r = app.run("file.new", p.clone());
-            if r.is_ok() {
-                crate::new_document::remember(app, &p);
-            }
-            r
-        }
+        "newDocument" => crate::new_document::create(app, d),
         "frameSize" => {
             let x = d.fields.get("x").and_then(Value::as_f64).unwrap_or(0.0);
             let y = d.fields.get("y").and_then(Value::as_f64).unwrap_or(0.0);
