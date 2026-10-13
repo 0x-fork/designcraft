@@ -39,7 +39,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "app.language",
         "Interface Language",
         None,
-        "{lang: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk} — menus and panel names (the macOS menu bar follows on the next launch)",
+        "{lang: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk|ka} — menus and panel names (the macOS menu bar follows on the next launch)",
     ),
     (
         "app.flattener",
@@ -292,6 +292,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.language|Português (Brasil)|{\"lang\": \"pt-br\"}",
             "ui:app.language|Italiano|{\"lang\": \"it\"}",
             "ui:app.language|Українська|{\"lang\": \"uk\"}",
+            "ui:app.language|ქართული|{\"lang\": \"ka\"}",
             "<",
             ">Transparency Flattener Presets",
             "ui:app.flattener|None (keep transparency)|{\"preset\": \"\"}",
@@ -2867,6 +2868,29 @@ mod tests {
                 assert_ne!(crate::i18n::tr("it", title), title, "{title}");
             }
         }
+
+        run_ui(&mut app, "app.language", &json!({"lang": "ka"})).unwrap().unwrap();
+        assert_eq!(app.ui.language, "ka");
+        assert_eq!(checked(&app, "app.language", &json!({"lang": "ka"})), Some(true));
+        // Every menu title, item and submenu is translated into Georgian.
+        let mut untranslated = Vec::new();
+        for (title, entries) in menu_tree() {
+            let mut labels = vec![title.to_string()];
+            let mut stack: Vec<&Item> = entries.iter().collect();
+            while let Some(entry) = stack.pop() {
+                match entry {
+                    Item::Sub(label, children) => {
+                        labels.push(label.clone());
+                        stack.extend(children.iter());
+                    }
+                    Item::Cmd { label, id, .. } if id != "app.language" => labels.push(label.clone()),
+                    _ => {}
+                }
+            }
+            // Labels without letters ("180°") read the same in every language.
+            untranslated.extend(labels.into_iter().filter(|l| l.chars().any(char::is_alphabetic) && crate::i18n::tr("ka", l) == l.as_str()));
+        }
+        assert!(untranslated.is_empty(), "untranslated Georgian menu labels: {untranslated:?}");
     }
 
     #[test]
@@ -2920,7 +2944,7 @@ mod tests {
         crate::dialogs::confirm(&mut app).unwrap();
         frame(&mut app);
         assert_eq!(app.session.documents().len(), 1);
-        for lang in ["uk", "zh", "", "ar", "pt-br", "it"] {
+        for lang in ["uk", "zh", "", "ar", "pt-br", "it", "ka"] {
             app.run("app.language", json!({"lang": lang})).unwrap();
             frame(&mut app);
         }

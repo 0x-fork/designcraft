@@ -99,7 +99,7 @@ Interface strings translated, of 1,724 measured. Detail: [docs/localization-pari
 | Korean | ko | none | 0% |
 | Vietnamese | vi | none | 0% |
 
-Also shipped: Italian (85%), Ukrainian (83%).
+Also shipped: Italian (85%), Ukrainian (83%), Georgian (100%).
 
 ## Upcoming
 
@@ -150,6 +150,8 @@ Newest first.
   `text.thread`, `text.unthread`, `text.removeFromThread` with undo; locked frames and layers
   refuse threads. The alpha gate now waits only on the Primary Text Frame page fixes (#165). No
   readiness percentage change.
+- **2026-10-14** · Georgian interface (`ka`, Edit ▸ Interface Language ▸ ქართული): every catalog key
+  translated, count captions as `noun: n`.
 - **2026-10-12** · macOS Dock Quit uses the same unsaved-document prompts as window and menu Quit. Repeated requests keep the current answers; Cancel retains every tab and unsaved recovery checkpoint, and completed Save/Don't Save answers exit through the ordinary event loop. No readiness percentage change.
 - **2026-10-12** · Orderly native exit writes the latest recovery state after finalizing current quit approvals; incomplete or stale plans keep their documents, and Undo to the saved state clears stale recovery. Unavailable or failed recovery is reported. Cancelable macOS Dock Quit remains open (#544). No readiness percentage change.
 - **2026-10-12** · Recovered documents keep a checkpoint until saved, closed or reverted, including a second crash before autosave. Restarted document IDs and explicit recovery folders preserve other snapshots; failed republishing retains the original. No readiness percentage change.
