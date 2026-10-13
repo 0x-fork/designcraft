@@ -515,6 +515,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Buttons and Forms", ["Schaltflächen und Formulare", "Boutons et formulaires", "Botones y formularios", "ボタンとフォーム", "按钮和表单"]),
     ("Liquid Layout", ["Flüssiges Layout", "Mise en page liquide", "Maquetación líquida", "リキッドレイアウト", "自适应版面"]),
     ("Workspace", ["Arbeitsbereich", "Espace de travail", "Espacio de trabajo", "ワークスペース", "工作区"]),
+    ("Editorial", ["Redaktion", "Éditorial", "Editorial", "エディトリアル", "编辑"]),
+    ("Object & Layout", ["Objekt und Layout", "Objet et mise en page", "Objeto y diseño", "オブジェクト＆レイアウト", "对象和版面"]),
+    ("Styles", ["Formate", "Styles", "Estilos", "スタイル", "样式"]),
+    ("Essentials Classic", ["Essentials Classic", "Essentials Classic", "Essentials Classic", "Essentials Classic", "基本功能（经典）"]),
     ("Split Window", ["Fenster teilen", "Fractionner la fenêtre", "Dividir ventana", "ウィンドウを分割", "拆分窗口"]),
     ("New Window", ["Neues Fenster", "Nouvelle fenêtre", "Nueva ventana", "新規ウィンドウ", "新建窗口"]),
     (
@@ -4184,7 +4188,14 @@ pub fn style_name<'a>(lang: &str, name: &'a str) -> &'a str {
 /// Built-in workspace captions; custom workspace names remain unchanged.
 pub fn workspace_name<'a>(lang: &str, name: &'a str) -> &'a str {
     match name {
-        "Essentials" | "Advanced" | "Book" | "Digital Publishing" | "Interactive for PDF" | "Printing and Proofing" | "Typography" => tr(lang, name),
+        "Essentials"
+        | "Essentials Classic"
+        | "Advanced"
+        | "Book"
+        | "Digital Publishing"
+        | "Interactive for PDF"
+        | "Printing and Proofing"
+        | "Typography" => tr(lang, name),
         _ => name,
     }
 }

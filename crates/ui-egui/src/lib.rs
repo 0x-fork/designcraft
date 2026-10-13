@@ -116,6 +116,9 @@ pub struct SavedWorkspace {
     pub docking: Option<craft_ui::docking::Layout<String>>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub docking_hidden: std::collections::BTreeMap<String, craft_ui::docking::Location<String>>,
+    /// The workspace's own icon column (see [`UiState::icon_groups`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_groups: Option<Vec<Vec<String>>>,
 }
 
 /// A missing on-by-default bool stays on. `bool::default` is false.
@@ -253,6 +256,10 @@ pub struct UiState {
     #[serde(skip)]
     pub docking_opened: Option<String>,
     pub dock_expanded: bool,
+    /// A workspace's iconic panel groups (Essentials Classic), shown with their names in the icon
+    /// column instead of every panel; `None` is the full icon column.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_groups: Option<Vec<Vec<String>>>,
     pub units: Unit,
     pub workspace: String,
     /// Window › Workspace › New Workspace: saved panel arrangements.
@@ -370,6 +377,7 @@ impl Default for UiState {
             docking_raise: None,
             docking_opened: None,
             dock_expanded: true,
+            icon_groups: None,
             units: Unit::Picas,
             workspace: "Essentials".into(),
             custom_workspaces: Vec::new(),
