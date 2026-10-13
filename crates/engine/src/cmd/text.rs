@@ -31,6 +31,15 @@ pub fn specs() -> Vec<CommandSpec> {
             st.selection.text = Some(TextSel { anchor: a, focus: b, ..t });
             ok()
         }),
+        cmd!(noundo "text.selectSentence", "Select Sentence", [], None, "{frame, point} — the sentence under the point (triple click)", has_doc, |s, p| {
+            select_around(s, p, "text.selectSentence", sentence_bounds)
+        }),
+        cmd!(noundo "text.selectParagraph", "Select Paragraph", [], None, "{frame, point} — the paragraph under the point (quadruple click)", has_doc, |s, p| {
+            select_around(s, p, "text.selectParagraph", para_bounds)
+        }),
+        cmd!(noundo "text.selectStory", "Select Story", [], None, "{frame, point} — all the text of the story under the point, threaded frames included (quintuple click)", has_doc, |s, p| {
+            select_around(s, p, "text.selectStory", |t, _| (0, t.len()))
+        }),
         cmd!(noundo "text.select", "Select Text", [], None, "{story, anchor, focus} (UTF-8 byte offsets into the story text, as find.find reports them: á or — counts 2 or 3)", has_doc, |s, p| {
             let sid = StoryId(p.get("story").and_then(Value::as_u64).unwrap_or(0));
             let st = s.doc_mut()?;
@@ -625,6 +634,62 @@ fn word_bounds(s: &str, i: usize) -> (usize, usize) {
     let a = s[..i.min(s.len())].char_indices().rev().take_while(|(_, c)| is_word(*c)).last().map(|(k, _)| k).unwrap_or(i);
     let b = s[i.min(s.len())..].char_indices().find(|(_, c)| !is_word(*c)).map(|(k, _)| i + k).unwrap_or(s.len());
     (a, b)
+}
+
+/// Selects `bounds(text, byte)` around the byte under `point` in `frame`. Unlike a caret
+/// placement, a press inside the current selection is no start of a text drag here: it is the
+/// third or later click of a row, which lands in the word or sentence just selected.
+fn select_around(s: &mut Session, p: &Value, id: &str, bounds: fn(&str, usize) -> (usize, usize)) -> Result<Value> {
+    let frame = id_param(p, "frame").ok_or_else(|| bad(id, "missing frame"))?;
+    let pt = point_param(p, "point").unwrap_or(Point::ZERO);
+    let (sid, b, cell) = hit_byte(s, frame, pt).ok_or_else(|| bad(id, "not a text frame"))?;
+    let st = s.doc_mut()?;
+    let text = st.doc.text_story(sid, cell).map(|x| x.text.clone()).unwrap_or_default();
+    let (anchor, focus) = bounds(&text, floor_char_boundary(&text, b));
+    st.selection = Selection::text(TextSel { story: sid, anchor, focus, frame: Some(frame), cell });
+    st.revision += 1;
+    Ok(json!({"story": sid.0, "anchor": anchor, "focus": focus}))
+}
+
+/// The paragraph around byte `i`, without its `\n`.
+fn para_bounds(s: &str, i: usize) -> (usize, usize) {
+    let i = i.min(s.len());
+    let a = s.get(..i).and_then(|t| t.rfind('\n')).map_or(0, |k| k + 1);
+    let b = s.get(i..).and_then(|t| t.find('\n')).map_or(s.len(), |k| i + k);
+    (a, b)
+}
+
+/// The sentence around byte `i`, within its paragraph: it ends after `.`, `!`, `?` or `…` (and
+/// any closing quotes or brackets) followed by a space or the paragraph end, or after a CJK full
+/// stop, and takes the spaces after it, as deleting a sentence should leave none behind.
+fn sentence_bounds(s: &str, i: usize) -> (usize, usize) {
+    let (pa, pb) = para_bounds(s, i);
+    let para = s.get(pa..pb).unwrap_or("");
+    let mut start = 0;
+    let mut it = para.char_indices().peekable();
+    while let Some((_, c)) = it.next() {
+        let cjk = matches!(c, '。' | '！' | '？');
+        if !cjk && !matches!(c, '.' | '!' | '?' | '…') {
+            continue;
+        }
+        while it.peek().is_some_and(|&(_, c)| {
+            matches!(c, '.' | '!' | '?' | '…' | '。' | '！' | '？' | '"' | '\'' | '”' | '’' | '»' | '›' | ')' | ']' | '」' | '』' | '）')
+        }) {
+            it.next();
+        }
+        if !cjk && it.peek().is_some_and(|&(_, c)| !c.is_whitespace()) {
+            continue;
+        }
+        while it.peek().is_some_and(|&(_, c)| c.is_whitespace()) {
+            it.next();
+        }
+        let end = it.peek().map_or(para.len(), |&(k, _)| k);
+        if pa + end > i || end == para.len() {
+            return (pa + start, pa + end);
+        }
+        start = end;
+    }
+    (pa + start, pb)
 }
 
 /// Type ▸ Story Direction.
@@ -1894,5 +1959,46 @@ mod story_query_contract_tests {
         assert_eq!(s.execute("story.get", &json!({"frame":f["id"]})).unwrap()["text"], "");
         s.execute("text.select", &json!({"story":f["story"],"anchor":0})).unwrap();
         assert_eq!(s.execute("story.get", &json!({})).unwrap()["text"], "");
+    }
+}
+
+#[cfg(test)]
+mod multi_click_tests {
+    use super::{para_bounds, sentence_bounds};
+
+    fn sentence(s: &str, at: &str) -> String {
+        let i = s.find(at).unwrap();
+        let (a, b) = sentence_bounds(s, i);
+        s[a..b].to_string()
+    }
+
+    #[test]
+    fn sentences_end_at_a_stop_before_a_space_or_the_paragraph_end() {
+        let s = "It costs 3.5 euros. \u{201C}Really?\u{201D} (Twice!) Yes\u{2026} fine.\nNext one. Last";
+        assert_eq!(sentence(s, "costs"), "It costs 3.5 euros. ");
+        assert_eq!(sentence(s, "Really"), "\u{201C}Really?\u{201D} ");
+        assert_eq!(sentence(s, "Twice"), "(Twice!) ");
+        assert_eq!(sentence(s, "Yes"), "Yes\u{2026} ");
+        assert_eq!(sentence(s, "fine"), "fine.");
+        assert_eq!(sentence(s, "one"), "Next one. ");
+        assert_eq!(sentence(s, "Last"), "Last");
+        // The caret at the very end of a paragraph is in its last sentence.
+        let end = s.find('\n').unwrap();
+        assert_eq!(sentence_bounds(s, end), (s.find("fine").unwrap(), end));
+    }
+
+    #[test]
+    fn cjk_full_stops_end_sentences_without_a_space() {
+        let s = "これは文です。次の文！最後";
+        assert_eq!(sentence(s, "次"), "次の文！");
+        assert_eq!(sentence(s, "最後"), "最後");
+    }
+
+    #[test]
+    fn paragraphs_stop_at_returns() {
+        let s = "One.\nTwo two.\n";
+        assert_eq!(para_bounds(s, 6), (5, 13));
+        assert_eq!(para_bounds(s, 0), (0, 4));
+        assert_eq!(para_bounds(s, s.len()), (s.len(), s.len()));
     }
 }
