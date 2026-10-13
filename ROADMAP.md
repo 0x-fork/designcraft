@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-13** · macOS: a command chosen with the mouse in the menu bar runs at once. It used to wait for the next mouse move or key press over the window, so File › Open, Place and Save As seemed to take 10–20 seconds to open their dialogs. No readiness percentage change.
 - **2026-10-13** · An explicit recovery folder (`file.recovery.save` with `dir`) never overwrites or deletes another running app's checkpoints. Document uids start at 1 in every process, so two apps saving recovery to one chosen folder replaced or removed each other's `<uid>.designcraft`. A run replaces or removes only the entries it wrote or recovered there, refuses an occupied uid, and refuses a folder whose run lock another app holds. No readiness percentage change.
 - **2026-10-13** · PDF export leaves out form fields, buttons and video or sound that don't print: inside a hidden group, on a hidden or non-printing layer, or marked non-printing. Page content and interactive elements follow one inclusion rule. No readiness percentage change.
 - **2026-10-13** · IDML export keeps parent item overrides: each page lists its overridden parent items and the local copy keeps its link to the parent item, so a reopened IDML file shows only the local copy (#725). No readiness percentage change.

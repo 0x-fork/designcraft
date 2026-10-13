@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::mpsc::{Receiver, channel};
 
 use designcraft_ui_egui::DesignApp;
 use designcraft_ui_egui::menus::{self, AppMenuItem, Item};
@@ -19,6 +20,7 @@ enum Handle {
 pub struct NativeMenu {
     _menu: Menu,
     items: HashMap<String, (String, Value, Handle)>,
+    events: Receiver<MenuEvent>,
     last_refresh: f64,
     /// The interface language the titles are in and whether CJK features are shown: the menu is
     /// rebuilt when either changes.
@@ -39,7 +41,15 @@ fn shortcut(id: &str) -> Option<&'static str> {
 }
 
 impl NativeMenu {
-    pub fn install(app: &mut DesignApp) -> Self {
+    pub fn install(app: &mut DesignApp, ctx: &egui::Context) -> Self {
+        // A click in the menu bar reaches the app with no input over the window, so nothing would
+        // draw the frame that runs the command until the pointer or a key comes back: wake egui.
+        let (tx, events) = channel();
+        let repaint = ctx.clone();
+        MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
+            let _ = tx.send(e);
+            repaint.request_repaint();
+        }));
         let menu = Menu::new();
         let mut items = HashMap::new();
         let mut counter = 0usize;
@@ -77,11 +87,11 @@ impl NativeMenu {
                 (p.is_null() && accel(sc).is_some()).then(|| id.clone())
             })
             .collect();
-        Self { _menu: menu, items, last_refresh: 0.0, shown_for: (app.ui.language.clone(), designcraft_ui_egui::cjk_features(app)) }
+        Self { _menu: menu, items, events, last_refresh: 0.0, shown_for: (app.ui.language.clone(), designcraft_ui_egui::cjk_features(app)) }
     }
 
     pub fn poll(&mut self, app: &mut DesignApp, ctx: &egui::Context) {
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+        while let Ok(ev) = self.events.try_recv() {
             if let Some((cmd, params, _)) = self.items.get(ev.id.as_ref()) {
                 menus::activate_native(app, ctx, &cmd.clone(), &params.clone());
             }
@@ -90,7 +100,7 @@ impl NativeMenu {
         // back by Cancel): the system menu bar follows at once, like the panels (the new menu
         // replaces the old one as the application's menu before that one is dropped).
         if app.ui.language != self.shown_for.0 || designcraft_ui_egui::cjk_features(app) != self.shown_for.1 {
-            *self = Self::install(app);
+            *self = Self::install(app, ctx);
         }
         let now = designcraft_ui_egui::now_ms();
         if now - self.last_refresh < 250.0 {
