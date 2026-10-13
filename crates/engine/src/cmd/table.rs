@@ -178,7 +178,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "Split Cell Horizontally",
             ["Table"],
             None,
-            "{} — the target cell becomes two, one above the other",
+            "{} — each target cell becomes two, one above the other",
             in_table,
             |s, p| split(s, p, true)
         ),
@@ -187,7 +187,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "Split Cell Vertically",
             ["Table"],
             None,
-            "{} — the target cell becomes two, side by side",
+            "{} — each target cell becomes two, side by side",
             in_table,
             |s, p| split(s, p, false)
         ),
@@ -589,7 +589,7 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
 fn split(s: &mut Session, p: &Value, horizontal: bool) -> Result<Value> {
     let g = target(s, p, "table.split")?;
     edit_table(s, &g, "table.split", |t| {
-        t.split_cell(g.range.r0, g.range.c0, horizontal);
+        t.split_cells(g.range, horizontal).map_err(|e| bad("table.split", e))?;
         Ok(json!({"rows": t.nrows(), "cols": t.ncols()}))
     })
 }
@@ -645,7 +645,7 @@ fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
         Some(o) => return Err(bad("table.setCell", format!("unknown vj `{o}`"))),
         None => None,
     };
-    let text = str_param(p, "text").map(str::to_string);
+    let text = str_param(p, "text").map(|_| super::text_param(p, "text"));
     let stroke = p.get("stroke").cloned();
     edit_table(s, &g, "table.setCell", |t| {
         let owners = t.owners();

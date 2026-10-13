@@ -206,9 +206,30 @@ struct Importer<'r> {
     /// Cross-reference format Self → name.
     xref_format_names: HashMap<String, String>,
     xref_formats: Vec<designcraft_doc::XrefFormat>,
-    /// Index topic Self → topic path; topic See / See also cross-references.
-    index_topics: HashMap<String, Vec<String>>,
+    /// Index topic Self → topic path and per-level sort keys; topic cross-references.
+    index_topics: HashMap<String, IndexTopic>,
     index_xrefs: Vec<designcraft_doc::IndexRef>,
+}
+
+/// IDML stores a sort key on each topic, rather than on its page references.
+#[derive(Clone, Default)]
+struct IndexTopic {
+    path: Vec<String>,
+    sort: Vec<String>,
+}
+
+impl IndexTopic {
+    fn child(&self, topic: &El) -> Self {
+        let mut path = self.path.clone();
+        path.push(topic.get("Name").unwrap_or("").to_string());
+        let mut sort = self.sort.clone();
+        if let Some(key) = topic.get("SortOrder").filter(|key| !key.is_empty()) {
+            // Keep empty positions before a child's key, but omit trailing defaults.
+            sort.resize(self.path.len(), String::new());
+            sort.push(key.to_string());
+        }
+        Self { path, sort }
+    }
 }
 
 fn lab_to_color(l: f32, a: f32, b: f32) -> Color {
@@ -453,7 +474,7 @@ impl<'r> Importer<'r> {
             self.xref_format(e);
         }
         if let Some(ix) = top.iter().find(|e| e.local() == "Index") {
-            self.index_topics_of(ix, &[]);
+            self.index_topics_of(ix, &IndexTopic::default());
         }
         // Stories (ids first so frames can reference them).
         for e in top.iter().filter(|e| e.local() == "Story") {
@@ -1010,33 +1031,31 @@ impl<'r> Importer<'r> {
     }
 
     /// Index topics (recursively); at the root, their See / See also cross-references too.
-    fn index_topics_of(&mut self, e: &El, prefix: &[String]) {
+    fn index_topics_of(&mut self, e: &El, prefix: &IndexTopic) {
         for t in e.find_all("Topic") {
-            let mut path = prefix.to_vec();
-            path.push(t.get("Name").unwrap_or("").to_string());
+            let topic = prefix.child(t);
             if let Some(me) = t.get("Self") {
-                self.index_topics.insert(me.to_string(), path.clone());
+                self.index_topics.insert(me.to_string(), topic.clone());
             }
-            self.index_topics_of(t, &path);
+            self.index_topics_of(t, &topic);
         }
-        if !prefix.is_empty() {
+        if !prefix.path.is_empty() {
             return;
         }
-        let mut stack = vec![(e, Vec::<String>::new())];
-        while let Some((el, path)) = stack.pop() {
+        let mut stack = vec![(e, IndexTopic::default())];
+        while let Some((el, prefix)) = stack.pop() {
             for t in el.find_all("Topic") {
-                let mut p = path.clone();
-                p.push(t.get("Name").unwrap_or("").to_string());
+                let topic = prefix.child(t);
                 for x in t.find_all("CrossReference") {
-                    let target = x.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).map(|p| p.join(": ")).unwrap_or_default();
+                    let target = x.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).map(|t| t.path.join(": ")).unwrap_or_default();
                     use designcraft_doc::index::IndexRange as R;
                     let range = match x.get("CrossReferenceType") {
                         Some("SeeAlso") | Some("SeeAlsoHerein") => R::SeeAlso(target),
                         _ => R::See(target),
                     };
-                    self.index_xrefs.push(designcraft_doc::IndexRef { topics: p.clone(), sort: vec![], range });
+                    self.index_xrefs.push(designcraft_doc::IndexRef { topics: topic.path.clone(), sort: topic.sort.clone(), range });
                 }
-                stack.push((t, p));
+                stack.push((t, topic));
             }
         }
     }
@@ -1796,14 +1815,14 @@ impl<'r> Importer<'r> {
                     }
                     "PageReference" => {
                         use designcraft_doc::index::IndexRange as R;
-                        let topics = c.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).cloned().unwrap_or_default();
+                        let topic = c.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).cloned().unwrap_or_default();
                         let range = match c.get("PageReferenceType") {
                             Some("ToEndOfStory") | Some("ToEndOfDocument") | Some("ToEndOfSection") => R::ToEndOfStory,
                             Some("ForNextNParagraphs") => R::NextParagraphs(c.num("PageReferenceLimit").unwrap_or(1.0).max(1.0) as u32),
                             Some("SuppressPageNumbers") => R::SuppressPageRange,
                             _ => R::CurrentPage,
                         };
-                        b.index_refs.push(designcraft_doc::IndexRef { topics, sort: vec![], range });
+                        b.index_refs.push(designcraft_doc::IndexRef { topics: topic.path, sort: topic.sort, range });
                         b.push(&designcraft_doc::INDEX_MARK.to_string(), cf);
                     }
                     "CrossReferenceSource" => {
@@ -2181,6 +2200,11 @@ impl<'r> Importer<'r> {
                 let options = TextFrameOptions {
                     path: Some(designcraft_doc::PathType {
                         start: tp.num("StartBracket").unwrap_or(0.0).max(0.0),
+                        // At (or past) the path's length it is the path's end: no end bracket.
+                        end: tp
+                            .num("EndBracket")
+                            .filter(|e| e.is_finite() && *e >= 0.0)
+                            .filter(|e| *e < designcraft_geom::warp::PathWarp::new(&it.path.to_bezpath(), false).length() - 0.01),
                         flip: tp.get("FlipPathEffect") == Some("Flipped"),
                         align: names::path_align_in(tp.get("TextAlignment").unwrap_or("")),
                     }),
