@@ -372,12 +372,14 @@ fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rect, xf: &Xf,
     let Some(st) = app.session.active() else { return };
     let ppp = ctx.pixels_per_point() as f64;
     let doc_key = (st.uid, std::sync::Arc::as_ptr(&st.doc) as u64, st.revision, preview);
+    let editing_parents = st.editing_parents;
     // Overscan: 25% of the viewport on every side, within the GPU's maximum texture size.
     let max_side = ctx.input(|i| i.max_texture_side) as f32 / ppp as f32;
     let (ow, oh) =
         ((rect.width() * 0.25).min((max_side - rect.width()) / 2.0).max(0.0), (rect.height() * 0.25).min((max_side - rect.height()) / 2.0).max(0.0));
     let want = |origin: Point| crate::Shown {
         doc: doc_key,
+        editing_parents,
         origin: Point::new(origin.x - ow as f64 / xf.zoom, origin.y - oh as f64 / xf.zoom),
         zoom: xf.zoom,
         size: (rect.width() + 2.0 * ow, rect.height() + 2.0 * oh),
@@ -385,7 +387,7 @@ fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rect, xf: &Xf,
     let target = want(xf.origin);
     // Does the current texture cover the viewport at this zoom and document state?
     let covers = |s: &crate::Shown| {
-        s.doc == doc_key && (s.zoom - xf.zoom).abs() < 1e-9 && {
+        s.doc == doc_key && s.editing_parents == editing_parents && (s.zoom - xf.zoom).abs() < 1e-9 && {
             let x0 = (xf.origin.x - s.origin.x) * s.zoom;
             let y0 = (xf.origin.y - s.origin.y) * s.zoom;
             x0 >= -0.5 && y0 >= -0.5 && x0 + rect.width() as f64 <= s.size.0 as f64 + 0.5 && y0 + rect.height() as f64 <= s.size.1 as f64 + 0.5
@@ -407,6 +409,7 @@ fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rect, xf: &Xf,
         return;
     }
     let doc_changed = app.canvas.shown.is_none_or(|s| s.doc != doc_key);
+    let mode_changed = app.canvas.shown.is_some_and(|s| s.editing_parents != editing_parents);
     let zoom_same = app.canvas.shown.is_some_and(|s| (s.zoom - xf.zoom).abs() < 1e-9);
     let job = |app: &DesignApp| {
         let st = app.session.active()?;
@@ -449,7 +452,9 @@ fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rect, xf: &Xf,
     if doc_changed && zoom_same && patch_texture(app, layout, ppp, doc_key, preview) {
         return;
     }
-    if !has_worker || app.canvas.shown.is_none() || (doc_changed && zoom_same) {
+    // A mode switch changes every spread's meaning, even if the document has no damage.
+    // Show the new canvas immediately, including when fitting it changes the zoom.
+    if !has_worker || app.canvas.shown.is_none() || mode_changed || (doc_changed && zoom_same) {
         let t0 = crate::now_ms();
         let Some((doc, placed, w, h, view, opts)) = job(app) else { return };
         let img = app.canvas.renderer.render(&doc, &app.session.cache, &placed, w, h, view, &opts);
@@ -457,6 +462,7 @@ fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rect, xf: &Xf,
         app.canvas.shown = Some(target);
         app.canvas.shown_doc = Some(doc);
         app.canvas.pending = None;
+        app.canvas.pending_doc = None;
         app.perf.render_ms = crate::now_ms() - t0;
         return;
     }
@@ -464,7 +470,7 @@ fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rect, xf: &Xf,
     {
         // Already rendering this view?
         if app.canvas.pending.is_some_and(|(_, p)| {
-            p.doc == doc_key && (p.zoom - xf.zoom).abs() < 1e-9 && {
+            p.doc == doc_key && p.editing_parents == editing_parents && (p.zoom - xf.zoom).abs() < 1e-9 && {
                 let x0 = (xf.origin.x - p.origin.x) * p.zoom;
                 let y0 = (xf.origin.y - p.origin.y) * p.zoom;
                 x0 >= 0.0 && y0 >= 0.0 && x0 + rect.width() as f64 <= p.size.0 as f64 && y0 + rect.height() as f64 <= p.size.1 as f64
@@ -487,7 +493,7 @@ fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rect, xf: &Xf,
 /// Returns false when a full render is needed (view moved, too much changed, or damage unknown).
 fn patch_texture(app: &mut DesignApp, layout: &CanvasLayout, ppp: f64, doc_key: (u64, u64, u64, bool), preview: bool) -> bool {
     let (Some(sh), Some(old), Some(st)) = (app.canvas.shown, app.canvas.shown_doc.clone(), app.session.active()) else { return false };
-    if sh.doc.0 != doc_key.0 || sh.doc.3 != doc_key.3 || app.canvas.texture.is_none() {
+    if sh.doc.0 != doc_key.0 || sh.doc.3 != doc_key.3 || sh.editing_parents != st.editing_parents || app.canvas.texture.is_none() {
         return false;
     }
     let new = st.doc.clone();
@@ -1770,6 +1776,10 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
     }
     true
 }
+
+#[cfg(test)]
+#[path = "parent_canvas_tests.rs"]
+mod parent_canvas_tests;
 
 #[cfg(test)]
 mod tests {

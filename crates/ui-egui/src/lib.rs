@@ -410,6 +410,8 @@ impl Default for View {
 pub struct Shown {
     /// (doc uid, doc pointer, revision, preview).
     pub doc: (u64, u64, u64, bool),
+    /// Parent and document spreads have different canvas placement and content.
+    pub editing_parents: bool,
     /// Canvas point at the texture's top-left, zoom, and texture size in screen points.
     pub origin: Point,
     pub zoom: f64,
