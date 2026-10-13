@@ -1279,6 +1279,9 @@ mod new_document_tests {
         let c = s.preview_new_document(&json!({})).unwrap();
         s.execute("frame.create", &json!({"rect": [10, 10, 100, 100]})).unwrap();
         assert_eq!(crate::recovery::save(&s, &dir).unwrap(), 0);
+        // The app's timer saves through the command.
+        assert_eq!(s.execute("file.recovery.save", &json!({})).unwrap()["saved"], 0);
+        assert!(crate::recovery::list(&dir).is_empty());
         assert_eq!(s.end_new_document_preview(), None);
         assert_eq!((s.documents().len(), s.doc().unwrap().uid, s.doc().unwrap().doc.title.as_str()), (2, c, "Untitled-2"));
         s.execute("file.new", &json!({})).unwrap();

@@ -427,7 +427,12 @@ pub(crate) fn save_tracked(s: &mut Session, dir: &Path) -> Result<usize> {
     }
     prepare_save(s, dir)?;
     let mut n = 0;
+    let preview = s.new_document_preview();
     for index in 0..s.docs.len() {
+        // New Document's preview is never written, so it has no checkpoint to discard either.
+        if s.docs.get(index).is_some_and(|document| preview == Some(document.uid)) {
+            continue;
+        }
         if s.docs.get(index).is_some_and(|document| !document.is_dirty()) {
             discard_document(s, index, Some(dir));
             continue;
