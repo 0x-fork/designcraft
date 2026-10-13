@@ -651,7 +651,7 @@ mod tests {
         assert!(out.pixel(30, 40)[3].abs_diff(64) <= 1, "half-opacity object inside a half-opacity group is quarter opaque");
         let cmy = renderer.render(&doc, &Cache::new(), &placements, 160, 120, Affine::IDENTITY, &RenderOptions { plate: Some(4), ..options.clone() });
         let k = renderer.render(&doc, &Cache::new(), &placements, 160, 120, Affine::IDENTITY, &RenderOptions { plate: Some(3), ..options });
-        for ((out, cmy), k) in out.pixels.chunks_exact(4).zip(cmy.pixels.chunks_exact(4)).zip(k.pixels.chunks_exact(4)) {
+        for ((out, cmy), k) in out.pixels.as_chunks::<4>().0.iter().zip(cmy.pixels.as_chunks::<4>().0).zip(k.pixels.as_chunks::<4>().0) {
             assert_eq!(cmy[3], k[3], "all ink passes have the same coverage");
             assert_eq!(out[3], cmy[3], "conversion preserves coverage");
             assert!(out[..3].iter().all(|v| *v <= out[3]), "output remains premultiplied");
