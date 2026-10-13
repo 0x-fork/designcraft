@@ -1121,7 +1121,7 @@ mod tests {
             let aid = AssetId(d.alloc());
             d.assets.insert(
                 aid,
-                Arc::new(Asset { page: 0, id: aid, name: name.into(), mime: mime.into(), link: None, data: Arc::new(vec![1]), pixels: Some((1, 1)) }),
+                Arc::new(Asset { page: 0, id: aid, name: name.into(), mime: mime.into(), link: None, data: Arc::new(vec![1]), pixels: Some((1, 1)), ..Default::default() }),
             );
             let mut item = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(Rect::new(36.0, y, 72.0, y + 36.0)));
             item.alt_text = alt.into();
@@ -1132,6 +1132,8 @@ mod tests {
                 auto_fit: Default::default(),
                 fit_align: 4,
                 crop: [0.0; 4],
+                clip: None,
+                wrap: Default::default(),
             });
             d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
             aid.0
