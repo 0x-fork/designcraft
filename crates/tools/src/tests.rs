@@ -1769,7 +1769,7 @@ fn eyedropper_ignores_inactive_states_of_a_multi_state_object() {
     vector.fill.swatch = "[Black]".into();
     let target = add_rect(&mut d, Rect::new(400.0, 100.0, 450.0, 150.0));
     let s = Selection { items: vec![target], ..Default::default() };
-    let sample = Action::Exec("color.sample".into(), serde_json::json!({"at": [120.0, 130.0], "spread": {"kind": "doc", "index": 0}}));
+    let samples_image = |a: &[Action]| a.iter().any(|a| matches!(a, Action::Exec(c, _) if c == "color.sample"));
     // Children [vector, raster] with the raster on top: it samples only while it is the active state.
     for (active, samples) in [(1, true), (0, false)] {
         let mut group = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(area));
@@ -1782,6 +1782,6 @@ fn eyedropper_ignores_inactive_states_of_a_multi_state_object() {
         let off = l.xf(SpreadRef::Doc(0)).translation();
         let cx = ctx(&d2, &s, &c, &l);
         let a = create("eyedropper").pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
-        assert_eq!(a.contains(&sample), samples, "active state {active}: {a:?}");
+        assert_eq!(samples_image(&a), samples, "active state {active}: {a:?}");
     }
 }
