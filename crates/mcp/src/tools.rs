@@ -233,7 +233,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &[],
             ),
-            true,
+            false,
         ),
         tool(
             "export_png",
@@ -250,7 +250,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "Screenshot",
             &app_only("Capture the whole app window (menus, panels, canvas) and return it as a PNG image. Optionally also keep it at `path`."),
             obj(json!({"path": string("Also write the PNG here")}), &[]),
-            true,
+            false,
         ),
         // ----- input -----
         tool(
