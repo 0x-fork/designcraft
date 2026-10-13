@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Change All (Object)",
             [],
             None,
-            "{…find.objects criteria, change: {fill?, stroke?, strokeWeight?, opacity?}} → {changed}",
+            "{…the criteria of find.objects, change: {fill?, stroke?, strokeWeight?, opacity?}} → {changed}",
             has_doc,
             |s, p| {
                 let ids = find_objects(&s.doc()?.doc, p);
@@ -65,7 +65,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             change
         ),
-        cmd!(noundo "find.next", "Find Next", ["Edit"], Some("Cmd+Alt+F"), "{find, grep?, …} — selects the next match after the caret", has_doc, find_next),
+        cmd!(noundo "find.next", "Find Next", ["Edit"], Some("Cmd+Alt+F"), "{find, grep?, caseSensitive?, wholeWord?} — selects the next match after the caret", has_doc, find_next),
     ]
 }
 
