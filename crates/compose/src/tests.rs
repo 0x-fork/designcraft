@@ -7009,7 +7009,6 @@ fn degenerate_frame_outlines_compose_without_panicking() {
     }
 }
 
-
 #[test]
 fn cache_recomposes_when_the_baseline_grid_changes() {
     let para = ParaAttrs { grid_align: Some(GridAlign::AllLines), ..Default::default() };
