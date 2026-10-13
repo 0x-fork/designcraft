@@ -2533,6 +2533,19 @@ fn path_text_keeps_the_original_vertical_fit_limit() {
     }
 }
 
+/// A path whose length is NaN (a NaN point from a damaged file) composes without panicking on the
+/// end bracket's clamp.
+#[test]
+fn path_text_with_a_nan_length_composes() {
+    let (mut d, sid, fid) = doc_with("HELLO", Rect::new(0.0, 0.0, 200.0, 100.0), ParaAttrs::default());
+    let it = d.item_mut(fid).unwrap();
+    it.shape = designcraft_doc::Shape::Path;
+    it.path = designcraft_geom::shapes::line(Point::ZERO, Point::new(f64::NAN, 0.0));
+    it.text_frame_mut().unwrap().options.path =
+        Some(designcraft_doc::PathType { start: 0.0, end: Some(50.0), flip: false, align: designcraft_doc::PathAlign::Baseline });
+    let _ = compose_story(&d, sid, &ComposeOptions::default());
+}
+
 fn two_keep_frames(text: &str) -> (Document, StoryId, ItemId, ItemId) {
     let (mut d, sid, first) = baseline_fit_doc(text, 48.0);
     d.item_mut(first).unwrap().path = designcraft_geom::shapes::rectangle(Rect::new(0.0, 0.0, 75.0, 48.0));

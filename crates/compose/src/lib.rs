@@ -716,7 +716,7 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                     // Keep the path identity: its synthetic area uses full line extents.
                     ..tf.options.clone()
                 };
-                let end = pt.end.map_or(len, |e| e.clamp(0.0, len));
+                let end = pt.end.map_or(len, |e| e.max(0.0).min(len));
                 (Rect::new(0.0, 0.0, (end - pt.start).max(1.0), size * 1.6), opts)
             }
             None => (item.text_area(), tf.options.clone()),

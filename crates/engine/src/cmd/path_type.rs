@@ -97,7 +97,7 @@ fn path_options(s: &mut Session, p: &Value) -> Result<Value> {
             return Ok(json!({"deleted": true}));
         }
         if let Some(v) = p.get("start").and_then(Value::as_f64).filter(|v| v.is_finite()) {
-            pt.start = v.clamp(0.0, len);
+            pt.start = v.max(0.0).min(len);
         }
         match p.get("end") {
             Some(Value::Null) => pt.end = None,
