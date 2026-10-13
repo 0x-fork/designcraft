@@ -1923,6 +1923,10 @@ fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
         for ((id, r), t) in items.iter().zip(targets) {
             let delta = t - lo(r);
             if let Some(it) = d.item_mut(*id) {
+                // Keep locked items in the spacing calculation, as align does for its reference.
+                if it.locked {
+                    continue;
+                }
                 let v = if horizontal { Vec2::new(delta, 0.0) } else { Vec2::new(0.0, delta) };
                 it.xf = Affine::translate(v) * it.xf;
             }
