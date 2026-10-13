@@ -3598,7 +3598,11 @@ fn feather_choke_and_corners_round_trip() {
     let mut d = Document::new(&NewDocument::default());
     let lid = d.default_layer();
     let feathers = [(6.0, 40.0, FeatherCorners::Sharp), (4.0, 0.0, FeatherCorners::Rounded), (3.0, 12.5, FeatherCorners::Diffused)];
-    let fx = |(w, choke, corners): (f64, f64, FeatherCorners)| Effects { feather: w, feather_options: FeatherOptions { choke, corners }, ..Default::default() };
+    let fx = |(w, choke, corners): (f64, f64, FeatherCorners)| Effects {
+        feather: w,
+        feather_options: FeatherOptions { choke, corners },
+        ..Default::default()
+    };
     for (i, f) in feathers.into_iter().enumerate() {
         let x = 40.0 + 120.0 * i as f64;
         let mut it = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(Rect::new(x, 40.0, x + 100.0, 140.0)));
