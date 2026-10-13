@@ -66,6 +66,20 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Paste Vector Art",
         ["Vektorgrafik einfügen", "Coller l’illustration vectorielle", "Pegar ilustración vectorial", "ベクトルアートをペースト", "粘贴矢量图稿"],
     ),
+    ("Baseline Options", ["Grundlinienoptionen", "Options de ligne de base", "Opciones de línea de base", "ベースラインオプション", "基线选项"]),
+    ("Fixed Number", ["Feste Anzahl", "Nombre fixe", "Número fijo", "固定数", "固定数字"]),
+    ("Fixed Width", ["Feste Breite", "Largeur fixe", "Anchura fija", "固定幅", "固定宽度"]),
+    ("Gutter:", ["Spaltenabstand:", "Gouttière :", "Medianil:", "間隔:", "栏间距："]),
+    ("Inset Spacing", ["Versatzabstand", "Marge intérieure", "Espaciado de margen interior", "フレーム内マージン", "内边距"]),
+    ("Vertical Justification", ["Vertikale Ausrichtung", "Justification verticale", "Justificación vertical", "垂直比率", "垂直对齐"]),
+    ("Align:", ["Ausrichten:", "Alignement :", "Alinear:", "整列:", "对齐："]),
+    ("Ignore Text Wrap", ["Textumfluss ignorieren", "Ignorer l’habillage", "Ignorar ceñir texto", "テキストの回り込みを無視", "忽略文本绕排"]),
+    ("Technique:", ["Technik:", "Technique :", "Técnica:", "テクニック:", "方法："]),
+    ("Softer", ["Weicher", "Plus flou", "Más suave", "さらにソフトに", "柔和"]),
+    ("Precise", ["Präzise", "Précis", "Precisa", "精細", "精确"]),
+    ("Corners:", ["Ecken:", "Angles :", "Esquinas:", "角:", "角点："]),
+    ("Sharp", ["Spitz", "Vifs", "Nítidas", "シャープ", "锐利"]),
+    ("Diffused", ["Weich", "Diffus", "Difusas", "拡散", "扩散"]),
     ("Reverse Path", ["Pfadrichtung umkehren", "Inverser le tracé", "Invertir trazado", "パスの方向反転", "反转路径"]),
     ("Set Anchor", ["Ankerpunkt festlegen", "Définir le point d’ancrage", "Definir punto de ancla", "アンカーポイントを設定", "设置锚点"]),
     ("Effects…", ["Effekte…", "Effets…", "Efectos…", "効果…", "效果…"]),
@@ -515,6 +529,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Buttons and Forms", ["Schaltflächen und Formulare", "Boutons et formulaires", "Botones y formularios", "ボタンとフォーム", "按钮和表单"]),
     ("Liquid Layout", ["Flüssiges Layout", "Mise en page liquide", "Maquetación líquida", "リキッドレイアウト", "自适应版面"]),
     ("Workspace", ["Arbeitsbereich", "Espace de travail", "Espacio de trabajo", "ワークスペース", "工作区"]),
+    ("Editorial", ["Redaktion", "Éditorial", "Editorial", "エディトリアル", "编辑"]),
+    ("Object & Layout", ["Objekt und Layout", "Objet et mise en page", "Objeto y diseño", "オブジェクト＆レイアウト", "对象和版面"]),
+    ("Styles", ["Formate", "Styles", "Estilos", "スタイル", "样式"]),
+    ("Essentials Classic", ["Essentials Classic", "Essentials Classic", "Essentials Classic", "Essentials Classic", "基本功能（经典）"]),
     ("Split Window", ["Fenster teilen", "Fractionner la fenêtre", "Dividir ventana", "ウィンドウを分割", "拆分窗口"]),
     ("New Window", ["Neues Fenster", "Nouvelle fenêtre", "Nueva ventana", "新規ウィンドウ", "新建窗口"]),
     (
@@ -4184,7 +4202,14 @@ pub fn style_name<'a>(lang: &str, name: &'a str) -> &'a str {
 /// Built-in workspace captions; custom workspace names remain unchanged.
 pub fn workspace_name<'a>(lang: &str, name: &'a str) -> &'a str {
     match name {
-        "Essentials" | "Advanced" | "Book" | "Digital Publishing" | "Interactive for PDF" | "Printing and Proofing" | "Typography" => tr(lang, name),
+        "Essentials"
+        | "Essentials Classic"
+        | "Advanced"
+        | "Book"
+        | "Digital Publishing"
+        | "Interactive for PDF"
+        | "Printing and Proofing"
+        | "Typography" => tr(lang, name),
         _ => name,
     }
 }

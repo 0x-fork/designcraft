@@ -232,7 +232,7 @@ pub fn fitted(d: &Document, fid: ItemId, sid: StoryId) -> Option<Rect> {
 }
 
 /// Give frame `fid` the inner bounds `to` (its path scaled into them).
-fn resize(d: &mut Document, fid: ItemId, to: Rect) -> bool {
+pub(crate) fn resize(d: &mut Document, fid: ItemId, to: Rect) -> bool {
     let Some(it) = d.item_mut(fid) else { return false };
     let r = it.inner_bounds();
     if r.width() < EPS || r.height() < EPS {

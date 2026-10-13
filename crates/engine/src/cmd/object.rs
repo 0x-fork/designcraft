@@ -525,7 +525,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Effects",
             [],
             None,
-            "{effects?: {dropShadow?: {on?, color?, opacity?, angle?, globalLight?, distance?, size?, spread?}, innerShadow?, outerGlow?, innerGlow?, bevel?, satin?, feather? (width), directionalFeather?, gradientFeather?} (the fields given replace the object's, as the Effects dialog sets them), opacity?: 0..1, blend?, ids?} — every effect at once, one undo step",
+            "{effects?: {dropShadow?: {on?, color?, opacity?, angle?, globalLight?, distance?, size?, spread?}, innerShadow?, outerGlow?, innerGlow? {on?, color?, opacity?, size?, choke?, center?, mode? (blend mode: Screen, Multiply, …; Screen by default), technique?: softer|precise}, bevel?, satin?, feather? (width), featherOptions? {choke? (%), corners?: sharp|rounded|diffused}, directionalFeather?, gradientFeather?} (the fields given replace the object's, as the Effects dialog sets them), opacity?: 0..1, blend?, ids?} — every effect at once, one undo step",
             has_selection,
             effects_all
         ),
@@ -539,7 +539,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Frame Options…",
             ["Object"],
             Some("Cmd+B"),
-            "{columns?, gutter?, inset?: number|[t,l,b,r] (null keeps that side), verticalJustification?: top|center|bottom|justify, firstBaseline?: ascent|capHeight|leading|xHeight|emboxHeight|fixed, autoSize?: off|heightOnly|widthOnly|heightAndWidth|heightAndWidthProportionally, autoSizeReference?: topLeft|topCenter|topRight|leftCenter|center|rightCenter|bottomLeft|bottomCenter|bottomRight (the point that stays put), useMinimumHeight?: bool, minimumHeight? (pt), useMinimumWidth?: bool, minimumWidth? (pt), noLineBreaks?: bool, ignoreWrap?, balanceColumns?, columnRule?: bool, columnRuleWeight? (pt), columnRuleColor? (swatch name), columnRuleTint? (0..1), columnRuleOffset? (pt, horizontal), columnRuleTopInset? (pt), columnRuleBottomInset? (pt), vertical?: bool (sets the story direction of the frames' stories, as Type ▸ Story Direction), ids?}",
+            "{columns?, gutter?, inset?: number|[t,l,b,r] (null keeps that side), verticalJustification?: top|center|bottom|justify, columnsKind?: fixedNumber|fixedWidth, columnWidth? (pt, Fixed Width), firstBaseline?: ascent|capHeight|leading|xHeight|emboxHeight|fixed, firstBaselineMin? (pt), autoSize?: off|heightOnly|widthOnly|heightAndWidth|heightAndWidthProportionally, autoSizeReference?: topLeft|topCenter|topRight|leftCenter|center|rightCenter|bottomLeft|bottomCenter|bottomRight (the point that stays put), useMinimumHeight?: bool, minimumHeight? (pt), useMinimumWidth?: bool, minimumWidth? (pt), noLineBreaks?: bool, ignoreWrap?, balanceColumns?, columnRule?: bool, columnRuleWeight? (pt), columnRuleColor? (swatch name), columnRuleTint? (0..1), columnRuleOffset? (pt, horizontal), columnRuleTopInset? (pt), columnRuleBottomInset? (pt), vertical?: bool (sets the story direction of the frames' stories, as Type ▸ Story Direction), ids?}",
             has_selection,
             text_frame_options
         ),
@@ -2038,6 +2038,7 @@ fn sanitize_effects(e: &mut designcraft_doc::Effects) -> Result<()> {
     len(&mut sa.distance)?;
     len(&mut sa.size)?;
     len(&mut e.feather)?;
+    pct(&mut e.feather_options.choke)?;
     for w in &mut e.directional_feather.widths {
         len(w)?;
     }
@@ -2268,6 +2269,8 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
     let rule_bottom = ranged("columnRuleBottomInset", -1440.0, 1440.0, "a number of points")?;
     let min_height = ranged("minimumHeight", 0.0, crate::autosize::MAX_SIDE, "a number of points")?;
     let min_width = ranged("minimumWidth", 0.0, crate::autosize::MAX_SIDE, "a number of points")?;
+    let column_width = ranged("columnWidth", 0.0, 15552.0, "a number of points")?;
+    let first_baseline_min = ranged("firstBaselineMin", 0.0, 15552.0, "a number of points")?;
     let reference = match p.get("autoSizeReference") {
         None | Some(Value::Null) => None,
         Some(v) => Some(
@@ -2337,6 +2340,12 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = p.get("ignoreWrap").and_then(Value::as_bool) {
                 o.ignore_wrap = v;
             }
+            if let Some(v) = column_width {
+                o.column_width = v;
+            }
+            if let Some(v) = first_baseline_min {
+                o.first_baseline_min = v;
+            }
             if let Some(v) = p.get("balanceColumns").and_then(Value::as_bool) {
                 o.balance_columns = v;
             }
@@ -2360,6 +2369,16 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if let Some(v) = rule_bottom {
                 o.column_rule_bottom_inset = v;
+            }
+            // Fixed Width columns set the frame's width: n columns, the gutters between them and
+            // the left and right insets.
+            let fixed_width = o.columns_kind == designcraft_doc::ColumnsKind::FixedWidth && o.column_width > 0.0;
+            let width = f64::from(o.columns.max(1)) * o.column_width + f64::from(o.columns.max(1) - 1) * o.gutter + o.inset[1] + o.inset[3];
+            if fixed_width
+                && ["columnsKind", "columnWidth", "columns", "gutter", "inset"].iter().any(|k| p.get(*k).is_some())
+                && let Some(r) = d.item(*id).map(Item::inner_bounds)
+            {
+                crate::autosize::resize(d, *id, Rect::new(r.x0, r.y0, r.x0 + width, r.y1));
             }
         }
         // Story direction belongs to the story: every frame of the thread turns.
@@ -4992,5 +5011,52 @@ mod ungroup_tests {
         assert!(d.item(ell).unwrap().has_nested_items());
         assert_eq!(s.doc().unwrap().selection.items.len(), 2);
         d.check().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod fixed_width_tests {
+    use super::*;
+
+    #[test]
+    fn fixed_width_columns_set_the_frame_width() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [36, 36, 300, 300], "content": "text", "text": "Hello"})).unwrap();
+        let id = ItemId(r["id"].as_u64().unwrap());
+        let p = json!({"ids": [id.0], "columns": 2, "gutter": 12, "inset": 0, "columnsKind": "fixedWidth", "columnWidth": 120});
+        s.execute("object.textFrameOptions", &p).unwrap();
+        let b = s.doc().unwrap().doc.item(id).unwrap().inner_bounds();
+        assert!((b.width() - (2.0 * 120.0 + 12.0)).abs() < 1e-6, "{b:?}");
+        assert!((b.x0 - 36.0).abs() < 1e-6 && (b.height() - 264.0).abs() < 1e-6, "{b:?}");
+        // Widths beyond the largest page are refused and change nothing.
+        for (k, v) in [("columnWidth", 1e9), ("columnWidth", -1.0), ("firstBaselineMin", 1e9)] {
+            assert!(s.execute("object.textFrameOptions", &json!({"ids": [id.0], k: v})).is_err(), "{k} {v}");
+        }
+        assert!((s.doc().unwrap().doc.item(id).unwrap().inner_bounds().width() - 252.0).abs() < 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod glow_feather_options_tests {
+    use serde_json::json;
+
+    #[test]
+    fn glow_mode_technique_and_feather_options_are_kept() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [0, 0, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+        s.execute(
+            "object.effects",
+            &json!({"ids": [id], "effects": {"innerGlow": {"on": true, "mode": "Multiply", "technique": "precise"}, "feather": 4.5, "featherOptions": {"choke": 140, "corners": "sharp"}}}),
+        )
+        .unwrap();
+        let e = s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().effects.clone();
+        assert_eq!((e.inner_glow.mode, e.inner_glow.technique), (designcraft_color::BlendMode::Multiply, designcraft_doc::GlowTechnique::Precise));
+        assert_eq!((e.feather_options.choke, e.feather_options.corners), (100.0, designcraft_doc::FeatherCorners::Sharp), "choke is a percentage");
+        // InDesign's defaults: Screen and Softer; Diffused corners, no choke.
+        let d = designcraft_doc::Effects::default();
+        assert_eq!((d.inner_glow.mode, d.inner_glow.technique), (designcraft_color::BlendMode::Screen, designcraft_doc::GlowTechnique::Softer));
+        assert_eq!((d.feather_options.choke, d.feather_options.corners), (0.0, designcraft_doc::FeatherCorners::Diffused));
     }
 }

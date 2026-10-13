@@ -1994,7 +1994,18 @@ impl<'a> Ex<'a> {
             );
         }
         if e.feather > 0.0 || all {
-            out.push(El::new("FeatherSetting").attr("Mode", if e.feather > 0.0 { "Standard" } else { "None" }).attr("Width", num(e.feather)));
+            let corners = match e.feather_options.corners {
+                designcraft_doc::FeatherCorners::Sharp => "Sharp",
+                designcraft_doc::FeatherCorners::Rounded => "Rounded",
+                designcraft_doc::FeatherCorners::Diffused => "Diffusion",
+            };
+            out.push(
+                El::new("FeatherSetting")
+                    .attr("Mode", if e.feather > 0.0 { "Standard" } else { "None" })
+                    .attr("Width", num(e.feather))
+                    .attr("ChokeAmount", num(e.feather_options.choke))
+                    .attr("CornerType", corners),
+            );
         }
         out
     }
