@@ -584,6 +584,17 @@ fn dashed(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke, dash: f32, 
     painter.extend(egui::Shape::dashed_line(&[a, b], stroke, dash, gap));
 }
 
+/// The most baseline grid lines drawn on a page: one per point of the tallest page (216 in).
+const MAX_BASELINES: usize = 216 * 72;
+
+/// Baseline grid lines inside a page, measured from its top: `start + n * increment` for n >= 0 (the bottom
+/// edge is not a line). Lines above the page are skipped without walking them, however far up the start is.
+fn baseline_grid_lines(start: f64, increment: f64, height: f64) -> impl Iterator<Item = f64> {
+    let step = increment.max(1.0);
+    let first = if start < 0.0 { start.rem_euclid(step) } else { start };
+    (0..MAX_BASELINES).map(move |n| first + n as f64 * step).take_while(move |y| *y < height)
+}
+
 fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout, t: &Tokens) {
     let s = &doc.settings;
     for slot in &layout.slots {
@@ -612,13 +623,11 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
             // Baseline grid.
             if app.ui.baseline_grid && xf.zoom >= s.baseline_grid.view_threshold {
                 let g = &s.baseline_grid;
-                let mut y = g.start;
-                while y < p.height {
+                for y in baseline_grid_lines(g.start, g.increment, p.height) {
                     painter.line_segment(
                         [pt(Point::new(pr.x0, pr.y0 + y)), pt(Point::new(pr.x1, pr.y0 + y))],
                         Stroke::new(hair(painter), c32(g.color).gamma_multiply(0.8)),
                     );
-                    y += g.increment.max(1.0);
                 }
             }
             // Margins (magenta) and columns (violet).
@@ -1917,5 +1926,19 @@ mod tests {
         let Some(rect) = h.state().canvas_rect else { return };
         right_click(&mut h, pos2(rect.center().x, rect.min.y - RULER / 2.0));
         assert!(h.query_by_label("   Points").is_none());
+    }
+
+    #[test]
+    fn baseline_grid_lines_are_the_ones_on_the_page() {
+        // A start far above the page used to be walked line by line, without end.
+        for start in [-1e9, -1e17] {
+            let mut far = baseline_grid_lines(start, 12.0, 792.0);
+            assert_eq!((far.next(), far.count()), (Some(8.0), 65));
+        }
+        let lines = |start, increment, height| baseline_grid_lines(start, increment, height).collect::<Vec<_>>();
+        assert_eq!(lines(36.0, 12.0, 72.0), [36.0, 48.0, 60.0], "the bottom edge is not a line");
+        assert_eq!(lines(-30.0, 12.0, 30.0), [6.0, 18.0], "a start above the page keeps its rhythm");
+        assert_eq!(lines(f64::NAN, 12.0, 792.0), [0.0; 0]);
+        assert_eq!(baseline_grid_lines(0.0, 12.0, f64::INFINITY).count(), MAX_BASELINES);
     }
 }
