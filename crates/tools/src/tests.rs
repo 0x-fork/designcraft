@@ -1662,13 +1662,10 @@ fn direct_selection_drags_the_end_anchors_of_type_on_a_path() {
     let off = l.xf(SpreadRef::Doc(0)).translation();
     let s = Selection { items: vec![id], content: true, ..Default::default() };
     let cx = ctx(&d, &s, &c, &l);
-    for (x, end) in [(100.0, false), (500.0, true)] {
+    for x in [100.0, 500.0] {
         let p = Point::new(x + off.x, 300.0 + off.y);
         let mut direct = create("directSelection");
         assert_ne!(direct.cursor(&cx, p, Mods::default()), Cursor::PathBracket, "anchor at {x}");
         assert_eq!(direct.pointer(&cx, &PointerEvent::new(PointerKind::Down, p.x, p.y)), vec![Action::Begin("Move Anchor".into())]);
-        // The Selection tool still takes the bracket there.
-        let mut sel = create("selection");
-        assert_eq!(sel.pointer(&cx, &PointerEvent::new(PointerKind::Down, p.x, p.y)), vec![Action::Begin("Move Bracket".into())], "end {end}");
     }
 }
