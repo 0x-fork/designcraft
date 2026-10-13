@@ -1657,6 +1657,10 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                 if cancel || (!popup_open && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
                     result = Some(false);
                 }
+                if d.id == "newDocument" {
+                    ui.add_space(8.0);
+                    check(ui, &mut d, "preview", crate::i18n::tr(&app.ui.language, "Preview"));
+                }
                 if d.id == "closeDocument" && ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Don't Save"))).clicked() {
                     d.fields.insert("discard".into(), json!(true));
                     result = Some(true);
@@ -1664,6 +1668,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             });
         });
     });
+    if d.id == "newDocument" && result.is_none() {
+        crate::new_document::preview(app, &mut d);
+    }
     app.ui.dialog = Some(d);
     match result {
         Some(true) => {
@@ -1671,6 +1678,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         }
         Some(false) => {
             app.ui.dialog = None;
+            crate::new_document::end_preview(app);
             app.cancel_pdf_import();
         }
         None => {}
@@ -1685,6 +1693,8 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
     }
     match d.id.as_str() {
         "newDocument" => {
+            // The preview goes; Create makes the document afresh, with no undo history.
+            crate::new_document::end_preview(app);
             let p = crate::new_document::params(&d);
             let r = app.run("file.new", p.clone());
             if r.is_ok() {

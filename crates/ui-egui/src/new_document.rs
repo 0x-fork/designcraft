@@ -139,6 +139,69 @@ pub(crate) fn remember(app: &mut DesignApp, p: &Value) {
     recent.truncate(MAX_RECENT);
 }
 
+/// The `file.new` params of the document Preview shows (set while it is shown).
+const PREVIEWED: &str = "_previewed";
+
+/// `file.new` params for Preview, or `None` while a field doesn't hold a value yet (empty, half
+/// typed, negative): the preview then stays as it was.
+fn preview_params(d: &Dialog) -> Option<Value> {
+    let measures = measure_keys().into_iter().all(|k| !d.fields.contains_key(&k) || measure(d, &k).is_some_and(|v| v >= 0.0));
+    let counts =
+        ["pages", "startPage", "columns"].into_iter().all(|k| !d.fields.contains_key(k) || d.n(k).is_some_and(|v| v.is_finite() && v >= 1.0));
+    (measures && counts).then(|| params(d))
+}
+
+/// Preview on: a document with the dialog's settings shows in the workspace, made again when a
+/// setting changes. Settings `file.new` refuses (a zero width) keep the last one. Off: it goes.
+pub(crate) fn preview(app: &mut DesignApp, d: &mut Dialog) {
+    let on = match d.fields.get("preview").and_then(Value::as_bool) {
+        Some(on) => on,
+        None => {
+            d.fields.insert("preview".into(), json!(app.ui.new_document_preview));
+            app.ui.new_document_preview
+        }
+    };
+    app.ui.new_document_preview = on;
+    if !on {
+        end_preview(app);
+        d.fields.remove(PREVIEWED);
+        return;
+    }
+    let Some(p) = preview_params(d) else { return };
+    let shown = app.session.new_document_preview();
+    if shown.is_some() && d.fields.get(PREVIEWED) == Some(&p) {
+        return;
+    }
+    if app.session.preview_new_document(&p).is_ok() {
+        forget_view(app, shown);
+    }
+    // Refused settings are not tried again until they change.
+    d.fields.insert(PREVIEWED.into(), p);
+}
+
+/// Remove the preview document, if one is shown, and show the document that was active before.
+pub(crate) fn end_preview(app: &mut DesignApp) {
+    let uid = app.session.end_new_document_preview();
+    forget_view(app, uid);
+}
+
+/// End a preview whose New Document window has gone or no longer previews (closed over the
+/// control channel, or replaced by another dialog).
+pub(crate) fn end_stale_preview(app: &mut DesignApp) {
+    let previewing = app.ui.dialog.as_ref().is_some_and(|d| d.id == "newDocument" && d.b("preview"));
+    if !previewing && app.session.new_document_preview().is_some() {
+        end_preview(app);
+    }
+}
+
+/// Drop the views (one per pane) of a preview document that has gone.
+fn forget_view(app: &mut DesignApp, uid: Option<u64>) {
+    if let Some(uid) = uid {
+        app.views.remove(&uid);
+        app.views.remove(&(uid ^ (1 << 63)));
+    }
+}
+
 /// Save the details as the document preset `name` (`file.savePreset`, which replaces one of that
 /// name) and show it on the Saved tab.
 fn save_preset(app: &mut DesignApp, d: &mut Dialog, name: &str) -> Result<(), String> {
@@ -892,6 +955,78 @@ mod tests {
         h.key_press(egui::Key::Escape);
         h.run_steps(4);
         assert!(h.state().app.ui.dialog.is_none());
+    }
+
+    fn set(app: &mut DesignApp, ctx: &egui::Context, fields: &[(&str, Value)]) {
+        let d = app.ui.dialog.as_mut().unwrap();
+        for (k, v) in fields {
+            d.fields.insert((*k).into(), v.clone());
+        }
+        frame(app, ctx, vec![]);
+    }
+
+    fn shown(app: &DesignApp) -> (usize, f64, u32) {
+        let doc = &app.session.active().unwrap().doc;
+        (app.session.documents().len(), doc.settings.page_width, doc.page(0).unwrap().columns.count)
+    }
+
+    #[test]
+    fn preview_shows_the_settings_live_and_close_restores_the_workspace() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"title": "A"})).unwrap();
+        app.run("file.new", json!({"title": "B"})).unwrap();
+        app.session.set_active(0);
+        let a = app.session.active().unwrap().clone();
+        app.run("app.newDocumentDialog", json!({})).unwrap();
+        let ctx = context();
+        settle(&mut app, &ctx);
+        assert_eq!(app.session.documents().len(), 2, "Preview starts off");
+        set(&mut app, &ctx, &[("preview", json!(true))]);
+        assert_eq!(shown(&app), (3, 612.0, 1), "a third tab shows the dialog's settings");
+        set(&mut app, &ctx, &[("width", json!("300 pt")), ("columns", json!("3"))]);
+        assert_eq!(shown(&app), (3, 300.0, 3), "and follows them");
+        // Half-typed and refused values keep the last preview.
+        for width in ["", "-5", "0"] {
+            set(&mut app, &ctx, &[("width", json!(width))]);
+            assert_eq!(shown(&app), (3, 300.0, 3), "{width:?}");
+        }
+        // Escape closes the window: the preview goes and A is shown again, untouched.
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
+        );
+        assert!(app.ui.dialog.is_none());
+        let back = app.session.active().unwrap();
+        assert_eq!(app.session.documents().len(), 2);
+        assert_eq!((back.uid, back.revision, back.history.undo.len(), back.is_dirty()), (a.uid, a.revision, 0, false));
+        // Preview is remembered; turning it off removes the preview, as does closing the window
+        // any other way.
+        app.run("app.newDocumentDialog", json!({})).unwrap();
+        frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.session.documents().len(), 3);
+        set(&mut app, &ctx, &[("preview", json!(false))]);
+        assert_eq!((app.session.documents().len(), app.session.active().unwrap().uid), (2, a.uid));
+        set(&mut app, &ctx, &[("preview", json!(true))]);
+        app.ui.dialog = None;
+        end_stale_preview(&mut app);
+        assert_eq!((app.session.documents().len(), app.session.active().unwrap().uid), (2, a.uid));
+    }
+
+    #[test]
+    fn create_keeps_the_previewed_document_with_the_final_settings() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"title": "A"})).unwrap();
+        app.run("app.newDocumentDialog", json!({})).unwrap();
+        let ctx = context();
+        set(&mut app, &ctx, &[("preview", json!(true)), ("width", json!("400 pt"))]);
+        set(&mut app, &ctx, &[("pages", json!("4")), ("facingPages", json!(false))]);
+        crate::dialogs::confirm(&mut app).unwrap();
+        let st = app.session.active().unwrap();
+        assert_eq!((app.session.documents().len(), st.doc.settings.page_width, st.doc.page_count()), (2, 400.0, 4));
+        assert!(!st.doc.settings.facing_pages);
+        assert_eq!((st.doc.title.as_str(), st.history.undo.len(), st.is_dirty()), ("Untitled-2", 0, false));
+        assert_eq!(app.session.new_document_preview(), None);
     }
 
     #[test]

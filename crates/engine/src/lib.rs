@@ -278,6 +278,9 @@ pub struct Session {
     pub book: Option<cmd::book::Book>,
     /// Content Collector conveyor: collected objects as snippets (name, bytes).
     pub conveyor: Vec<(String, Vec<u8>)>,
+    /// New Document's Preview: the preview document's uid and the uid of the document that was
+    /// active before it (see [`Session::preview_new_document`]).
+    pub(crate) new_document_preview: Option<(u64, Option<u64>)>,
 }
 
 impl Default for Session {
@@ -312,6 +315,7 @@ impl Session {
             conveyor: Vec::new(),
             book: None,
             untitled: 0,
+            new_document_preview: None,
         }
     }
 

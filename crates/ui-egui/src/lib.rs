@@ -246,6 +246,9 @@ pub struct UiState {
     pub custom_workspaces: Vec<SavedWorkspace>,
     /// File › New › Document › Recent: the settings of the last documents made, newest first.
     pub recent_new_documents: Vec<designcraft_doc::build::NewDocument>,
+    /// File › New › Document › Preview, kept for the session.
+    #[serde(skip)]
+    pub new_document_preview: bool,
     /// Transform reference point (0..8, row-major; 0 = top-left).
     pub ref_point: u8,
     /// Align To target (`selection`, `keyObject`, `margins`, `page`, `spread`).
@@ -344,6 +347,7 @@ impl Default for UiState {
             workspace: "Essentials".into(),
             custom_workspaces: Vec::new(),
             recent_new_documents: Vec::new(),
+            new_document_preview: false,
             ref_point: 0,
             align_to: "selection".into(),
             text_style_tab: 0,
@@ -803,6 +807,7 @@ impl DesignApp {
         }
         self.last_time = now;
         self.drain_control(ctx);
+        new_document::end_stale_preview(self);
         if self.fonts_ready {
             self.drain_inbox();
         }
