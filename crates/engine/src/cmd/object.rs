@@ -1489,6 +1489,20 @@ fn unlocked(d: &Document, it: &Item) -> bool {
     !it.locked && d.layer(it.layer).is_none_or(|l| !l.locked)
 }
 
+/// Refuses a path edit on `id` when it, a group it sits in, or its layer is locked.
+pub(super) fn path_editable(d: &Document, id: ItemId, cmd: &str) -> Result<()> {
+    let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
+    let mut items = d.spread(loc.spread).map(|sp| &sp.items[..]).unwrap_or_default();
+    for &i in &loc.path {
+        let Some(it) = items.get(i) else { break };
+        if !unlocked(d, it) {
+            return Err(bad(cmd, "the path is locked"));
+        }
+        items = it.children();
+    }
+    Ok(())
+}
+
 fn has_editable_selection(s: &Session) -> std::result::Result<(), String> {
     has_selection(s)?;
     let st = s.active().ok_or_else(|| super::NOTHING_SELECTED.to_string())?;
@@ -2075,6 +2089,7 @@ fn path_append(s: &mut Session, p: &Value) -> Result<Value> {
     let a = p.get("anchor").and_then(anchor_from).ok_or_else(|| bad("path.appendAnchor", "missing anchor"))?;
     let subpath = p.get("subpath").and_then(Value::as_u64);
     s.edit(|d, _| {
+        path_editable(d, id, "path.appendAnchor")?;
         let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         let inv = (d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default()).inverse();
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
@@ -2110,12 +2125,10 @@ fn path_set_anchor(s: &mut Session, p: &Value) -> Result<Value> {
     let subpath = p.get("subpath").and_then(Value::as_u64);
     let which = p.get("anchor").cloned().unwrap_or(Value::Null);
     s.edit(|d, _| {
+        path_editable(d, id, ID)?;
         let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         let inv = (d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default()).inverse();
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
-        if it.locked {
-            return Err(bad(ID, "the path is locked"));
-        }
         let sp = match subpath {
             Some(i) => usize::try_from(i).ok().and_then(|i| it.path.subpaths.get_mut(i)),
             None => it.path.subpaths.last_mut(),
@@ -2157,12 +2170,19 @@ fn path_reverse(s: &mut Session, p: &Value) -> Result<Value> {
     {
         return Err(bad("path.reverse", "no such subpath"));
     }
-    let ids = if only.is_some() { ids.into_iter().take(1).collect() } else { ids };
+    let ids: Vec<ItemId> = if only.is_some() { ids.into_iter().take(1).collect() } else { ids };
+    let doc = &s.doc()?.doc;
+    let editable: Vec<ItemId> = ids.iter().copied().filter(|id| path_editable(doc, *id, "path.reverse").is_ok()).collect();
+    if editable.is_empty()
+        && let Some(id) = ids.first()
+    {
+        path_editable(doc, *id, "path.reverse")?;
+    }
     s.edit(|d, _| {
         let mut reversed = 0;
-        for id in &ids {
+        for id in &editable {
             let Some(it) = d.item_mut(*id) else { continue };
-            if it.locked || it.is_group() {
+            if it.is_group() {
                 continue;
             }
             for (i, sp) in it.path.subpaths.iter_mut().enumerate() {
@@ -2184,6 +2204,7 @@ fn path_close(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("path.close", "missing id"))?;
     let only = p.get("subpath").and_then(Value::as_u64).map(|i| usize::try_from(i).unwrap_or(usize::MAX));
     s.edit(|d, _| {
+        path_editable(d, id, "path.close")?;
         let it = d.item_mut(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         if only.is_some_and(|i| i >= it.path.subpaths.len()) {
             return Err(bad("path.close", "no such subpath"));
@@ -2206,6 +2227,7 @@ fn path_move_anchors(s: &mut Session, p: &Value) -> Result<Value> {
     let d0 = Vec2::new(f64_or(p, "dx", 0.0), f64_or(p, "dy", 0.0));
     let handle = str_param(p, "handle").map(str::to_string);
     s.edit(|d, _| {
+        path_editable(d, id, "path.moveAnchors")?;
         let loc = d.find(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         let m = d.parent_xf(&loc) * d.item_at(&loc).map(|i| i.xf).unwrap_or_default();
         // Spread-space delta → inner-space delta (linear part only).
