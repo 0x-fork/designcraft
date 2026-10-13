@@ -3736,6 +3736,6 @@ mod tests {
         app.ui.dialog = None;
         let texts = start_screen_texts(&mut app);
         assert!(texts.iter().any(|t| t == "Recent files"), "{texts:?}");
-        assert!(texts.iter().any(|t| t.starts_with("gone.designcraft")), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "gone"), "the card names it without `.designcraft`: {texts:?}");
     }
 }

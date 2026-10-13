@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let path = str_param(p, "path").ok_or_else(|| bad("file.saveACopy", "missing `path`"))?.to_string();
             let mut copy = (*s.doc()?.doc).clone();
             super::datamerge::refresh_relative_paths(&mut copy, std::path::Path::new(&path));
-            let bytes = to_bytes(&copy);
+            let bytes = to_bytes_with_preview(&copy, &s.cache);
             #[cfg(not(target_arch = "wasm32"))]
             crate::atomic::write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -123,6 +123,22 @@ pub fn to_bytes(d: &Document) -> Vec<u8> {
     designcraft_format::save(d).unwrap_or_default()
 }
 
+/// The longer side of the first-page picture saved in the file, in pixels.
+const PREVIEW_PX: f64 = 320.0;
+
+/// [`to_bytes`] with a picture of the first page, which the start screen shows next to the file
+/// in its recent files. A page that can't be drawn just leaves the picture out.
+fn to_bytes_with_preview(d: &Document, cache: &crate::Cache) -> Vec<u8> {
+    let preview = d.page_loc(0).and_then(|(si, pi)| {
+        let b = d.spreads.get(si)?.pages.get(pi)?.bounds();
+        let side = b.width().max(b.height());
+        (side.is_finite() && side > 0.0).then_some(PREVIEW_PX / side)
+    });
+    let png =
+        preview.and_then(|scale| designcraft_render::Renderer::new().render_page(d, cache, 0, scale, false, &Default::default())).map(|r| r.to_png());
+    designcraft_format::save_with_preview(d, png.as_deref()).unwrap_or_default()
+}
+
 pub fn from_bytes(b: &[u8]) -> Result<Document> {
     designcraft_format::load(b).map_err(|e| EngineError::Other(e.to_string()))
 }
@@ -172,6 +188,31 @@ fn has_recent(s: &Session) -> std::result::Result<(), String> {
 }
 
 /// One File › Open Recent row: the path, its file name and whether it is still there.
+/// A recent file's first-page picture as straight RGBA, for the start screen.
+pub struct RecentPreview {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// The picture a `.designcraft` file saved of its first page; None when the file is gone, isn't
+/// ours, or was saved before files had one (it gets one when saved again).
+pub fn recent_preview(path: &str) -> Option<RecentPreview> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let file = std::fs::File::open(path).ok()?;
+        let png = designcraft_format::read_preview(std::io::BufReader::new(file))?;
+        let img = designcraft_images::decode_rgba(&png)?;
+        let (width, height) = img.dimensions();
+        Some(RecentPreview { width, height, rgba: img.into_raw() })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        None
+    }
+}
+
 fn recent_entry(path: &str) -> Value {
     let name = std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string());
     #[cfg(not(target_arch = "wasm32"))]
@@ -293,9 +334,10 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
     super::datamerge::refresh_relative_paths(&mut saved, std::path::Path::new(&path));
     let paths_changed = saved.data_merge != st.doc.data_merge;
     let saved = if paths_changed { Arc::new(saved) } else { st.doc.clone() };
-    let bytes = to_bytes(&saved);
+    let bytes = to_bytes_with_preview(&saved, &s.cache);
     #[cfg(not(target_arch = "wasm32"))]
     crate::atomic::write_file(&path, &bytes)?;
+    let st = s.doc_mut()?;
     if paths_changed {
         st.doc = saved;
         st.revision = st.revision.saturating_add(1);
@@ -1098,6 +1140,29 @@ mod recent_tests {
         s.execute("file.clearRecent", &json!({})).unwrap();
         assert!(s.prefs.recent_files.is_empty());
         assert!(s.execute("file.openRecent", &json!({"index": 0})).is_err(), "disabled when empty");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Saving puts a small picture of the first page in the file, which the start screen reads
+    /// without opening the document.
+    #[test]
+    fn saved_files_carry_a_first_page_preview() {
+        let dir = temp_dir("preview");
+        let mut s = Session::new();
+        let a = saved(&mut s, &dir.join("a.designcraft"));
+        let p = super::recent_preview(&a).expect("a preview");
+        assert_eq!(p.width.max(p.height), super::PREVIEW_PX as u32);
+        assert_eq!(p.rgba.len(), (p.width * p.height * 4) as usize);
+        assert!(p.rgba.as_chunks::<4>().0.iter().any(|px| px[3] == 255), "the page is drawn, not left transparent");
+        let copy = dir.join("copy.designcraft");
+        s.execute("file.saveACopy", &json!({"path": copy.to_string_lossy()})).unwrap();
+        assert!(super::recent_preview(&copy.to_string_lossy()).is_some(), "Save a Copy has one too");
+        // Files without one (saved before previews), missing files and other files have none.
+        let old = dir.join("old.designcraft");
+        std::fs::write(&old, super::to_bytes(&s.doc().unwrap().doc)).unwrap();
+        for path in [old, dir.join("gone.designcraft"), dir.clone()] {
+            assert!(super::recent_preview(&path.to_string_lossy()).is_none(), "{path:?}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
