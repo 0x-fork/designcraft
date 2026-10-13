@@ -221,7 +221,13 @@ pub fn pixel_size(bytes: &[u8]) -> Option<(u32, u32)> {
         let be = |i: usize| u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
         return Some((be(18), be(14)));
     }
-    image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+        // `image` doesn't read five-sample CMYK with alpha.
+        .or_else(|| tiff_decoder(bytes)?.dimensions().ok())
 }
 
 /// Straight (non-premultiplied) RGBA8 of a raster in display sRGB: an embedded ICC profile is
@@ -562,6 +568,13 @@ mod tests {
         assert_eq!(decode_cmyk_tiff(&rgb), None);
         assert!(!is_cmyk_tiff(b"II*\0"), "truncated");
         assert_eq!(decode_cmyk_tiff(&b[..b.len() / 2]), None, "truncated");
+    }
+
+    #[test]
+    fn cmyk_tiff_with_alpha_reports_its_pixel_size() {
+        use tiff::encoder::colortype::CMYKA8;
+        let b = tiff_of::<CMYKA8>(2, 1, &[0, 0, 0, 255, 255, 0, 0, 0, 0, 0], true);
+        assert_eq!(pixel_size(&b), Some((2, 1)));
     }
 
     #[test]
