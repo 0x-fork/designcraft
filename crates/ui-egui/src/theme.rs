@@ -85,6 +85,9 @@ pub struct Tokens {
     pub measure_text: Color32,
     /// Live-corner widget and corner diamonds.
     pub live_corner: Color32,
+    /// The Windows caption Close button when hovered, and its glyph.
+    pub caption_close: Color32,
+    pub caption_close_text: Color32,
 }
 
 fn hex(s: u32) -> Color32 {
@@ -128,6 +131,8 @@ impl Tokens {
             measure_bg: Color32::from_rgba_unmultiplied(70, 70, 70, 230),
             measure_text: Color32::WHITE,
             live_corner: hex(0xffe500),
+            caption_close: hex(0xc42b1c),
+            caption_close_text: Color32::WHITE,
         };
         match b {
             Brightness::Dark => dark,

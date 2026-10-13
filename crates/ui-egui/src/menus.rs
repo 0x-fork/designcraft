@@ -236,6 +236,11 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("window.controlBar", "Control", Some("Cmd+Alt+6"), "{}"),
     ("window.split", "Split Window", None, "{on?: bool} — two views of the document side by side, each with its own zoom and scroll"),
     ("window.newWindow", "New Window", None, "{on?: bool} — another view of the active document in its own window"),
+    ("window.minimize", "Minimize Window", None, "{} — minimize the desktop window"),
+    ("window.maximize", "Maximize/Restore Window", None, "{on?: bool} — toggle maximization when omitted"),
+    ("window.close", "Close Window", None, "{} — request that the desktop window close"),
+    ("window.drag", "Move Window", None, "{} — begin a native window drag while the primary mouse button is held"),
+    ("window.resize", "Resize Window", None, "{edge: north|south|east|west|northEast|southEast|northWest|southWest} — begin a native edge drag"),
     ("window.taskBar", "Contextual Task Bar", None, "{}"),
     (
         "window.taskBarPin",
@@ -834,6 +839,9 @@ fn toggle_tabs_panel(app: &mut DesignApp) {
 
 /// Run a UI command; `None` if `id` isn't one.
 pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    if matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize") && !app.custom_titlebar {
+        return Some(Err("custom window controls are not available in this host".into()));
+    }
     if let Some(result) = crate::panel_docking::command(app, id, p) {
         return Some(result);
     }
@@ -843,6 +851,38 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
         Ok(json!(*b))
     };
     Some(match id {
+        "window.minimize" => {
+            app.pending_window_commands.push(egui::ViewportCommand::Minimized(true));
+            Ok(Value::Null)
+        }
+        "window.maximize" => {
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.window_maximized);
+            app.pending_window_commands.push(egui::ViewportCommand::Maximized(on));
+            Ok(json!(on))
+        }
+        "window.close" => {
+            app.pending_window_commands.push(egui::ViewportCommand::Close);
+            Ok(Value::Null)
+        }
+        "window.drag" => {
+            app.pending_window_commands.push(egui::ViewportCommand::StartDrag);
+            Ok(Value::Null)
+        }
+        "window.resize" => {
+            let edge = match p.get("edge").and_then(Value::as_str) {
+                Some("north") => egui::ResizeDirection::North,
+                Some("south") => egui::ResizeDirection::South,
+                Some("east") => egui::ResizeDirection::East,
+                Some("west") => egui::ResizeDirection::West,
+                Some("northEast") => egui::ResizeDirection::NorthEast,
+                Some("southEast") => egui::ResizeDirection::SouthEast,
+                Some("northWest") => egui::ResizeDirection::NorthWest,
+                Some("southWest") => egui::ResizeDirection::SouthWest,
+                _ => return Some(Err("invalid window resize edge".into())),
+            };
+            app.pending_window_commands.push(egui::ViewportCommand::BeginResize(edge));
+            Ok(Value::Null)
+        }
         "app.newDocumentDialog" => {
             app.ui.dialog = Some(crate::dialogs::Dialog::new("newDocument", json!({})));
             Ok(Value::Null)
@@ -1833,6 +1873,9 @@ pub fn enabled(app: &DesignApp, id: &str) -> bool {
     if waits_for_ime(app, id) {
         return false;
     }
+    if matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize") {
+        return app.custom_titlebar;
+    }
     match designcraft_engine::find_command(id) {
         Some(c) => (c.enabled)(&app.session).is_ok(),
         None => true,
@@ -2128,6 +2171,9 @@ pub fn checked(app: &DesignApp, id: &str, params: &Value) -> Option<bool> {
 pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
     if waits_for_ime(app, id) {
         return false;
+    }
+    if matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize") {
+        return app.custom_titlebar;
     }
     if id == "app.justificationDialog" {
         return enabled(app, "type.para");
