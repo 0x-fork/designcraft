@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use designcraft_color::BlendMode;
 use designcraft_doc::{
-    AssetId, Content, Document, Effects, Fill, Item, ItemId, ItemLoc, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke,
-    TextFrame, TextFrameOptions, TextSel,
+    AssetId, Content, Document, Effects, Fill, Item, ItemId, ItemLoc, ParaFormat, Selection, Shape, SpreadRef, Story, StoryId, Stroke, TextFrame,
+    TextFrameOptions, TextSel,
 };
 use designcraft_geom::{Affine, Point, Rect, Vec2, shapes};
 use serde_json::{Value, json};
@@ -56,7 +56,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             transform_resize
         ),
-        cmd!("transform.rotate", "Rotate", ["Object", "Transform"], None, "{angle (degrees, CCW), ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}", has_selection, transform_rotate),
+        cmd!(
+            "transform.rotate",
+            "Rotate",
+            ["Object", "Transform"],
+            None,
+            "{angle (degrees, CCW), ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}",
+            has_selection,
+            transform_rotate
+        ),
         cmd!("transform.scale", "Scale", ["Object", "Transform"], None, "{sx, sy, ids?} (about the selection centre)", has_selection, |s, p| {
             let sx = f64_or(p, "sx", 1.0);
             let sy = f64_or(p, "sy", sx);
@@ -94,10 +102,18 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             clear_transformations
         ),
-        cmd!("transform.shear", "Shear", ["Object", "Transform"], None, "{angle (degrees), ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}", has_selection, |s, p| {
-            let a = f64_or(p, "angle", 0.0).clamp(-85.0, 85.0).to_radians().tan();
-            apply_about_ref(s, p, Affine::new([1.0, 0.0, a, 1.0, 0.0, 0.0]))
-        }),
+        cmd!(
+            "transform.shear",
+            "Shear",
+            ["Object", "Transform"],
+            None,
+            "{angle (degrees), ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}",
+            has_selection,
+            |s, p| {
+                let a = f64_or(p, "angle", 0.0).clamp(-85.0, 85.0).to_radians().tan();
+                apply_about_ref(s, p, Affine::new([1.0, 0.0, a, 1.0, 0.0, 0.0]))
+            }
+        ),
         cmd!(
             "object.matchAttributes",
             "Apply Attributes (Eyedropper)",
@@ -107,10 +123,18 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             match_attributes
         ),
-        cmd!("transform.flip", "Flip", ["Object", "Transform"], None, "{axis: horizontal|vertical, ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}", has_selection, |s, p| {
-            let h = str_param(p, "axis") != Some("vertical");
-            apply_about_ref(s, p, if h { Affine::scale_non_uniform(-1.0, 1.0) } else { Affine::scale_non_uniform(1.0, -1.0) })
-        }),
+        cmd!(
+            "transform.flip",
+            "Flip",
+            ["Object", "Transform"],
+            None,
+            "{axis: horizontal|vertical, ref?: 0..8 (reference point of the selection bounds, default 4: centre), ids?}",
+            has_selection,
+            |s, p| {
+                let h = str_param(p, "axis") != Some("vertical");
+                apply_about_ref(s, p, if h { Affine::scale_non_uniform(-1.0, 1.0) } else { Affine::scale_non_uniform(1.0, -1.0) })
+            }
+        ),
         cmd!(
             "transform.set",
             "Transform Panel",
