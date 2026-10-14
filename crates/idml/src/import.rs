@@ -2015,7 +2015,7 @@ impl<'r> Importer<'r> {
                 overridden: vec![],
                 guides: Vec::<Guide>::new(),
                 show_parent_items: show,
-                liquid: Default::default(),
+                liquid: names::liquid_rule_in(p.get("LayoutRule").unwrap_or("Off")),
                 transition: None,
                 view_rotation: 0,
                 show_parent_overlay: false,

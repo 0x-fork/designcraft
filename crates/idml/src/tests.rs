@@ -2169,3 +2169,159 @@ fn frame_preference_property_color_resolves_for_frames_and_object_styles() {
     assert_eq!(colors, vec!["Near", "Near", "Far", designcraft_color::swatch::NONE]);
     assert_eq!(d.styles.object_style("Child").unwrap().text_frame.as_ref().unwrap().column_rule_color, "Near");
 }
+
+mod liquid_page_rules {
+    use super::*;
+    use designcraft_doc::LiquidRule as R;
+    use std::sync::Arc;
+
+    // Literal XML expectations, independent of names.rs and serde spellings.
+    const CASES: [(&str, R); 6] = [
+        ("Scale", R::Scale),
+        ("Off", R::Off),
+        ("Recenter", R::ReCenter),
+        ("GuideBased", R::GuideBased),
+        ("ObjectBased", R::ObjectBased),
+        ("UseMaster", R::ControlledByParent),
+    ];
+
+    fn fixture(rule: Option<&str>, parent_rule: Option<&str>) -> Vec<u8> {
+        let attribute = |value: Option<&str>| value.map(|v| format!(r#" LayoutRule="{v}""#)).unwrap_or_default();
+        let (rule, parent_rule) = (attribute(rule), attribute(parent_rule));
+        let map = r#"<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" Self="d">
+  <idPkg:Preferences src="Resources/Preferences.xml"/>
+  <idPkg:MasterSpread src="MasterSpreads/A.xml"/>
+  <idPkg:MasterSpread src="MasterSpreads/B.xml"/>
+  <idPkg:Spread src="Spreads/S.xml"/>
+</Document>"#;
+        let parent = format!(
+            r#"<idPkg:MasterSpread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+  <MasterSpread Self="ma" NamePrefix="A" BaseName="Base" PageCount="2">
+    <Page Self="a1" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350"/>
+    <Page Self="a2"{parent_rule} GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350"/>
+  </MasterSpread>
+</idPkg:MasterSpread>"#
+        );
+        // Based-on belongs to the whole derived master: both pages apply the same master.
+        let derived = format!(
+            r#"<idPkg:MasterSpread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+  <MasterSpread Self="mb" NamePrefix="B" BaseName="Derived" PageCount="2">
+    <Page Self="b1"{rule} AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350"/>
+    <Page Self="b2" AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350"/>
+  </MasterSpread>
+</idPkg:MasterSpread>"#
+        );
+        let spread = format!(
+            r#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+  <Spread Self="s" PageCount="2">
+    <Page Self="p1" AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350">
+      <MarginPreference ColumnCount="3" ColumnGutter="12" Top="10" Bottom="20" Left="30" Right="40"/>
+    </Page>
+    <Page Self="p2"{rule} AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350"/>
+  </Spread>
+</idPkg:Spread>"#
+        );
+        zip_files(&[
+            ("designmap.xml", map),
+            ("Resources/Preferences.xml", PREFS),
+            ("MasterSpreads/A.xml", &parent),
+            ("MasterSpreads/B.xml", &derived),
+            ("Spreads/S.xml", &spread),
+        ])
+    }
+
+    #[test]
+    fn import_literal_xml() {
+        let baseline = import_idml(&fixture(None, None)).unwrap();
+        assert_eq!((baseline.spreads.len(), baseline.parents.len()), (1, 2));
+        assert!(baseline.spreads.iter().chain(&baseline.parents).all(|sp| sp.pages.len() == 2));
+        assert!(baseline.spreads.iter().chain(&baseline.parents).flat_map(|sp| &sp.pages).all(|pg| pg.liquid == R::Off));
+        let cases = CASES.into_iter().map(|(literal, rule)| (Some(literal), rule)).chain([
+            (None, R::Off),
+            (Some("ReCenter"), R::Off),
+            (Some("controlledByParent"), R::Off),
+            (Some("PreserveExisting"), R::Off),
+        ]);
+        for (literal, rule) in cases {
+            let actual = import_idml(&fixture(literal, Some("Recenter"))).unwrap();
+            assert_eq!(actual.spreads[0].pages[1].liquid, rule, "ordinary Page: {literal:?}");
+            assert_eq!(actual.parents[1].pages[0].liquid, rule, "master Page: {literal:?}");
+            // Same XML without rule attributes supplies the complete allowed-delta oracle.
+            let mut expected = baseline.clone();
+            Arc::make_mut(&mut expected.spreads[0]).pages[1].liquid = rule;
+            Arc::make_mut(&mut expected.parents[1]).pages[0].liquid = rule;
+            Arc::make_mut(&mut expected.parents[0]).pages[1].liquid = R::ReCenter;
+            // Import assigns a fresh creation timestamp; all other document fields are compared.
+            expected.created = actual.created;
+            assert_eq!(actual, expected, "{literal:?}: only the three explicit rule fields may change apart from the import timestamp");
+            assert_eq!(actual.spreads[0].pages[0].liquid, R::Off, "omitted does not infer inheritance");
+            assert_eq!(actual.spreads[0].pages[0].parent, Some(actual.parents[0].id));
+            assert_eq!(actual.parents[1].parent.as_ref().unwrap().based_on, Some(actual.parents[0].id));
+            assert!(actual.parents.iter().flat_map(|sp| &sp.pages).all(|pg| pg.parent.is_none()));
+            if rule == R::ControlledByParent {
+                // The right document page resolves to A's right page, not B's controlled page.
+                assert_eq!(actual.parent_page_for(1), Some((0, 1)));
+                assert_eq!(actual.parents[0].pages[1].liquid, R::ReCenter);
+            }
+        }
+    }
+
+    #[test]
+    fn export_and_round_trip() {
+        use std::io::Read;
+
+        let baseline = import_idml(&fixture(None, None)).unwrap();
+        for (literal, rule) in CASES {
+            // Set native enums directly; the literal importer under test does not build this input.
+            let mut source = baseline.clone();
+            let pages = &mut Arc::make_mut(&mut source.spreads[0]).pages;
+            pages[0].parent = None;
+            pages[0].liquid = R::ControlledByParent;
+            pages[1].liquid = rule;
+            Arc::make_mut(&mut source.parents[0]).pages[1].liquid = R::ReCenter;
+            Arc::make_mut(&mut source.parents[1]).pages[0].liquid = rule;
+            source.check().unwrap();
+            let bytes = export_idml(&source);
+            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+            for (directory, tag, spread, rules) in [
+                ("Spreads", "Spread", &source.spreads[0], ["UseMaster", literal]),
+                ("MasterSpreads", "MasterSpread", &source.parents[0], ["Off", "Recenter"]),
+                ("MasterSpreads", "MasterSpread", &source.parents[1], [literal, "Off"]),
+            ] {
+                let path = format!("{directory}/{tag}_u{:x}.xml", spread.id.0);
+                let mut part = Vec::new();
+                archive.by_name(&path).unwrap().read_to_end(&mut part).unwrap();
+                let root = xml::parse(&part).unwrap();
+                let body = root.find(tag).unwrap();
+                let pages: Vec<_> = body.find_all("Page").collect();
+                assert_eq!(pages.len(), spread.pages.len(), "{path}");
+                for (page, expected) in spread.pages.iter().zip(rules) {
+                    let id = format!("u{:x}", page.id.0);
+                    let matches: Vec<_> = pages.iter().filter(|p| p.get("Self") == Some(id.as_str())).collect();
+                    assert_eq!(matches.len(), 1, "{path}: {id}");
+                    assert_eq!(matches[0].get("LayoutRule"), Some(expected), "{path}: {id}");
+                }
+            }
+            let actual = import_idml(&bytes).unwrap();
+            assert_eq!((actual.spreads.len(), actual.parents.len()), (1, 2));
+            assert_eq!(actual.spreads[0].pages[0].parent, None);
+            assert_eq!(actual.spreads[0].pages[1].parent, Some(actual.parents[0].id));
+            assert_eq!(actual.parent_page_for(1), Some((0, 1)));
+            assert!(actual.parents.iter().flat_map(|sp| &sp.pages).all(|pg| pg.parent.is_none()));
+            for (index, prefix, name, based_on) in [(0, "A", "Base", None), (1, "B", "Derived", Some(actual.parents[0].id))] {
+                let info = actual.parents[index].parent.as_ref().unwrap();
+                assert_eq!((&info.prefix[..], &info.name[..], info.based_on), (prefix, name, based_on));
+            }
+            for (got, want) in actual.spreads.iter().chain(&actual.parents).zip(source.spreads.iter().chain(&source.parents)) {
+                assert_eq!(got.pages.len(), want.pages.len());
+                for (got, want) in got.pages.iter().zip(&want.pages) {
+                    // IDs are allocated afresh; parent associations were checked explicitly above.
+                    let mut normalized = got.clone();
+                    normalized.id = want.id;
+                    normalized.parent = want.parent;
+                    assert_eq!(&normalized, want, "{literal}: all other Page fields, including the stored rule");
+                }
+            }
+        }
+    }
+}

@@ -1663,6 +1663,7 @@ impl<'a> Ex<'a> {
                 .attr("Self", uid(pg.id.0))
                 .attr("Name", name)
                 .attr("AppliedMaster", applied.map(|s| uid(s.0)).unwrap_or_else(|| "n".into()))
+                .attr("LayoutRule", names::liquid_rule_out(pg.liquid))
                 .attr("OverrideList", "")
                 .attr("GeometricBounds", format!("0 0 {} {}", num(pg.height), num(pg.width)))
                 .attr("ItemTransform", format!("1 0 0 1 {} {}", num(pg.x - ox), num(-oy)))
