@@ -152,21 +152,63 @@ pub fn specs() -> Vec<CommandSpec> {
                 ok()
             })
         }),
-        cmd!("layout.pages.duplicateSpread", "Duplicate Spread", ["Layout", "Pages"], None, "{spread}", has_doc, |s, p| {
-            let si = p.get("spread").and_then(Value::as_u64).unwrap_or(0) as usize;
-            s.edit(|d, _| {
-                let sp = d.spreads.get(si).cloned().ok_or_else(|| bad("layout.pages.duplicateSpread", "no such spread"))?;
-                let after = d.first_page_of_spread(si) + sp.pages.len() - 1;
-                let parent = sp.pages.first().and_then(|p| p.parent);
-                d.insert_pages(Some(after), sp.pages.len(), parent)?;
-                // Copy items onto the new spread(s) at the same positions.
-                let src = d.clone();
-                let ids: Vec<_> = sp.items.iter().map(|i| i.id).collect();
-                let (nsi, _) = d.page_loc(after + 1).ok_or_else(|| bad("layout.pages.duplicateSpread", "insert failed"))?;
-                super::object::duplicate_from(d, &src, &ids, designcraft_doc::SpreadRef::Doc(nsi), designcraft_geom::Vec2::ZERO)?;
-                ok()
-            })
-        }),
+        cmd!(
+            "layout.pages.duplicateSpread",
+            "Duplicate Spread",
+            ["Layout", "Pages"],
+            None,
+            "{spread, atEnd?: bool (Duplicate Spread at End of Document; the Pages panel's New Page button takes a dropped page there), to?: page index the copied pages move to in the same undo step (the Pages panel's Alt-drag)} → {page: the copy's first page (0-based)} — the spread's pages (size, margins, columns, guides, liquid rule) and items",
+            has_doc,
+            |s, p| {
+                let si = p.get("spread").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let at_end = p.get("atEnd").and_then(Value::as_bool).unwrap_or(false);
+                let to = p.get("to").and_then(Value::as_u64).map(|t| t as usize);
+                s.edit(|d, _| {
+                    let sp = d.spreads.get(si).cloned().ok_or_else(|| bad("layout.pages.duplicateSpread", "no such spread"))?;
+                    // The copies land at `to`..`to + n` of the document with them in it.
+                    if to.is_some_and(|t| t > d.page_count()) {
+                        return Err(bad("layout.pages.duplicateSpread", "no such page"));
+                    }
+                    let after = if at_end { d.page_count() - 1 } else { d.first_page_of_spread(si) + sp.pages.len() - 1 };
+                    let parent = sp.pages.first().and_then(|p| p.parent);
+                    d.insert_pages(Some(after), sp.pages.len(), parent)?;
+                    // The copies are the pages they copy: size, margins, columns, guides, liquid rule.
+                    for (k, src) in sp.pages.iter().enumerate() {
+                        let Some((nsi, npi)) = d.page_loc(after + 1 + k) else { continue };
+                        let nsp = std::sync::Arc::make_mut(&mut d.spreads[nsi]);
+                        let pg = &mut nsp.pages[npi];
+                        let dx = pg.x - src.x;
+                        (pg.width, pg.height, pg.margins, pg.columns, pg.liquid) =
+                            (src.width, src.height, src.margins, src.columns.clone(), src.liquid);
+                        pg.guides = src.guides.clone();
+                        for g in pg.guides.iter_mut().filter(|g| g.orientation == designcraft_doc::Orientation::Vertical) {
+                            g.position += dx;
+                        }
+                        nsp.relayout();
+                    }
+                    // Copy items onto the new spread(s) at the same positions.
+                    let src = d.clone();
+                    let ids: Vec<_> = sp.items.iter().map(|i| i.id).collect();
+                    let (nsi, _) = d.page_loc(after + 1).ok_or_else(|| bad("layout.pages.duplicateSpread", "insert failed"))?;
+                    super::object::duplicate_from(d, &src, &ids, designcraft_doc::SpreadRef::Doc(nsi), designcraft_geom::Vec2::ZERO)?;
+                    let first = after + 1;
+                    let Some(to) = to else { return Ok(json!({"page": first})) };
+                    // Moving a page shifts the ones between; order the moves so each copy keeps
+                    // its place among the others.
+                    let n = sp.pages.len();
+                    if first < to {
+                        for k in (0..n).rev() {
+                            d.move_page(first + k, to + k)?;
+                        }
+                    } else {
+                        for k in 0..n {
+                            d.move_page(first + k, to + k)?;
+                        }
+                    }
+                    Ok(json!({"page": to}))
+                })
+            }
+        ),
         cmd!(
             "layout.pages.applyParent",
             "Apply Parent to Pages…",

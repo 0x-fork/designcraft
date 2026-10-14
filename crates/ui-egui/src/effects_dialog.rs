@@ -658,6 +658,16 @@ mod tests {
     }
 
     #[test]
+    fn set_makes_the_path_and_ignores_an_empty_one() {
+        let mut d = Dialog::new(ID, json!({"fx": {}}));
+        set(&mut d, &["featherOptions", "choke"], json!(20));
+        assert_eq!(d.fields["fx"]["featherOptions"]["choke"], json!(20));
+        let before = d.fields.clone();
+        set(&mut d, &[], json!(1));
+        assert_eq!(d.fields, before, "an empty path changes nothing (and doesn't panic)");
+    }
+
+    #[test]
     fn the_effects_dialog_opens_on_the_chosen_effect_previews_and_applies_once() {
         let (mut app, id) = app_with_frame();
         let ctx = egui::Context::default();
