@@ -1884,6 +1884,11 @@ impl<'a> Ex<'a> {
                 .attr("ImportPolicy", "NoAutoImport")
                 .attr("ExportPolicy", "NoAutoExport"),
         );
+        if is_pdf && asset.page > 0 {
+            // PDF Import Options: the page is 1-based; page 1 (the default) needs no element, as
+            // InDesign omits it too.
+            el.push(El::new("PDFAttribute").attr("PageNumber", asset.page.saturating_add(1).to_string()));
+        }
         el
     }
 
