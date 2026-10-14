@@ -2519,6 +2519,25 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Object-Based", ["Object-Based", "Object-Based", "Object-Based", "Object-Based", "基于对象"]),
     ("Guide-Based", ["Guide-Based", "Guide-Based", "Guide-Based", "Guide-Based", "基于参考线"]),
     ("Resize Page", ["Seitengröße ändern", "Redimensionner la page", "Cambiar tamaño de página", "ページのサイズを変更", "调整页面大小"]),
+    (
+        "Liquid Page Rule:",
+        ["Regel für flüssige Seiten:", "Règle de page liquide :", "Regla de página líquida:", "リキッドページルール:", "自适应页面规则："],
+    ),
+    (
+        "Show Parent Page Overlay",
+        [
+            "Überlagerung der übergeordneten Seite anzeigen",
+            "Afficher la superposition de la page parent",
+            "Mostrar superposición de página principal",
+            "親ページオーバーレイを表示",
+            "显示父页面叠加",
+        ],
+    ),
+    (
+        "Controlled by Parent",
+        ["Durch übergeordnete Seite gesteuert", "Contrôlé par le parent", "Controlado por principal", "親ページで制御", "由父页面控制"],
+    ),
+    ("US Business Card", ["US-Visitenkarte", "Carte de visite US", "Tarjeta de visita EE. UU.", "US 名刺", "美国名片"]),
     ("Loop", ["Loop", "Loop", "Loop", "Loop", "循环播放"]),
     ("Object-based", ["Object-based", "Object-based", "Object-based", "Object-based", "基于对象"]),
     ("Off", ["Off", "Off", "Off", "Off", "关闭"]),

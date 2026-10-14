@@ -664,8 +664,18 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
             painter.rect_stroke(rect(br), 0.0, Stroke::new(hair(painter), c32(s.bleed_color)), StrokeKind::Middle);
         }
         let pasteboard = m.inverse().transform_rect_bbox(layout.pasteboard);
-        for p in &sp.pages {
+        for (pi, p) in sp.pages.iter().enumerate() {
             let pr = p.bounds();
+            // Page tool › Show Parent Page Overlay: the parent page's size over the page.
+            if p.show_parent_overlay
+                && let SpreadRef::Doc(si) = slot.spread
+                && let Some((ppi, ppg)) = doc.parent_page_for(doc.first_page_of_spread(si) + pi)
+                && let Some(pp) = doc.parents.get(ppi).and_then(|ps| ps.pages.get(ppg))
+            {
+                let r = rect(DRect::new(pr.x0, pr.y0, pr.x0 + pp.width, pr.y0 + pp.height));
+                painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(110, 110, 230, 28));
+                painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_rgb(110, 110, 230)), StrokeKind::Middle);
+            }
             if !app.ui.guides {
                 continue;
             }

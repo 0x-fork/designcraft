@@ -643,6 +643,31 @@ fn page_size_keeps_objects_by_its_anchor() {
     assert_eq!(s.execute("layout.selectPage", &json!({"page": 1})).unwrap()["page"], 1);
 }
 
+#[test]
+fn controlled_by_parent_takes_the_parent_pages_rule() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 400, "height": 400, "facingPages": false})).unwrap();
+    let id = s.execute("frame.create", &json!({"rect": [100, 100, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+    let frame = |s: &Session| s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().bounds();
+    // The page follows its parent; the parent page re-centres.
+    s.execute("liquid.pageRule", &json!({"rule": "controlledByParent", "pages": [1]})).unwrap();
+    s.edit(|d, _| {
+        std::sync::Arc::make_mut(&mut d.parents[0]).pages[0].liquid = designcraft_doc::LiquidRule::ReCenter;
+        Ok(())
+    })
+    .unwrap();
+    s.execute("layout.pageSize", &json!({"pages": [1], "width": 600})).unwrap();
+    assert_eq!(frame(&s).x0, 200.0, "re-centred: {:?}", frame(&s));
+    // Without a parent (or a parent that's also controlled by its parent) nothing moves.
+    s.execute("layout.pages.applyParent", &json!({"pages": [0], "parent": null})).unwrap();
+    s.execute("layout.pageSize", &json!({"pages": [1], "width": 800})).unwrap();
+    assert_eq!(frame(&s).x0, 200.0);
+    // Show Parent Page Overlay is a page option.
+    s.execute("layout.pageOptions", &json!({"pages": [1], "showParentOverlay": true})).unwrap();
+    assert!(s.doc().unwrap().doc.spreads[0].pages[0].show_parent_overlay);
+    assert!(s.execute("layout.pageOptions", &json!({"pages": [2], "showParentOverlay": true})).is_err());
+}
+
 /// Load the text from a frame's out port with the Selection tool and click on the pasteboard:
 /// a new frame is threaded there and the overset text flows into it.
 #[test]

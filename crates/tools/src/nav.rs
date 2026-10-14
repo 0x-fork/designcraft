@@ -198,6 +198,7 @@ pub fn rule_label(rule: designcraft_doc::LiquidRule) -> &'static str {
         R::ReCenter => "Re-center",
         R::ObjectBased => "Object-Based",
         R::GuideBased => "Guide-Based",
+        R::ControlledByParent => "Controlled by Parent",
     }
 }
 
