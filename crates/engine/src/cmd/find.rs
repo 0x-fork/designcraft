@@ -835,7 +835,7 @@ mod tests {
         let revision = s.doc().unwrap().revision;
         let history = s.doc().unwrap().history.undo.len();
         s.execute("text.selectWord", &json!({"frame": frame.0, "point": [point.x, point.y]})).unwrap();
-        assert!(s.text_drag, "exercise place's in-selection early return");
+        assert!(!s.text_drag, "explicit word reselection does not start a text drag");
         assert_eq!(s.doc().unwrap().selection, selected, "same full selection, including frame");
         assert_eq!(s.doc().unwrap().revision, revision + 1);
         assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc));
