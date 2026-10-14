@@ -195,7 +195,7 @@ pub fn control_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
 }
 
 /// The Control panel with the Page tool, as InDesign's: reference point, X/Y, W/H, page-size
-/// preset, orientation, Liquid Page Rule, Objects Move with Page and Show Parent Page Overlay, for
+/// preset, orientation, Liquid Page Rule and Show Parent Page Overlay, for
 /// the page the Page tool selected (else the page in view). W/H keep the reference point in place.
 fn control_page(app: &mut DesignApp, ui: &mut egui::Ui) {
     let lang = app.ui.language.clone();
@@ -274,9 +274,6 @@ fn control_page(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
     vsep(ui);
     ui.vertical(|ui| {
-        // Objects follow a page that moves in its spread; pages don't move yet, so it's always on.
-        let mut follow = true;
-        ui.add_enabled(false, egui::Checkbox::new(&mut follow, crate::rtl::widget(ui, crate::i18n::tr(&lang, "Objects Move with Page"))));
         let mut overlay = pg.show_parent_overlay;
         if ui.checkbox(&mut overlay, crate::rtl::widget(ui, crate::i18n::tr(&lang, "Show Parent Page Overlay"))).changed() {
             let _ = app.run("layout.pageOptions", json!({"pages": [n], "showParentOverlay": overlay}));
@@ -930,9 +927,11 @@ mod tests {
         app.run("file.new", serde_json::json!({"width": 252, "height": 144, "facingPages": false})).unwrap();
         app.session.set_tool("page");
         let mut h = test_window::open(app, vec2(1800.0, 600.0));
-        for label in ["Liquid Page Rule:", "Objects Move with Page"] {
-            let _ = h.get_by_label(label);
-        }
+        let _ = h.get_by_label("Liquid Page Rule:");
+        // Pages don't move within their spread, so there is no "Objects Move with Page" option, and
+        // no "Controlled by Parent" rule until parent pages have rules of their own.
+        assert!(h.query_by_label("Objects Move with Page").is_none());
+        assert!(!crate::panels::interactive::LIQUID_RULES.iter().any(|(r, _)| *r == designcraft_doc::LiquidRule::ControlledByParent));
         assert_eq!(crate::panels::properties::preset_name(252.0, 144.0), "US Business Card");
         h.get_by_label("Show Parent Page Overlay").click();
         h.run_steps(4);
