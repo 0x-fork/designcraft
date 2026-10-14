@@ -1021,7 +1021,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 // Footnotes referenced on this line need room at the bottom of the column too
                 // (a line at the top of a column is set anyway).
                 let line_notes = if notes.active() { notes.refs_in(line_glyphs) } else { Vec::new() };
-                let col_w = cols[cur.fi][cur.col.min(cols[cur.fi].len() - 1)].width();
+                let col_w = notes.area(&cols[cur.fi], cur.col).map_or(0.0, |r| r.width());
                 let reserve = notes.reserve(doc, cur.fi, cur.col, &line_notes, col_w, f, opts);
                 let reserve = if cur.last_baseline.is_none() { notes.reserve(doc, cur.fi, cur.col, &[], col_w, f, opts) } else { reserve };
                 let fits = baseline + desc <= col.y1 - reserve + 0.01 && !capped;
@@ -1169,8 +1169,21 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     keep_violation: false,
                     drop_cap: drop_box,
                 });
+                let placed_notes = !line_notes.is_empty();
                 for k in line_notes {
                     notes.place(doc, k, cur.fi, cur.col, col_w, f, opts);
+                }
+                // Notes spanning the columns take room from the columns before this one too: re-lay
+                // the frame with that room left.
+                if placed_notes {
+                    let r = notes.reserve(doc, cur.fi, cur.col, &[], col_w, f, opts);
+                    if notes.earlier_columns_collide(&out.frames[cur.fi].lines, cur.fi, cur.col, &cols[cur.fi], r)
+                        && let Some(j) = out.frames[cur.fi].lines.first().map(|l| l.para)
+                    {
+                        rewind(j, &snaps, &note_snaps, &mut notes, &mut out, &mut cur, &mut list_counter, &mut force_col, &mut line_cap);
+                        pi = j;
+                        continue 'paras;
+                    }
                 }
                 if !sub_objects.is_empty() {
                     let ft = &mut out.frames[cur.fi];

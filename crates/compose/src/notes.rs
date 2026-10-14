@@ -5,6 +5,9 @@
 //! the first footnote and the space between footnotes). A line that would collide moves to the
 //! next column with its footnotes. After the story is laid out the footnotes of each column are
 //! stacked against the column bottom, with the separator rule above the first one.
+//!
+//! With Span Footnotes Across Columns the notes of a frame share one area across all its columns,
+//! composed at the frame's text width: every column of the frame makes room for it.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -38,13 +41,39 @@ pub(crate) struct Notes {
     /// Composed footnote text by (index, label, width).
     cache: HashMap<(usize, String, u64), (Arc<ComposedStory>, f64)>,
     notes: Vec<Arc<designcraft_doc::Footnote>>,
+    /// Footnotes span the columns of their frame.
+    span: bool,
+    /// Room a frame's earlier columns had to leave for spanning notes placed in a later column;
+    /// kept across re-lays so the columns before the reference make room on the next pass.
+    floor: HashMap<usize, f64>,
 }
 
 impl Notes {
     pub fn new(doc: &Document, story: &Story) -> Notes {
         let refs: Vec<usize> = if story.notes.is_empty() { Vec::new() } else { story.text.match_indices(FOOTNOTE_REF).map(|(i, _)| i).collect() };
         let start = if refs.is_empty() { 1 } else { doc.footnote_start(story.id) };
-        Notes { numbers: vec![start; refs.len()], refs, num: start, key: None, placed: Vec::new(), cache: HashMap::new(), notes: story.notes.clone() }
+        Notes {
+            numbers: vec![start; refs.len()],
+            refs,
+            num: start,
+            key: None,
+            placed: Vec::new(),
+            cache: HashMap::new(),
+            notes: story.notes.clone(),
+            span: doc.footnote_options.span_columns,
+            floor: HashMap::new(),
+        }
+    }
+
+    /// Whether a note placed in (fi, col) shares the footnote area of column (`fi`, `ci`).
+    fn same_area(&self, p: &Placed, fi: usize, ci: usize) -> bool {
+        p.fi == fi && (self.span || p.col == ci)
+    }
+
+    /// The footnote area of column `col` of a frame with columns `cols`: the column, or all of
+    /// them when notes span columns.
+    pub fn area(&self, cols: &[Rect], col: usize) -> Option<Rect> {
+        if self.span { cols.iter().copied().reduce(|a, b| a.union(b)) } else { cols.get(col.min(cols.len().saturating_sub(1))).copied() }
     }
 
     pub fn active(&self) -> bool {
@@ -127,7 +156,7 @@ impl Notes {
         let o = &doc.footnote_options;
         let mut n = 0usize;
         let mut h = 0.0;
-        for p in self.placed.iter().filter(|p| p.fi == fi && p.col == col) {
+        for p in self.placed.iter().filter(|p| self.same_area(p, fi, col)) {
             n += 1;
             h += p.h;
         }
@@ -135,7 +164,23 @@ impl Notes {
             n += 1;
             h += self.compose(doc, k, w, f, opts).1;
         }
-        if n == 0 { 0.0 } else { h + o.space_between * (n - 1) as f64 + o.space_before }
+        let r = if n == 0 { 0.0 } else { h + o.space_between * (n - 1) as f64 + o.space_before };
+        if self.span { r.max(self.floor.get(&fi).copied().unwrap_or(0.0)) } else { r }
+    }
+
+    /// After spanning notes were placed in column `col` of frame `fi`: whether a line of an earlier
+    /// column now runs into their area. The area is then remembered for the frame, to re-lay it.
+    pub fn earlier_columns_collide(&mut self, lines: &[crate::Line], fi: usize, col: usize, cols: &[Rect], reserve: f64) -> bool {
+        if !self.span || col == 0 || reserve <= self.floor.get(&fi).copied().unwrap_or(0.0) + 0.01 {
+            return false;
+        }
+        let hit = lines
+            .iter()
+            .any(|l| (l.column as usize) < col && cols.get(l.column as usize).is_some_and(|c| l.baseline + l.descent > c.y1 - reserve + 0.01));
+        if hit {
+            self.floor.insert(fi, reserve);
+        }
+        hit
     }
 
     pub fn place(&mut self, doc: &Document, k: usize, fi: usize, col: usize, w: f64, f: &FrameSpec, opts: &ComposeOptions) {
@@ -152,13 +197,13 @@ impl Notes {
             return;
         }
         let o = &doc.footnote_options;
-        let mut groups: Vec<(usize, usize)> = self.placed.iter().map(|p| (p.fi, p.col)).collect();
+        let mut groups: Vec<(usize, usize)> = self.placed.iter().map(|p| (p.fi, if self.span { 0 } else { p.col })).collect();
         groups.dedup();
         groups.sort_unstable();
         groups.dedup();
         for (fi, ci) in groups {
-            let (Some(_), Some(col)) = (frames.get(fi), cols.get(fi).and_then(|c| c.get(ci))) else { continue };
-            let here: Vec<&Placed> = self.placed.iter().filter(|p| p.fi == fi && p.col == ci).collect();
+            let (Some(_), Some(col)) = (frames.get(fi), cols.get(fi).filter(|c| ci < c.len()).and_then(|c| self.area(c, ci))) else { continue };
+            let here: Vec<&Placed> = self.placed.iter().filter(|p| self.same_area(p, fi, ci)).collect();
             let total: f64 = here.iter().map(|p| p.h).sum::<f64>() + o.space_between * (here.len() - 1) as f64;
             let top = col.y1 - total;
             let ft = &mut out.frames[fi];
@@ -177,7 +222,7 @@ impl Notes {
                 ft.notes.push(PlacedNote {
                     id: note.id,
                     index: p.k,
-                    column: ci as u32,
+                    column: p.col as u32,
                     label: o.label(self.numbers[p.k], true),
                     origin: Point::new(col.x0, y),
                     rect: Rect::new(col.x0, y, col.x1, y + p.h),

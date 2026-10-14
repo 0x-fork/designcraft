@@ -1270,6 +1270,44 @@ fn footnote_line_at_column_top_still_sets() {
 }
 
 #[test]
+fn footnotes_span_columns_across_the_frame_bottom() {
+    // Span Footnotes Across Columns: the note area runs under every column of the frame and each
+    // column's text ends above it, also the columns before the one holding the reference.
+    let text = [LOREM; 8].join(" ");
+    let note = "A long footnote, long enough to wrap if it is set one column wide rather than across the frame.";
+    let compose = |at: usize, span: bool| {
+        let (mut d, sid, fid) = doc_with(&text, Rect::new(36.0, 36.0, 436.0, 236.0), ParaAttrs::default());
+        d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.columns = 2;
+        d.footnote_options.span_columns = span;
+        d.story_mut(sid).unwrap().insert_note(at, note, ParaFormat::default());
+        let space_before = d.footnote_options.space_before;
+        (compose_story(&d, sid, &ComposeOptions::default()), space_before)
+    };
+    let plain = compose(10, false).0;
+    // A reference halfway down the second column.
+    let in_col1 = plain.frames[0].lines.iter().filter(|l| l.column == 1).nth(5).unwrap().range.start + 5;
+    for (at, ref_col) in [(10, 0), (in_col1, 1)] {
+        let (cs, space_before) = compose(at, true);
+        let ft = &cs.frames[0];
+        let (c0, c1) = (ft.columns[0], ft.columns[1]);
+        assert_eq!(ft.notes.len(), 1);
+        let n = &ft.notes[0];
+        assert_eq!(n.column, ref_col, "ref at {at}");
+        assert!((n.rect.x0 - c0.x0).abs() < 1e-6 && (n.rect.x1 - c1.x1).abs() < 1e-6, "ref at {at}: note {:?} spans the frame", n.rect);
+        assert!((n.rect.y1 - c0.y1).abs() < 1e-6, "ref at {at}: note ends at the frame bottom");
+        for col in 0..2 {
+            let last = ft.lines.iter().rfind(|l| l.column == col).unwrap();
+            assert!(last.baseline + last.descent <= n.rect.y0 - space_before + 0.01, "ref at {at}: column {col} text clears the note");
+        }
+        assert!(n.text.frames[0].lines.iter().all(|l| l.x1 - l.x0 > c0.width() + 1.0), "ref at {at}: note set at the frame width");
+    }
+    // Off: the note stays in the column holding its reference.
+    let n = &compose(in_col1, false).0.frames[0].notes[0];
+    assert_eq!(n.column, 1);
+    assert!((n.rect.x0 - plain.frames[0].columns[1].x0).abs() < 1e-6 && (n.rect.x1 - plain.frames[0].columns[1].x1).abs() < 1e-6);
+}
+
+#[test]
 fn hj_severity_shades() {
     use crate::hj_severity;
     assert_eq!(hj_severity(1.0, 0.8, 1.33), 0);
