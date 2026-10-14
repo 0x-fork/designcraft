@@ -586,7 +586,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fitting",
             ["Object", "Fitting"],
             None,
-            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, axis?: both|height|width (frame-local sides Fit Frame to Content moves; default both), ids?}",
+            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, axis?: both|height|width (frame-local sides Fit Frame to Content moves; default both), ids?} — locked objects and objects on locked layers are left as they are",
             has_selection,
             fit
         ),
