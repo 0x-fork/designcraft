@@ -188,6 +188,10 @@ fn change(s: &mut Session, p: &Value) -> Result<Value> {
                 t.anchor = t.anchor.min(len);
                 t.focus = t.focus.min(len);
             }
+            // `first` is the first match of the whole search, not of each story.
+            if first_only && count > 0 {
+                break;
+            }
         }
         Ok(json!({"count": count}))
     })
@@ -249,6 +253,21 @@ mod tests {
         assert_eq!(s.execute("find.find", &json!({"find": ".^pc"})).unwrap().as_array().unwrap().len(), 1);
         s.execute("find.next", &json!({"find": "or"})).unwrap();
         assert!(s.doc().unwrap().selection.text.is_some());
+    }
+
+    #[test]
+    fn change_first_changes_one_match_in_the_whole_document() {
+        for grep in [false, true] {
+            let mut s = Session::new();
+            s.execute("file.new", &json!({})).unwrap();
+            for y in [36, 336] {
+                s.execute("frame.create", &json!({"rect": [36, y, 300, y + 200], "content": "text", "text": "red and red"})).unwrap();
+            }
+            let r = s.execute("find.change", &json!({"find": "red", "change": "blue", "first": true, "grep": grep})).unwrap();
+            assert_eq!(r["count"], 1);
+            assert_eq!(s.execute("find.find", &json!({"find": "blue"})).unwrap().as_array().unwrap().len(), 1);
+            assert_eq!(s.execute("find.find", &json!({"find": "red"})).unwrap().as_array().unwrap().len(), 3);
+        }
     }
 
     #[test]
