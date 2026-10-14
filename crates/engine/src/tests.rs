@@ -724,6 +724,32 @@ fn page_tool_pins_and_locks_objects_on_object_based_pages() {
     assert!(s.overlays(v).iter().any(|o| matches!(o, designcraft_tools::Overlay::Tip { text, .. } if text.starts_with("Object is pinned"))));
 }
 
+#[test]
+fn duplicating_a_page_keeps_its_own_size_rule_guides_and_objects() {
+    // Chris Cicchino's Page Tool video (2:06): the letterhead page is duplicated, then resized.
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 252, "height": 144, "facingPages": false})).unwrap();
+    s.execute("layout.pages.insert", &json!({"count": 1})).unwrap();
+    s.execute("layout.pageSize", &json!({"pages": [2], "width": 612, "height": 792})).unwrap();
+    s.execute("liquid.pageRule", &json!({"rule": "scale", "pages": [2]})).unwrap();
+    s.execute("guide.add", &json!({"spread": 1, "page": 0, "orientation": "vertical", "position": 300})).unwrap();
+    s.execute("frame.create", &json!({"spread": 1, "rect": [100, 100, 200, 200]})).unwrap();
+    let r = s.execute("layout.pages.duplicateSpread", &json!({"spread": 1})).unwrap();
+    assert_eq!(r["page"], 2);
+    let d = s.doc().unwrap().doc.clone();
+    let (si, pi) = d.page_loc(2).unwrap();
+    let pg = &d.spreads[si].pages[pi];
+    assert_eq!((pg.width, pg.height, pg.liquid), (612.0, 792.0, designcraft_doc::LiquidRule::Scale));
+    assert_eq!(pg.guides.len(), 1);
+    assert_eq!(d.spreads[si].items.len(), 1);
+    // At the end of the document (the New Page button): the business card, not the last page's size.
+    let r = s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "atEnd": true})).unwrap();
+    assert_eq!(r["page"], 3);
+    let d = s.doc().unwrap().doc.clone();
+    let (si, pi) = d.page_loc(3).unwrap();
+    assert_eq!((d.spreads[si].pages[pi].width, d.spreads[si].pages[pi].height), (252.0, 144.0));
+}
+
 /// Load the text from a frame's out port with the Selection tool and click on the pasteboard:
 /// a new frame is threaded there and the overset text flows into it.
 #[test]
@@ -822,4 +848,32 @@ fn type_tool_frames_snap_to_the_margins() {
     let r = items.last().unwrap().bounds();
     assert!((r.x0 - margin.x0).abs() < 1e-6 && (r.y0 - margin.y0).abs() < 1e-6, "press point {r:?} vs {margin:?}");
     assert!((r.x1 - margin.x1).abs() < 1e-6, "right edge {} vs {}", r.x1, margin.x1);
+}
+
+#[test]
+fn duplicating_a_page_to_an_index_is_one_undo_step() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"facingPages": false})).unwrap();
+    s.execute("layout.pages.insert", &json!({"count": 2})).unwrap();
+    for (page, width) in [(1, 300), (2, 400), (3, 500)] {
+        s.execute("layout.pageSize", &json!({"pages": [page], "width": width, "height": 600})).unwrap();
+    }
+    let widths = |s: &Session| {
+        let d = &s.doc().unwrap().doc;
+        (0..d.page_count()).map(|i| d.page_loc(i).map(|(si, pi)| d.spreads[si].pages[pi].width)).collect::<Option<Vec<_>>>().unwrap()
+    };
+    // Backwards: the last page copied to the front.
+    let r = s.execute("layout.pages.duplicateSpread", &json!({"spread": 2, "to": 0})).unwrap();
+    assert_eq!(r["page"], 0);
+    assert_eq!(widths(&s), [500.0, 300.0, 400.0, 500.0]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+    // Forwards: the first page copied to the end.
+    s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "to": 3})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0, 300.0]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+    // Past the end: refused, nothing changes.
+    assert!(s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "to": 4})).is_err());
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
 }
