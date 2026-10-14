@@ -1016,6 +1016,9 @@ pub struct Item {
     pub isolate: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub knockout: bool,
+    /// Flex Layout: this frame lays out the objects nested in it (see [`crate::flex`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flex: Option<crate::flex::FlexLayout>,
 }
 
 fn identity() -> Affine {
@@ -1061,6 +1064,7 @@ impl Item {
             active_state: 0,
             isolate: false,
             knockout: false,
+            flex: None,
         }
     }
 

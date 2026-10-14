@@ -550,6 +550,56 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
                 }
             }
         }
+        // Flex Layout panel (original drawings): direction arrows, wrap, justification, spacing.
+        "flex-right" | "flex-left" | "flex-down" | "flex-up" => {
+            let pts: [(f32, f32); 5] = match name {
+                "flex-right" => [(3.0, 10.0), (16.0, 10.0), (11.5, 6.0), (16.0, 10.0), (11.5, 14.0)],
+                "flex-left" => [(17.0, 10.0), (4.0, 10.0), (8.5, 6.0), (4.0, 10.0), (8.5, 14.0)],
+                "flex-down" => [(10.0, 3.0), (10.0, 16.0), (6.0, 11.5), (10.0, 16.0), (14.0, 11.5)],
+                _ => [(10.0, 17.0), (10.0, 4.0), (6.0, 8.5), (10.0, 4.0), (14.0, 8.5)],
+            };
+            pen.line(&pts[..2]);
+            pen.line(&pts[2..]);
+        }
+        "flex-wrap" => {
+            pen.line(&[(16.0, 4.0), (16.0, 12.0), (5.0, 12.0)]);
+            pen.line(&[(8.5, 8.5), (5.0, 12.0), (8.5, 15.5)]);
+        }
+        "flex-start" | "flex-center" | "flex-end" | "flex-between" | "flex-around" | "flex-evenly" => {
+            // Three bars in a box, where the justification puts them.
+            pen.rect(1.5, 6.0, 18.5, 14.0);
+            let xs: [f32; 3] = match name {
+                "flex-start" => [3.0, 6.0, 9.0],
+                "flex-center" => [6.5, 9.5, 12.5],
+                "flex-end" => [10.0, 13.0, 16.0],
+                "flex-between" => [3.0, 9.5, 16.0],
+                "flex-around" => [4.5, 9.5, 14.5],
+                _ => [5.0, 9.5, 14.0],
+            };
+            for x in xs {
+                pen.frect(x, 7.5, x + 1.8, 12.5);
+            }
+        }
+        "gap-h" => {
+            pen.line(&[(3.0, 4.0), (3.0, 16.0)]);
+            pen.line(&[(17.0, 4.0), (17.0, 16.0)]);
+            pen.line(&[(5.5, 10.0), (14.5, 10.0)]);
+            pen.line(&[(8.0, 7.5), (5.5, 10.0), (8.0, 12.5)]);
+            pen.line(&[(12.0, 7.5), (14.5, 10.0), (12.0, 12.5)]);
+        }
+        "gap-v" => {
+            pen.line(&[(4.0, 3.0), (16.0, 3.0)]);
+            pen.line(&[(4.0, 17.0), (16.0, 17.0)]);
+            pen.line(&[(10.0, 5.5), (10.0, 14.5)]);
+            pen.line(&[(7.5, 8.0), (10.0, 5.5), (12.5, 8.0)]);
+            pen.line(&[(7.5, 12.0), (10.0, 14.5), (12.5, 12.0)]);
+        }
+        "panel-flex" => {
+            pen.rect(2.5, 3.5, 17.5, 16.5);
+            pen.frect(5.0, 6.0, 8.5, 14.0);
+            pen.frect(11.5, 6.0, 15.0, 14.0);
+            pen.line(&[(8.5, 10.0), (11.5, 10.0)]);
+        }
         // ---- Properties panel glyphs (original drawings)
         "orient-portrait" => {
             pen.rect(5.5, 3.0, 14.5, 17.0);

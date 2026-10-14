@@ -1078,6 +1078,12 @@ fn transform_move(s: &mut Session, p: &Value) -> Result<Value> {
             }
             it.xf = Affine::translate((dx, dy)) * it.xf;
         }
+        // An object dragged inside a Flex Layout takes the place it was dropped on.
+        if !copy {
+            for id in &ids {
+                super::flex::drop_in_container(d, *id);
+            }
+        }
         Ok(json!({"moved": ids.len(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
     })
 }
@@ -1108,6 +1114,8 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
                 it.xf = Affine::translate(m * c - c) * it.xf;
             } else if scale_content {
                 scale_item(it, m, (sx * sy).abs().sqrt(), strokes);
+            } else if it.flex.is_some() {
+                resize_container(it, m);
             } else if matches!(it.content, Content::Group { .. }) {
                 it.xf = m * it.xf;
             } else {
@@ -1125,6 +1133,23 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(json!({"resized": ids.len()}))
     })
+}
+
+/// A Flex Layout container takes the new box (its objects keep their size; the layout places them),
+/// and a side whose length changes becomes Fixed, as dragging a container's handle does in InDesign.
+fn resize_container(it: &mut Item, m: Affine) {
+    let before = it.inner_bounds();
+    let inner = it.xf.inverse() * m * it.xf;
+    bake(it, inner);
+    let after = it.inner_bounds();
+    if let Some(f) = it.flex.as_mut() {
+        if (after.width() - before.width()).abs() > 1e-6 {
+            f.width = designcraft_doc::FlexSize::Fixed;
+        }
+        if (after.height() - before.height()).abs() > 1e-6 {
+            f.height = designcraft_doc::FlexSize::Fixed;
+        }
+    }
 }
 
 fn union_bounds(d: &Document, ids: &[ItemId]) -> Rect {
@@ -1374,7 +1399,9 @@ fn transform_set(s: &mut Session, p: &Value) -> Result<Value> {
             * Affine::translate((-geom.x0, -geom.y0));
         for id in &ids {
             if let Some(it) = d.item_mut(*id) {
-                if matches!(it.content, Content::Group { .. }) {
+                if it.flex.is_some() {
+                    resize_container(it, m);
+                } else if matches!(it.content, Content::Group { .. }) {
                     it.xf = m * it.xf;
                 } else {
                     let inner = it.xf.inverse() * m * it.xf;
