@@ -20,7 +20,7 @@ pub const ICON_PANELS: &[(&str, &str, &str)] = &[
     ("paragraphStyles", "Paragraph Styles", "panel-pstyles"),
     ("characterStyles", "Character Styles", "panel-cstyles"),
     ("character", "Character", "panel-character"),
-    ("typography", "Typography", "panel-character"),
+    ("typography", "Typography", "panel-typography"),
     ("glyphs", "Glyphs", "panel-character"),
     ("paragraph", "Paragraph", "panel-paragraph"),
     ("textWrap", "Text Wrap", "panel-wrap"),
