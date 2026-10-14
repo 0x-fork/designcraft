@@ -1113,11 +1113,13 @@ impl DesignApp {
         }
         self.flush_window_commands(ctx);
         #[cfg(not(target_arch = "wasm32"))]
-        let (dropped, pointer) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.hover_pos()));
-        for f in dropped {
-            let p = f.path().to_string_lossy().to_string();
-            if !p.is_empty() {
-                let _ = self.open_dropped_at(&p, pointer);
+        {
+            let (dropped, pointer) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.hover_pos()));
+            for f in dropped {
+                let p = f.path().to_string_lossy().to_string();
+                if !p.is_empty() {
+                    let _ = self.open_dropped_at(&p, pointer);
+                }
             }
         }
         self.handle_quit(ctx);
