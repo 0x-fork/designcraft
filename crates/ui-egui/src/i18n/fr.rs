@@ -7,7 +7,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("All Documents", "Tous les documents"),
     ("Alpha Channel", "Couche alpha"),
     ("Anchored Object Options", "Options d'objet ancré"),
-    ("Apply Parent to Pages", "Appliquer le gabarit aux pages"),
     ("ArtCraft App Page", "Page de l'application ArtCraft"),
     ("ArtCraft Website", "Site web d'ArtCraft"),
     ("Auto Size", "Taille automatique"),

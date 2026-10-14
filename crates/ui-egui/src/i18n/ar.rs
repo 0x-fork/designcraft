@@ -924,7 +924,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Duplicate Spread at End of Document", "تكرار الانتشار في نهاية المستند"),
     ("Delete Spread", "حذف الانتشار"),
     ("Parent Pages", "الصفحات الأصل"),
-    ("Apply Parent to Pages", "تطبيق الأصل على الصفحات"),
     ("Email", "بريد إلكتروني"),
     ("Embed", "تضمين"),
     ("Fast", "سريع"),

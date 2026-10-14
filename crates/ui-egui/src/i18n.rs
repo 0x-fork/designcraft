@@ -700,7 +700,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Apply Parent to Pages",
         [
             "Übergeordnete Seite auf Seiten anwenden",
-            "Appliquer le parent aux pages",
+            "Appliquer le gabarit aux pages",
             "Aplicar principal a páginas",
             "親ページを適用",
             "将父页面应用于页面",
