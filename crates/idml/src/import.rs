@@ -9,8 +9,8 @@ use designcraft_color::{Color, ColorType, Gradient, GradientKind, GradientStop, 
 use designcraft_doc::{
     Asset, AssetId, BaselineGrid, CellRange, CharAttrs, CharFormat, CharRun, CharacterStyle, Columns, ColumnsKind, Content, DocSettings, Document,
     DropShadow, Effects, Fill, GridAlign, GridRelative, Guide, Item, ItemId, Kerning, LAYER_COLORS, Layer, LayerId, ListType, Margins, ObjectStyle,
-    Page, PageId, PageSide, ParaAttrs, ParaFormat, ParagraphStyle, ParentInfo, RowHeightMode, Rule, Section, Shape, SpanColumns, Spread, SpreadId,
-    Story, StoryId, Stroke, Styles, TabStop, Table, TextFrame, TextFrameOptions, TextWrap, story as st,
+    Orientation, Page, PageId, PageSide, ParaAttrs, ParaFormat, ParagraphStyle, ParentInfo, RowHeightMode, Rule, Section, Shape, SpanColumns, Spread,
+    SpreadId, Story, StoryId, Stroke, Styles, TabStop, Table, TextFrame, TextFrameOptions, TextWrap, story as st,
 };
 use designcraft_geom::corners::{Corner, CornerOptions};
 use designcraft_geom::{Affine, Anchor, PathData, Point, Rect, SubPath};
@@ -116,6 +116,14 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
     Ok(Imported { document, warnings })
 }
 
+/// View Preferences › Ruler Origin.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RulerOrigin {
+    Spread,
+    Page,
+    Spine,
+}
+
 /// A package part name in the form the lookup compares: InDesign and other IDML writers differ
 /// in percent-encoding, case, path separators and a leading `./` or `/`.
 fn normalize_part_name(name: &str) -> String {
@@ -159,6 +167,8 @@ struct ItemCtx {
 
 struct Importer<'r> {
     read_link: &'r dyn Fn(&str) -> Option<Vec<u8>>,
+    /// View Preferences › Ruler Origin: where a guide's Location is measured from.
+    ruler_origin: RulerOrigin,
     next_id: u64,
     settings: DocSettings,
     default_margins: Option<(Margins, Columns)>,
@@ -275,6 +285,7 @@ impl<'r> Importer<'r> {
         styles.paragraph.iter_mut().for_each(|s| s.based_on = None);
         Importer {
             read_link,
+            ruler_origin: RulerOrigin::Spread,
             next_id: 0,
             settings: DocSettings::default(),
             default_margins: None,
@@ -362,6 +373,11 @@ impl<'r> Importer<'r> {
                     if let Some(v) = e.num("CursorKeyIncrement") {
                         self.settings.keyboard_increment = v;
                     }
+                    self.ruler_origin = match e.get("RulerOrigin") {
+                        Some("PageOrigin") => RulerOrigin::Page,
+                        Some("SpineOrigin") => RulerOrigin::Spine,
+                        _ => RulerOrigin::Spread,
+                    };
                 }
                 "GridPreference" => self.grid_prefs(e),
                 "PasteboardPreference" => {
@@ -1964,6 +1980,33 @@ impl<'r> Importer<'r> {
 
     // ---------- spreads and items ----------
 
+    /// Ruler guides of a `<Page>` (its `<Guide>` children), `page` its rectangle in our spread
+    /// coordinates. A guide's Location is measured from the ruler origin: the spread's top left, the
+    /// page's, or the spine. Fit to Page off: the guide crosses the spread.
+    fn guides_of(&self, p: &El, page: Rect, spine: f64) -> Vec<Guide> {
+        p.find_all("Guide")
+            .filter_map(|g| {
+                let at = g.num("Location").filter(|v| v.is_finite() && v.abs() < 1e7)?;
+                let orientation = if g.get("Orientation") == Some("Horizontal") { Orientation::Horizontal } else { Orientation::Vertical };
+                let position = match (orientation, self.ruler_origin) {
+                    (Orientation::Horizontal, RulerOrigin::Page) => page.y0 + at,
+                    (Orientation::Horizontal, _) => at,
+                    (Orientation::Vertical, RulerOrigin::Page) => page.x0 + at,
+                    (Orientation::Vertical, RulerOrigin::Spine) => spine + at,
+                    (Orientation::Vertical, RulerOrigin::Spread) => at,
+                };
+                Some(Guide {
+                    orientation,
+                    position,
+                    spread: g.get("FitToPage") == Some("false"),
+                    locked: g.get("Locked") == Some("true"),
+                    layer: g.get("ItemLayer").and_then(|l| self.layer_ids.get(l)).copied(),
+                    liquid: false,
+                })
+            })
+            .collect()
+    }
+
     fn spread(&mut self, e: &El, id: SpreadId, master: bool) -> Spread {
         let facing = self.settings.facing_pages;
         // Page rectangles in IDML spread coordinates.
@@ -1981,6 +2024,9 @@ impl<'r> Importer<'r> {
         let min_y = pages.iter().map(|(r, _)| r.y0).fold(f64::INFINITY, f64::min);
         let (min_x, min_y) = if min_x.is_finite() { (min_x, min_y) } else { (0.0, 0.0) };
         let shift = Affine::translate((-min_x, -min_y));
+        // The spine: between a left and a right page (else the spread's left edge).
+        let spine = pages.iter().map(|(r, _)| r.x0 - min_x).filter(|x| *x > 1e-6).fold(f64::INFINITY, f64::min);
+        let spine = if spine.is_finite() && facing { spine } else { 0.0 };
         let show = e.get("ShowMasterItems") != Some("false");
         let first_abs: usize = self.spreads.iter().map(|s| s.pages.len()).sum();
         let mut out_pages = Vec::new();
@@ -2013,7 +2059,7 @@ impl<'r> Importer<'r> {
                 parent,
                 side,
                 overridden: vec![],
-                guides: Vec::<Guide>::new(),
+                guides: self.guides_of(p, Rect::new(r.x0 - min_x, r.y0 - min_y, r.x1 - min_x, r.y1 - min_y), spine),
                 show_parent_items: show,
                 liquid: Default::default(),
                 transition: None,
