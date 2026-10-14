@@ -128,7 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
-- **2026-10-14** · With the Page tool, the Control panel shows the page as InDesign's does: W/H from a reference point, page-size preset (US Business Card added), orientation, Liquid Page Rule (now with Controlled by Parent) and Show Parent Page Overlay, which draws the parent page's size over a resized page. No readiness percentage change.
+- **2026-10-14** · With the Page tool, the Control panel shows the page as InDesign's does: W/H from a reference point, page-size preset (US Business Card added), orientation, Liquid Page Rule and Show Parent Page Overlay, which draws the parent page's size over a resized page. No readiness percentage change.
 - **2026-10-14** · The Page tool works as InDesign's: a click selects a page and shows its handles and liquid page rule; dragging a handle previews the rule and springs back, Alt-drag resizes the page from the opposite edge, Shift keeps proportions, with a W/H readout. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
