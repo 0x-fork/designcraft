@@ -1172,7 +1172,8 @@ impl Exporter<'_> {
     /// A placed PDF as krilla embeds it. krilla refuses a PDF newer than the file it writes (the
     /// export fails at the end with `VersionMismatch(Pdf17)`), and PDF/X-4 is PDF 1.6 while
     /// VectorCraft and most tools write 1.7. PDF 1.7 changed nothing in how a page draws, so a 1.7
-    /// file goes in as 1.6 (its header relabelled, as `qpdf --force-version=1.6` does). A newer
+    /// file goes in as 1.6 (its header and catalog `/Version` relabelled, as
+    /// `qpdf --force-version=1.6` does). A newer
     /// file is left out and the export fails naming it ([`Exporter::check_placed_versions`]).
     fn placed_pdf(&mut self, asset: &designcraft_doc::Asset) -> Option<krilla::pdf::PdfDocument> {
         use hayro_syntax::PdfVersion as V;
@@ -1193,8 +1194,8 @@ impl Exporter<'_> {
         }
         if have == V::Pdf17
             && max == V::Pdf16
-            && let Some(bytes) = relabel_pdf_header(&asset.data, b"%PDF-1.7", b"%PDF-1.6")
-            && let Ok(pdf) = krilla::pdf::Pdf::new(Arc::new(bytes))
+            && let bytes = relabel_pdf_header(&asset.data, b"%PDF-1.7", b"%PDF-1.6").unwrap_or_else(|| asset.data.to_vec())
+            && let Ok(pdf) = krilla::pdf::Pdf::new(Arc::new(relabel_catalog_version(bytes)))
             && pdf.version() <= max
         {
             self.warn(format!("{}: a PDF 1.7 placed in a PDF 1.6 file, embedded as PDF 1.6", asset.name));
@@ -1358,6 +1359,30 @@ fn relabel_pdf_header(data: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     let mut out = data.to_vec();
     out.get_mut(at..at + to.len())?.copy_from_slice(to);
     Some(out)
+}
+
+/// `data` with every `/Version /1.7` changed to `/Version /1.6` in place, so the xref offsets
+/// hold. The catalog's `/Version` wins over the header (TCPDF writes both), so relabelling the
+/// header alone leaves the file a PDF 1.7. A catalog inside a compressed object stream is left as
+/// it is, and the version check still names the file.
+fn relabel_catalog_version(mut data: Vec<u8>) -> Vec<u8> {
+    const KEY: &[u8] = b"/Version";
+    let mut from = 0;
+    while let Some(at) = data.get(from..).and_then(|rest| rest.windows(KEY.len()).position(|w| w == KEY)) {
+        let mut i = from + at + KEY.len();
+        while data.get(i).is_some_and(|b| b" \t\r\n\x0c\0".contains(b)) {
+            i += 1;
+        }
+        let ends = data.get(i + 4).is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'.');
+        if data.get(i..i + 4) == Some(b"/1.7".as_slice())
+            && ends
+            && let Some(b) = data.get_mut(i + 3)
+        {
+            *b = b'6';
+        }
+        from = i;
+    }
+    data
 }
 
 /// The sRGB profile (ICC v2.1) that untagged RGB images carry in PDF/X-4.
