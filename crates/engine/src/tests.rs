@@ -695,3 +695,31 @@ fn type_tool_frames_snap_to_the_margins() {
     assert!((r.x0 - margin.x0).abs() < 1e-6 && (r.y0 - margin.y0).abs() < 1e-6, "press point {r:?} vs {margin:?}");
     assert!((r.x1 - margin.x1).abs() < 1e-6, "right edge {} vs {}", r.x1, margin.x1);
 }
+
+#[test]
+fn duplicating_a_page_to_an_index_is_one_undo_step() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"facingPages": false})).unwrap();
+    s.execute("layout.pages.insert", &json!({"count": 2})).unwrap();
+    for (page, width) in [(1, 300), (2, 400), (3, 500)] {
+        s.execute("layout.pageSize", &json!({"pages": [page], "width": width, "height": 600})).unwrap();
+    }
+    let widths = |s: &Session| {
+        let d = &s.doc().unwrap().doc;
+        (0..d.page_count()).map(|i| d.page_loc(i).map(|(si, pi)| d.spreads[si].pages[pi].width)).collect::<Option<Vec<_>>>().unwrap()
+    };
+    // Backwards: the last page copied to the front.
+    let r = s.execute("layout.pages.duplicateSpread", &json!({"spread": 2, "to": 0})).unwrap();
+    assert_eq!(r["page"], 0);
+    assert_eq!(widths(&s), [500.0, 300.0, 400.0, 500.0]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+    // Forwards: the first page copied to the end.
+    s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "to": 3})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0, 300.0]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+    // Past the end: refused, nothing changes.
+    assert!(s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "to": 4})).is_err());
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+}
