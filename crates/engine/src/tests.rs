@@ -682,6 +682,56 @@ fn character_style_delete_rejects_builtin_styles() {
 }
 
 #[test]
+fn character_style_delete_rejects_missing_unknown_and_self_replacement() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+    assert!(s.execute("style.character.delete", &json!({"name": ""})).is_err(), "empty name is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": "No Such Style"})).is_err(), "unknown name is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": name, "replaceWith": "No Such Style"})).is_err(), "unknown replaceWith is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": name, "replaceWith": name})).is_err(), "replaceWith can't be the deleted style");
+}
+
+#[test]
+fn paragraph_style_delete_rejects_missing_unknown_and_self_replacement() {
+    let mut s = session();
+    let name = s.execute("style.paragraph.create", &json!({"name": "Caption"})).unwrap()["name"].as_str().unwrap().to_string();
+    assert!(s.execute("style.paragraph.delete", &json!({"name": ""})).is_err(), "empty name is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": "No Such Style"})).is_err(), "unknown name is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": name, "replaceWith": "No Such Style"})).is_err(), "unknown replaceWith is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": name, "replaceWith": name})).is_err(), "replaceWith can't be the deleted style");
+}
+
+#[test]
+fn character_style_delete_reassigns_every_kind_of_reference() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+    let repl = s.execute("style.character.create", &json!({"name": "Emphasis"})).unwrap()["name"].as_str().unwrap().to_string();
+    // Another character style's basedOn.
+    let based = s.execute("style.character.create", &json!({"name": "Strong", "basedOn": name})).unwrap()["name"].as_str().unwrap().to_string();
+    // A paragraph style's nested, nested line, GREP and drop cap styles, and the footnote reference style.
+    s.execute(
+        "style.paragraph.create",
+        &json!({"name": "Body", "para": {
+            "nestedStyles": [{"style": name, "through": true, "count": 1, "until": {"kind": "words"}}],
+            "grepStyles": [{"style": name, "pattern": "x"}],
+            "nestedLineStyles": [{"style": name, "lines": 1}],
+            "dropCapStyle": name}}),
+    )
+    .unwrap();
+    s.execute("footnote.options", &json!({"refCharStyle": name})).unwrap();
+    s.execute("style.character.delete", &json!({"name": name, "replaceWith": repl})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.doc.styles.char_style(&name).is_none(), "deleted style is gone");
+    assert_eq!(st.doc.styles.char_style(&based).unwrap().based_on.as_deref(), Some(repl.as_str()), "basedOn redirected");
+    let body = st.doc.styles.para("Body").unwrap();
+    assert_eq!(body.para.nested_styles.as_ref().unwrap()[0].style, repl, "nested style redirected");
+    assert_eq!(body.para.nested_line_styles.as_ref().unwrap()[0].style, repl, "nested line style redirected");
+    assert_eq!(body.para.grep_styles.as_ref().unwrap()[0].style, repl, "grep style redirected");
+    assert_eq!(body.para.drop_cap_style.as_deref(), Some(repl.as_str()), "drop cap style redirected");
+    assert_eq!(st.doc.footnote_options.ref_char_style, repl, "footnote reference style redirected");
+}
+
+#[test]
 fn page_tool_selects_a_page_and_its_handles_preview_or_resize_it() {
     use designcraft_tools::{CanvasLayout, Mods, PointerEvent, PointerKind};
     let mut s = Session::new();
