@@ -947,9 +947,12 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
         }
         let b = xf.rect(a.transform_rect_bbox(it.bounds()));
         union = Some(union.map_or(b, |u| u.union(b)));
-        // Text frame ports.
-        if let Content::Text(tf) = &it.content {
-            draw_ports(app, painter, xf, doc, layout, it, tf.story, color);
+        // Text frame ports, also of the frames inside a selected group (so an overset frame in a
+        // group shows its red mark).
+        let mut frames = Vec::new();
+        text_frames_in(it, a, 0, &mut frames);
+        for (frame, story, _) in frames {
+            draw_ports(app, painter, xf, doc, layout, frame, story, color);
         }
         if let Content::Graphic(g) = &it.content
             && sel.content
@@ -1022,6 +1025,23 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
         }
     }
     text_rect.or(union)
+}
+
+/// How deep a selected group is walked for the text frames whose ports are drawn.
+const PORT_GROUP_DEPTH: usize = 32;
+
+/// `it` when it is a text frame, or every text frame nested in it when it is a group, each with
+/// its story and the transform of its parent (`a` is the transform of `it`'s parent).
+fn text_frames_in<'a>(it: &'a Item, a: Affine, depth: usize, out: &mut Vec<(&'a Item, designcraft_doc::StoryId, Affine)>) {
+    match &it.content {
+        Content::Text(tf) => out.push((it, tf.story, a)),
+        Content::Group { items } if depth < PORT_GROUP_DEPTH => {
+            for child in items {
+                text_frames_in(child, a * it.xf, depth + 1, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Port location (canvas): out port at bottom-right, in port at top-left.
@@ -2479,6 +2499,34 @@ mod tests {
                 assert_eq!(app.session.doc().unwrap().selection, selection);
             }
         }
+    }
+
+    /// A selected group lists the text frames inside it for ports, with the group's transform.
+    #[test]
+    fn grouped_text_frames_get_ports() {
+        let mut s = designcraft_engine::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = s.execute("frame.create", &json!({"rect": [10, 10, 110, 60], "content": "text"})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("frame.create", &json!({"rect": [10, 80, 110, 130]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("selection.set", &json!({"ids": [a, b]})).unwrap();
+        let g = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+        s.execute("transform.move", &json!({"dx": 5, "dy": 7, "ids": [g]})).unwrap();
+        let doc = &s.doc().unwrap().doc;
+        let group = doc.item(designcraft_doc::ItemId(g)).unwrap();
+        let mut out = Vec::new();
+        text_frames_in(group, Affine::IDENTITY, 0, &mut out);
+        assert_eq!(out.len(), 1, "one text frame in the group");
+        assert_eq!(out[0].0.id.0, a);
+        assert_eq!(out[0].2, group.xf);
+        // A plain text frame lists itself with the given parent transform.
+        out.clear();
+        text_frames_in(out_frame(doc, a), Affine::translate((1.0, 2.0)), 0, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].2, Affine::translate((1.0, 2.0)));
+    }
+
+    fn out_frame(doc: &Document, id: u64) -> &Item {
+        doc.item(designcraft_doc::ItemId(id)).unwrap()
     }
 
     #[test]
