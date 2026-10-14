@@ -239,20 +239,20 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             });
         });
     });
-    // Alt-drag (InDesign's Option-drag) copies the page to where it's dropped.
-    let copy = ui.input(|i| i.modifiers.alt);
+    // Alt-drag copies a page that is a spread of its own to where it's dropped, in one undo
+    // step; a page from a larger spread moves as usual.
+    let alt = ui.input(|i| i.modifiers.alt);
+    let copy = |from: usize| {
+        let (si, _) = doc.page_loc(from)?;
+        (alt && doc.spreads.get(si).is_some_and(|s| s.pages.len() == 1)).then_some(si)
+    };
     match drop {
-        Some((PageDrag::Page(from), to)) if copy => {
-            if let Some((si, _)) = doc.page_loc(from)
-                && let Ok(r) = app.run("layout.pages.duplicateSpread", json!({"spread": si}))
-                && let Some(new) = r["page"].as_u64().map(|p| p as usize)
-                && new != to
-            {
-                let _ = app.run("layout.pages.move", json!({"from": new, "to": to}));
+        Some((PageDrag::Page(from), to)) => {
+            if let Some(si) = copy(from) {
+                let _ = app.run("layout.pages.duplicateSpread", json!({"spread": si, "to": to}));
+            } else if from != to {
+                let _ = app.run("layout.pages.move", json!({"from": from, "to": to}));
             }
-        }
-        Some((PageDrag::Page(from), to)) if from != to => {
-            let _ = app.run("layout.pages.move", json!({"from": from, "to": to}));
         }
         Some((PageDrag::Parent(prefix), to)) => {
             let _ = app.run("layout.pages.applyParent", json!({"pages": [to], "parent": prefix}));
