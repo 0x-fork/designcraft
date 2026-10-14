@@ -13,6 +13,9 @@ pub mod styles;
 pub mod swatches;
 pub mod table;
 
+#[cfg(test)]
+mod color_panel_tests;
+
 use designcraft_doc::{Content, StrokeAlign, WrapMode};
 use designcraft_geom::Rect;
 use egui::vec2;
