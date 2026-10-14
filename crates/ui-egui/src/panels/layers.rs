@@ -230,19 +230,37 @@ pub fn show(app: &mut DesignApp, ui: &mut Ui) {
             }
             let (eye, lock) = eye_lock(ui, &app.ui.language, row, !it.hidden, it.locked, !l.visible, ("item", it.id.0));
             let name = item_label(&doc, it);
-            let clip = Rect::from_min_max(row.min, pos2(row.max.x - 26.0, row.max.y));
-            ui.painter().with_clip_rect(clip).text(
-                row.min + vec2(2.0 * COL_W + 30.0, ROW_H / 2.0),
-                egui::Align2::LEFT_CENTER,
-                &name,
-                egui::FontId::proportional(11.0),
-                if it.hidden { t.text_dim } else { t.text },
-            );
+            let field = Rect::from_min_max(row.min + vec2(2.0 * COL_W + 28.0, 3.0), pos2(row.max.x - 28.0, row.max.y - 3.0));
+            let renaming = match rename_field(ui, field, it.id.0) {
+                // An empty name goes back to the automatic label.
+                Some(Some(new)) => {
+                    if new != it.name {
+                        let _ = app.run("object.rename", json!({"id": it.id.0, "name": new}));
+                    }
+                    false
+                }
+                Some(None) => false,
+                None => ui.data(|d| d.get_temp::<(RenameKey, String)>(egui::Id::new(RENAME))).is_some_and(|(k, _)| k == it.id.0),
+            };
+            if !renaming {
+                let clip = Rect::from_min_max(row.min, pos2(row.max.x - 26.0, row.max.y));
+                ui.painter().with_clip_rect(clip).text(
+                    row.min + vec2(2.0 * COL_W + 30.0, ROW_H / 2.0),
+                    egui::Align2::LEFT_CENTER,
+                    &name,
+                    egui::FontId::proportional(11.0),
+                    if it.hidden { t.text_dim } else { t.text },
+                );
+            }
             let sq = selection_square(ui, &app.ui.language, row, lc, is_sel, true, ("item", it.id.0));
             if eye {
                 let _ = app.run("object.setFlags", json!({"ids": [it.id.0], "hidden": !it.hidden}));
             } else if lock {
                 let _ = app.run("object.setFlags", json!({"ids": [it.id.0], "locked": !it.locked}));
+            } else if resp.double_clicked() {
+                // Its own name, or the label it shows without the brackets.
+                let current = if it.name.is_empty() { name.trim_start_matches('<').trim_end_matches('>').to_string() } else { it.name.clone() };
+                start_rename(ui, it.id.0, &current);
             } else if sq || resp.clicked() {
                 let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
                 let _ = app.run("selection.set", json!({"ids": [it.id.0], "add": add}));
@@ -271,6 +289,45 @@ pub fn show(app: &mut DesignApp, ui: &mut Ui) {
             }
         });
     });
+}
+
+/// The object whose row is being renamed.
+type RenameKey = u64;
+const RENAME: &str = "layers_rename";
+
+/// The name field of the row being renamed (double-click), in `r`: `Some(Some(name))` when Enter
+/// or a click elsewhere confirms it, `Some(None)` when Esc cancels, `None` while typing or when
+/// this row isn't being renamed.
+fn rename_field(ui: &mut Ui, r: Rect, key: RenameKey) -> Option<Option<String>> {
+    let id = egui::Id::new(RENAME);
+    let (k, mut text): (RenameKey, String) = ui.data(|d| d.get_temp(id))?;
+    if k != key {
+        return None;
+    }
+    let edit = ui.put(r, egui::TextEdit::singleline(&mut text).font(egui::FontId::proportional(11.0)).margin(vec2(2.0, 1.0)));
+    if !edit.has_focus() && !edit.lost_focus() {
+        edit.request_focus();
+    }
+    let done = if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        Some(None)
+    } else if edit.lost_focus() {
+        Some(Some(text.trim().to_string()))
+    } else {
+        None
+    };
+    ui.data_mut(|d| {
+        if done.is_some() {
+            d.remove::<(RenameKey, String)>(id);
+        } else {
+            d.insert_temp(id, (key, text));
+        }
+    });
+    done
+}
+
+/// Start renaming row `key`, its field showing `name`.
+fn start_rename(ui: &Ui, key: RenameKey, name: &str) {
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (key, name.to_string())));
 }
 
 #[cfg(test)]
@@ -312,5 +369,33 @@ mod tests {
         h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(("layer_open", first.0)), false));
         h.run_steps(2);
         assert!(!open(&h));
+    }
+
+    #[test]
+    fn rows_rename_in_place() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        let mut h = Harness::builder().with_size(egui::vec2(260.0, 400.0)).build_ui_state(|ui, app: &mut DesignApp| show(app, ui), app);
+        h.run_steps(2);
+        let rename = |h: &mut Harness<'_, DesignApp>, key: RenameKey, typed: &str| {
+            // As a double-click starts it (with an emptied field here, so the typing is the name).
+            h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (key, String::new())));
+            h.run_steps(2);
+            h.get_by_role(egui::accesskit::Role::TextInput).type_text(typed);
+            h.run_steps(1);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(2);
+        };
+        rename(&mut h, id, "Hero bottle");
+        assert_eq!(h.state().session.active().unwrap().doc.item(ItemId(id)).unwrap().name, "Hero bottle");
+        // Esc leaves the name as it was.
+        h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (id, String::new())));
+        h.run_steps(2);
+        h.get_by_role(egui::accesskit::Role::TextInput).type_text("Oops");
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert_eq!(h.state().session.active().unwrap().doc.item(ItemId(id)).unwrap().name, "Hero bottle");
     }
 }
