@@ -106,6 +106,7 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
         }
     }
     let mut im = Importer::new(read_link);
+    im.japanese_composer = files.values().any(|data| names_japanese_composer(data));
     im.run(&root, &top)?;
     let document = im.finish(&root).map_err(|e| match e {
         // Without its spread parts there is nothing to open: say which parts were missing.
@@ -114,6 +115,23 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
     })?;
     document.check().map_err(|e| IdmlError::Invalid(e.to_string()))?;
     Ok(Imported { document, warnings })
+}
+
+/// Does this package part apply one of InDesign's Japanese composers (`HL Composer J`,
+/// `HL Single J`) anywhere? Only they use the CJK leading model.
+fn names_japanese_composer(data: &[u8]) -> bool {
+    const KEY: &[u8] = b"Composer=\"";
+    let mut rest = data;
+    while let Some(at) = rest.windows(KEY.len()).position(|w| w == KEY) {
+        let value = rest.get(at + KEY.len()..).unwrap_or_default();
+        let end = value.iter().position(|b| *b == b'"').unwrap_or(value.len());
+        let name = String::from_utf8_lossy(value.get(..end).unwrap_or_default());
+        if name.ends_with(" J") || name.contains("Japanese") {
+            return true;
+        }
+        rest = value.get(end..).unwrap_or_default();
+    }
+    false
 }
 
 /// A package part name in the form the lookup compares: InDesign and other IDML writers differ
@@ -159,6 +177,8 @@ struct ItemCtx {
 
 struct Importer<'r> {
     read_link: &'r dyn Fn(&str) -> Option<Vec<u8>>,
+    /// The package applies a Japanese composer somewhere (see [`names_japanese_composer`]).
+    japanese_composer: bool,
     next_id: u64,
     settings: DocSettings,
     default_margins: Option<(Margins, Columns)>,
@@ -275,6 +295,7 @@ impl<'r> Importer<'r> {
         styles.paragraph.iter_mut().for_each(|s| s.based_on = None);
         Importer {
             read_link,
+            japanese_composer: false,
             next_id: 0,
             settings: DocSettings::default(),
             default_margins: None,
@@ -903,7 +924,13 @@ impl<'r> Importer<'r> {
             let based_on = if name == designcraft_doc::NO_PARA_STYLE { None } else { self.based_on(e, true) };
             let next_style = e.get("NextStyle").map(|n| self.para_style_ref(n)).filter(|n| *n != name);
             let para = self.para_attrs(e);
-            let chars = self.char_attrs(e);
+            let mut chars = self.char_attrs(e);
+            // InDesign writes its CJK leading model (Aki Below) on [No paragraph style] of every
+            // document; only the Japanese composers use it, so a document set with the Paragraph or
+            // Single-line Composer spaces its lines baseline to baseline.
+            if name == designcraft_doc::NO_PARA_STYLE && !self.japanese_composer {
+                chars.leading_model = None;
+            }
             let s = ParagraphStyle { name: name.clone(), based_on, next_style, para, chars, shortcut: String::new() };
             match self.styles.para_mut(&name) {
                 Some(slot) => *slot = s,

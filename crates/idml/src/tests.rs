@@ -2169,3 +2169,35 @@ fn frame_preference_property_color_resolves_for_frames_and_object_styles() {
     assert_eq!(colors, vec!["Near", "Near", "Far", designcraft_color::swatch::NONE]);
     assert_eq!(d.styles.object_style("Child").unwrap().text_frame.as_ref().unwrap().column_rule_color, "Near");
 }
+
+/// InDesign writes `LeadingModel="LeadingModelAkiBelow"` on [No paragraph style] of every
+/// document, but only its Japanese composers use the leading model: with the Paragraph Composer,
+/// a 24 pt paragraph after a 32 pt one sits a Roman 28.8 pt below it (Montilla Design's Flex Layout
+/// file: frames fitted to that came out overset).
+#[test]
+fn the_default_cjk_leading_model_applies_only_with_a_japanese_composer() {
+    let styles = |composer: &str| {
+        STYLES.replace(
+            r#"Name="$ID/[No paragraph style]" PointSize="12">"#,
+            &format!(r#"Name="$ID/[No paragraph style]" PointSize="12" LeadingModel="LeadingModelAkiBelow" Composer="{composer}">"#),
+        )
+    };
+    let model = |composer: &str| {
+        let s = styles(composer);
+        let pkg = zip_files(&[
+            ("designmap.xml", DESIGNMAP),
+            ("Resources/Graphic.xml", GRAPHIC),
+            ("Resources/Styles.xml", &s),
+            ("Resources/Preferences.xml", PREFS),
+            ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+            ("Spreads/Spread_sp1.xml", SPREAD),
+            ("Stories/Story_s1.xml", STORY),
+        ]);
+        let d = import_idml(&pkg).unwrap();
+        d.styles.para(designcraft_doc::NO_PARA_STYLE).unwrap().chars.leading_model
+    };
+    assert_eq!(model("HL Composer"), None, "the Paragraph Composer leads baseline to baseline");
+    assert_eq!(model("HL Single"), None);
+    assert_eq!(model("$ID/HL Composer J"), Some(designcraft_doc::cjk::LeadingModel::AkiBelow));
+    assert_eq!(model("$ID/HL Single J"), Some(designcraft_doc::cjk::LeadingModel::AkiBelow));
+}
