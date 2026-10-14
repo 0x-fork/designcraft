@@ -994,11 +994,12 @@ fn draw_text_selection(
     let range = ts.range();
     // Selected table cells: tint every selected cell.
     if let Some(sel) = cells.filter(|c| c.story == ts.story) {
+        let selected = doc.story(sel.story).and_then(|s| s.tables.get(&sel.table)).map(|t| t.selected_owners(sel.range)).unwrap_or_default();
         for ft in &cs.frames {
             let (Some((a, _)), Some(it)) = (item_canvas_xf(doc, layout, ft.frame), doc.item(ft.frame)) else { continue };
             let m = a * doc.text_xf(it);
             for t in ft.tables.iter().filter(|t| t.table == sel.table) {
-                for c in t.cells.iter().filter(|c| sel.range.contains(c.row, c.col)) {
+                for c in t.cells.iter().filter(|c| selected.binary_search(&(c.row, c.col)).is_ok()) {
                     let q = [
                         xf.to_screen(m * Point::new(c.rect.x0, c.rect.y0)),
                         xf.to_screen(m * Point::new(c.rect.x1, c.rect.y0)),
@@ -1906,6 +1907,79 @@ mod tests {
     fn units(h: &Harness<'_, DesignApp>) -> (Unit, Unit) {
         let s = &h.state().session.doc().unwrap().doc.settings;
         (s.horizontal_units, s.vertical_units)
+    }
+
+    #[test]
+    fn selected_merged_owners_paint_the_same_row_and_column_targets() {
+        for column in [true, false] {
+            for merged in [false, true] {
+                let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+                app.run("file.new", json!({"pages": 1})).unwrap();
+                app.run("frame.create", json!({"rect": [36, 36, 300, 300], "content": "text"})).unwrap();
+                app.run("table.insert", json!({"rows": 2, "cols": 2})).unwrap();
+                if merged {
+                    let range = if column { json!({"rows": [0, 0], "cols": [0, 1]}) } else { json!({"rows": [0, 1], "cols": [0, 0]}) };
+                    app.run("table.select", range).unwrap();
+                    app.run("table.merge", json!({})).unwrap();
+                }
+                app.run("table.select", json!({"rows": [1, 1], "cols": [1, 1]})).unwrap();
+                app.run(if column { "table.selectColumn" } else { "table.selectRow" }, json!({})).unwrap();
+                let st = app.session.doc().unwrap();
+                let selection = st.selection.clone();
+                let ts = selection.text.unwrap();
+                let selected = selection.cells.unwrap();
+                assert_eq!(
+                    selected.range,
+                    if column { designcraft_doc::CellRange::new(0, 1, 1, 1) } else { designcraft_doc::CellRange::new(1, 0, 1, 1) }
+                );
+                let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+                let cs = app.session.cache.get(&st.doc, ts.story, None);
+                let ft = &cs.frames[0];
+                let table = ft.tables.iter().find(|t| t.table == selected.table).unwrap();
+                let (a, _) = item_canvas_xf(&st.doc, &layout, ft.frame).unwrap();
+                let m = a * st.doc.text_xf(st.doc.item(ft.frame).unwrap());
+                let xf = Xf { min: pos2(0.0, 0.0), origin: Point::new(0.0, 0.0), zoom: 1.0, rot: 0, pivot: pos2(0.0, 0.0) };
+                let owners = if merged {
+                    [(0, 0), (1, 1)]
+                } else if column {
+                    [(0, 1), (1, 1)]
+                } else {
+                    [(1, 0), (1, 1)]
+                };
+                let expected: Vec<_> = owners
+                    .into_iter()
+                    .map(|(r, c)| {
+                        let rect = table.cells.iter().find(|cell| cell.row == r && cell.col == c).unwrap().rect;
+                        vec![
+                            xf.to_screen(m * Point::new(rect.x0, rect.y0)),
+                            xf.to_screen(m * Point::new(rect.x1, rect.y0)),
+                            xf.to_screen(m * Point::new(rect.x1, rect.y1)),
+                            xf.to_screen(m * Point::new(rect.x0, rect.y1)),
+                        ]
+                    })
+                    .collect();
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    draw_text_selection(&app, ui.painter(), &xf, &st.doc, &layout, ts, Some(selected));
+                });
+                output.textures_delta.clear();
+                let tint = Color32::from_rgba_unmultiplied(80, 140, 255, 90);
+                let painted: Vec<_> = output
+                    .shapes
+                    .into_iter()
+                    .filter_map(|s| match s.shape {
+                        egui::Shape::Path(path) if path.fill == tint => {
+                            assert!(path.closed);
+                            assert_eq!(path.stroke, egui::epaint::PathStroke::NONE);
+                            Some(path.points)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(painted, expected, "only the two touched owners are tinted; column={column}, merged={merged}");
+                assert_eq!(app.session.doc().unwrap().selection, selection);
+            }
+        }
     }
 
     #[test]
