@@ -150,6 +150,9 @@ pub fn natural_size(bytes: &[u8]) -> Option<(f64, f64)> {
 
 /// Pixel dimensions of a raster.
 pub fn pixel_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if let Some(p) = palette_tiff(bytes) {
+        return Some((p.width, p.height));
+    }
     if is_psd(bytes) && bytes.len() >= 26 {
         // Header: signature, version, 6 reserved, channels, height, width (big-endian).
         let be = |i: usize| u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
@@ -162,6 +165,10 @@ pub fn pixel_size(bytes: &[u8]) -> Option<(u32, u32)> {
 pub fn decode_rgba(bytes: &[u8]) -> Option<image::RgbaImage> {
     if is_psd(bytes) {
         return psd::decode(bytes);
+    }
+    // `image` rejects indexed-colour TIFFs (an old GIF logo saved from Photoshop).
+    if let Some(img) = decode_palette_tiff(bytes) {
+        return Some(img);
     }
     // An EPS is drawn as its proxy (preview, simple PostScript or placeholder); the document
     // keeps the EPS itself.
@@ -226,6 +233,98 @@ fn tiff_decoder(bytes: &[u8]) -> Option<tiff::decoder::Decoder<std::io::Cursor<&
         return None;
     }
     tiff::decoder::Decoder::new(std::io::Cursor::new(bytes)).ok()
+}
+
+/// An indexed-colour TIFF (PhotometricInterpretation 3): its size, bits per index and ColorMap
+/// in 8 bits per channel.
+struct PaletteTiff {
+    width: u32,
+    height: u32,
+    bits: u8,
+    colours: Vec<[u8; 3]>,
+}
+
+/// The header of a palette TIFF with 1-, 2-, 4- or 8-bit indices and a full ColorMap, which
+/// neither `image` nor `tiff` decodes. `None` for anything else.
+fn palette_tiff(bytes: &[u8]) -> Option<PaletteTiff> {
+    use tiff::tags::Tag;
+    let mut d = tiff_decoder(bytes)?;
+    if d.find_tag_unsigned::<u16>(Tag::PhotometricInterpretation).ok()?? != 3 {
+        return None;
+    }
+    if d.find_tag_unsigned::<u16>(Tag::SamplesPerPixel).ok()?.unwrap_or(1) != 1 {
+        return None;
+    }
+    let bits = d.find_tag_unsigned::<u8>(Tag::BitsPerSample).ok()?.unwrap_or(1);
+    if !matches!(bits, 1 | 2 | 4 | 8) {
+        return None;
+    }
+    // 2^bits reds, then greens, then blues; 16-bit entries whose high byte is the 8-bit value.
+    let map = d.find_tag_unsigned_vec::<u16>(Tag::ColorMap).ok()??;
+    let n = 1usize << bits;
+    let (r, gb) = map.split_at_checked(n)?;
+    let (g, b) = gb.split_at_checked(n)?;
+    if b.len() != n {
+        return None;
+    }
+    let colours = r.iter().zip(g).zip(b).map(|((&r, &g), &b)| [r, g, b].map(|v| (v >> 8) as u8)).collect();
+    let (width, height) = d.dimensions().ok()?;
+    Some(PaletteTiff { width, height, bits, colours })
+}
+
+/// A palette TIFF as RGBA, each index looked up in the ColorMap.
+fn decode_palette_tiff(bytes: &[u8]) -> Option<image::RgbaImage> {
+    let p = palette_tiff(bytes)?;
+    // Read as gray, `tiff` hands back the indices themselves, whatever the compression or layout.
+    let gray = with_photometric(bytes, 1)?;
+    let tiff::decoder::DecodingResult::U8(px) = tiff_decoder(&gray)?.read_image().ok()? else { return None };
+    let (w, h) = (usize::try_from(p.width).ok()?, usize::try_from(p.height).ok()?);
+    let bits = usize::from(p.bits);
+    // Indices below 8 bits are packed high bits first, each row starting on a byte.
+    let row = w.checked_mul(bits)?.div_ceil(8);
+    if row == 0 || px.len() < row.checked_mul(h)? {
+        return None;
+    }
+    let per_byte = 8 / bits;
+    let mask = ((1u16 << bits) - 1) as u8;
+    let mut out = Vec::new();
+    out.try_reserve_exact(w.checked_mul(h)?.checked_mul(4)?).ok()?;
+    for line in px.chunks_exact(row).take(h) {
+        for x in 0..w {
+            let shift = 8 - bits * (x % per_byte + 1);
+            let i = (line.get(x / per_byte)? >> shift) & mask;
+            let [r, g, b] = *p.colours.get(usize::from(i))?;
+            out.extend([r, g, b, 255]);
+        }
+    }
+    image::RgbaImage::from_raw(p.width, p.height, out)
+}
+
+/// A copy of a TIFF with its first image's PhotometricInterpretation (tag 262, one SHORT) set
+/// to `value`. Classic and BigTIFF, either byte order.
+fn with_photometric(bytes: &[u8], value: u16) -> Option<Vec<u8>> {
+    let le = bytes.starts_with(b"II");
+    let int = |at: usize, len: usize| -> Option<usize> {
+        let b = bytes.get(at..at.checked_add(len)?)?;
+        let v = |acc: u64, &x: &u8| acc << 8 | u64::from(x);
+        usize::try_from(if le { b.iter().rev().fold(0, v) } else { b.iter().fold(0, v) }).ok()
+    };
+    // Classic: 4-byte offsets and value counts, 2-byte entry count, 12-byte entries. BigTIFF:
+    // 8, 8, 8 and 20.
+    let (ifd, word, count_len, entry_len) = if int(2, 2)? == 43 { (int(8, 8)?, 8, 8, 20) } else { (int(4, 4)?, 4, 2, 12) };
+    let count = int(ifd, count_len)?;
+    for k in 0..count {
+        let at = ifd.checked_add(count_len)?.checked_add(k.checked_mul(entry_len)?)?;
+        // Tag, type (3 = SHORT), value count, then the value itself.
+        if int(at, 2)? == 262 && int(at + 2, 2)? == 3 && int(at + 4, word)? == 1 {
+            let mut out = bytes.to_vec();
+            let v = if le { value.to_le_bytes() } else { value.to_be_bytes() };
+            let value_at = at + 4 + word;
+            out.get_mut(value_at..value_at + 2)?.copy_from_slice(&v);
+            return Some(out);
+        }
+    }
+    None
 }
 
 /// A TIFF whose pixels are CMYK (PhotometricInterpretation Separated, four inks).
@@ -433,6 +532,59 @@ mod tests {
         assert_eq!(decode_cmyk_tiff(&rgb), None);
         assert!(!is_cmyk_tiff(b"II*\0"), "truncated");
         assert_eq!(decode_cmyk_tiff(&b[..b.len() / 2]), None, "truncated");
+    }
+
+    /// Indexed colour (PhotometricInterpretation 3), which the `tiff` encoder has no type for.
+    struct Palette<const BITS: u16>;
+    impl<const BITS: u16> tiff::encoder::colortype::ColorType for Palette<BITS> {
+        type Inner = u8;
+        const TIFF_VALUE: tiff::tags::PhotometricInterpretation = tiff::tags::PhotometricInterpretation::RGBPalette;
+        const BITS_PER_SAMPLE: &'static [u16] = &[BITS];
+        const SAMPLE_FORMAT: &'static [tiff::tags::SampleFormat] = &[tiff::tags::SampleFormat::Uint];
+        fn horizontal_predict(row: &[u8], result: &mut Vec<u8>) {
+            result.extend_from_slice(row);
+        }
+    }
+
+    /// A palette TIFF as Photoshop and Pillow write it: 16-bit ColorMap entries (reds, then
+    /// greens, then blues), each 8-bit value times 256.
+    fn palette_tiff<const BITS: u16>(w: u32, h: u32, px: &[u8], colours: &[[u8; 3]], lzw: bool) -> Vec<u8> {
+        let n = 1usize << BITS;
+        let mut map = vec![0u16; 3 * n];
+        for (i, c) in colours.iter().enumerate() {
+            for (ch, &v) in c.iter().enumerate() {
+                map[ch * n + i] = u16::from(v) << 8;
+            }
+        }
+        let mut b = Vec::new();
+        let mut enc = tiff::encoder::TiffEncoder::new(std::io::Cursor::new(&mut b)).unwrap();
+        if lzw {
+            enc = enc.with_compression(tiff::encoder::Compression::Lzw);
+        }
+        let mut img = enc.new_image::<Palette<BITS>>(w, h).unwrap();
+        img.encoder().write_tag(tiff::tags::Tag::ColorMap, &map[..]).unwrap();
+        img.write_data(px).unwrap();
+        b
+    }
+
+    /// Indexed-colour TIFFs (an old GIF logo saved from Photoshop) are sized and drawn through
+    /// their palette, uncompressed or LZW, 8- or 4-bit.
+    #[test]
+    fn palette_tiff_decodes_through_its_colormap() {
+        let colours = [[0, 128, 255], [255, 0, 0], [10, 20, 30]];
+        for lzw in [false, true] {
+            let b = palette_tiff::<8>(3, 1, &[2, 0, 1], &colours, lzw);
+            assert_eq!(pixel_size(&b), Some((3, 1)), "lzw {lzw}");
+            let img = decode_rgba(&b).expect("decodes");
+            let px: Vec<_> = img.pixels().map(|p| p.0).collect();
+            assert_eq!(px, [[10, 20, 30, 255], [0, 128, 255, 255], [255, 0, 0, 255]], "lzw {lzw}");
+        }
+        // Two indices per byte, high nibble first: 2, 1 | 0, 2 (the encoder counts samples, not
+        // bytes, so the strip carries two spare bytes the decoder doesn't read).
+        let b = palette_tiff::<4>(2, 2, &[0x21, 0x02, 0, 0], &colours, false);
+        assert_eq!(pixel_size(&b), Some((2, 2)));
+        let px: Vec<_> = decode_rgba(&b).expect("decodes").pixels().map(|p| p.0).collect();
+        assert_eq!(px, [[10, 20, 30, 255], [255, 0, 0, 255], [0, 128, 255, 255], [10, 20, 30, 255]]);
     }
 
     #[test]
