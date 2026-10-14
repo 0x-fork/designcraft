@@ -550,6 +550,94 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
                 }
             }
         }
+        // Pathfinder panel › Paths: a join point, a path opened and one closed, two opposed arrows.
+        "path-join" => {
+            pen.line(&[(3.0, 16.0), (5.0, 12.0), (10.0, 10.0)]);
+            pen.line(&[(10.0, 10.0), (15.0, 8.0), (17.0, 4.0)]);
+            pen.fcircle(10.0, 10.0, 2.2);
+        }
+        "path-open" | "path-close" => {
+            let gap = if name == "path-open" { 0.9 } else { 0.0 };
+            let n = 28;
+            let pts: Vec<(f32, f32)> = (0..=n)
+                .map(|i| {
+                    let a = -std::f32::consts::FRAC_PI_2 + gap / 2.0 + (std::f32::consts::TAU - gap) * i as f32 / n as f32;
+                    (10.0 + 6.5 * a.cos(), 10.5 + 6.5 * a.sin())
+                })
+                .collect();
+            pen.line(&pts);
+            if name == "path-open" {
+                pen.frect(11.0, 2.5, 14.0, 5.5);
+                pen.frect(6.0, 2.5, 9.0, 5.5);
+            } else {
+                pen.fcircle(10.0, 4.0, 1.8);
+            }
+        }
+        "path-reverse" => {
+            pen.line(&[(3.0, 7.0), (16.0, 7.0)]);
+            pen.line(&[(13.0, 4.0), (16.5, 7.0), (13.0, 10.0)]);
+            pen.line(&[(17.0, 13.0), (4.0, 13.0)]);
+            pen.line(&[(7.0, 10.0), (3.5, 13.0), (7.0, 16.0)]);
+        }
+        // Pathfinder panel › Convert Shape: the shape outlined.
+        "shape-rect" => pen.rect(3.0, 5.0, 17.0, 15.0),
+        "shape-rounded" | "shape-beveled" | "shape-inverse" => {
+            let (x0, y0, x1, y1, r): (f32, f32, f32, f32, f32) = (3.0, 5.0, 17.0, 15.0, 3.5);
+            // Clockwise from the top left: each corner's two ends, and the centre of its arc
+            // (inside for a rounded corner, the corner itself for an inverse rounded one).
+            let corners = [
+                ((x0, y0), (x0, y0 + r), (x0 + r, y0), (x0 + r, y0 + r)),
+                ((x1, y0), (x1 - r, y0), (x1, y0 + r), (x1 - r, y0 + r)),
+                ((x1, y1), (x1, y1 - r), (x1 - r, y1), (x1 - r, y1 - r)),
+                ((x0, y1), (x0 + r, y1), (x0, y1 - r), (x0 + r, y1 - r)),
+            ];
+            let mut pts = Vec::new();
+            for (corner, a, b, inner) in corners {
+                if name == "shape-beveled" {
+                    pts.extend([a, b]);
+                    continue;
+                }
+                let c = if name == "shape-inverse" { corner } else { inner };
+                let a0 = (a.1 - c.1).atan2(a.0 - c.0);
+                let mut d = (b.1 - c.1).atan2(b.0 - c.0) - a0;
+                if d > std::f32::consts::PI {
+                    d -= std::f32::consts::TAU;
+                } else if d < -std::f32::consts::PI {
+                    d += std::f32::consts::TAU;
+                }
+                pts.extend((0..=6).map(|k| {
+                    let t = a0 + d * k as f32 / 6.0;
+                    (c.0 + r * t.cos(), c.1 + r * t.sin())
+                }));
+            }
+            pen.closed(&pts);
+        }
+        "shape-ellipse" => pen.ellipse(10.0, 10.0, 7.5, 5.0),
+        "shape-triangle" => pen.closed(&[(10.0, 3.5), (17.0, 16.0), (3.0, 16.0)]),
+        "shape-polygon" => pen.closed(&[(6.5, 4.0), (13.5, 4.0), (17.0, 10.0), (13.5, 16.0), (6.5, 16.0), (3.0, 10.0)]),
+        "shape-line" => pen.line(&[(4.0, 16.0), (16.0, 4.0)]),
+        "shape-orthogonal" => {
+            pen.line(&[(10.0, 3.0), (10.0, 17.0)]);
+            pen.line(&[(3.0, 10.0), (17.0, 10.0)]);
+        }
+        // Pathfinder panel › Convert Point: a point on a path, with its direction handles.
+        "point-plain" | "point-corner" | "point-smooth" | "point-symmetrical" => {
+            match name {
+                "point-plain" | "point-corner" => pen.line(&[(3.0, 16.0), (10.0, 8.0), (17.0, 16.0)]),
+                _ => pen.line(&[(3.0, 16.0), (5.5, 11.5), (10.0, 8.0), (14.5, 11.5), (17.0, 16.0)]),
+            }
+            let handles: &[(f32, f32)] = match name {
+                "point-corner" => &[(4.5, 4.0), (16.0, 5.0)],
+                "point-smooth" => &[(5.0, 8.0), (17.5, 8.0)],
+                "point-symmetrical" => &[(4.0, 8.0), (16.0, 8.0)],
+                _ => &[],
+            };
+            for &(hx, hy) in handles {
+                pen.line(&[(10.0, 8.0), (hx, hy)]);
+                pen.fcircle(hx, hy, 1.4);
+            }
+            pen.frect(8.5, 6.5, 11.5, 9.5);
+        }
         // ---- Properties panel glyphs (original drawings)
         "orient-portrait" => {
             pen.rect(5.5, 3.0, 14.5, 17.0);
@@ -883,6 +971,38 @@ mod tests {
         });
         out.textures_delta.clear();
         format!("{:?}", out.shapes.iter().map(|s| &s.shape).collect::<Vec<_>>())
+    }
+
+    /// The Pathfinder panel's icons are all drawn, and all differ.
+    #[test]
+    fn pathfinder_panel_icons_are_drawn() {
+        let names = [
+            "path-join",
+            "path-open",
+            "path-close",
+            "path-reverse",
+            "shape-rect",
+            "shape-rounded",
+            "shape-beveled",
+            "shape-inverse",
+            "shape-ellipse",
+            "shape-triangle",
+            "shape-polygon",
+            "shape-line",
+            "shape-orthogonal",
+            "point-plain",
+            "point-corner",
+            "point-smooth",
+            "point-symmetrical",
+        ];
+        let unknown = drawing("no-such-icon");
+        let drawn: Vec<String> = names.iter().map(|n| drawing(n)).collect();
+        for (i, (n, d)) in names.iter().zip(&drawn).enumerate() {
+            assert_ne!(*d, unknown, "{n} falls back to the placeholder");
+            for (m, e) in names.iter().zip(&drawn).skip(i + 1) {
+                assert_ne!(d, e, "{n} draws like {m}");
+            }
+        }
     }
 
     #[test]
