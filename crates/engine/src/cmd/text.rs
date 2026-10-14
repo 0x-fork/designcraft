@@ -2645,12 +2645,11 @@ mod gradient_text_tests {
     fn a_gradient_on_table_cell_text_spans_the_cells_text_in_pdf_as_on_screen() {
         let mut s = crate::Session::new();
         s.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false, "margins": 0})).unwrap();
-        let g = s
-            .execute("swatch.create", &json!({"gradient": {"stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}}))
-            .unwrap()["name"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        // A gradient swatch (an off-page object's unnamed one), red → blue.
+        let shape = s.execute("frame.create", &json!({"rect": [-60, 0, -50, 10], "content": "unassigned"})).unwrap()["id"].clone();
+        s.execute("object.gradient", &json!({"ids": [shape], "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}))
+            .unwrap();
+        let g = s.doc().unwrap().doc.item(designcraft_doc::ItemId(shape.as_u64().unwrap())).unwrap().fill.swatch.clone();
         let r = s.execute("frame.create", &json!({"rect": [0, 0, 300, 120], "content": "text", "text": ""})).unwrap();
         s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 0})).unwrap();
         s.execute("table.insert", &json!({"rows": 1, "cols": 3})).unwrap();
