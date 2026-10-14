@@ -357,9 +357,13 @@ fn page_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Docu
         let _ = app.run("layout.pages.duplicateSpread", json!({"spread": si, "atEnd": true}));
         ui.close();
     }
-    if item(ui, if pages_in_spread > 1 { "Delete Spread" } else { "Delete Page" }) {
+    if item(ui, "Delete Page") {
+        let _ = app.run("layout.pages.delete", json!({"pages": [abs]}));
+        ui.close();
+    }
+    if pages_in_spread > 1 && item(ui, "Delete Spread") {
         let first = doc.first_page_of_spread(si);
-        let _ = app.run("layout.pages.delete", json!({"pages": (first..first + pages_in_spread).collect::<Vec<_>>()}));
+        let _ = app.run("layout.pages.delete", json!({"pages": (first..first.saturating_add(pages_in_spread)).collect::<Vec<_>>()}));
         ui.close();
     }
     ui.separator();
@@ -507,12 +511,10 @@ mod tests {
         h.run_steps(3);
     }
 
-    #[test]
-    fn the_panel_menu_follows_indesigns_order() {
-        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
-        app.run("file.new", json!({"pages": 2, "facingPages": false})).unwrap();
+    /// The page menu for page `abs` of spread `si`.
+    fn menu_harness(app: DesignApp, abs: usize, si: usize) -> Harness<'static, DesignApp> {
         let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(
-            |ui, app: &mut DesignApp| {
+            move |ui, app: &mut DesignApp| {
                 let key = egui::Id::new("test_fonts");
                 if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
                     crate::theme::install_fonts(ui.ctx(), "");
@@ -520,11 +522,34 @@ mod tests {
                     return;
                 }
                 let doc = app.session.doc().unwrap().doc.clone();
-                page_menu(app, ui, &doc, 0, 0);
+                page_menu(app, ui, &doc, abs, si);
             },
             app,
         );
         h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn a_page_in_a_spread_offers_delete_page_and_delete_spread() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 5, "facingPages": true})).unwrap();
+        let doc = app.session.doc().unwrap().doc.clone();
+        let (si, _) = doc.page_loc(2).unwrap();
+        assert_eq!(doc.spreads[si].pages.len(), 2);
+        let mut h = menu_harness(app, 2, si);
+        let _ = h.get_by_label("Delete Spread");
+        h.get_by_label("Delete Page").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.doc().unwrap().doc.page_count(), 4, "only the clicked page");
+    }
+
+    #[test]
+    fn the_panel_menu_follows_indesigns_order() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 2, "facingPages": false})).unwrap();
+        let mut h = menu_harness(app, 0, 0);
+        assert!(h.query_by_label("Delete Spread").is_none(), "a single-page spread has no Delete Spread");
         // InDesign's items, top to bottom.
         let ys: Vec<f32> = ["Insert Pages…", "Move Pages…", "Duplicate Spread", "Duplicate Spread at End of Document", "Delete Page", "New Parent…"]
             .iter()
