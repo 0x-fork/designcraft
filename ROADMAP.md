@@ -4,6 +4,7 @@
 
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes) · **Target:** Adobe InDesign 2026
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (parent canvas refresh) · **Target:** Adobe InDesign 2026
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (bounded control click/drag input) · **Target:** Adobe InDesign 2026
 
 DesignCraft aims at full Adobe InDesign parity, and to be better: faster, open (documented JSON
 format + IDML), scriptable by agents (MCP), and available on the web.
@@ -151,6 +152,7 @@ Newest first.
   refuse threads. The alpha gate now waits only on the Primary Text Frame page fixes (#165). No
   readiness percentage change.
 - **2026-10-13** · Layout ▸ Table of Contents opens a real dialog: title and title style, Include Paragraph Styles and Other Styles lists with Add and Remove, and per style its entry style, page number position (after, before, none), separator and level. Replace Existing regenerates the current table of contents in place; otherwise OK makes a new frame on the page in view. IDML export writes the definition as a TOC style that import reads back, so Update works after a round trip. No readiness percentage change.
+- **2026-10-13** · Control-channel clicks and drags validate positive counts and the complete pending-event budget before queuing input (#732). Oversized requests leave pending gestures intact, preventing unbounded click-count allocation. No readiness percentage change.
 - **2026-10-12** · macOS Dock Quit uses the same unsaved-document prompts as window and menu Quit. Repeated requests keep the current answers; Cancel retains every tab and unsaved recovery checkpoint, and completed Save/Don't Save answers exit through the ordinary event loop. No readiness percentage change.
 - **2026-10-12** · Orderly native exit writes the latest recovery state after finalizing current quit approvals; incomplete or stale plans keep their documents, and Undo to the saved state clears stale recovery. Unavailable or failed recovery is reported. Cancelable macOS Dock Quit remains open (#544). No readiness percentage change.
 - **2026-10-12** · Recovered documents keep a checkpoint until saved, closed or reverted, including a second crash before autosave. Restarted document IDs and explicit recovery folders preserve other snapshots; failed republishing retains the original. No readiness percentage change.
