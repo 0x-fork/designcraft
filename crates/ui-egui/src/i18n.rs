@@ -684,6 +684,28 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Document Setup", ["Document Setup", "Format de document", "Document Setup", "Document Setup", "文档设置"]),
     ("Drop Shadow", ["Drop Shadow", "Ombre portée", "Drop Shadow", "Drop Shadow", "投影"]),
     ("Duplicate Spread", ["Duplicate Spread", "Dupliquer la planche", "Duplicate Spread", "Duplicate Spread", "复制跨页"]),
+    (
+        "Duplicate Spread at End of Document",
+        [
+            "Druckbogen am Dokumentende duplizieren",
+            "Dupliquer la planche à la fin du document",
+            "Duplicar pliego al final del documento",
+            "ドキュメントの最後にスプレッドを複製",
+            "在文档末尾复制跨页",
+        ],
+    ),
+    ("Delete Spread", ["Druckbogen löschen", "Supprimer la planche", "Eliminar pliego", "スプレッドを削除", "删除跨页"]),
+    ("Parent Pages", ["Übergeordnete Seiten", "Pages parents", "Páginas principales", "親ページ", "父页面"]),
+    (
+        "Apply Parent to Pages",
+        [
+            "Übergeordnete Seite auf Seiten anwenden",
+            "Appliquer le parent aux pages",
+            "Aplicar principal a páginas",
+            "親ページを適用",
+            "将父页面应用于页面",
+        ],
+    ),
     ("Email", ["Email", "E-mail", "Email", "Email", "电子邮件"]),
     ("Embed", ["Embed", "Incorporer", "Embed", "Embed", "嵌入"]),
     ("Export PDF", ["PDF exportieren", "Exporter en PDF", "Exportar PDF", "PDF を書き出し", "导出PDF"]),

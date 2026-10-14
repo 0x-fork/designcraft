@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-14** · The Pages panel menu follows InDesign's order: Insert Pages…, Move Pages…, Duplicate Spread (and at End of Document), Delete Page/Spread, New Parent…, Apply Parent to Pages, Override All Parent Page Items, Parent Pages, Create Alternate Layout…, Numbering & Section Options…, Allow Selected Spread to Shuffle. No readiness percentage change.
 - **2026-10-14** · Pages panel: Alt-drag copies a page, a page dropped on Create new page is duplicated at the end, Edit page size offers the presets and Custom Page Size…; duplicated pages keep their own size, rule and guides; thumbnails of pages of their own size stay in their rows. No readiness percentage change.
 - **2026-10-13** · Control-channel clicks and drags validate positive counts and the complete pending-event budget before queuing input (#732). Oversized requests leave pending gestures intact, preventing unbounded click-count allocation. No readiness percentage change.
 - **2026-10-13** · Switching between document and parent pages refreshes the canvas immediately, preventing black parent pages and stale document objects when the zoom stays the same. Ordinary edits retain partial repainting. No readiness percentage change.

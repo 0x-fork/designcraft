@@ -336,47 +336,39 @@ pub fn panel_menu(app: &mut DesignApp, ui: &mut egui::Ui) {
 }
 
 fn page_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Document, abs: usize, si: usize) {
-    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Insert Page After"))).clicked() {
-        let _ = app.run("layout.pages.insert", json!({"after": abs, "count": 1}));
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_owned();
+    let pages_in_spread = doc.spreads.get(si).map_or(1, |sp| sp.pages.len());
+    let item = |ui: &mut egui::Ui, label: &str| ui.button(crate::rtl::widget(ui, tr(label))).clicked();
+    // InDesign's order: pages, parents, layouts and numbering, shuffling.
+    if item(ui, "Insert Pages…") {
+        app.ui.dialog = Some(crate::dialogs::Dialog::new("cmd:layout.pages.insert", json!({"after": abs, "count": 1})));
         ui.close();
     }
-    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Delete Page"))).clicked() {
-        let _ = app.run("layout.pages.delete", json!({"pages": [abs]}));
+    if item(ui, "Move Pages…") {
+        app.ui.dialog = Some(crate::dialogs::Dialog::new("cmd:layout.pages.move", json!({"from": abs, "to": abs})));
         ui.close();
     }
-    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Duplicate Spread"))).clicked() {
+    if item(ui, "Duplicate Spread") {
         let _ = app.run("layout.pages.duplicateSpread", json!({"spread": si}));
         ui.close();
     }
-    if si > 0
-        && ui
-            .button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Add to Previous Spread")))
-            .on_hover_ui(|ui| {
-                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Spreads of up to 10 pages"));
-            })
-            .clicked()
-    {
-        let _ = app.run("layout.pages.toSpread", json!({"page": abs + 1, "spread": si - 1}));
+    if item(ui, "Duplicate Spread at End of Document") {
+        let _ = app.run("layout.pages.duplicateSpread", json!({"spread": si, "atEnd": true}));
         ui.close();
     }
-    let mut shuffle = doc.spreads.get(si).is_none_or(|sp| sp.allow_shuffle);
-    if ui.checkbox(&mut shuffle, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Allow Spread to Shuffle"))).clicked() {
-        let _ = app.run("layout.spreadShuffle", json!({"spread": si, "allow": shuffle}));
+    if item(ui, if pages_in_spread > 1 { "Delete Spread" } else { "Delete Page" }) {
+        let first = doc.first_page_of_spread(si);
+        let _ = app.run("layout.pages.delete", json!({"pages": (first..first + pages_in_spread).collect::<Vec<_>>()}));
         ui.close();
     }
     ui.separator();
-    for (id, label) in [
-        ("layout.overrideParentItems", "Override All Parent Page Items"),
-        ("layout.removeOverrides", "Remove All Local Overrides"),
-        ("layout.detachAll", "Detach All Objects from Parent"),
-    ] {
-        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
-            let _ = app.run(id, json!({"page": abs}));
-            ui.close();
-        }
+    if item(ui, "New Parent…") {
+        crate::menus::activate(app, "layout.parents.new", &serde_json::Value::Null);
+        ui.close();
     }
-    crate::menus::menu_button(ui, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Apply Parent")), |ui| {
-        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "[None]"))).clicked() {
+    crate::menus::menu_button(ui, crate::rtl::widget(ui, tr("Apply Parent to Pages")), |ui| {
+        if ui.button(crate::rtl::widget(ui, tr("[None]"))).clicked() {
             let _ = app.run("layout.pages.applyParent", json!({"pages": [abs], "parent": null}));
             ui.close();
         }
@@ -388,6 +380,45 @@ fn page_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Docu
             }
         }
     });
+    if item(ui, "Override All Parent Page Items") {
+        let _ = app.run("layout.overrideParentItems", json!({"page": abs}));
+        ui.close();
+    }
+    crate::menus::menu_button(ui, crate::rtl::widget(ui, tr("Parent Pages")), |ui| {
+        for (id, label) in [("layout.removeOverrides", "Remove All Local Overrides"), ("layout.detachAll", "Detach All Objects from Parent")] {
+            if ui.button(crate::rtl::widget(ui, tr(label))).clicked() {
+                let _ = app.run(id, json!({"page": abs}));
+                ui.close();
+            }
+        }
+    });
+    ui.separator();
+    if item(ui, "Create Alternate Layout…") {
+        crate::menus::activate(app, "layout.createAlternate", &serde_json::Value::Null);
+        ui.close();
+    }
+    if item(ui, "Numbering & Section Options…") {
+        crate::menus::activate(app, "layout.section", &serde_json::Value::Null);
+        ui.close();
+    }
+    ui.separator();
+    let mut shuffle = doc.spreads.get(si).is_none_or(|sp| sp.allow_shuffle);
+    if ui.checkbox(&mut shuffle, crate::rtl::widget(ui, tr("Allow Selected Spread to Shuffle"))).clicked() {
+        let _ = app.run("layout.spreadShuffle", json!({"spread": si, "allow": shuffle}));
+        ui.close();
+    }
+    // Not in InDesign's menu (it drags pages into spreads): kept for spreads of up to 10 pages.
+    if si > 0
+        && ui
+            .button(crate::rtl::widget(ui, tr("Add to Previous Spread")))
+            .on_hover_ui(|ui| {
+                crate::rtl::label(ui, tr("Spreads of up to 10 pages"));
+            })
+            .clicked()
+    {
+        let _ = app.run("layout.pages.toSpread", json!({"page": abs + 1, "spread": si - 1}));
+        ui.close();
+    }
 }
 
 /// A small label following the pointer while dragging.
@@ -474,6 +505,38 @@ mod tests {
         h.run_steps(2);
         h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers });
         h.run_steps(3);
+    }
+
+    #[test]
+    fn the_panel_menu_follows_indesigns_order() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 2, "facingPages": false})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let key = egui::Id::new("test_fonts");
+                if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(key, true));
+                    return;
+                }
+                let doc = app.session.doc().unwrap().doc.clone();
+                page_menu(app, ui, &doc, 0, 0);
+            },
+            app,
+        );
+        h.run_steps(3);
+        // InDesign's items, top to bottom.
+        let ys: Vec<f32> = ["Insert Pages…", "Move Pages…", "Duplicate Spread", "Duplicate Spread at End of Document", "Delete Page", "New Parent…"]
+            .iter()
+            .map(|l| h.get_by_label(l).rect().center().y)
+            .collect();
+        assert!(ys.windows(2).all(|w| w[0] < w[1]), "{ys:?}");
+        h.get_by_label("Duplicate Spread at End of Document").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.doc().unwrap().doc.page_count(), 3);
+        h.get_by_label("Insert Pages…").click();
+        h.run_steps(3);
+        assert!(h.state().ui.dialog.as_ref().is_some_and(|d| d.id == "cmd:layout.pages.insert"));
     }
 
     #[test]
