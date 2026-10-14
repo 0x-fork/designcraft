@@ -1384,8 +1384,9 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = p.get("altCols") {
             o.alt_cols = parse_alt(v);
         }
-        let h = p.get("headerRows").and_then(Value::as_u64).map(|v| v as usize);
-        let f = p.get("footerRows").and_then(Value::as_u64).map(|v| v as usize);
+        // At most 100 of each, as in `table.insert`: the rows the table lacks are added below.
+        let h = p.get("headerRows").and_then(Value::as_u64).map(|v| v.min(100) as usize);
+        let f = p.get("footerRows").and_then(Value::as_u64).map(|v| v.min(100) as usize);
         if h.is_some() || f.is_some() {
             let (h, f) = (h.unwrap_or(t.header_rows()), f.unwrap_or(t.footer_rows()));
             // Add rows when there aren't enough for the requested header/footer plus one body row.
@@ -2136,6 +2137,19 @@ mod sort_tests {
         assert_eq!([cell(&s, 0, 0), cell(&s, 1, 0), cell(&s, 2, 0)], ["b", "c", "a"]);
         s.execute("table.moveColumn", &json!({"from": 1, "to": 0})).unwrap();
         assert_eq!((cell(&s, 2, 0), cell(&s, 2, 1)), ("x".to_string(), "a".to_string()));
+    }
+
+    #[test]
+    fn table_options_limits_header_and_footer_rows() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 500, 700], "content": "text", "text": ""})).unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 0})).unwrap();
+        s.execute("table.insert", &json!({"rows": 2, "cols": 2})).unwrap();
+        // The limit `table.insert` has: the table used to grow by as many rows as were asked for.
+        s.execute("table.options", &json!({"headerRows": 5000, "footerRows": 5000})).unwrap();
+        let t = table(&s);
+        assert_eq!((t.header_rows(), t.footer_rows(), t.nrows()), (100, 100, 201));
     }
 }
 
