@@ -2169,3 +2169,89 @@ fn frame_preference_property_color_resolves_for_frames_and_object_styles() {
     assert_eq!(colors, vec!["Near", "Near", "Far", designcraft_color::swatch::NONE]);
     assert_eq!(d.styles.object_style("Child").unwrap().text_frame.as_ref().unwrap().column_rule_color, "Near");
 }
+
+/// A package entry nothing in `designmap.xml` refers to is never decompressed: a damaged one
+/// (its checksum no longer matches) does not stop the import.
+#[test]
+fn unreferenced_entries_are_not_read() {
+    use zip::write::SimpleFileOptions;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    w.start_file("mimetype", stored).unwrap();
+    w.write_all(MIMETYPE.as_bytes()).unwrap();
+    for (n, c) in [
+        ("designmap.xml", DESIGNMAP),
+        ("Resources/Graphic.xml", GRAPHIC),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", PREFS),
+        ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+        ("Spreads/Spread_sp1.xml", SPREAD),
+        ("Stories/Story_s1.xml", STORY),
+    ] {
+        w.start_file(n, SimpleFileOptions::default()).unwrap();
+        w.write_all(c.as_bytes()).unwrap();
+    }
+    w.start_file("junk/irrelevant.bin", stored).unwrap();
+    w.write_all(b"<<payload-of-an-unused-entry>>").unwrap();
+    let mut bytes = w.finish().unwrap().into_inner();
+    let at = bytes.windows(9).position(|w| w == b"<<payload").unwrap();
+    bytes[at] = b'X';
+    let d = import_idml(&bytes).unwrap();
+    assert_eq!(d.spreads.len(), 1);
+}
+
+/// A part that expands past the 512 MiB limit while claiming to hold one byte is refused once the
+/// limit is reached, with an error that says so, instead of being read whole into memory.
+#[test]
+fn oversized_part_is_refused() {
+    use zip::write::SimpleFileOptions;
+    let designmap = r#"<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" Self="d">
+          <idPkg:Story src="Stories/Story_big.xml"/>
+        </Document>"#;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    w.start_file("mimetype", SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+    w.write_all(MIMETYPE.as_bytes()).unwrap();
+    w.start_file("designmap.xml", SimpleFileOptions::default()).unwrap();
+    w.write_all(designmap.as_bytes()).unwrap();
+    w.start_file("Stories/Story_big.xml", SimpleFileOptions::default()).unwrap();
+    let chunk = vec![b' '; 1 << 20];
+    for _ in 0..512 {
+        w.write_all(&chunk).unwrap();
+    }
+    w.write_all(b" ").unwrap();
+    let mut bytes = w.finish().unwrap().into_inner();
+    assert!(bytes.len() < 8 << 20, "{}", bytes.len());
+    // Claim one byte in the local header and the central directory record (no ZIP64 fields or
+    // data descriptors here), so only the bytes actually decompressed can show the part is too big.
+    let mut patched = 0;
+    for i in 0..bytes.len().saturating_sub(46) {
+        let (size_at, len_at, name_at) = match &bytes[i..i + 4] {
+            b"PK\x03\x04" => (22, 26, 30),
+            b"PK\x01\x02" => (24, 28, 46),
+            _ => continue,
+        };
+        let len = u16::from_le_bytes([bytes[i + len_at], bytes[i + len_at + 1]]) as usize;
+        if bytes.get(i + name_at..i + name_at + len) == Some(b"Stories/Story_big.xml".as_slice()) {
+            bytes[i + size_at..i + size_at + 4].copy_from_slice(&1u32.to_le_bytes());
+            patched += 1;
+        }
+    }
+    assert_eq!(patched, 2);
+    let Err(err) = import_idml(&bytes) else { panic!("an oversized part imported") };
+    assert!(err.to_string().contains("limit"), "{err}");
+}
+
+/// A package with more entries than any document needs is refused before any is read.
+#[test]
+fn too_many_entries_are_refused() {
+    use zip::write::SimpleFileOptions;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    w.start_file("mimetype", stored).unwrap();
+    w.write_all(MIMETYPE.as_bytes()).unwrap();
+    for i in 0..100_000 {
+        w.start_file(format!("junk/{i}"), stored).unwrap();
+    }
+    let Err(err) = import_idml(&w.finish().unwrap().into_inner()) else { panic!("a package with 100 001 entries imported") };
+    assert!(err.to_string().contains("entries"), "{err}");
+}

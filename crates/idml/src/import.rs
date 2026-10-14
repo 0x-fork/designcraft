@@ -62,30 +62,14 @@ pub struct Imported {
 
 /// Import with a custom reader for linked files, reporting the problems that did not stop it.
 pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Imported> {
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
-    let mut files: HashMap<String, Vec<u8>> = HashMap::new();
-    // Normalised part name → entry name, first entry wins (zip order, so the choice is stable).
-    let mut lenient: HashMap<String, String> = HashMap::new();
-    for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
-        if f.is_dir() {
-            continue;
-        }
-        let name = f.name().to_string();
-        // The size is what the archive claims: don't reserve more than a sane part up front.
-        let mut buf = Vec::with_capacity((f.size() as usize).min(1 << 24));
-        f.read_to_end(&mut buf).map_err(|e| IdmlError::Part { part: name.clone(), msg: e.to_string() })?;
-        lenient.entry(normalize_part_name(&name)).or_insert_with(|| name.clone());
-        files.insert(name, buf);
-    }
-    let part = |name: &str| files.get(name).or_else(|| lenient.get(&normalize_part_name(name)).and_then(|n| files.get(n)));
-    if let Some(m) = part("mimetype")
-        && String::from_utf8_lossy(m).trim() != MIMETYPE
+    let mut pkg = Package::open(bytes)?;
+    if let Some(m) = pkg.part("mimetype")?
+        && String::from_utf8_lossy(&m).trim() != MIMETYPE
     {
-        return Err(IdmlError::NotIdml(format!("unexpected mimetype `{}`", String::from_utf8_lossy(m).trim())));
+        return Err(IdmlError::NotIdml(format!("unexpected mimetype `{}`", String::from_utf8_lossy(&m).trim())));
     }
-    let dm = part("designmap.xml").ok_or_else(|| IdmlError::NotIdml("missing designmap.xml".into()))?;
-    let root = parse(dm).map_err(|msg| IdmlError::Part { part: "designmap.xml".into(), msg })?;
+    let dm = pkg.part("designmap.xml")?.ok_or_else(|| IdmlError::NotIdml("missing designmap.xml".into()))?;
+    let root = parse(&dm).map_err(|msg| IdmlError::Part { part: "designmap.xml".into(), msg })?;
     if root.local() != "Document" {
         return Err(IdmlError::NotIdml(format!("designmap root is <{}>", root.name)));
     }
@@ -95,11 +79,11 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
     for c in root.elements() {
         if c.name.starts_with("idPkg:") {
             let Some(src) = c.get("src") else { continue };
-            let Some(data) = part(src) else {
+            let Some(data) = pkg.part(src)? else {
                 warnings.push(format!("{src}: listed in designmap.xml but missing from the package; its contents were not imported"));
                 continue;
             };
-            let el = parse(data).map_err(|msg| IdmlError::Part { part: src.into(), msg })?;
+            let el = parse(&data).map_err(|msg| IdmlError::Part { part: src.into(), msg })?;
             top.extend(el.elements().cloned());
         } else {
             top.push(c.clone());
@@ -114,6 +98,68 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
     })?;
     document.check().map_err(|e| IdmlError::Invalid(e.to_string()))?;
     Ok(Imported { document, warnings })
+}
+
+/// Most entries an IDML package may hold.
+const MAX_ENTRIES: usize = 100_000;
+/// Most bytes one package part may expand to.
+const MAX_PART_BYTES: u64 = 512 << 20;
+/// Most bytes all the parts read from one package may expand to together.
+const MAX_TOTAL_BYTES: u64 = 2 << 30;
+
+/// An IDML package whose parts are decompressed only when the import asks for them, within
+/// byte budgets that don't trust the sizes the archive claims.
+struct Package<'a> {
+    zip: zip::ZipArchive<std::io::Cursor<&'a [u8]>>,
+    /// Normalised part name → entry name, first entry wins (zip order, so the choice is stable).
+    lenient: HashMap<String, String>,
+    /// Bytes the parts still to be read may expand to.
+    left: u64,
+}
+
+impl<'a> Package<'a> {
+    fn open(bytes: &'a [u8]) -> Result<Self> {
+        let zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
+        if zip.len() > MAX_ENTRIES {
+            return Err(IdmlError::NotIdml(format!("{} entries (at most {MAX_ENTRIES})", zip.len())));
+        }
+        let mut lenient: HashMap<String, String> = HashMap::new();
+        for i in 0..zip.len() {
+            let Some(name) = zip.name_for_index(i) else { continue };
+            if name.ends_with('/') {
+                continue;
+            }
+            lenient.entry(normalize_part_name(name)).or_insert_with(|| name.to_string());
+        }
+        Ok(Package { zip, lenient, left: MAX_TOTAL_BYTES })
+    }
+
+    /// The bytes of part `name` (matched exactly, then leniently), or `None` if the package has
+    /// no such part.
+    fn part(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+        let exact = self.zip.index_for_name(name).filter(|_| !name.ends_with('/'));
+        let Some(i) = exact.or_else(|| self.lenient.get(&normalize_part_name(name)).and_then(|n| self.zip.index_for_name(n))) else {
+            return Ok(None);
+        };
+        let f = self.zip.by_index(i).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
+        let part = f.name().to_string();
+        let limit = MAX_PART_BYTES.min(self.left);
+        let too_big = || IdmlError::Part {
+            part: part.clone(),
+            msg: format!("larger than the {MAX_PART_BYTES}-byte part limit (or the package is larger than {MAX_TOTAL_BYTES} bytes)"),
+        };
+        if f.size() > limit {
+            return Err(too_big());
+        }
+        let mut buf = Vec::new();
+        f.take(limit.saturating_add(1)).read_to_end(&mut buf).map_err(|e| IdmlError::Part { part: part.clone(), msg: e.to_string() })?;
+        let n = buf.len() as u64;
+        if n > limit {
+            return Err(too_big());
+        }
+        self.left = self.left.saturating_sub(n);
+        Ok(Some(buf))
+    }
 }
 
 /// A package part name in the form the lookup compares: InDesign and other IDML writers differ
