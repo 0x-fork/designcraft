@@ -4,7 +4,7 @@
 //! vello_cpu only supports filter layers in single-threaded contexts, so on the multithreaded
 //! pipeline each effect is rendered into an offscreen single-threaded context cropped to its
 //! reach and composited back as an image ([`Renderer::with_filters`]); single-threaded contexts
-//! draw directly.
+//! draw directly. A very wide blur goes offscreen in both, at a lower resolution.
 //!
 //! - Drop shadow / outer glow: the object's silhouette (everything it paints: fill, image, text,
 //!   stroke) in a `DropShadowOnly` layer under the object. `size` sets the blur (σ = size / 2),
@@ -337,8 +337,9 @@ impl Renderer {
     }
 
     /// Run `draw`, which pushes filter layers. Single-threaded contexts draw directly. On a
-    /// multithreaded context the layer is drawn into an offscreen single-threaded context
-    /// covering `reach` (spread space) plus the blur's spread, then composited back.
+    /// multithreaded context, or for a blur wider than [`MAX_BLUR_SPREAD`], the layer is drawn into
+    /// an offscreen single-threaded context covering `reach` (spread space) plus the blur's spread,
+    /// then composited back.
     pub(crate) fn with_filters(
         &mut self,
         ctx: &mut RenderContext,
@@ -347,28 +348,67 @@ impl Renderer {
         sigma: f64,
         draw: impl FnOnce(&mut Self, &mut RenderContext, &Frame),
     ) {
-        if !f.mt {
-            return draw(self, ctx, f);
-        }
         // 3σ of the Gaussian in pixels, plus a pixel of antialiasing.
         let spread = sigma.max(0.0) * 3.0 / f.px + 2.0;
-        let screen = Rect::new(0.0, 0.0, ctx.width() as f64, ctx.height() as f64).inflate(spread, spread);
-        let r = f.view.transform_rect_bbox(reach).inflate(spread, spread).intersect(screen);
-        let (x0, y0) = (r.x0.floor(), r.y0.floor());
-        let (w, h) = ((r.x1.ceil() - x0).min(crate::MAX_SIDE as f64), (r.y1.ceil() - y0).min(crate::MAX_SIDE as f64));
-        if w < 1.0 || h < 1.0 {
-            return;
+        if !f.mt && spread <= MAX_BLUR_SPREAD {
+            return draw(self, ctx, f);
         }
-        let (w, h) = (w as u16, h as u16);
-        let mut off = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
-        let shifted = Frame { mt: false, view: Affine::translate((-x0, -y0)) * f.view, ..*f };
+        let Some(o) = offscreen(f.view.transform_rect_bbox(reach), spread, ctx.width(), ctx.height()) else { return };
+        let mut off = RenderContext::new_with(o.width, o.height, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+        let view = Affine::scale(1.0 / o.scale) * Affine::translate((-o.x0, -o.y0)) * f.view;
+        let shifted = Frame { mt: false, view, px: f.px * o.scale, ..*f };
         draw(self, &mut off, &shifted);
         off.flush();
-        let mut pm = vello_cpu::Pixmap::new(w, h);
+        let mut pm = vello_cpu::Pixmap::new(o.width, o.height);
         off.render(&mut pm, &mut self.resources);
-        ctx.set_transform(Affine::translate((x0, y0)));
+        ctx.set_transform(Affine::translate((o.x0, o.y0)) * Affine::scale(o.scale));
         ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(std::sync::Arc::new(pm)), sampler: peniko::ImageSampler::default() });
-        ctx.fill_rect(&Rect::new(0.0, 0.0, w as f64, h as f64));
+        ctx.fill_rect(&Rect::new(0.0, 0.0, f64::from(o.width), f64::from(o.height)));
         ctx.set_transform(Affine::IDENTITY);
+    }
+}
+
+/// The widest blur (3σ, device pixels) drawn at full resolution. vello pads a filter layer by the
+/// blur's width on every side, so a wide blur needs gigabytes; it is drawn at a lower resolution
+/// instead, where it is this wide, and has no detail to lose there.
+const MAX_BLUR_SPREAD: f64 = 1024.0;
+
+/// An offscreen image for [`Renderer::with_filters`]: where it goes on the device, how many device
+/// pixels one of its pixels covers, and its size.
+#[derive(Debug, PartialEq)]
+struct Offscreen {
+    x0: f64,
+    y0: f64,
+    scale: f64,
+    width: u16,
+    height: u16,
+}
+
+/// The offscreen image an effect is drawn in: `reach` (device pixels) widened by the blur's
+/// `spread`, within the window widened the same way, at a resolution that keeps the blur within
+/// [`MAX_BLUR_SPREAD`], at most `MAX_SIDE` a side. `None` when none of it shows.
+fn offscreen(reach: Rect, spread: f64, width: u16, height: u16) -> Option<Offscreen> {
+    let screen = Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).inflate(spread, spread);
+    let r = reach.inflate(spread, spread).intersect(screen);
+    let (x0, y0) = (r.x0.floor(), r.y0.floor());
+    let scale = (spread / MAX_BLUR_SPREAD).max(1.0);
+    let side = |len: f64| (len / scale).ceil().min(crate::MAX_SIDE as f64);
+    let (w, h) = (side(r.x1.ceil() - x0), side(r.y1.ceil() - y0));
+    (w >= 1.0 && h >= 1.0).then_some(Offscreen { x0, y0, scale, width: w as u16, height: h as u16 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wide_blur_is_drawn_offscreen_at_a_lower_resolution() {
+        let object = Rect::new(150.0, 150.0, 350.0, 350.0);
+        let small = Offscreen { x0: 140.0, y0: 140.0, scale: 1.0, width: 220, height: 220 };
+        assert_eq!(offscreen(object, 10.0, 1440, 900), Some(small));
+        // A 10,000 pt drop shadow at 100%: 3σ is 15,000 px, which asked for 30,204 px a side and as
+        // much padding again inside vello's filter layer. Drawn at 1/14.65 it is 1,024 px wide.
+        let wide = Offscreen { x0: -14852.0, y0: -14852.0, scale: 15_002.0 / 1024.0, width: 2062, height: 2062 };
+        assert_eq!(offscreen(object, 15_002.0, 1440, 900), Some(wide));
     }
 }
