@@ -1031,6 +1031,14 @@ pub(crate) fn validate_char_fill(document: &designcraft_doc::Document, attrs: &C
     Ok(())
 }
 
+/// Byte `pos` is the hidden paragraph mark of an *empty* paragraph: the only character on that
+/// line, and so the one a line-affecting attribute like leading can land on right away instead of
+/// waiting for the next typed character (otherwise an empty line could never get its own leading).
+fn empty_para_mark(story: &designcraft_doc::Story, pos: usize) -> bool {
+    let ranges = story.para_ranges();
+    ranges.get(story.para_at(pos)).is_some_and(|r| r.start == pos && r.end == pos) && story.text.as_bytes().get(pos) == Some(&b'\n')
+}
+
 pub(crate) fn format_chars(s: &mut Session, attrs: &Value) -> Result<Value> {
     let mut a = CharAttrs::default();
     if let Some(o) = attrs.as_object() {
@@ -1041,11 +1049,13 @@ pub(crate) fn format_chars(s: &mut Session, attrs: &Value) -> Result<Value> {
     validate_char_fill(&s.doc()?.doc, &a, "type.char")?;
     let cleared: Vec<String> = attrs.as_object().map(|o| o.iter().filter(|(_, v)| v.is_null()).map(|(k, _)| k.clone()).collect()).unwrap_or_default();
     let targets = format_targets(s);
-    // A caret in text: the format is for the next typing.
+    // A caret in text: the format is for the next typing — unless it sits on an empty paragraph's
+    // hidden mark, which takes the format immediately (there is nothing else on that line to type
+    // into first).
     if let [t] = targets.as_slice()
         && t.range.is_empty()
         && let Some(at) = s.doc()?.selection.text
-        && s.doc()?.doc.text_story(t.story, t.cell).is_some_and(|st| !st.is_empty())
+        && s.doc()?.doc.text_story(t.story, t.cell).is_some_and(|st| !st.is_empty() && !empty_para_mark(st, t.range.start))
     {
         let doc = s.doc()?.uid;
         let mut f = typing_format(s).cloned().unwrap_or(TypingFormat { doc, at, attrs: CharAttrs::default(), cleared: vec![] });
@@ -1067,12 +1077,21 @@ pub(crate) fn apply_char_attrs(d: &mut designcraft_doc::Document, targets: &[Tar
         let r = &t.range;
         let Some(st) = d.text_story_mut(t.story, t.cell) else { continue };
         if r.is_empty() {
-            // An empty story: its one (empty) run is the format typing takes.
-            if st.is_empty()
-                && let Some(run) = st.chars.first_mut()
-            {
-                run.format.over.merge(a);
-                st.rev += 1;
+            if st.is_empty() {
+                // An empty story: its one (empty) run is the format typing takes.
+                if let Some(run) = st.chars.first_mut() {
+                    run.format.over.merge(a);
+                    st.rev += 1;
+                }
+            } else if empty_para_mark(st, r.start) {
+                // An empty paragraph elsewhere in the story: its hidden paragraph mark is its only
+                // character, and the one that carries line-affecting attributes like leading.
+                st.format_chars(r.start..r.start + 1, |f| {
+                    f.over.merge(a);
+                    for k in cleared {
+                        let _ = f.over.set_json(k, &Value::Null);
+                    }
+                });
             }
             continue;
         }
@@ -1638,6 +1657,32 @@ What's new in typography this season, and why it matters to every designer"}),
         s.execute("text.select", &json!({"story": sid.0, "anchor": 0, "focus": 4})).unwrap();
         s.execute("type.openType", &json!({"figures": "proportionalOldstyle"})).unwrap();
         assert_ne!(gids(&s), lining);
+    }
+
+    /// A blank line (an empty paragraph) has no characters to select, but its hidden paragraph
+    /// mark can still take a leading change right away: otherwise there'd be no way to adjust the
+    /// line height of a blank line at all.
+    #[test]
+    fn leading_applies_to_an_empty_lines_hidden_paragraph_mark() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let text = "Para one\n\nPara two";
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 300, 200], "content": "text", "text": text})).unwrap();
+        let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
+        // The blank line between the two paragraphs: a collapsed caret, since it has no text.
+        let blank = text.find("\n\n").unwrap() + 1;
+        s.execute("text.select", &json!({"story": sid.0, "anchor": blank})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"leading": {"kind": "points", "value": 40.0}}})).unwrap();
+        let st = s.doc().unwrap().doc.story(sid).unwrap();
+        // `char_format_at` resolves a boundary to the *preceding* run (new typing's format), so
+        // check just past the mark's own one-byte run, which the mark alone occupies.
+        assert_eq!(st.char_format_at(blank + 1).over.leading, Some(designcraft_doc::Leading::Points(40.0)));
+        // No pending typing format was left behind: it applied immediately.
+        assert!(s.typing_format.is_none());
+        let d = s.doc().unwrap().doc.clone();
+        let cs = designcraft_compose::compose_story(&d, sid, &Default::default());
+        let blank_line = cs.frames[0].lines.iter().find(|l| l.range == (blank..blank)).unwrap();
+        assert_eq!(blank_line.leading, 40.0, "the blank line's own height changed");
     }
 }
 
