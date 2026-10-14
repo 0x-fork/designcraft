@@ -1260,6 +1260,34 @@ fn alt_arrows_kern_at_the_caret_and_track_a_selection() {
 }
 
 #[test]
+fn duplicating_a_page_to_an_index_is_one_undo_step() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"facingPages": false})).unwrap();
+    s.execute("layout.pages.insert", &json!({"count": 2})).unwrap();
+    for (page, width) in [(1, 300), (2, 400), (3, 500)] {
+        s.execute("layout.pageSize", &json!({"pages": [page], "width": width, "height": 600})).unwrap();
+    }
+    let widths = |s: &Session| {
+        let d = &s.doc().unwrap().doc;
+        (0..d.page_count()).map(|i| d.page_loc(i).map(|(si, pi)| d.spreads[si].pages[pi].width)).collect::<Option<Vec<_>>>().unwrap()
+    };
+    // Backwards: the last page copied to the front.
+    let r = s.execute("layout.pages.duplicateSpread", &json!({"spread": 2, "to": 0})).unwrap();
+    assert_eq!(r["page"], 0);
+    assert_eq!(widths(&s), [500.0, 300.0, 400.0, 500.0]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+    // Forwards: the first page copied to the end.
+    s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "to": 3})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0, 300.0]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+    // Past the end: refused, nothing changes.
+    assert!(s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "to": 4})).is_err());
+    assert_eq!(widths(&s), [300.0, 400.0, 500.0]);
+}
+
+#[test]
 fn duplicating_a_page_keeps_its_own_size_rule_guides_and_objects() {
     // Chris Cicchino's Page Tool video (2:06): the letterhead page is duplicated, then resized.
     let mut s = Session::new();
