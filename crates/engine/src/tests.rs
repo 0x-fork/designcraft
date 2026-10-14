@@ -1356,3 +1356,59 @@ fn controlled_by_parent_takes_the_parent_pages_rule() {
     assert!(s.doc().unwrap().doc.spreads[0].pages[0].show_parent_overlay);
     assert!(s.execute("layout.pageOptions", &json!({"pages": [2], "showParentOverlay": true})).is_err());
 }
+
+#[test]
+fn page_tool_pins_and_locks_objects_on_object_based_pages() {
+    use designcraft_tools::{CanvasLayout, Mods, PointerEvent, PointerKind};
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 612, "height": 792, "facingPages": false})).unwrap();
+    let id = s.execute("frame.create", &json!({"rect": [256, 72, 356, 132]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("liquid.pageRule", &json!({"rule": "objectBased"})).unwrap();
+    s.execute("edit.deselectAll", &json!({})).unwrap();
+    s.set_tool("page");
+    let v = ViewInfo::at_zoom(1.0);
+    let ev =
+        |kind, p: designcraft_geom::Point, alt: bool| PointerEvent { mods: Mods { alt, ..Default::default() }, ..PointerEvent::new(kind, p.x, p.y) };
+    let canvas = |s: &Session| {
+        let d = &s.doc().unwrap().doc;
+        let l = CanvasLayout::new(d, false);
+        (
+            l.page_rect(d, 0).unwrap(),
+            l.xf(designcraft_doc::SpreadRef::Doc(0)).transform_rect_bbox(d.item(designcraft_doc::ItemId(id)).unwrap().bounds()),
+        )
+    };
+    let click = |s: &mut Session, p: designcraft_geom::Point| {
+        s.pointer(&ev(PointerKind::Down, p, false), v).unwrap();
+        s.pointer(&ev(PointerKind::Up, p, false), v).unwrap();
+    };
+    let liquid = |s: &Session| s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().liquid;
+    // A click on the object selects it with its page; its pins and locks show.
+    let (_, o) = canvas(&s);
+    click(&mut s, o.center());
+    let sel = s.doc().unwrap().selection.clone();
+    assert_eq!((sel.page, sel.items.clone()), (Some(0), vec![designcraft_doc::ItemId(id)]));
+    assert!(
+        s.overlays(v)
+            .iter()
+            .any(|o| matches!(o, designcraft_tools::Overlay::LiquidPins { pins: [false, false, false, false], resize: [true, true], .. }))
+    );
+    // The right pin (14 px outside the right edge) and the width lock (10 px right of the centre).
+    click(&mut s, designcraft_geom::Point::new(o.x1 + 14.0, o.center().y));
+    click(&mut s, designcraft_geom::Point::new(o.center().x + 10.0, o.center().y));
+    let l = liquid(&s).unwrap();
+    assert!(l.pin_right && !l.resize_width && l.resize_height && !l.pin_left, "{l:?}");
+    // Alt-drag the page 100 pt wider: the pinned, width-locked frame keeps its size by the right edge.
+    let (p, _) = canvas(&s);
+    let right = designcraft_geom::Point::new(p.x1, p.center().y);
+    s.pointer(&ev(PointerKind::Down, right, true), v).unwrap();
+    s.pointer(&ev(PointerKind::Drag, right + designcraft_geom::Vec2::new(100.0, 0.0), true), v).unwrap();
+    s.pointer(&ev(PointerKind::Up, right + designcraft_geom::Vec2::new(100.0, 0.0), true), v).unwrap();
+    let d = &s.doc().unwrap().doc;
+    let (pg, b) = (&d.spreads[0].pages[0], d.item(designcraft_doc::ItemId(id)).unwrap().bounds());
+    assert_eq!(pg.width, 712.0);
+    assert!((b.width() - 100.0).abs() < 1e-6 && (pg.x + pg.width - b.x1 - 256.0).abs() < 1e-6, "{b:?}");
+    // Hovering a pin shows its tooltip.
+    let (_, o) = canvas(&s);
+    s.pointer(&ev(PointerKind::Move, designcraft_geom::Point::new(o.x1 + 14.0, o.center().y), false), v).unwrap();
+    assert!(s.overlays(v).iter().any(|o| matches!(o, designcraft_tools::Overlay::Tip { text, .. } if text.starts_with("Object is pinned"))));
+}

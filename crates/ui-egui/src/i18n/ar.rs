@@ -773,6 +773,24 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Show Parent Page Overlay", "إظهار تراكب الصفحة الأصل"),
     ("Controlled by Parent", "تتحكم فيه الصفحة الأصل"),
     ("US Business Card", "بطاقة عمل أمريكية"),
+    ("Object is pinned relative to the page edge. Click to release.", "الكائن مثبت بالنسبة إلى حافة الصفحة. انقر لتحريره."),
+    ("Click to pin the object relative to the page edge.", "انقر لتثبيت الكائن بالنسبة إلى حافة الصفحة."),
+    (
+        "The object changes width as the page changes width. Click to lock the object width.",
+        "يتغير عرض الكائن مع تغير عرض الصفحة. انقر لقفل عرض الكائن.",
+    ),
+    (
+        "The object's width is locked. Click to let the object change width as the page changes width.",
+        "عرض الكائن مقفل. انقر للسماح بتغيره مع عرض الصفحة.",
+    ),
+    (
+        "The object changes height as the page changes height. Click to lock the object height.",
+        "يتغير ارتفاع الكائن مع تغير ارتفاع الصفحة. انقر لقفل ارتفاع الكائن.",
+    ),
+    (
+        "The object's height is locked. Click to let the object change height as the page changes height.",
+        "ارتفاع الكائن مقفل. انقر للسماح بتغيره مع ارتفاع الصفحة.",
+    ),
     ("Loop", "تكرار"),
     ("Object-based", "استنادًا إلى الكائنات"),
     ("Play on Page Load", "تشغيل عند تحميل الصفحة"),

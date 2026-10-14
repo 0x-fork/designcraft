@@ -304,7 +304,7 @@ fn page_tool_selects_a_page_and_opens_page_size_on_double_click() {
     let (x, y) = (200.0 + off.x + d.spreads[0].pages[0].x, 200.0 + off.y);
     let mut t = create("page");
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, x, y));
-    assert_eq!(a, vec![Action::Exec("layout.selectPage".into(), serde_json::json!({"page": 1}))]);
+    assert_eq!(a, vec![Action::Exec("layout.selectPage".into(), serde_json::json!({"page": 1, "ids": []}))]);
     let a = t.pointer(&cx, &PointerEvent::new(PointerKind::DoubleClick, x, y));
     assert_eq!(a, vec![Action::Dialog("cmd:layout.pageSize".into(), serde_json::json!({"pages": [1], "width": 612.0, "height": 792.0}))]);
     // The selected page shows its handles and its liquid page rule.

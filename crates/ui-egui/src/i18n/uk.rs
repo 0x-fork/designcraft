@@ -1356,6 +1356,24 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Show Parent Page Overlay", "Показати накладення батьківської сторінки"),
     ("Controlled by Parent", "Керується батьківською сторінкою"),
     ("US Business Card", "Візитна картка (США)"),
+    ("Object is pinned relative to the page edge. Click to release.", "Об’єкт закріплено відносно краю сторінки. Клацніть, щоб звільнити."),
+    ("Click to pin the object relative to the page edge.", "Клацніть, щоб закріпити об’єкт відносно краю сторінки."),
+    (
+        "The object changes width as the page changes width. Click to lock the object width.",
+        "Ширина об’єкта змінюється разом зі сторінкою. Клацніть, щоб заблокувати ширину.",
+    ),
+    (
+        "The object's width is locked. Click to let the object change width as the page changes width.",
+        "Ширину об’єкта заблоковано. Клацніть, щоб вона змінювалася разом зі сторінкою.",
+    ),
+    (
+        "The object changes height as the page changes height. Click to lock the object height.",
+        "Висота об’єкта змінюється разом зі сторінкою. Клацніть, щоб заблокувати висоту.",
+    ),
+    (
+        "The object's height is locked. Click to let the object change height as the page changes height.",
+        "Висоту об’єкта заблоковано. Клацніть, щоб вона змінювалася разом зі сторінкою.",
+    ),
     ("Loop", "Зациклити"),
     ("Object-based", "На основі об’єктів"),
     ("Off", "Вимкнено"),

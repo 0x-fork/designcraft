@@ -16,6 +16,7 @@ mod frame;
 mod gradient;
 pub mod layout;
 mod nav;
+pub use nav::{LOCK_OFFSET_PX, PIN_OFFSET_PX};
 mod pen;
 mod pencil;
 pub mod select;
@@ -359,6 +360,20 @@ pub enum Overlay {
     Tag {
         p: Point,
         text: String,
+    },
+    /// A tooltip near the pointer (English; the UI translates it).
+    Tip {
+        p: Point,
+        text: String,
+    },
+    /// An object's liquid pins and resize locks on an object-based page (Page tool), canvas
+    /// coordinates: pinned sides (top, right, bottom, left) and whether width and height follow the
+    /// page.
+    LiquidPins {
+        object: Rect,
+        page: Rect,
+        pins: [bool; 4],
+        resize: [bool; 2],
     },
 }
 

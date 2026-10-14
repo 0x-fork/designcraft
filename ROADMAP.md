@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-14** · On an object-based page the Page tool shows a selected object's liquid pins and resize locks as InDesign does: a click pins a side to the page edge or locks the width or height, with InDesign's tooltips. No readiness percentage change.
 - **2026-10-14** · With the Page tool, the Control panel shows the page as InDesign's does: W/H from a reference point, page-size preset (US Business Card added), orientation, Liquid Page Rule and Show Parent Page Overlay, which draws the parent page's size over a resized page. No readiness percentage change.
 - **2026-10-14** · The Page tool works as InDesign's: a click selects a page and shows its handles and liquid page rule; dragging a handle previews the rule and springs back, Alt-drag resizes the page from the opposite edge, Shift keeps proportions, with a W/H readout. No readiness percentage change.
 - **2026-10-14** · With the Page tool, a guide dragged from a ruler is a liquid guide (dashed), as in InDesign; guide-based pages stretch the objects it crosses. No readiness percentage change.

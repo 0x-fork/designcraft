@@ -1361,6 +1361,24 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Show Parent Page Overlay", "Mostra sovrapposizione pagina principale"),
     ("Controlled by Parent", "Controllato dalla pagina principale"),
     ("US Business Card", "Biglietto da visita USA"),
+    ("Object is pinned relative to the page edge. Click to release.", "L’oggetto è fissato rispetto al bordo della pagina. Fai clic per sbloccarlo."),
+    ("Click to pin the object relative to the page edge.", "Fai clic per fissare l’oggetto rispetto al bordo della pagina."),
+    (
+        "The object changes width as the page changes width. Click to lock the object width.",
+        "La larghezza dell’oggetto cambia con quella della pagina. Fai clic per bloccarla.",
+    ),
+    (
+        "The object's width is locked. Click to let the object change width as the page changes width.",
+        "La larghezza dell’oggetto è bloccata. Fai clic perché cambi con quella della pagina.",
+    ),
+    (
+        "The object changes height as the page changes height. Click to lock the object height.",
+        "L’altezza dell’oggetto cambia con quella della pagina. Fai clic per bloccarla.",
+    ),
+    (
+        "The object's height is locked. Click to let the object change height as the page changes height.",
+        "L’altezza dell’oggetto è bloccata. Fai clic perché cambi con quella della pagina.",
+    ),
     ("Loop", "Ciclo continuo"),
     ("Object-based", "Basato su oggetti"),
     ("Off", "Disattivato"),
