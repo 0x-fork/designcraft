@@ -75,6 +75,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.deletePage", "Delete Page", None, "{} — deletes the page in view"),
     ("app.duplicateSpread", "Duplicate Spread", None, "{} — duplicates the spread in view (pages and items)"),
     ("app.tablePanel", "Table Panel", Some("Shift+F9"), "{}"),
+    ("app.characterPanel", "Character", Some("Cmd+T"), "{} — the Character panel"),
+    ("app.paragraphPanel", "Paragraph", Some("Cmd+Alt+T"), "{} — the Paragraph panel"),
+    ("app.glyphsPanel", "Glyphs", Some("Alt+Shift+F11"), "{} — the Glyphs panel"),
+    ("app.characterStylesPanel", "Character Styles", Some("Cmd+Shift+F11"), "{} — the Character Styles panel"),
+    ("app.paragraphStylesPanel", "Paragraph Styles", Some("Cmd+F11"), "{} — the Paragraph Styles panel"),
+    ("app.insertCurrentPageNumber", "Current Page Number", Some("Cmd+Alt+Shift+N"), "{} — the Current Page Number marker at the insertion point"),
     ("app.storyEditor", "Edit in Story Editor", Some("Cmd+Y"), "{story?}"),
     ("view.zoomIn", "Zoom In", Some("Cmd+="), "{}"),
     ("view.zoomOut", "Zoom Out", Some("Cmd+-"), "{}"),
@@ -120,7 +126,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("view.baselineGrid", "Show/Hide Baseline Grid", Some("Cmd+Alt+'"), "{}"),
     ("view.textThreads", "Show/Hide Text Threads", Some("Cmd+Alt+Y"), "{}"),
-    ("view.hiddenCharacters", "Show/Hide Hidden Characters", Some("Cmd+Alt+I"), "{}"),
+    ("view.hiddenCharacters", "Show Hidden Characters", Some("Cmd+Alt+I"), "{}"),
     ("view.taggedFrames", "Show/Hide Tagged Frames", None, "{} — XML-tagged frames outlined in their tag colour"),
     ("window.hidePanels", "Show/Hide Panels", Some("Tab"), "{} — every panel, the Tools panel included"),
     ("window.hidePanelsExceptTools", "Show/Hide Panels Except Tools", Some("Shift+Tab"), "{}"),
@@ -330,18 +336,76 @@ pub const MENUS: &[(&str, &[&str])] = &[
     (
         "Type",
         &[
-            "ui:app.findFontDialog",
+            ">Size",
+            "cmd:type.char|6 pt|{\"attrs\": {\"size\": 6}}",
+            "cmd:type.char|7 pt|{\"attrs\": {\"size\": 7}}",
+            "cmd:type.char|8 pt|{\"attrs\": {\"size\": 8}}",
+            "cmd:type.char|9 pt|{\"attrs\": {\"size\": 9}}",
+            "cmd:type.char|10 pt|{\"attrs\": {\"size\": 10}}",
+            "cmd:type.char|11 pt|{\"attrs\": {\"size\": 11}}",
+            "cmd:type.char|12 pt|{\"attrs\": {\"size\": 12}}",
+            "cmd:type.char|14 pt|{\"attrs\": {\"size\": 14}}",
+            "cmd:type.char|18 pt|{\"attrs\": {\"size\": 18}}",
+            "cmd:type.char|24 pt|{\"attrs\": {\"size\": 24}}",
+            "cmd:type.char|30 pt|{\"attrs\": {\"size\": 30}}",
+            "cmd:type.char|36 pt|{\"attrs\": {\"size\": 36}}",
+            "cmd:type.char|48 pt|{\"attrs\": {\"size\": 48}}",
+            "cmd:type.char|60 pt|{\"attrs\": {\"size\": 60}}",
+            "cmd:type.char|72 pt|{\"attrs\": {\"size\": 72}}",
+            "<",
+            "-",
+            "ui:app.characterPanel",
+            "ui:app.paragraphPanel",
+            "ui:app.glyphsPanel",
+            "-",
+            "ui:app.characterStylesPanel",
+            "ui:app.paragraphStylesPanel",
             "-",
             "cmd:type.createOutlines",
-            ">Bulleted and Numbered Lists",
-            "cmd:list.define",
+            "ui:app.findFontDialog",
+            ">Change Case",
+            "cmd:type.changeCase|UPPERCASE|{\"case\": \"upper\"}",
+            "cmd:type.changeCase|lowercase|{\"case\": \"lower\"}",
+            "cmd:type.changeCase|Title Case|{\"case\": \"title\"}",
+            "cmd:type.changeCase|Sentence case|{\"case\": \"sentence\"}",
             "<",
+            "-",
             ">Type on a Path",
             "cmd:type.pathOptions",
             "cmd:type.pathOptions|Delete Type from Path|{\"delete\": true}",
             "<",
-            "ui:window.panel|Glyphs|{\"panel\": \"glyphs\"}",
-            "cmd:type.fillWithPlaceholder",
+            "-",
+            ">Notes",
+            "cmd:note.new",
+            "ui:window.panel|Notes|{\"panel\": \"notes\"}",
+            "<",
+            ">Track Changes",
+            "cmd:changes.track",
+            "cmd:changes.acceptAll",
+            "cmd:changes.rejectAll",
+            "<",
+            "-",
+            "cmd:footnote.insert",
+            "ui:app.footnoteOptionsDialog",
+            "cmd:endnote.insert",
+            "cmd:footnote.goToReference",
+            "-",
+            ">Hyperlinks & Cross-References",
+            "cmd:hyperlink.create",
+            "cmd:anchor.create",
+            "-",
+            "ui:app.insertXrefDialog",
+            "cmd:xref.defineFormat",
+            "<",
+            ">Text Variables",
+            "cmd:variables.define",
+            "cmd:variables.insert",
+            "<",
+            "-",
+            ">Bulleted & Numbered Lists",
+            "cmd:list.define",
+            "<",
+            "-",
             ">Insert Special Character",
             ">Symbols",
             "cmd:text.insert|Bullet Character|{\"text\": \"\u{2022}\", \"raw\": true}",
@@ -353,7 +417,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:text.insert|Trademark Symbol|{\"text\": \"\u{2122}\", \"raw\": true}",
             "<",
             ">Markers",
-            "cmd:text.insert|Current Page Number|{\"text\": \"\u{e000}\", \"raw\": true}",
+            "ui:app.insertCurrentPageNumber",
             "cmd:text.insert|Next Page Number|{\"text\": \"\u{e007}\", \"raw\": true}",
             "cmd:text.insert|Previous Page Number|{\"text\": \"\u{e008}\", \"raw\": true}",
             "cmd:text.insert|Section Marker|{\"text\": \"\u{e001}\", \"raw\": true}",
@@ -400,44 +464,10 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:text.insert|Paragraph Return|{\"text\": \"\\n\", \"raw\": true}",
             "cmd:text.insert|Forced Line Break|{\"text\": \"\u{2028}\", \"raw\": true}",
             "<",
-            "-",
-            ">Change Case",
-            "cmd:type.changeCase|UPPERCASE|{\"case\": \"upper\"}",
-            "cmd:type.changeCase|lowercase|{\"case\": \"lower\"}",
-            "cmd:type.changeCase|Title Case|{\"case\": \"title\"}",
-            "cmd:type.changeCase|Sentence case|{\"case\": \"sentence\"}",
-            "<",
-            "-",
-            "cmd:type.alignLeft",
-            "cmd:type.alignCenter",
-            "cmd:type.alignRight",
-            "cmd:type.justify",
-            "ui:app.paragraphRulesDialog",
-            "-",
-            "cmd:type.bold",
-            "cmd:type.italic",
-            "cmd:type.underline",
-            "cmd:type.allCaps",
-            "-",
-            "cmd:type.sizeUp",
-            "cmd:type.sizeDown",
+            "cmd:type.fillWithPlaceholder",
             "-",
             "ui:view.hiddenCharacters",
             "-",
-            ">Hyperlinks & Cross-References",
-            "cmd:hyperlink.create",
-            "cmd:anchor.create",
-            "-",
-            "ui:app.insertXrefDialog",
-            "cmd:xref.defineFormat",
-            "<",
-            ">Text Variables",
-            "cmd:variables.define",
-            "cmd:variables.insert",
-            "<",
-            "-",
-            "cmd:footnote.insert",
-            "cmd:endnote.insert",
             "cmd:math.insert",
             ">Story Direction",
             "cmd:type.storyDirection|Horizontal|{\"vertical\": false}",
@@ -447,13 +477,6 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.rubyDialog",
             "cmd:type.kenten",
             "cmd:type.warichu",
-            ">Track Changes",
-            "cmd:changes.track",
-            "cmd:changes.acceptAll",
-            "cmd:changes.rejectAll",
-            "<",
-            "ui:app.footnoteOptionsDialog",
-            "cmd:footnote.goToReference",
         ],
     ),
     (
@@ -1264,6 +1287,17 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
             Ok(Value::Null)
         }
+        "app.characterPanel" | "app.paragraphPanel" | "app.glyphsPanel" | "app.characterStylesPanel" | "app.paragraphStylesPanel" => {
+            let panel = match id {
+                "app.characterPanel" => "character",
+                "app.paragraphPanel" => "paragraph",
+                "app.glyphsPanel" => "glyphs",
+                "app.characterStylesPanel" => "characterStyles",
+                _ => "paragraphStyles",
+            };
+            run_ui(app, "window.panel", &json!({"panel": panel})).unwrap_or(Ok(Value::Null))
+        }
+        "app.insertCurrentPageNumber" => app.run("text.insert", json!({"text": "\u{e000}", "raw": true})),
         "window.panel" => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("properties").to_string();
             if crate::dock::DOCK_TABS.iter().any(|(id, _, _)| *id == panel) {
@@ -3509,6 +3543,91 @@ mod tests {
         assert!(special.is_some_and(|c| c.iter().any(|i| matches!(i, Item::Sub(n, _) if n == "Symbols"))));
         // Fixed-parameter variants keep their own labels.
         assert!(all.iter().any(|(l, id, p)| l == "Fill Frame Proportionally" && id == "object.fit" && p["mode"] == "fillProportionally"));
+    }
+
+    #[test]
+    fn the_type_menu_follows_indesigns_order() {
+        // InDesign's Type menu, as Chris Nielsen opens it in "Numbering Page Sections" (2:09).
+        let ty = menu_tree().into_iter().find(|(m, _)| *m == "Type").unwrap().1;
+        let labels: Vec<String> = ty
+            .iter()
+            .map(|i| match i {
+                Item::Sep => "-".to_string(),
+                Item::Sub(n, _) => format!("{n} >"),
+                Item::Cmd { label, .. } => label.clone(),
+            })
+            .collect();
+        let expected = [
+            "Size >",
+            "-",
+            "Character",
+            "Paragraph",
+            "Glyphs",
+            "-",
+            "Character Styles",
+            "Paragraph Styles",
+            "-",
+            "Create Outlines",
+            "Find/Replace Font…",
+            "Change Case >",
+            "-",
+            "Type on a Path >",
+            "-",
+            "Notes >",
+            "Track Changes >",
+            "-",
+            "Insert Footnote",
+            "Document Footnote Options…",
+            "Insert Endnote",
+        ];
+        assert_eq!(&labels[..expected.len()], expected, "{labels:?}");
+        let pos = |l: &str| labels.iter().position(|x| x == l).unwrap_or_else(|| panic!("{l} in {labels:?}"));
+        assert!(pos("Hyperlinks & Cross-References >") < pos("Text Variables >"));
+        assert!(pos("Text Variables >") < pos("Bulleted & Numbered Lists >"));
+        assert!(pos("Bulleted & Numbered Lists >") < pos("Insert Special Character >"));
+        assert!(pos("Insert Special Character >") < pos("Insert White Space >"));
+        assert!(pos("Insert Break Character >") < pos("Fill with Placeholder Text"));
+        assert!(pos("Fill with Placeholder Text") < pos("Show Hidden Characters"));
+        // Alignment, styles and point sizes keep their shortcuts, out of the menu as in InDesign.
+        for gone in ["Align Left", "Bold", "Increase Point Size", "Paragraph Rules…"] {
+            assert!(!labels.iter().any(|l| l == gone), "{gone}");
+        }
+        let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let all = effective_shortcuts(&app);
+        for (id, sc) in [
+            ("type.alignLeft", "Cmd+Shift+L"),
+            ("app.characterPanel", "Cmd+T"),
+            ("app.paragraphPanel", "Cmd+Alt+T"),
+            ("app.insertCurrentPageNumber", "Cmd+Alt+Shift+N"),
+        ] {
+            assert_eq!(all.iter().find(|(i, _)| i == id).map(|(_, s)| s.as_str()), Some(sc), "{id}");
+        }
+        // Markers › Current Page Number carries ⌥⇧⌘N.
+        let markers = ty
+            .iter()
+            .find_map(|i| match i {
+                Item::Sub(n, c) if n == "Insert Special Character" => {
+                    c.iter().find_map(|i| if let Item::Sub(n, c) = i { (n == "Markers").then(|| c.clone()) } else { None })
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(matches!(&markers[0], Item::Cmd { label, shortcut: Some("Cmd+Alt+Shift+N"), .. } if label == "Current Page Number"));
+    }
+
+    #[test]
+    fn type_panel_items_open_their_panels_and_the_marker_shortcut_inserts_a_page_number() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        activate(&mut app, "app.characterPanel", &Value::Null);
+        assert_eq!(app.ui.open_panel.as_deref(), Some("character"));
+        activate(&mut app, "app.paragraphStylesPanel", &Value::Null);
+        assert_eq!(app.ui.open_panel.as_deref(), Some("paragraphStyles"));
+        let story = app.run("frame.create", json!({"rect": [36, 36, 200, 100], "content": "text", "text": "Page "})).unwrap()["story"].clone();
+        app.run("text.select", json!({"story": story, "anchor": 5, "focus": 5})).unwrap();
+        activate(&mut app, "app.insertCurrentPageNumber", &Value::Null);
+        let d = &app.session.doc().unwrap().doc;
+        assert_eq!(d.story(designcraft_doc::StoryId(story.as_u64().unwrap())).unwrap().text, "Page \u{e000}");
     }
 
     #[test]
