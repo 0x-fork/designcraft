@@ -409,7 +409,6 @@ fn pdf_export(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     }
 }
 
-/// The options of the selected text frame (the first selected item, or the frame of the caret).
 /// The selected text frame's width (its own, before rotation).
 fn selected_frame_width(app: &DesignApp) -> Option<f64> {
     let st = app.session.active()?;
@@ -417,6 +416,7 @@ fn selected_frame_width(app: &DesignApp) -> Option<f64> {
     Some(st.doc.item(fid)?.inner_bounds().width())
 }
 
+/// The options of the selected text frame (the first selected item, or the frame of the caret).
 fn selected_frame_options(app: &DesignApp) -> Option<designcraft_doc::TextFrameOptions> {
     let st = app.session.active()?;
     let fid = st.selection.items.first().copied().or_else(|| st.selection.text.and_then(|t| t.frame))?;
