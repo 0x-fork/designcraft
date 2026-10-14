@@ -1,5 +1,9 @@
 //! Document → PDF. The item walk mirrors `designcraft-render`'s `draw_spread` / `draw_item`.
 
+#[cfg(test)]
+#[path = "registration_tests.rs"]
+pub(crate) mod registration_tests;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -169,6 +173,11 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         #[cfg(test)]
         image_conversions: 0,
         pdfs: HashMap::new(),
+        variants: HashMap::new(),
+        has_optional_content: false,
+        #[cfg(test)]
+        pdf_preparations: 0,
+        layer_error: None,
         version,
         too_new: Vec::new(),
         svgs: HashMap::new(),
@@ -227,6 +236,9 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         pdf.set_tag_tree(ex.tag_tree());
     }
     ex.check_placed_versions()?;
+    if let Some(error) = ex.layer_error {
+        return Err(error);
+    }
     let mut bytes = writer.finish().map_err(PdfError::from)?;
     // Transparency blends in the document's blend space: CMYK for print (and always in PDF/X).
     let mut warnings = ex.warnings;
@@ -234,6 +246,9 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         // The rewrite matches krilla's exact output; in PDF/X-4, `check_pdfx4` reports any
         // group that got past it, with its page.
         crate::pdfx::cmyk_group_spaces(&mut bytes);
+    }
+    if ex.has_optional_content {
+        bytes = crate::optional_content::register(&bytes)?;
     }
     // Form fields (Buttons and Forms) and, for interactive PDF, video and sound; not in PDF/X
     // or PDF/A: this update comes after krilla's validator ran, and its NeedAppearances fields and
@@ -277,8 +292,11 @@ fn merge_pdfs_inner(parts: &[(Vec<u8>, Vec<(f32, f32)>)], title: Option<&str>) -
     let mut writer = Writer::new(krilla::SerializeSettings::default(), metadata);
     let pdf = writer.document_mut();
     let mut pages = 0;
+    let mut has_optional_content = false;
     for (bytes, sizes) in parts {
-        let src = krilla::pdf::Pdf::new(Arc::new(bytes.clone())).map_err(|e| PdfError::Write(format!("{e:?}")))?;
+        let variant = crate::optional_content::prepare(&Arc::new(bytes.clone()), &[])?;
+        has_optional_content |= !sizes.is_empty() && variant.has_optional_content;
+        let src = krilla::pdf::Pdf::new(variant.data).map_err(|e| PdfError::Write(format!("{e:?}")))?;
         let doc = krilla::pdf::PdfDocument::new(Arc::new(src));
         for (i, &(w, h)) in sizes.iter().enumerate() {
             let size = Size::from_wh(w.max(1.0), h.max(1.0)).ok_or(PdfError::NoPages)?;
@@ -295,7 +313,8 @@ fn merge_pdfs_inner(parts: &[(Vec<u8>, Vec<(f32, f32)>)], title: Option<&str>) -
     if pages == 0 {
         return Err(PdfError::NoPages);
     }
-    writer.finish().map_err(PdfError::from)
+    let bytes = writer.finish().map_err(PdfError::from)?;
+    if has_optional_content { crate::optional_content::register(&bytes) } else { Ok(bytes) }
 }
 
 /// File › Print Booklet: how pages pair up on printer spreads.
@@ -356,6 +375,11 @@ fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) ->
         #[cfg(test)]
         image_conversions: 0,
         pdfs: HashMap::new(),
+        variants: HashMap::new(),
+        has_optional_content: false,
+        #[cfg(test)]
+        pdf_preparations: 0,
+        layer_error: None,
         // krilla's default.
         version: PdfVersion::Pdf17,
         too_new: Vec::new(),
@@ -405,9 +429,15 @@ fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) ->
         page.finish();
     }
     ex.check_placed_versions()?;
+    if let Some(error) = ex.layer_error {
+        return Err(error);
+    }
     let mut bytes = writer.finish().map_err(PdfError::from)?;
     if doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk {
         crate::pdfx::cmyk_group_spaces(&mut bytes);
+    }
+    if ex.has_optional_content {
+        bytes = crate::optional_content::register(&bytes)?;
     }
     let mut warnings = ex.warnings;
     warnings.dedup();
@@ -487,7 +517,12 @@ pub(crate) struct Exporter<'a> {
     #[cfg(test)]
     image_conversions: usize,
     /// Placed PDFs (embedded as vector pages) and their page counts.
-    pdfs: HashMap<AssetId, Option<(krilla::pdf::PdfDocument, usize)>>,
+    pdfs: HashMap<(AssetId, Vec<hayro_syntax::object::ObjectIdentifier>), Option<(krilla::pdf::PdfDocument, usize)>>,
+    variants: HashMap<(AssetId, Vec<String>), crate::optional_content::Variant>,
+    has_optional_content: bool,
+    #[cfg(test)]
+    pdf_preparations: usize,
+    layer_error: Option<PdfError>,
     /// The PDF version written; placed PDFs must not be newer.
     version: PdfVersion,
     /// Placed PDFs too new to embed in this version ("name is PDF 2.0"): the export fails.
@@ -965,7 +1000,7 @@ impl Exporter<'_> {
                 let g = &if it.media.is_some() { it.drawn_graphic(&self.doc.assets).unwrap_or_else(|| g.clone()) } else { g.clone() };
                 if let Some(p) = &path {
                     s.push_clip_path(p, &FillRule::NonZero);
-                    self.graphic(s, g);
+                    self.graphic(s, g, &it.pdf_hidden_layers);
                     s.pop();
                 }
             }
@@ -1258,9 +1293,9 @@ impl Exporter<'_> {
     /// `qpdf --force-version=1.6` does). A newer
     /// file is left out and the export fails naming it ([`Exporter::check_placed_versions`]).
     /// Returns the document with its page count.
-    fn placed_pdf(&mut self, asset: &designcraft_doc::Asset) -> Option<(krilla::pdf::PdfDocument, usize)> {
+    fn placed_pdf(&mut self, asset: &designcraft_doc::Asset, data: Arc<Vec<u8>>) -> Option<(krilla::pdf::PdfDocument, usize)> {
         use hayro_syntax::PdfVersion as V;
-        let Ok(pdf) = krilla::pdf::Pdf::new(asset.data.clone()) else {
+        let Ok(pdf) = krilla::pdf::Pdf::new(data.clone()) else {
             self.warn(format!("{}: can't read the placed PDF", asset.name));
             return None;
         };
@@ -1278,7 +1313,7 @@ impl Exporter<'_> {
         }
         if have == V::Pdf17
             && max == V::Pdf16
-            && let bytes = relabel_pdf_header(&asset.data, b"%PDF-1.7", b"%PDF-1.6").unwrap_or_else(|| asset.data.to_vec())
+            && let bytes = relabel_pdf_header(&data, b"%PDF-1.7", b"%PDF-1.6").unwrap_or_else(|| data.to_vec())
             && let Ok(pdf) = krilla::pdf::Pdf::new(Arc::new(relabel_catalog_version(bytes)))
             && pdf.version() <= max
         {
@@ -1372,24 +1407,24 @@ impl Exporter<'_> {
     }
 
     /// Draw a placed graphic, inside its clipping path when it has one.
-    pub(crate) fn graphic(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic) {
+    pub(crate) fn graphic(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: &[String]) {
         match g.clip_region().map(|(region, even_odd)| (to_path(&region), even_odd)) {
             Some((Some(clip), even_odd)) => {
                 s.push_clip_path(&clip, if even_odd { &FillRule::EvenOdd } else { &FillRule::NonZero });
-                self.graphic_unclipped(s, g);
+                self.graphic_unclipped(s, g, hidden);
                 s.pop();
             }
             // A degenerate outline shows nothing, or everything when inverted.
             Some((None, even_odd)) => {
                 if even_odd {
-                    self.graphic_unclipped(s, g);
+                    self.graphic_unclipped(s, g, hidden);
                 }
             }
-            None => self.graphic_unclipped(s, g),
+            None => self.graphic_unclipped(s, g, hidden),
         }
     }
 
-    fn graphic_unclipped(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic) {
+    fn graphic_unclipped(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: &[String]) {
         // Video / sound without a poster: a dark frame with a play mark.
         if let Some(asset) = self.doc.assets.get(&g.asset)
             && designcraft_doc::media_kind(&asset.mime).is_some()
@@ -1423,11 +1458,39 @@ impl Exporter<'_> {
             let [l, t, r, b] = shown.unwrap_or([0.0, 0.0, 1.0, 1.0]);
             let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
             let Some(size) = Size::from_wh(page_w.max(1e-3) as f32, page_h.max(1e-3) as f32) else { return };
-            let placed = match self.pdfs.get(&g.asset) {
+            let request = (g.asset, hidden.to_vec());
+            let variant = match self.variants.get(&request) {
+                Some(variant) => variant.clone(),
+                None => {
+                    #[cfg(test)]
+                    {
+                        self.pdf_preparations += 1;
+                    }
+                    match crate::optional_content::prepare(&asset.data, hidden) {
+                        Ok(variant) => {
+                            self.variants.insert(request, variant.clone());
+                            variant
+                        }
+                        Err(error) => {
+                            let message = match error {
+                                PdfError::Write(message) => message,
+                                other => other.to_string(),
+                            };
+                            self.layer_error.get_or_insert(PdfError::Write(format!("{}: {message}", asset.name)));
+                            return;
+                        }
+                    }
+                }
+            };
+            if let Some(warning) = variant.warning {
+                self.warn(format!("{}: {warning}", asset.name));
+            }
+            let key = (g.asset, variant.hidden);
+            let placed = match self.pdfs.get(&key) {
                 Some(p) => p.clone(),
                 None => {
-                    let p = self.placed_pdf(asset);
-                    self.pdfs.insert(g.asset, p.clone());
+                    let p = self.placed_pdf(asset, variant.data);
+                    self.pdfs.insert(key, p.clone());
                     p
                 }
             };
@@ -1437,6 +1500,7 @@ impl Exporter<'_> {
                     self.warn(format!("{}: the placed PDF has no page {}", asset.name, u64::from(asset.page) + 1));
                 }
                 Some((placed, _)) => {
+                    self.has_optional_content |= variant.has_optional_content;
                     s.push_transform(&tf(g.xf));
                     let clip = shown.and_then(|_| to_path(&Rect::new(0.0, 0.0, g.size.0, g.size.1).to_path(0.1)));
                     if let Some(clip) = &clip {
@@ -1884,6 +1948,10 @@ mod image_content_cache_tests {
             images_by_content: ImageContentCache::default(),
             image_conversions: 0,
             pdfs: HashMap::new(),
+            variants: HashMap::new(),
+            has_optional_content: false,
+            pdf_preparations: 0,
+            layer_error: None,
             version: PdfVersion::Pdf17,
             too_new: Vec::new(),
             svgs: HashMap::new(),
@@ -1896,6 +1964,42 @@ mod image_content_cache_tests {
             text_area: None,
             para_tags: HashMap::new(),
         }
+    }
+    #[test]
+    fn prepared_pdf_variants_reuse_parsing_by_asset_and_hidden_names() {
+        let mut doc = Document::new(&Default::default());
+        let cache = Cache::new();
+        let opts = PdfOptions::default();
+        let source = export_pdf(&doc, &cache, &opts).unwrap();
+        let a = asset(&mut doc, source.clone(), "a.pdf");
+        let b = asset(&mut doc, source, "b.pdf");
+        let mut ex = exporter(&doc, &cache, &opts);
+        let mut writer = Writer::new(Default::default(), Default::default());
+        let mut page = writer.document_mut().start_page_with(PageSettings::new(Size::from_wh(100.0, 100.0).unwrap()));
+        let mut surface = page.surface();
+        for (id, hidden, count) in [(a, vec![], 1), (a, vec![], 1), (a, vec!["Hidden".into()], 2), (b, vec![], 3), (a, vec![], 3)] {
+            let graphic = designcraft_doc::Graphic {
+                asset: id,
+                size: (100.0, 100.0),
+                xf: Affine::IDENTITY,
+                clip: None,
+                auto_fit: Default::default(),
+                fit_align: 4,
+                crop: [0.0; 4],
+                wrap: Default::default(),
+                fill: Default::default(),
+            };
+            ex.graphic_unclipped(&mut surface, &graphic, &hidden);
+            assert!(ex.layer_error.is_none());
+            assert_eq!(ex.pdf_preparations, count, "count actual preparations, not writer resource deduplication");
+        }
+        assert_eq!(ex.variants.len(), 3);
+        assert_eq!(ex.pdfs.len(), 2);
+        let variant = ex.variants.get(&(a, Vec::new())).unwrap();
+        assert!(Arc::ptr_eq(&variant.data, &doc.assets[&a].data));
+        surface.finish();
+        page.finish();
+        assert!(writer.finish().is_ok());
     }
     #[test]
     fn exact_bytes_reuse_conversion_under_real_hash_collisions() {
