@@ -21,7 +21,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Guide",
             [],
             None,
-            "{orientation: horizontal|vertical, position (spread coordinate), spread?, page? (index in the spread; default: the page under `at` or the position), at? (the other coordinate), spreadGuide?: bool} or {orientation: both, point: [x, y], spread?, page?, spreadGuide?: bool} → {page, index}; `both` adds a horizontal guide through y and a vertical guide through x as one undo step → {guides: [{page, index}, {page, index}]}",
+            "{orientation: horizontal|vertical, position (spread coordinate), spread?, page? (index in the spread; default: the page under `at` or the position), at? (the other coordinate), spreadGuide?: bool, liquid?: bool (a liquid guide, as the Page tool draws from the rulers)} or {orientation: both, point: [x, y], spread?, page?, spreadGuide?: bool, liquid?: bool} → {page, index}; `both` adds a horizontal guide through y and a vertical guide through x as one undo step → {guides: [{page, index}, {page, index}]}",
             has_doc,
             add
         ),
@@ -96,6 +96,7 @@ fn page_at(d: &Document, r: SpreadRef, x: f64) -> usize {
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let r = super::spread_param(p, "guide.add")?;
     let spread_guide = p.get("spreadGuide").and_then(Value::as_bool).unwrap_or(false);
+    let liquid = p.get("liquid").and_then(Value::as_bool).unwrap_or(false);
     let page = optional_usize(p, "page", "guide.add")?;
     // (orientation, position, x used to find the page)
     let guides: Vec<(Orientation, f64, f64)> = if str_param(p, "orientation") == Some("both") {
@@ -132,7 +133,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
         let mut out = Vec::new();
         for (o, pos, pi) in placed {
             let pg = sp.pages.get_mut(pi).ok_or_else(|| bad("guide.add", "no such page"))?;
-            pg.guides.push(Guide { orientation: o, position: pos, spread: spread_guide, locked: false, layer: Some(layer), liquid: false });
+            pg.guides.push(Guide { orientation: o, position: pos, spread: spread_guide, locked: false, layer: Some(layer), liquid: liquid && !spread_guide });
             out.push(json!({"page": pi, "index": pg.guides.len() - 1}));
         }
         match <[Value; 1]>::try_from(out) {
