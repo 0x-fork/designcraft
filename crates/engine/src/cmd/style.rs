@@ -1880,6 +1880,22 @@ mod radial_gradient_tests {
         let (c, side, top) = sides(&r.render_page(&d, &p.cache, 0, 1.0, false, &Default::default()).unwrap());
         assert!(c < 30 && side > 220 && top > 220, "pdf: centre {c}, side {side}, top {top}");
     }
+
+    #[test]
+    fn a_box_with_no_height_or_width_has_a_circle_across_its_length() {
+        let f = designcraft_doc::Fill::swatch("g");
+        let line = designcraft_geom::Rect::new(20.0, 60.0, 180.0, 60.0);
+        let (c, rx, ry) = f.radial_ellipse(line);
+        assert_eq!((c.x, c.y, rx, ry), (100.0, 60.0, 80.0, 80.0));
+        let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(10.0, 0.0, 10.0, 50.0));
+        assert_eq!((rx, ry), (25.0, 25.0));
+        // A point: a tiny circle, never a zero radius.
+        let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(5.0, 5.0, 5.0, 5.0));
+        assert!(rx > 0.0 && rx == ry);
+        // A box keeps its ellipse.
+        let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(0.0, 0.0, 100.0, 200.0));
+        assert_eq!((rx, ry), (50.0, 100.0));
+    }
 }
 
 #[cfg(test)]

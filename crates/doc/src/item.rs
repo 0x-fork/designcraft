@@ -44,7 +44,13 @@ impl Fill {
                 let r = designcraft_geom::Vec2::new(x1 - x0, (y1 - y0) / k).hypot();
                 (designcraft_geom::Point::new(x0, y0), r, r * k)
             }
-            None => (b.center(), b.width().max(1e-9) / 2.0, b.height().max(1e-9) / 2.0),
+            // A box with no width or height (a straight line's) has no ellipse: a circle across
+            // its length.
+            None if b.width() <= 1e-9 || b.height() <= 1e-9 => {
+                let r = b.width().max(b.height()).max(1e-3) / 2.0;
+                (b.center(), r, r)
+            }
+            None => (b.center(), b.width() / 2.0, b.height() / 2.0),
         }
     }
 
