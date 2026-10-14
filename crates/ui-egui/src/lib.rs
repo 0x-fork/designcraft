@@ -214,7 +214,8 @@ pub struct UiState {
     pub display_quality: designcraft_render::DisplayQuality,
     /// Preferences › Interface › UI scaling (1 = 100%).
     pub ui_scale: f32,
-    /// Preferences › Appearance of Black: 100% K on screen as rich black.
+    /// Preferences › Appearance of Black: 100% K on screen as rich black (InDesign's default,
+    /// Display All Blacks as Rich Black; off: accurately, as dark grey).
     pub rich_black: bool,
     /// View › Overprint Preview.
     pub overprint_preview: bool,
@@ -334,7 +335,7 @@ impl Default for UiState {
             ink_limit: None,
             display_quality: designcraft_render::DisplayQuality::High,
             ui_scale: 1.0,
-            rich_black: false,
+            rich_black: true,
             overprint_preview: false,
             shortcuts: Default::default(),
             control_bar: false,
@@ -1413,6 +1414,17 @@ pub fn drop_key_name_text(raw: &mut egui::RawInput, text_field_focused: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// InDesign shows 100% K as pure black on screen unless Appearance of Black says otherwise
+    /// (Display All Blacks as Rich Black is its default); settings saved without the field get it too.
+    #[test]
+    fn black_shows_as_rich_black_by_default() {
+        assert!(UiState::default().rich_black);
+        let saved: UiState = serde_json::from_str("{}").unwrap();
+        assert!(saved.rich_black);
+        let accurate: UiState = serde_json::from_str(r#"{"richBlack": false}"#).unwrap();
+        assert!(!accurate.rich_black, "a saved choice is kept");
+    }
 
     /// An app with one document that has an unsaved edit.
     fn app_with_unsaved_document() -> DesignApp {
