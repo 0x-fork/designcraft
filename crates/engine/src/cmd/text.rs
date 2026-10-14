@@ -1398,9 +1398,9 @@ fn fill_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
             story_of(s, p).ok_or_else(|| bad("type.fillWithPlaceholder", "select a text frame"))?
         }
     };
-    // Fill until overset with paragraphs of a few sentences each, as InDesign's placeholder text
+    // Fill until overset with paragraphs of two to five sentences, as InDesign's placeholder text
     // comes (so a paragraph can be styled on its own).
-    const SENTENCES_PER_PARAGRAPH: [usize; 6] = [3, 4, 2, 5, 3, 4];
+    const SENTENCES_PER_PARAGRAPH: [usize; 7] = [2, 2, 3, 3, 5, 2, 4];
     let mut text = String::new();
     let sentences: Vec<&str> = PLACEHOLDER.split_inclusive(". ").map(str::trim_end).collect();
     let doc = s.doc()?.doc.clone();
