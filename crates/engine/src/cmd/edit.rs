@@ -100,7 +100,7 @@ fn outside_text(text: &str) -> Result<String> {
 fn paste_text_frame(s: &mut Session, p: &Value, text: &str, slice: Option<&designcraft_doc::Story>) -> Result<Value> {
     use designcraft_geom::{Point, Rect, shapes};
     const LIMIT: f64 = 1.0e5;
-    let sr = super::spread_param(p, "spread");
+    let sr = super::spread_param(p, "spread")?;
     let at = super::point_param(p, "at")
         .filter(|a| a.x.is_finite() && a.y.is_finite())
         .map(|a| Point::new(a.x.clamp(-LIMIT, LIMIT), a.y.clamp(-LIMIT, LIMIT)));
@@ -169,6 +169,8 @@ pub fn specs() -> Vec<CommandSpec> {
             st.doc = e.doc;
             st.selection = e.selection;
             st.revision += 1;
+            // Pending typing overrides belong to the current edit state, not a restored snapshot.
+            s.typing_format = None;
             Ok(json!({"undone": e.label}))
         }),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Shift+Z"), "{}", can_redo, |s, _| {
@@ -178,6 +180,7 @@ pub fn specs() -> Vec<CommandSpec> {
             st.doc = e.doc;
             st.selection = e.selection;
             st.revision += 1;
+            s.typing_format = None;
             Ok(json!({"redone": e.label}))
         }),
         cmd!(noundo "selection.set", "Select", [], None, "{ids: [id], add?: bool, content?: bool}", has_doc, |s, p| {

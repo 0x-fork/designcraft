@@ -206,9 +206,30 @@ struct Importer<'r> {
     /// Cross-reference format Self → name.
     xref_format_names: HashMap<String, String>,
     xref_formats: Vec<designcraft_doc::XrefFormat>,
-    /// Index topic Self → topic path; topic See / See also cross-references.
-    index_topics: HashMap<String, Vec<String>>,
+    /// Index topic Self → topic path and per-level sort keys; topic cross-references.
+    index_topics: HashMap<String, IndexTopic>,
     index_xrefs: Vec<designcraft_doc::IndexRef>,
+}
+
+/// IDML stores a sort key on each topic, rather than on its page references.
+#[derive(Clone, Default)]
+struct IndexTopic {
+    path: Vec<String>,
+    sort: Vec<String>,
+}
+
+impl IndexTopic {
+    fn child(&self, topic: &El) -> Self {
+        let mut path = self.path.clone();
+        path.push(topic.get("Name").unwrap_or("").to_string());
+        let mut sort = self.sort.clone();
+        if let Some(key) = topic.get("SortOrder").filter(|key| !key.is_empty()) {
+            // Keep empty positions before a child's key, but omit trailing defaults.
+            sort.resize(self.path.len(), String::new());
+            sort.push(key.to_string());
+        }
+        Self { path, sort }
+    }
 }
 
 fn lab_to_color(l: f32, a: f32, b: f32) -> Color {
@@ -456,7 +477,7 @@ impl<'r> Importer<'r> {
             self.xref_format(e);
         }
         if let Some(ix) = top.iter().find(|e| e.local() == "Index") {
-            self.index_topics_of(ix, &[]);
+            self.index_topics_of(ix, &IndexTopic::default());
         }
         // Stories (ids first so frames can reference them).
         for e in top.iter().filter(|e| e.local() == "Story") {
@@ -772,8 +793,8 @@ impl<'r> Importer<'r> {
     /// A `TextFramePreference`, with its column rule colour resolved to a swatch.
     fn frame_options(&mut self, prefs: &[&El]) -> TextFrameOptions {
         let mut o = text_frame_options(prefs);
-        if let Some(r) = Prefs(prefs).get("ColumnRuleStrokeColor") {
-            o.column_rule_color = self.swatch_ref(r);
+        if let Some(r) = Prefs(prefs).prop("ColumnRuleStrokeColor") {
+            o.column_rule_color = self.swatch_ref(&r);
         }
         o
     }
@@ -1013,33 +1034,31 @@ impl<'r> Importer<'r> {
     }
 
     /// Index topics (recursively); at the root, their See / See also cross-references too.
-    fn index_topics_of(&mut self, e: &El, prefix: &[String]) {
+    fn index_topics_of(&mut self, e: &El, prefix: &IndexTopic) {
         for t in e.find_all("Topic") {
-            let mut path = prefix.to_vec();
-            path.push(t.get("Name").unwrap_or("").to_string());
+            let topic = prefix.child(t);
             if let Some(me) = t.get("Self") {
-                self.index_topics.insert(me.to_string(), path.clone());
+                self.index_topics.insert(me.to_string(), topic.clone());
             }
-            self.index_topics_of(t, &path);
+            self.index_topics_of(t, &topic);
         }
-        if !prefix.is_empty() {
+        if !prefix.path.is_empty() {
             return;
         }
-        let mut stack = vec![(e, Vec::<String>::new())];
-        while let Some((el, path)) = stack.pop() {
+        let mut stack = vec![(e, IndexTopic::default())];
+        while let Some((el, prefix)) = stack.pop() {
             for t in el.find_all("Topic") {
-                let mut p = path.clone();
-                p.push(t.get("Name").unwrap_or("").to_string());
+                let topic = prefix.child(t);
                 for x in t.find_all("CrossReference") {
-                    let target = x.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).map(|p| p.join(": ")).unwrap_or_default();
+                    let target = x.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).map(|t| t.path.join(": ")).unwrap_or_default();
                     use designcraft_doc::index::IndexRange as R;
                     let range = match x.get("CrossReferenceType") {
                         Some("SeeAlso") | Some("SeeAlsoHerein") => R::SeeAlso(target),
                         _ => R::See(target),
                     };
-                    self.index_xrefs.push(designcraft_doc::IndexRef { topics: p.clone(), sort: vec![], range });
+                    self.index_xrefs.push(designcraft_doc::IndexRef { topics: topic.path.clone(), sort: topic.sort.clone(), range });
                 }
-                stack.push((t, p));
+                stack.push((t, topic));
             }
         }
     }
@@ -1810,14 +1829,14 @@ impl<'r> Importer<'r> {
                     }
                     "PageReference" => {
                         use designcraft_doc::index::IndexRange as R;
-                        let topics = c.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).cloned().unwrap_or_default();
+                        let topic = c.get("ReferencedTopic").and_then(|r| self.index_topics.get(r)).cloned().unwrap_or_default();
                         let range = match c.get("PageReferenceType") {
                             Some("ToEndOfStory") | Some("ToEndOfDocument") | Some("ToEndOfSection") => R::ToEndOfStory,
                             Some("ForNextNParagraphs") => R::NextParagraphs(c.num("PageReferenceLimit").unwrap_or(1.0).max(1.0) as u32),
                             Some("SuppressPageNumbers") => R::SuppressPageRange,
                             _ => R::CurrentPage,
                         };
-                        b.index_refs.push(designcraft_doc::IndexRef { topics, sort: vec![], range });
+                        b.index_refs.push(designcraft_doc::IndexRef { topics: topic.path, sort: topic.sort, range });
                         b.push(&designcraft_doc::INDEX_MARK.to_string(), cf);
                     }
                     "CrossReferenceSource" => {
@@ -2205,6 +2224,11 @@ impl<'r> Importer<'r> {
                 let options = TextFrameOptions {
                     path: Some(designcraft_doc::PathType {
                         start: tp.num("StartBracket").unwrap_or(0.0).max(0.0),
+                        // At (or past) the path's length it is the path's end: no end bracket.
+                        end: tp
+                            .num("EndBracket")
+                            .filter(|e| e.is_finite() && *e >= 0.0)
+                            .filter(|e| *e < designcraft_geom::warp::PathWarp::new(&it.path.to_bezpath(), false).length() - 0.01),
                         flip: tp.get("FlipPathEffect") == Some("Flipped"),
                         align: names::path_align_in(tp.get("TextAlignment").unwrap_or("")),
                     }),
@@ -2231,7 +2255,7 @@ impl<'r> Importer<'r> {
                 let prefs: Vec<&El> = std::iter::once(e).chain(self.object_style_chain(e)).filter_map(|s| s.find("TextFramePreference")).collect();
                 let mut options = text_frame_options(&prefs);
                 // `prefs` borrows the object styles, so the rule colour's swatch is resolved after it.
-                if let Some(r) = Prefs(&prefs).get("ColumnRuleStrokeColor").map(str::to_string) {
+                if let Some(r) = Prefs(&prefs).prop("ColumnRuleStrokeColor") {
                     options.column_rule_color = self.swatch_ref(&r);
                 }
                 if let Some(g) = e.find("BaselineFrameGridOption")
@@ -2554,10 +2578,10 @@ fn ace_char(v: &str) -> Option<char> {
 }
 
 fn margins_of(m: &El) -> (Margins, Columns) {
-    let g = |k: &str, d: f64| m.num(k).unwrap_or(d);
+    let g = |k: &str, d: f64| m.num(k).filter(|v| v.is_finite()).unwrap_or(d);
     (
         Margins { top: g("Top", 36.0), bottom: g("Bottom", 36.0), inside: g("Left", 36.0), outside: g("Right", 36.0) },
-        Columns { count: g("ColumnCount", 1.0).max(1.0) as u32, gutter: g("ColumnGutter", 12.0), positions: None },
+        Columns { count: g("ColumnCount", 1.0).clamp(1.0, 216.0) as u32, gutter: g("ColumnGutter", 12.0), positions: None },
     )
 }
 
@@ -2566,14 +2590,14 @@ fn text_frame_options(prefs: &[&El]) -> TextFrameOptions {
     let e = Prefs(prefs);
     let mut o = TextFrameOptions::default();
     if let Some(v) = e.num("TextColumnCount") {
-        o.columns = v.max(1.0) as u32;
+        o.columns = v.clamp(1.0, 216.0) as u32;
     }
     if let Some(v) = e.num("TextColumnGutter") {
         o.gutter = v;
     }
-    o.columns_kind = if e.get("UseFixedColumnWidth") == Some("true") {
+    o.columns_kind = if e.prop("UseFixedColumnWidth").as_deref().map(str::trim) == Some("true") {
         ColumnsKind::FixedWidth
-    } else if e.get("UseFlexibleColumnWidth") == Some("true") {
+    } else if e.prop("UseFlexibleColumnWidth").as_deref().map(str::trim) == Some("true") {
         ColumnsKind::FlexibleWidth
     } else {
         ColumnsKind::FixedNumber
@@ -2583,33 +2607,33 @@ fn text_frame_options(prefs: &[&El]) -> TextFrameOptions {
     {
         o.column_width = v;
     }
-    o.balance_columns = e.get("VerticalBalanceColumns") == Some("true");
+    o.balance_columns = e.prop("VerticalBalanceColumns").as_deref().map(str::trim) == Some("true");
     if let Some(p) = prefs.iter().find(|p| p.prop("InsetSpacing").is_some())
         && let Some(inset) = inset_spacing(p)
     {
         o.inset = inset;
     }
-    if let Some(v) = e.get("VerticalJustification") {
-        o.vertical_justification = names::vj_in(v);
+    if let Some(v) = e.prop("VerticalJustification") {
+        o.vertical_justification = names::vj_in(v.trim());
     }
     if let Some(v) = e.num("VerticalThreshold") {
         o.vj_paragraph_spacing_limit = v;
     }
-    if let Some(v) = e.get("FirstBaselineOffset") {
-        o.first_baseline = names::first_baseline_in(v);
+    if let Some(v) = e.prop("FirstBaselineOffset") {
+        o.first_baseline = names::first_baseline_in(v.trim());
     }
     if let Some(v) = e.num("MinimumFirstBaselineOffset") {
         o.first_baseline_min = v;
     }
-    o.ignore_wrap = e.get("IgnoreWrap") == Some("true");
-    if let Some(v) = e.get("AutoSizingType") {
-        o.auto_size = names::auto_size_in(v);
+    o.ignore_wrap = e.prop("IgnoreWrap").as_deref().map(str::trim) == Some("true");
+    if let Some(v) = e.prop("AutoSizingType") {
+        o.auto_size = names::auto_size_in(v.trim());
     }
-    if let Some(v) = e.get("AutoSizingReferencePoint") {
-        o.auto_size_ref = names::REF_POINTS.iter().position(|p| *p == v).unwrap_or(1) as u8;
+    if let Some(v) = e.prop("AutoSizingReferencePoint") {
+        o.auto_size_ref = names::REF_POINTS.iter().position(|p| *p == v.trim()).unwrap_or(1) as u8;
     }
     // Column rules (the colour is a swatch reference: see `Importer::frame_options`).
-    o.column_rule = e.get("ColumnRuleOverride") == Some("true");
+    o.column_rule = e.prop("ColumnRuleOverride").as_deref().map(str::trim) == Some("true");
     let finite = |k: &str| e.num(k).filter(|v| v.is_finite());
     if let Some(v) = finite("ColumnRuleStrokeWidth") {
         o.column_rule_weight = v.clamp(0.0, 1000.0);
@@ -2670,15 +2694,16 @@ fn inherits_drop_cap_style<'a>(styles: &'a Styles, mut name: Option<&'a str>) ->
     false
 }
 
-/// Attribute lookup over several elements: the first that has it.
+/// Property lookup over preference levels: the nearest level wins, attributes before children.
 struct Prefs<'a>(&'a [&'a El]);
 
 impl Prefs<'_> {
-    fn get(&self, k: &str) -> Option<&str> {
-        self.0.iter().find_map(|e| e.get(k))
+    fn prop(&self, k: &str) -> Option<String> {
+        self.0.iter().find_map(|e| e.prop(k))
     }
     fn num(&self, k: &str) -> Option<f64> {
-        self.get(k).and_then(|v| v.trim().parse().ok())
+        // The nearest preference wins; within it, attributes precede property children.
+        self.prop(k).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite())
     }
 }
 
@@ -2737,4 +2762,245 @@ pub(crate) fn uri_to_path(uri: &str) -> String {
         _ => rest,
     };
     percent_decode(rest)
+}
+
+#[cfg(test)]
+mod numeric_property_tests {
+    use super::*;
+
+    fn pref(attrs: &[(&str, &str)], props: &[(&str, &str)]) -> El {
+        let mut e = El::new("TextFramePreference");
+        for (key, value) in attrs {
+            e.set(key, *value);
+        }
+        let mut p = El::new("Properties");
+        for (key, value) in props {
+            p.push(El::new(key).text(*value));
+        }
+        e.push(p);
+        e
+    }
+
+    #[test]
+    fn numeric_property_forms_import_every_frame_option() {
+        let local = pref(
+            &[("UseFixedColumnWidth", "true")],
+            &[
+                ("TextColumnCount", "3"),
+                ("TextColumnGutter", "17"),
+                ("TextColumnFixedWidth", "123"),
+                ("VerticalThreshold", "19"),
+                ("MinimumFirstBaselineOffset", "8"),
+                ("ColumnRuleStrokeWidth", "2"),
+                ("ColumnRuleStrokeTint", "25"),
+                ("ColumnRuleOffset", "3"),
+                ("ColumnRuleTopInset", "4"),
+                ("ColumnRuleBottomInset", "5"),
+            ],
+        );
+        let o = text_frame_options(&[&local]);
+        assert_eq!((o.columns, o.gutter, o.column_width), (3, 17., 123.));
+        assert_eq!((o.vj_paragraph_spacing_limit, o.first_baseline_min), (19., 8.));
+        assert_eq!(
+            (o.column_rule_weight, o.column_rule_tint, o.column_rule_offset, o.column_rule_top_inset, o.column_rule_bottom_inset),
+            (2., 0.25, 3., 4., 5.)
+        );
+    }
+
+    #[test]
+    fn numeric_property_precedence_is_nearest_level_then_attribute() {
+        let local = pref(&[("TextColumnCount", "4")], &[("TextColumnCount", "5"), ("TextColumnGutter", "17")]);
+        let child = pref(
+            &[("TextColumnGutter", "90"), ("MinimumFirstBaselineOffset", "8")],
+            &[("MinimumFirstBaselineOffset", "9"), ("VerticalThreshold", "19")],
+        );
+        let base = pref(&[("VerticalThreshold", "99")], &[("ColumnRuleStrokeWidth", "2")]);
+        let o = text_frame_options(&[&local, &child, &base]);
+        assert_eq!((o.columns, o.gutter, o.first_baseline_min, o.vj_paragraph_spacing_limit, o.column_rule_weight), (4, 17., 8., 19., 2.));
+        // An explicit invalid value still masks inherited values, as attribute lookup did.
+        let invalid = pref(&[("TextColumnCount", "bad")], &[("TextColumnCount", "6")]);
+        assert_eq!(text_frame_options(&[&invalid, &local]).columns, TextFrameOptions::default().columns);
+    }
+}
+
+#[cfg(test)]
+mod frame_preference_safety_tests {
+    use super::*;
+
+    fn pref(attrs: &[(&str, &str)], props: &[(&str, &str)]) -> El {
+        let mut e = El::new("TextFramePreference");
+        for (key, value) in attrs {
+            e.set(key, *value);
+        }
+        let mut p = El::new("Properties");
+        for (key, value) in props {
+            p.push(El::new(key).text(*value));
+        }
+        e.push(p);
+        e
+    }
+
+    #[test]
+    fn frame_preference_nonfinite_numbers_keep_finite_defaults() {
+        const KEYS: [&str; 10] = [
+            "TextColumnCount",
+            "TextColumnGutter",
+            "TextColumnFixedWidth",
+            "VerticalThreshold",
+            "MinimumFirstBaselineOffset",
+            "ColumnRuleStrokeWidth",
+            "ColumnRuleStrokeTint",
+            "ColumnRuleOffset",
+            "ColumnRuleTopInset",
+            "ColumnRuleBottomInset",
+        ];
+        let fallback = pref(&[("UseFixedColumnWidth", "true")], &[]);
+        let expected = text_frame_options(&[&fallback]);
+        for value in ["NaN", "inf", "-inf", "1e309"] {
+            for attribute in [true, false] {
+                let values: Vec<_> = KEYS.iter().map(|key| (*key, value)).collect();
+                let mut invalid = if attribute { pref(&values, &[]) } else { pref(&[], &values) };
+                invalid.set("UseFixedColumnWidth", "true");
+                let inherited = pref(&[], &[("TextColumnCount", "7"), ("TextColumnGutter", "9")]);
+                assert_eq!(text_frame_options(&[&invalid, &inherited]), expected, "{value}, attribute={attribute}");
+            }
+        }
+    }
+
+    #[test]
+    fn frame_preference_property_booleans_enums_and_precedence() {
+        let base = pref(
+            &[
+                ("UseFixedColumnWidth", "true"),
+                ("UseFlexibleColumnWidth", "false"),
+                ("VerticalBalanceColumns", "false"),
+                ("IgnoreWrap", "false"),
+                ("ColumnRuleOverride", "false"),
+                ("VerticalJustification", "TopAlign"),
+                ("FirstBaselineOffset", "AscentOffset"),
+                ("AutoSizingType", "Off"),
+                ("AutoSizingReferencePoint", "TopCenterPoint"),
+            ],
+            &[],
+        );
+        let local = pref(
+            &[],
+            &[
+                ("UseFixedColumnWidth", "false"),
+                ("UseFlexibleColumnWidth", "true"),
+                ("VerticalBalanceColumns", "true"),
+                ("IgnoreWrap", "true"),
+                ("ColumnRuleOverride", "true"),
+                ("VerticalJustification", "BottomAlign"),
+                ("FirstBaselineOffset", "FixedHeight"),
+                ("AutoSizingType", "HeightAndWidth"),
+                ("AutoSizingReferencePoint", "BottomRightPoint"),
+            ],
+        );
+        let o = text_frame_options(&[&local, &base]);
+        assert_eq!(o.columns_kind, ColumnsKind::FlexibleWidth);
+        assert!(o.balance_columns && o.ignore_wrap && o.column_rule);
+        assert_eq!(o.vertical_justification, designcraft_doc::VerticalJustification::Bottom);
+        assert_eq!(o.first_baseline, designcraft_doc::FirstBaseline::Fixed);
+        assert_eq!(o.auto_size, designcraft_doc::AutoSize::HeightAndWidth);
+        assert_eq!(o.auto_size_ref, 8);
+        let fixed = pref(&[], &[("UseFixedColumnWidth", "true")]);
+        assert_eq!(text_frame_options(&[&fixed, &local, &base]).columns_kind, ColumnsKind::FixedWidth);
+        // At one level an attribute wins over a conflicting property child, for every key.
+        let mut same_level = local.clone();
+        for (key, value) in &base.attrs {
+            same_level.set(key, value);
+        }
+        assert_eq!(text_frame_options(&[&same_level, &local]), text_frame_options(&[&base]));
+        // Malformed nearer values mask ancestors and use the normal per-field fallback.
+        let mut malformed = El::new("TextFramePreference");
+        for (key, _) in &base.attrs {
+            malformed.set(key, "invalid");
+        }
+        assert_eq!(text_frame_options(&[&malformed, &local]), TextFrameOptions { auto_size_ref: 1, ..Default::default() });
+    }
+}
+
+#[cfg(test)]
+mod page_column_import_safety_tests {
+    use super::*;
+
+    #[test]
+    fn frame_preference_page_columns_are_bounded_and_finite() {
+        for (raw, expected) in [("4000000000", 216), ("1e300", 216), ("-10", 1), ("NaN", 1), ("inf", 1)] {
+            let m = El::new("MarginPreference")
+                .attr("ColumnCount", raw)
+                .attr("ColumnGutter", "NaN")
+                .attr("Top", "inf")
+                .attr("Bottom", "-inf")
+                .attr("Left", "NaN")
+                .attr("Right", "1e309");
+            let (margins, columns) = margins_of(&m);
+            assert_eq!(columns.count, expected);
+            assert_eq!(columns.gutter, 12.);
+            assert_eq!(margins, Margins::uniform(36.));
+        }
+    }
+}
+
+#[cfg(test)]
+mod frame_preference_scalar_tests {
+    use super::*;
+
+    #[test]
+    fn frame_preference_scalar_whitespace() {
+        let values = [
+            ("UseFixedColumnWidth", "true"),
+            ("UseFlexibleColumnWidth", "false"),
+            ("VerticalBalanceColumns", "true"),
+            ("IgnoreWrap", "true"),
+            ("ColumnRuleOverride", "true"),
+            ("VerticalJustification", "BottomAlign"),
+            ("FirstBaselineOffset", "FixedHeight"),
+            ("AutoSizingType", "HeightAndWidth"),
+            ("AutoSizingReferencePoint", "BottomRightPoint"),
+        ];
+        let preference = |properties: bool, padded: bool, fixed: bool| {
+            let mut e = El::new("TextFramePreference");
+            let mut props = El::new("Properties");
+            for (key, raw) in values {
+                let raw = match key {
+                    "UseFixedColumnWidth" if !fixed => "false",
+                    "UseFlexibleColumnWidth" if !fixed => "true",
+                    _ => raw,
+                };
+                let value = if padded { format!("\n  {raw}\t ") } else { raw.to_string() };
+                if properties {
+                    props.push(El::new(key).text(value));
+                } else {
+                    e.set(key, value);
+                }
+            }
+            e.push(props);
+            e
+        };
+        for fixed in [false, true] {
+            let clean = preference(false, false, fixed);
+            let expected = text_frame_options(&[&clean]);
+            assert_eq!(expected.columns_kind, if fixed { ColumnsKind::FixedWidth } else { ColumnsKind::FlexibleWidth });
+            assert!(expected.balance_columns && expected.ignore_wrap && expected.column_rule);
+            assert_eq!(expected.vertical_justification, designcraft_doc::VerticalJustification::Bottom);
+            assert_eq!(expected.first_baseline, designcraft_doc::FirstBaseline::Fixed);
+            assert_eq!(expected.auto_size, designcraft_doc::AutoSize::HeightAndWidth);
+            assert_eq!(expected.auto_size_ref, 8);
+            for properties in [false, true] {
+                let padded = preference(properties, true, fixed);
+                assert_eq!(text_frame_options(&[&padded]), expected);
+            }
+            // A malformed nearest attribute masks both its own valid child and farther values.
+            let mut invalid = preference(true, true, fixed);
+            for (key, _) in values {
+                invalid.set(key, " invalid ");
+            }
+            assert_eq!(text_frame_options(&[&invalid, &clean]), TextFrameOptions { auto_size_ref: 1, ..Default::default() });
+        }
+        // Object identities use the raw property lookup, not scalar whitespace normalization.
+        let exact = El::new("TextFramePreference").child(El::new("Properties").child(El::new("ColumnRuleStrokeColor").text(" Color/Named ")));
+        assert_eq!(Prefs(&[&exact]).prop("ColumnRuleStrokeColor").as_deref(), Some(" Color/Named "));
+    }
 }

@@ -102,6 +102,7 @@ fn key_from(name: &str) -> Option<egui::Key> {
 
 /// Handle one control request. Commands it runs leave the user's system clipboard alone.
 pub fn handle(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
+    app.install_clipboard_guard(ctx);
     let was = std::mem::replace(&mut app.in_control, true);
     let out = handle_request(app, ctx, req);
     app.in_control = was;
@@ -180,21 +181,28 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
                 mac_cmd: b("cmd") && cfg!(target_os = "macos"),
                 command: b("cmd"),
             };
-            app.synthetic.push(egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: m });
-            app.synthetic.push(egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers: m });
+            app.control_synthetic.push(egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: m });
+            app.control_synthetic.push(egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers: m });
             if let Some(t) = s("text") {
-                app.synthetic.push(egui::Event::Text(t.to_string()));
+                app.control_synthetic.push(egui::Event::Text(t.to_string()));
             }
             ctx.request_repaint();
             ok(Value::Null)
         }
         "ui.move" => {
             let pos = egui::pos2(p.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32, p.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32);
-            app.synthetic.push(egui::Event::PointerMoved(pos));
+            app.control_synthetic.push(egui::Event::PointerMoved(pos));
             ctx.request_repaint();
             ok(Value::Null)
         }
         "ui.click" | "ui.drag" => {
+            let count = match p.get("count") {
+                None => 1,
+                Some(v) => match v.as_u64().filter(|n| (1..=255).contains(n)) {
+                    Some(n) => n,
+                    None => return err("`count` must be an integer from 1 through 255"),
+                },
+            };
             // Screen-space (egui points) pointer input through egui itself: reaches every widget.
             let f = |k: &str| p.get(k).and_then(Value::as_f64).unwrap_or(0.0) as f32;
             let button = match s("button") {
@@ -212,21 +220,20 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
             };
             let a = egui::pos2(f("x"), f("y"));
             let end = if req.method == "ui.drag" { egui::pos2(f("toX"), f("toY")) } else { a };
-            app.synthetic.push(egui::Event::PointerMoved(a));
-            app.synthetic.push(egui::Event::PointerButton { pos: a, button, pressed: true, modifiers });
+            app.control_synthetic.push(egui::Event::PointerMoved(a));
+            app.control_synthetic.push(egui::Event::PointerButton { pos: a, button, pressed: true, modifiers });
             if req.method == "ui.drag" {
                 // From the caller: a huge count would queue events until memory runs out.
                 let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(8).clamp(1, 10_000);
                 for i in 1..=steps {
                     let t = i as f32 / steps as f32;
-                    app.synthetic.push(egui::Event::PointerMoved(a + (end - a) * t));
+                    app.control_synthetic.push(egui::Event::PointerMoved(a + (end - a) * t));
                 }
             }
-            app.synthetic.push(egui::Event::PointerButton { pos: end, button, pressed: false, modifiers });
-            let count = p.get("count").and_then(Value::as_u64).unwrap_or(1);
+            app.control_synthetic.push(egui::Event::PointerButton { pos: end, button, pressed: false, modifiers });
             for _ in 1..count {
-                app.synthetic.push(egui::Event::PointerButton { pos: end, button, pressed: true, modifiers });
-                app.synthetic.push(egui::Event::PointerButton { pos: end, button, pressed: false, modifiers });
+                app.control_synthetic.push(egui::Event::PointerButton { pos: end, button, pressed: true, modifiers });
+                app.control_synthetic.push(egui::Event::PointerButton { pos: end, button, pressed: false, modifiers });
             }
             ctx.request_repaint();
             ok(Value::Null)
@@ -236,7 +243,7 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
             // Focused widgets retain the synthetic keyboard route. Document automation uses
             // the explicit caret independently of the active tool, unlike ordinary typing.
             if ctx.text_edit_focused() || app.ui.dialog.is_some() || app.ui.palette.is_some() {
-                app.synthetic.push(egui::Event::Text(text.to_string()));
+                app.control_synthetic.push(egui::Event::Text(text.to_string()));
                 ctx.request_repaint();
                 ok(Value::Null)
             } else {
@@ -317,8 +324,7 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
         }
         "ui.dialog.confirm" => wrap(crate::dialogs::confirm(app)),
         "ui.dialog.cancel" => {
-            app.cancel_pdf_import();
-            app.ui.dialog = None;
+            crate::dialogs::cancel(app);
             ok(Value::Null)
         }
         "ui.resize" => {
@@ -368,6 +374,8 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
         "app.save" => wrap(app.run("file.save", json!({"path": s("path")}))),
         "app.export" => wrap(app.run("app.exportPng", p.clone())),
         "app.quit" => {
+            // Automation must not wait on a prompt: quit without asking about unsaved changes.
+            app.quit_without_asking = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             ok(Value::Null)
         }
@@ -453,7 +461,7 @@ mod automation_contract_tests {
         }
         assert!(ctx.text_edit_focused());
         assert_eq!(call(&mut app, &ctx, "ui.text", json!({"text":"field"}))["ok"], true);
-        let events = std::mem::take(&mut app.synthetic);
+        let events = std::mem::take(&mut app.control_synthetic);
         frame(&mut app, &ctx, events);
         assert_eq!(app.ui.palette.as_deref(), Some("field"));
         assert_eq!(app.session.execute("story.get", &json!({"story":f["story"]})).unwrap()["text"], "Hello");
@@ -526,5 +534,81 @@ mod tests {
         let _ = app.run("edit.paste", json!({}));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(text(&app).contains("SECRET"));
+    }
+}
+
+#[cfg(test)]
+mod deferred_clipboard_tests {
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[test]
+    fn synthetic_paste_keeps_mock_clipboard_private() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let observed = reads.clone();
+        let mut app = DesignApp::new(
+            designcraft_engine::Session::new(),
+            crate::Services {
+                clipboard_text: Some(Box::new(move || {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Some("SYNTHETIC_CLIPBOARD_SENTINEL".to_string())
+                })),
+                ..Default::default()
+            },
+        );
+        app.run("file.new", json!({})).unwrap();
+        let frame = app.run("frame.create", json!({"content":"text", "text":"Original", "rect":[72,72,200,100], "caret":false})).unwrap();
+        app.run("selection.set", json!({"ids":[frame["id"]]})).unwrap();
+        assert!(!app.session.wants_text());
+        let ctx = egui::Context::default();
+        let (req, _) = ControlRequest::new("ui.key", json!({"key":"V", "cmd":true}));
+        assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(v) if v["ok"]==true));
+        assert!(!app.in_control);
+        for step in 0..3 {
+            let mut raw = egui::RawInput { time: Some(step as f64 * 0.05), ..Default::default() };
+            app.raw_input_hook(&mut raw);
+            ctx.run_ui(raw, |ui| menus::shortcuts(&mut app, ui.ctx())).textures_delta.clear();
+        }
+        let texts: Vec<String> = app.session.active().unwrap().doc.stories.values().map(|story| story.text.clone()).collect();
+        assert_eq!(reads.load(Ordering::SeqCst), 0, "synthetic command read mocked system clipboard; stories={texts:?}");
+        assert!(!texts.iter().any(|text| text.contains("SYNTHETIC_CLIPBOARD_SENTINEL")));
+        // Once control input is drained, an ordinary user paste still reads its clipboard.
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&mut raw);
+        app.run("edit.paste", json!({})).unwrap();
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn deferred_control_widget_copy_leaves_native_clipboard_output_alone() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        let (req, _) = ControlRequest::new("ui.move", json!({"x":10,"y":10}));
+        let _ = handle(&mut app, &ctx, &req);
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&mut raw);
+        let mut private = ctx.run_ui(raw, |ui| ui.ctx().copy_text("control field".into()));
+        assert!(!private.platform_output.commands.iter().any(|cmd| matches!(cmd, egui::OutputCommand::CopyText(_))));
+        private.textures_delta.clear();
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&mut raw);
+        let mut native = ctx.run_ui(raw, |ui| ui.ctx().copy_text("native field".into()));
+        assert!(native.platform_output.commands.iter().any(|cmd| matches!(cmd, egui::OutputCommand::CopyText(text) if text=="native field")));
+        native.textures_delta.clear();
+    }
+
+    #[test]
+    fn control_click_rejects_unbounded_counts_before_queuing_input() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        for count in [json!(u64::MAX), json!(256), json!(0), json!(-1), json!(1.5)] {
+            let (req, _) = ControlRequest::new("ui.click", json!({"x":10,"y":10,"count":count}));
+            assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(v) if v["ok"]==false));
+            assert!(app.control_synthetic.is_empty());
+            assert!(app.synthetic.is_empty());
+            assert!(!app.in_control);
+        }
     }
 }

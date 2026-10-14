@@ -330,7 +330,8 @@ pub struct FrameSpec {
 impl FrameSpec {
     pub fn columns(&self) -> Vec<Rect> {
         let a = self.area;
-        let n = self.opts.columns.max(1);
+        // Primary frames inherit the document limit (216), beyond the interactive frame editor's 40.
+        let n = self.opts.columns.clamp(1, 216);
         match self.opts.columns_kind {
             designcraft_doc::ColumnsKind::FixedWidth if self.opts.column_width > 0.0 => (0..n)
                 .map(|i| {
@@ -431,7 +432,8 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                     path: None,
                     ..tf.options.clone()
                 };
-                (Rect::new(0.0, 0.0, (len - pt.start).max(1.0), size * 1.6), opts)
+                let end = pt.end.map_or(len, |e| e.max(0.0).min(len));
+                (Rect::new(0.0, 0.0, (end - pt.start).max(1.0), size * 1.6), opts)
             }
             None => (item.text_area(), tf.options.clone()),
         };
@@ -1563,7 +1565,9 @@ fn spacing_for(pp: &ParaProps, base_size: f64) -> Spacing {
         hyphen_penalty: 50.0 + 450.0 * pp.hyph_weight,
         hyphen_limit: pp.hyph_limit,
         ragged_stretch: base_size * 2.0,
-        hyph_zone: if pp.align.is_justified() { 0.0 } else { pp.hyph_zone },
+        // The zone is the Single-line Composer's (unjustified text only), as in InDesign: the
+        // Paragraph Composer weighs every break of the paragraph instead.
+        hyph_zone: if pp.align.is_justified() || pp.composer != Composer::SingleLine { 0.0 } else { pp.hyph_zone },
         optical: pp.optical_margin,
         korean_char_breaks: pp.korean_char_breaks,
     }
@@ -2438,6 +2442,18 @@ fn layout_line(
             // A default tab stop is a left tab.
             last_tab = Some((i, stop.as_ref().is_none_or(|t| t.align == TabAlign::Left)));
         } else if line[i].ch == story::RIGHT_INDENT_TAB {
+            // Use the first stop past the right margin, or the last stop at/before it.
+            // Choose the stop before checking its leader: an empty leader takes precedence too.
+            let right = x1 - tab_origin;
+            let stop = pp
+                .tabs
+                .iter()
+                .filter(|t| t.position > right)
+                .min_by(|a, b| a.position.total_cmp(&b.position))
+                .or_else(|| pp.tabs.iter().filter(|t| t.position <= right).max_by(|a, b| a.position.total_cmp(&b.position)));
+            if let Some(t) = stop.filter(|t| !t.leader.is_empty()) {
+                leaders.push((i, t.leader.clone()));
+            }
             let rest: f64 = line[i + 1..].iter().map(|g| g.adv).sum();
             line[i].adv = (measure - x - rest).max(0.0);
             last_tab = Some((i, false));
@@ -3563,6 +3579,51 @@ pub fn adjacent_row(l: &Line, x: f64, caret_y: f64, up: bool) -> Option<f64> {
 #[cfg(test)]
 mod tests;
 
+/// Type on a path: between the composed line (x along it, y as composed) and the frame's path
+/// space, as `path_glyphs` places the glyphs.
+pub struct PathTextMap {
+    warp: designcraft_geom::warp::PathWarp,
+    start: f64,
+    /// Line y that sits on the path (the alignment), and the line's baseline.
+    on: f64,
+    baseline: f64,
+}
+
+impl PathTextMap {
+    /// The map of `item` (type on a path) for its composed frame `ft`; None for other frames.
+    pub fn new(item: &designcraft_doc::Item, ft: &FrameText) -> Option<Self> {
+        let pt = item.text_frame()?.options.path.as_ref()?;
+        let warp = designcraft_geom::warp::PathWarp::new(&item.path.to_bezpath(), pt.flip);
+        let (on, baseline) = match ft.lines.first() {
+            Some(l) => (
+                match pt.align {
+                    designcraft_doc::PathAlign::Baseline => l.baseline,
+                    designcraft_doc::PathAlign::Ascender => l.baseline - l.ascent,
+                    designcraft_doc::PathAlign::Descender => l.baseline + l.descent,
+                    designcraft_doc::PathAlign::Center => l.baseline - (l.ascent - l.descent) / 2.0,
+                },
+                l.baseline,
+            ),
+            None => (0.0, 0.0),
+        };
+        Some(PathTextMap { warp, start: pt.start, on, baseline })
+    }
+
+    /// A point of the composed line, on the path: along it by x, across it by y.
+    pub fn to_path(&self, p: Point) -> Point {
+        match self.warp.at(self.start + p.x) {
+            Some((q, a)) => q + designcraft_geom::Vec2::new(-a.sin(), a.cos()) * (p.y - self.on),
+            None => p,
+        }
+    }
+
+    /// A point of the path space, on the composed line: how far along the path its nearest point
+    /// is, at the baseline (for hit testing).
+    pub fn to_line(&self, p: Point) -> Point {
+        Point::new(self.warp.nearest(p) - self.start, self.baseline)
+    }
+}
+
 /// Each visible glyph of a type-on-a-path frame placed on the path: its outline in frame space
 /// (grouped by run style).
 pub fn path_glyphs(
@@ -3612,4 +3673,48 @@ pub fn path_glyphs(
         }
     }
     runs
+}
+
+#[cfg(test)]
+mod column_allocation_safety_tests {
+    use super::*;
+
+    fn frame(kind: designcraft_doc::ColumnsKind) -> FrameSpec {
+        FrameSpec {
+            id: ItemId(1),
+            area: Rect::new(0., 0., 300., 100.),
+            opts: TextFrameOptions { columns: 217, columns_kind: kind, column_width: 20., gutter: 12., ..Default::default() },
+            vertical: false,
+            exclusions: vec![],
+            page_name: None,
+            page: None,
+            grid: None,
+            left_page: false,
+            page_rect: None,
+        }
+    }
+    fn check(kind: designcraft_doc::ColumnsKind) {
+        let mut f = frame(kind);
+        // Fail safely at a small boundary before exercising hostile native options.
+        assert_eq!(f.columns().len(), 216);
+        f.opts.columns = u32::MAX;
+        assert_eq!(f.columns().len(), 216);
+        f.opts.columns = 0;
+        assert_eq!(f.columns().len(), 1);
+        f.opts.columns = 2;
+        let expected = if kind == designcraft_doc::ColumnsKind::FixedWidth {
+            vec![Rect::new(0., 0., 20., 100.), Rect::new(32., 0., 52., 100.)]
+        } else {
+            vec![Rect::new(0., 0., 144., 100.), Rect::new(156., 0., 300., 100.)]
+        };
+        assert_eq!(f.columns(), expected);
+    }
+    #[test]
+    fn column_allocation_caps_equal_width_frame_count() {
+        check(designcraft_doc::ColumnsKind::FixedNumber);
+    }
+    #[test]
+    fn column_allocation_caps_fixed_width_frame_count() {
+        check(designcraft_doc::ColumnsKind::FixedWidth);
+    }
 }

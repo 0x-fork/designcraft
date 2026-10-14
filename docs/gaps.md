@@ -143,8 +143,11 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 ## Medium
 
 ### 15. Long documents in depth (F)
-- **Missing:** Books beyond a list of documents: style/swatch synchronization, book-wide
-  pagination, book PDF export, book TOC and index; Table of Contents Styles.
+- **Missing:** book-wide TOC and index; Table of Contents Styles and deeper production workflows.
+- **Present:** basic style synchronization, continuous book numbering and merged PDF export.
+  Chapter updates prepare the full batch and write only closed native chapters; IDML is a
+  read-only source. Each file is atomic, but a later I/O failure can leave completed chapters;
+  the error lists them. Cross-file transactional saving remains unavailable.
 - **Estimate:** 30–50 h.
 
 ### 16. Menu items still missing (U)

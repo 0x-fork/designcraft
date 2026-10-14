@@ -9,6 +9,7 @@ use super::*;
 
 mod assets;
 mod decorations;
+mod index_sort;
 
 fn zip_files(files: &[(&str, &str)]) -> Vec<u8> {
     use zip::write::SimpleFileOptions;
@@ -2101,4 +2102,70 @@ fn frames_inherit_object_style_corners_and_text_frame_options() {
     assert_eq!((o.columns, o.gutter, o.inset), (3, 18.0, [3.0; 4]));
     assert_eq!((o.vertical_justification, o.first_baseline, o.first_baseline_min), (VerticalJustification::Center, FirstBaseline::Leading, 4.0));
     assert_eq!((o.ignore_wrap, o.auto_size, o.auto_size_ref), (true, AutoSize::HeightOnly, 4));
+}
+#[test]
+fn type_on_a_path_keeps_its_start_and_end_brackets() {
+    use designcraft_geom::{Anchor, PathData, Point, SubPath};
+    for end in [Some(250.0), None] {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let id = designcraft_doc::ItemId(d.alloc());
+        let line = PathData::single(SubPath::new(vec![Anchor::corner(Point::new(100.0, 300.0)), Anchor::corner(Point::new(500.0, 300.0))], false));
+        let mut it = designcraft_doc::Item::new(id, lid, Shape::GraphicLine, line);
+        let sid = designcraft_doc::StoryId(d.alloc());
+        let mut tf = designcraft_doc::TextFrame { story: sid, options: Default::default() };
+        tf.options.path = Some(designcraft_doc::PathType { start: 30.0, end, ..Default::default() });
+        it.content = designcraft_doc::Content::Text(tf);
+        let mut story = designcraft_doc::Story::with_text(sid, "Along", Default::default());
+        story.frames = vec![id];
+        d.stories.insert(sid, std::sync::Arc::new(story));
+        d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+        let back = import_idml(&export_idml(&d)).unwrap();
+        let pt = back.spreads[0].items[0].text_frame().unwrap().options.path.clone().unwrap();
+        assert!((pt.start - 30.0).abs() < 1e-6, "{pt:?}");
+        assert_eq!(pt.end.map(|e| e.round()), end, "an end bracket at the path's end is no end bracket");
+    }
+}
+
+#[test]
+fn frame_preference_import_caps_column_count_without_composition() {
+    for (raw, expected) in [("4000000000", 216), ("1e300", 216), ("-100", 1), ("0", 1), ("NaN", 1), ("inf", 1), ("-inf", 1)] {
+        for attribute in [true, false] {
+            let preference = if attribute {
+                format!(r#"<TextFramePreference TextColumnCount="{raw}"/>"#)
+            } else {
+                format!(
+                    r#"<TextFramePreference><Properties><TextColumnCount type="number">{raw}</TextColumnCount></Properties></TextFramePreference>"#
+                )
+            };
+            let document = format!(
+                r#"<Document><Story Self="s"/><Spread Self="spread"><Page Self="page"/><TextFrame Self="frame" ParentStory="s">{preference}</TextFrame></Spread></Document>"#
+            );
+            let d = import_idml_with(&zip_files(&[("designmap.xml", &document)]), &|_| None).unwrap();
+            let frame = d.spreads[0].items[0].text_frame().unwrap();
+            // Inspect imported data only: never compose an unbounded input value.
+            assert_eq!(frame.options.columns, expected, "{raw}, attribute={attribute}");
+        }
+    }
+}
+
+#[test]
+fn frame_preference_property_color_resolves_for_frames_and_object_styles() {
+    let document = r#"<Document>
+<Color Self="Color/Near" Model="Process" Space="RGB" ColorValue="255 0 0" Name="Near" Visible="true"/>
+<Color Self="Color/Far" Model="Process" Space="RGB" ColorValue="0 0 255" Name="Far" Visible="true"/>
+<RootObjectStyleGroup Self="root">
+<ObjectStyle Self="ObjectStyle/Base" Name="Base" EnableTextFrameGeneralOptions="true"><TextFramePreference ColumnRuleStrokeColor="Color/Far"/></ObjectStyle>
+<ObjectStyle Self="ObjectStyle/Child" Name="Child" EnableTextFrameGeneralOptions="true"><Properties><BasedOn type="object">ObjectStyle/Base</BasedOn></Properties><TextFramePreference><Properties><ColumnRuleStrokeColor type="object">Color/Near</ColumnRuleStrokeColor></Properties></TextFramePreference></ObjectStyle>
+</RootObjectStyleGroup>
+<Story Self="s"/><Spread Self="spread"><Page Self="page"/>
+<TextFrame Self="local" ParentStory="s" AppliedObjectStyle="ObjectStyle/Base"><TextFramePreference><Properties><ColumnRuleStrokeColor type="object">Color/Near</ColumnRuleStrokeColor></Properties></TextFramePreference></TextFrame>
+<TextFrame Self="inherited" ParentStory="s" AppliedObjectStyle="ObjectStyle/Child"/>
+<TextFrame Self="attribute" ParentStory="s" AppliedObjectStyle="ObjectStyle/Child"><TextFramePreference ColumnRuleStrokeColor="Color/Far"><Properties><ColumnRuleStrokeColor type="object">Color/Near</ColumnRuleStrokeColor></Properties></TextFramePreference></TextFrame>
+<TextFrame Self="invalid" ParentStory="s" AppliedObjectStyle="ObjectStyle/Child"><TextFramePreference><Properties><ColumnRuleStrokeColor type="object">missing</ColumnRuleStrokeColor></Properties></TextFramePreference></TextFrame>
+</Spread></Document>"#;
+    let d = import_idml_with(&zip_files(&[("designmap.xml", document)]), &|_| None).unwrap();
+    let colors: Vec<_> = d.spreads[0].items.iter().map(|it| it.text_frame().unwrap().options.column_rule_color.as_str()).collect();
+    assert_eq!(colors, vec!["Near", "Near", "Far", designcraft_color::swatch::NONE]);
+    assert_eq!(d.styles.object_style("Child").unwrap().text_frame.as_ref().unwrap().column_rule_color, "Near");
 }

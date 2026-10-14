@@ -52,7 +52,16 @@ fn frame_param(s: &Session, p: &Value, cmd: &str) -> Result<ItemId> {
     if !st.doc.item(id).is_some_and(|it| it.is_text_frame()) {
         return Err(bad(cmd, format!("{id} is not a text frame")));
     }
+    check_editable(&st.doc, id, cmd)?;
     Ok(id)
+}
+
+fn check_editable(d: &Document, id: ItemId, cmd: &str) -> Result<()> {
+    let it = d.item(id).ok_or(designcraft_doc::DocError::NoItem(id))?;
+    if it.locked || d.layer(it.layer).is_some_and(|l| l.locked) {
+        return Err(bad(cmd, format!("{id} is locked or on a locked layer")));
+    }
+    Ok(())
 }
 
 /// A rect param made safe for a frame: finite, ordered, at least half a point each way.
@@ -68,7 +77,7 @@ fn frame_rect(p: &Value) -> Result<Option<Rect>> {
 
 fn thread(s: &mut Session, p: &Value) -> Result<Value> {
     let (from, to, rect) = (id_param(p, "from"), id_param(p, "to"), frame_rect(p)?);
-    let sr = spread_param(p, "spread");
+    let sr = spread_param(p, "spread")?;
     let autoflow = bool_or(p, "autoflow", false);
     let layer = s.doc()?.active_layer;
     s.edit(|d, sel| {
@@ -114,6 +123,10 @@ fn unthread(s: &mut Session, p: &Value) -> Result<Value> {
         "before" => d0.prev_frame(frame).ok_or_else(|| bad(CMD, format!("no frame comes before {frame} in its thread")))?,
         other => return Err(bad(CMD, format!("unknown side `{other}` (after, before)"))),
     };
+    check_editable(d0, at, CMD)?;
+    if let Some(next) = d0.next_frame(at) {
+        check_editable(d0, next, CMD)?;
+    }
     s.edit(|d, _| {
         d.unthread_after(at)?;
         let sid = d.item(at).and_then(|i| i.text_frame()).map(|t| t.story).ok_or_else(|| bad(CMD, "no story"))?;
@@ -123,6 +136,10 @@ fn unthread(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn remove_from_thread(s: &mut Session, p: &Value) -> Result<Value> {
     let frame = frame_param(s, p, "text.removeFromThread")?;
+    let d = &s.doc()?.doc;
+    for neighbour in [d.prev_frame(frame), d.next_frame(frame)].into_iter().flatten() {
+        check_editable(d, neighbour, "text.removeFromThread")?;
+    }
     s.edit(|d, _| {
         d.remove_from_thread(frame)?;
         Ok(json!({}))

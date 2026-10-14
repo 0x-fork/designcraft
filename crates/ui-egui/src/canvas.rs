@@ -393,7 +393,8 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
         Cursor::ResizeNwSe => C::ResizeNwSe,
         Cursor::ResizeNeSw => C::ResizeNeSw,
         Cursor::Rotate => C::Alias,
-        Cursor::Pen => C::Crosshair,
+        Cursor::Pen | Cursor::PenContinue => C::Crosshair,
+        Cursor::PathBracket => C::ResizeColumn,
         Cursor::Text => C::Text,
         Cursor::Hand => C::Grab,
         Cursor::HandGrab => C::Grabbing,
@@ -1017,6 +1018,28 @@ fn draw_text_selection(
         if range.is_empty() {
             continue;
         }
+        // Type on a path: the highlight bends with the text.
+        if let Some(map) = compose::PathTextMap::new(it, ft) {
+            for l in &ft.lines {
+                let (s, e) = (range.start.max(l.range.start), range.end.min(l.range.end));
+                if s >= e {
+                    continue;
+                }
+                for q in compose::highlight_quads(l, s, e, false) {
+                    let (x0, x1) = (q[0].x.min(q[1].x), q[0].x.max(q[1].x));
+                    let (y0, y1) = (q[0].y.min(q[2].y), q[0].y.max(q[2].y));
+                    // Short slices, each turned with the path.
+                    let n = ((x1 - x0) / 2.0).ceil().clamp(1.0, 2000.0) as usize;
+                    for k in 0..n {
+                        let (a, b) = (x0 + (x1 - x0) * k as f64 / n as f64, x0 + (x1 - x0) * (k + 1) as f64 / n as f64);
+                        let poly =
+                            [Point::new(a, y0), Point::new(b, y0), Point::new(b, y1), Point::new(a, y1)].map(|p| xf.to_screen(m * map.to_path(p)));
+                        painter.add(egui::Shape::convex_polygon(poly.to_vec(), Color32::from_rgba_unmultiplied(80, 140, 255, 110), Stroke::NONE));
+                    }
+                }
+            }
+            continue;
+        }
         let mut quads = Vec::new();
         let mut glyphs = Vec::new();
         for (li, l) in ft.lines.iter().enumerate() {
@@ -1057,8 +1080,10 @@ fn draw_text_selection(
         let m = a * doc.text_xf(it);
         let blink = (painter.ctx().input(|i| i.time) * 1.6) as i64 % 2 == 0;
         if blink {
-            let p0 = xf.to_screen(m * Point::new(x, bl - asc));
-            let p1 = xf.to_screen(m * Point::new(x, bl + desc));
+            // Type on a path: the caret stands across the path where it is along it.
+            let on = |p: Point| compose::PathTextMap::new(it, ft).map_or(p, |map| map.to_path(p));
+            let p0 = xf.to_screen(m * on(Point::new(x, bl - asc)));
+            let p1 = xf.to_screen(m * on(Point::new(x, bl + desc)));
             painter.line_segment([p0, p1], Stroke::new(1.0, Color32::BLACK));
         }
         painter.ctx().request_repaint_after(std::time::Duration::from_millis(330));
@@ -1898,6 +1923,86 @@ mod tests {
             right_click(&mut h, p);
             assert!(h.query_by_label("   Points").is_none());
         }
+    }
+
+    /// A text frame holding `text`, the Type tool, and a harness stepping at 60 fps (clicks in a
+    /// row must land within the double-click delay).
+    fn typing(text: &str) -> (Harness<'static, DesignApp>, u64) {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let r = app.run("frame.create", json!({"rect": [72, 72, 400, 400], "content": "text", "text": text})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        app.run("tool.select", json!({"tool": "type"})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        (h, id)
+    }
+
+    /// The screen point over the first line of frame `id` where a click puts the caret at a byte
+    /// in `bytes`.
+    fn screen_at(h: &mut Harness<'_, DesignApp>, id: u64, bytes: std::ops::Range<usize>) -> Pos2 {
+        let mut x = 74.0;
+        let p = loop {
+            assert!(x < 400.0, "no point on the first line hits {bytes:?}");
+            h.state_mut().run("text.placeCaret", json!({"frame": id, "point": [x, 80.0]})).unwrap();
+            if h.state().session.doc().unwrap().selection.text.is_some_and(|t| bytes.contains(&t.focus)) {
+                break Point::new(x, 80.0);
+            }
+            x += 1.0;
+        };
+        h.state_mut().run("edit.deselectAll", json!({})).unwrap();
+        let app = h.state();
+        let c = app.session.layout().to_canvas(SpreadRef::Doc(0), p);
+        Xf::new(app.canvas_rect.unwrap(), app.view().unwrap()).to_screen(c)
+    }
+
+    fn click(h: &mut Harness<'_, DesignApp>, p: Pos2) {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+            h.step();
+        }
+    }
+
+    fn selected(h: &Harness<'_, DesignApp>) -> std::ops::Range<usize> {
+        h.state().session.doc().unwrap().selection.text.map(|t| t.range()).unwrap_or_default()
+    }
+
+    #[test]
+    fn clicks_in_a_row_select_word_line_paragraph_with_return_and_story() {
+        let text = "One two. Three four! Five six.\nSecond para here.";
+        let (mut h, id) = typing(text);
+        // Inside "Three": double-click selects the word, then line and paragraph with return.
+        let p = screen_at(&mut h, id, 10..14);
+        h.hover_at(p);
+        h.step();
+        let mut got = vec![];
+        for _ in 0..5 {
+            click(&mut h, p);
+            let r = selected(&h);
+            got.push(text[r].to_string());
+        }
+        assert_eq!(got[1..], ["Three", "One two. Three four! Five six.", "One two. Three four! Five six.\n", text], "{got:?}");
+        assert!(got[0].is_empty(), "one click places the caret: {got:?}");
+    }
+
+    #[test]
+    fn slow_clicks_do_not_add_up() {
+        let (mut h, id) = typing("One two. Three four!");
+        let p = screen_at(&mut h, id, 10..14);
+        h.hover_at(p);
+        h.step();
+        for _ in 0..3 {
+            click(&mut h, p);
+            h.run_steps(30);
+        }
+        assert!(selected(&h).is_empty(), "three clicks half a second apart leave a caret: {:?}", selected(&h));
     }
 
     #[test]
