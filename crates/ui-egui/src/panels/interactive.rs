@@ -489,6 +489,21 @@ pub fn buttons(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Liquid page rules in InDesign's order, with their menu labels.
+pub const LIQUID_RULES: [(designcraft_doc::LiquidRule, &str); 6] = [
+    (designcraft_doc::LiquidRule::Off, "Off"),
+    (designcraft_doc::LiquidRule::Scale, "Scale"),
+    (designcraft_doc::LiquidRule::ReCenter, "Re-center"),
+    (designcraft_doc::LiquidRule::ObjectBased, "Object-based"),
+    (designcraft_doc::LiquidRule::GuideBased, "Guide-based"),
+    (designcraft_doc::LiquidRule::ControlledByParent, "Controlled by Parent"),
+];
+
+/// A liquid page rule's menu label.
+pub fn liquid_rule_label(rule: designcraft_doc::LiquidRule) -> &'static str {
+    LIQUID_RULES.iter().find(|(r, _)| *r == rule).map_or("Off", |(_, l)| l)
+}
+
 /// Liquid Layout panel: the current page's rule, the selection's pins (object-based), the page's
 /// liquid guides, and Create Alternate Layout.
 pub fn liquid(app: &mut DesignApp, ui: &mut egui::Ui) {
@@ -504,23 +519,9 @@ pub fn liquid(app: &mut DesignApp, ui: &mut egui::Ui) {
     crate::rtl::label(ui, egui::RichText::new(format!("{} {}", crate::i18n::tr(&app.ui.language, "Page"), d.page_name(page))).strong());
     let mut rule = pg.liquid;
     egui::ComboBox::from_id_salt("liquid_rule")
-        .selected_text(crate::rtl::widget(
-            ui,
-            crate::i18n::tr(
-                &app.ui.language,
-                match rule {
-                    L::Off => "Off",
-                    L::Scale => "Scale",
-                    L::ReCenter => "Re-center",
-                    L::GuideBased => "Guide-based",
-                    L::ObjectBased => "Object-based",
-                },
-            ),
-        ))
+        .selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, liquid_rule_label(rule))))
         .show_ui(ui, |ui| {
-            for (r, label) in
-                [(L::Off, "Off"), (L::Scale, "Scale"), (L::ReCenter, "Re-center"), (L::GuideBased, "Guide-based"), (L::ObjectBased, "Object-based")]
-            {
+            for (r, label) in LIQUID_RULES {
                 ui.selectable_value(&mut rule, r, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label)));
             }
         });

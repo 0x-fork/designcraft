@@ -469,6 +469,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             page_size
         ),
+        cmd!(
+            "layout.pageOptions",
+            "Page Options",
+            [],
+            None,
+            "{pages: [1-based], showParentOverlay?: bool} — Page tool options (Show Parent Page Overlay: the parent page's size drawn over the page)",
+            has_doc,
+            page_options
+        ),
         cmd!(noundo "layout.selectPage", "Select Page", [], None, "{page: 1-based | null} — the page the Page tool selects (its handles, the Control panel)", has_doc, |s, p| {
             let n = s.doc()?.doc.page_count();
             let page = match p.get("page") {
@@ -813,6 +822,26 @@ fn page_size(s: &mut crate::Session, p: &Value) -> Result<Value> {
     };
     s.edit(|d, _| {
         resize_pages_from(d, &pages, w, h, anchor);
+        Ok(json!({"pages": pages.len()}))
+    })
+}
+
+fn page_options(s: &mut crate::Session, p: &Value) -> Result<Value> {
+    let pages: Vec<usize> =
+        p.get("pages").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect()).unwrap_or_default();
+    let n = s.doc()?.doc.page_count();
+    if pages.is_empty() || pages.iter().any(|x| *x == 0 || *x > n) {
+        return Err(bad("layout.pageOptions", "give `pages` (1-based)"));
+    }
+    let overlay = p.get("showParentOverlay").and_then(Value::as_bool);
+    s.edit(|d, _| {
+        for page in &pages {
+            let Some((si, pi)) = d.page_loc(page - 1) else { continue };
+            let pg = &mut std::sync::Arc::make_mut(&mut d.spreads[si]).pages[pi];
+            if let Some(v) = overlay {
+                pg.show_parent_overlay = v;
+            }
+        }
         Ok(json!({"pages": pages.len()}))
     })
 }
