@@ -1081,18 +1081,20 @@ pub fn pdf_page_box(bytes: &[u8], page: usize, kind: &str) -> Option<(f64, f64, 
     let pdf = hayro::hayro_syntax::Pdf::new(std::sync::Arc::new(bytes.to_vec())).ok()?;
     let p = pdf.pages().get(page)?;
     let visible = p.intersected_crop_box();
+    // The boxes are in user space units; `/UserUnit` is the size of one in points.
+    let unit = p.user_unit() as f64;
     let key: &[u8] = match kind {
         "trim" => keys::TRIM_BOX,
         "bleed" => keys::BLEED_BOX,
         "art" => keys::ART_BOX,
-        "media" => return Some(rel(visible, p.media_box())),
-        _ => return Some(rel(visible, visible)),
+        "media" => return Some(rel(visible, p.media_box(), unit)),
+        _ => return Some(rel(visible, visible, unit)),
     };
     let b = p.raw().get::<PRect>(key).map(|b| b.intersect(p.media_box())).unwrap_or(visible);
-    fn rel(v: PRect, b: PRect) -> (f64, f64, f64, f64) {
-        (b.x0 - v.x0, v.y1 - b.y1, b.width(), b.height())
+    fn rel(v: PRect, b: PRect, unit: f64) -> (f64, f64, f64, f64) {
+        ((b.x0 - v.x0) * unit, (v.y1 - b.y1) * unit, b.width() * unit, b.height() * unit)
     }
-    Some(rel(visible, b))
+    Some(rel(visible, b, unit))
 }
 
 /// Separations Preview on a rendered image: `plate` 0–3 shows that process plate (C, M, Y, K) as
