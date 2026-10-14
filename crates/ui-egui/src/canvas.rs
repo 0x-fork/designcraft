@@ -863,6 +863,21 @@ fn draw_frames(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
         for it in &sp.items {
             draw_item_edges(painter, xf, doc, it, a);
         }
+        // Every overset frame, selected or not and inside groups too, shows its red mark at the
+        // out port (InDesign shows it only on the selected frame; a report in Preflight is easy
+        // to miss while laying out).
+        let mut overset = Vec::new();
+        overset_frames(app, doc, &sp.items, a, 0, &mut overset);
+        for (it, m) in overset {
+            let r = it.inner_bounds();
+            let c = xf.to_screen(m * Point::new(r.x1, r.y1)) - vec2(0.0, 12.0);
+            let s = 8.5;
+            painter.rect_filled(Rect::from_center_size(c, vec2(s, s)), 0.0, Color32::WHITE);
+            painter.rect_stroke(Rect::from_center_size(c, vec2(s, s)), 0.0, Stroke::new(hair(painter), layer_color(doc, it)), StrokeKind::Inside);
+            let red = Color32::from_rgb(230, 20, 20);
+            painter.line_segment([c - vec2(2.5, 0.0), c + vec2(2.5, 0.0)], Stroke::new(1.5, red));
+            painter.line_segment([c - vec2(0.0, 2.5), c + vec2(0.0, 2.5)], Stroke::new(1.5, red));
+        }
         // Tagged frames in their tag's colour.
         if app.ui.tagged_frames {
             for top in &sp.items {
@@ -1029,6 +1044,36 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
 
 /// How deep a selected group is walked for the text frames whose ports are drawn.
 const PORT_GROUP_DEPTH: usize = 32;
+
+/// The visible text frames among `items` (groups walked) that end an overset story, each with
+/// its full transform (`a` is the transform of the items' parent).
+fn overset_frames<'a>(
+    app: &DesignApp,
+    doc: &Document,
+    items: &'a [std::sync::Arc<Item>],
+    a: Affine,
+    depth: usize,
+    out: &mut Vec<(&'a Item, Affine)>,
+) {
+    if depth > PORT_GROUP_DEPTH {
+        return;
+    }
+    for it in items {
+        if it.hidden || doc.layer(it.layer).is_some_and(|l| !l.visible) {
+            continue;
+        }
+        match &it.content {
+            Content::Text(tf) => {
+                let Some(story) = doc.story(tf.story) else { continue };
+                if story.frames.last() == Some(&it.id) && app.session.cache.get(doc, tf.story, None).is_overset() {
+                    out.push((it, a * it.xf));
+                }
+            }
+            Content::Group { items } => overset_frames(app, doc, items, a * it.xf, depth + 1, out),
+            _ => {}
+        }
+    }
+}
 
 /// `it` when it is a text frame, or every text frame nested in it when it is a group, each with
 /// its story and the transform of its parent (`a` is the transform of `it`'s parent).
@@ -2527,6 +2572,33 @@ mod tests {
 
     fn out_frame(doc: &Document, id: u64) -> &Item {
         doc.item(designcraft_doc::ItemId(id)).unwrap()
+    }
+
+    /// An overset frame inside a group is listed for the red mark even when nothing is
+    /// selected; a frame with room, or a hidden one, is not.
+    #[test]
+    fn overset_frames_are_found_inside_groups() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let s = &mut app.session;
+        let frame_with = |s: &mut designcraft_engine::Session, rect: [f64; 4], text: &str| {
+            s.execute("frame.create", &json!({"rect": rect, "content": "text", "text": text})).unwrap()["id"].as_u64().unwrap()
+        };
+        let tiny = frame_with(s, [10.0, 10.0, 40.0, 16.0], "far too much text for a frame this small, over and over again");
+        let roomy = frame_with(s, [10.0, 100.0, 300.0, 300.0], "fits");
+        s.execute("selection.set", &json!({"ids": [tiny, roomy]})).unwrap();
+        s.execute("object.group", &json!({})).unwrap();
+        s.execute("selection.set", &json!({"ids": []})).unwrap();
+        let doc = app.session.doc().unwrap().doc.clone();
+        let mut out = Vec::new();
+        overset_frames(&app, &doc, &doc.spreads[0].items, Affine::IDENTITY, 0, &mut out);
+        assert_eq!(out.iter().map(|(it, _)| it.id.0).collect::<Vec<_>>(), vec![tiny]);
+        // Hidden: no mark.
+        app.session.execute("object.hide", &json!({"ids": [tiny]})).unwrap();
+        let doc = app.session.doc().unwrap().doc.clone();
+        out.clear();
+        overset_frames(&app, &doc, &doc.spreads[0].items, Affine::IDENTITY, 0, &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
