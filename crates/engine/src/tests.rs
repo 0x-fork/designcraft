@@ -1258,3 +1258,76 @@ fn alt_arrows_kern_at_the_caret_and_track_a_selection() {
     let t = s.doc().unwrap().selection.text.unwrap();
     assert_eq!((t.anchor, t.focus), (0, 5));
 }
+
+#[test]
+fn page_tool_selects_a_page_and_its_handles_preview_or_resize_it() {
+    use designcraft_tools::{CanvasLayout, Mods, PointerEvent, PointerKind};
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 612, "height": 792, "facingPages": false})).unwrap();
+    let id = s.execute("frame.create", &json!({"rect": [400, 100, 500, 200]})).unwrap()["id"].as_u64().unwrap();
+    let frame = |s: &Session| s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().bounds();
+    let width = |s: &Session| s.doc().unwrap().doc.spreads[0].pages[0].width;
+    // The page on the canvas (a single page is centred on the spine).
+    let page = |s: &Session| {
+        let d = &s.doc().unwrap().doc;
+        CanvasLayout::new(d, false).page_rect(d, 0).unwrap()
+    };
+    s.set_tool("page");
+    let v = ViewInfo::at_zoom(1.0);
+    let ev = |kind, x: f64, y: f64, alt: bool| PointerEvent { mods: Mods { alt, ..Default::default() }, ..PointerEvent::new(kind, x, y) };
+    let drag = |s: &mut Session, from: (f64, f64), by: f64, alt: bool, check: &dyn Fn(&Session)| {
+        s.pointer(&ev(PointerKind::Down, from.0, from.1, alt), v).unwrap();
+        s.pointer(&ev(PointerKind::Drag, from.0 + by, from.1, alt), v).unwrap();
+        check(s);
+        s.pointer(&ev(PointerKind::Up, from.0 + by, from.1, alt), v).unwrap();
+    };
+    // A click selects the page.
+    let c = page(&s).center();
+    s.pointer(&ev(PointerKind::Down, c.x, c.y, false), v).unwrap();
+    s.pointer(&ev(PointerKind::Up, c.x, c.y, false), v).unwrap();
+    assert_eq!(s.doc().unwrap().selection.page, Some(0));
+    // A plain drag of the right handle previews the page's liquid rule and springs back.
+    s.execute("liquid.pageRule", &json!({"rule": "scale"})).unwrap();
+    let undo = s.doc().unwrap().history.undo.len();
+    let r = page(&s);
+    drag(&mut s, (r.x1, r.center().y), 612.0, false, &|s| {
+        assert_eq!(width(s), 1224.0, "previewed");
+        // Scale keeps proportions: only wider, so the frame is centred on the wider page.
+        assert_eq!(frame(s).x0, 706.0, "the Scale rule in the preview: {:?}", frame(s));
+    });
+    assert_eq!((width(&s), frame(&s)), (612.0, designcraft_geom::Rect::new(400.0, 100.0, 500.0, 200.0)), "sprung back");
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "nothing to undo");
+    // Alt-drag resizes; with the rule off the frame stays where it is.
+    s.execute("liquid.pageRule", &json!({"rule": "off"})).unwrap();
+    let r = page(&s);
+    drag(&mut s, (r.x1, r.center().y), 100.0, true, &|_| {});
+    assert_eq!(width(&s), 712.0);
+    assert_eq!(frame(&s).x0, 400.0);
+    // The left handle grows the page to the left: the frame keeps its place by the right edge.
+    let r = page(&s);
+    drag(&mut s, (r.x0, r.center().y), -100.0, true, &|_| {});
+    let pg = s.doc().unwrap().doc.spreads[0].pages[0].clone();
+    assert_eq!(pg.width, 812.0);
+    assert_eq!(frame(&s).x0 - pg.x, 500.0, "100 pt further from the page's left edge");
+    // A click on the pasteboard deselects the page.
+    let r = page(&s);
+    s.pointer(&ev(PointerKind::Down, r.x0 - 200.0, r.center().y, false), v).unwrap();
+    assert_eq!(s.doc().unwrap().selection.page, None);
+}
+
+#[test]
+fn page_size_keeps_objects_by_its_anchor() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 400, "height": 400, "facingPages": false})).unwrap();
+    let id = s.execute("frame.create", &json!({"rect": [100, 100, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+    let frame = |s: &Session| s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().bounds();
+    // Bottom-right stays put: 100 wider and 50 taller moves the frame 100 right and 50 down.
+    s.execute("layout.pageSize", &json!({"pages": [1], "width": 500, "height": 450, "anchor": 8})).unwrap();
+    assert_eq!(frame(&s), designcraft_geom::Rect::new(200.0, 150.0, 300.0, 250.0));
+    // The centre: half of it.
+    s.execute("layout.pageSize", &json!({"pages": [1], "width": 700, "height": 450, "anchor": 4})).unwrap();
+    assert_eq!(frame(&s).x0, 300.0);
+    assert!(s.execute("layout.pageSize", &json!({"pages": [1], "width": 700, "anchor": 9})).is_err());
+    assert!(s.execute("layout.selectPage", &json!({"page": 2})).is_err());
+    assert_eq!(s.execute("layout.selectPage", &json!({"page": 1})).unwrap()["page"], 1);
+}

@@ -1536,6 +1536,27 @@ fn draw_tool_overlays(app: &mut DesignApp, painter: &egui::Painter, xf: &Xf) {
                 let pts = vec![c + vec2(0.0, -h), c + vec2(h, 0.0), c + vec2(0.0, h), c + vec2(-h, 0.0)];
                 painter.add(egui::Shape::convex_polygon(pts, tok.live_corner, Stroke::new(1.0, sel_color)));
             }
+            Overlay::PageHandles(r) => {
+                // The Page tool's selected page: outline and eight handles, as InDesign draws them.
+                let r = xf.rect(r);
+                let col = Color32::from_rgb(79, 153, 255);
+                painter.rect_stroke(r, 0.0, Stroke::new(1.0, col), StrokeKind::Middle);
+                for i in (0..9).filter(|i| *i != 4) {
+                    let c = pos2(r.min.x + r.width() * (i % 3) as f32 / 2.0, r.min.y + r.height() * (i / 3) as f32 / 2.0);
+                    let h = Rect::from_center_size(c, vec2(7.0, 7.0));
+                    painter.rect_filled(h, 0.0, Color32::WHITE);
+                    painter.rect_stroke(h, 0.0, Stroke::new(1.0, col), StrokeKind::Inside);
+                }
+            }
+            Overlay::Tag { p, text } => {
+                let text = crate::i18n::tr(&app.ui.language, &text).to_owned();
+                let s = xf.to_screen(p);
+                let g = painter.layout_no_wrap(text, egui::FontId::proportional(10.0), tok.measure_text);
+                let r = Rect::from_min_size(s - vec2(0.0, g.size().y + 4.0), g.size() + vec2(8.0, 4.0));
+                painter.rect_filled(r, 2.0, tok.measure_bg);
+                painter.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_rgb(79, 153, 255)), StrokeKind::Inside);
+                painter.galley(r.min + vec2(4.0, 2.0), g, tok.measure_text);
+            }
         }
     }
 }
