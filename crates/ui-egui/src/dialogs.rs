@@ -684,6 +684,257 @@ pub fn open_margins_and_columns(app: &mut DesignApp) {
     app.ui.dialog = Some(d);
 }
 
+/// The margin fields of Margins and Columns: (key, label on a facing page, label on a single one).
+const MARGIN_FIELDS: [(&str, &str, &str); 4] = [
+    ("marginTop", "Top:", "Top:"),
+    ("marginBottom", "Bottom:", "Bottom:"),
+    ("marginInside", "Inside:", "Left:"),
+    ("marginOutside", "Outside:", "Right:"),
+];
+
+/// Layout › Margins and Columns, laid out as InDesign's: Margins (Top and Bottom, Inside and
+/// Outside, with the link button between them: Make all settings the same), Columns (Number,
+/// Gutter), Adjust Layout, and Preview beside the options. Measures are in the ruler unit and
+/// take arithmetic ("0.4375 in*2").
+fn margins_and_columns_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
+    let facing = app.session.active().is_none_or(|s| s.doc.settings.facing_pages);
+    // Linked when the dialog opens with four equal margins, as InDesign's.
+    if !d.fields.contains_key("link") {
+        let first = d.s("marginTop");
+        let same = MARGIN_FIELDS.iter().all(|(k, _, _)| d.s(k) == first);
+        d.fields.insert("link".into(), json!(same));
+    }
+    link_margins(d);
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            group_box(ui, &tr("Margins"), |ui| {
+                ui.horizontal_top(|ui| {
+                    egui::Grid::new("mac_tb").num_columns(2).spacing([6.0, 6.0]).show(ui, |ui| {
+                        for (k, l, _) in &MARGIN_FIELDS[..2] {
+                            caption_right(ui, &tr(l), 72.0);
+                            measure_field(ui, d, k, 76.0);
+                            ui.end_row();
+                        }
+                    });
+                    // The link button, between the two rows.
+                    let linked = d.b("link");
+                    let tip = tr("Make all settings the same");
+                    let resp = ui
+                        .vertical(|ui| {
+                            ui.add_space(14.0);
+                            crate::icons::button(ui, if linked { "link" } else { "link-broken" }, 20.0, linked, &tip)
+                        })
+                        .inner;
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &tip));
+                    if resp.clicked() {
+                        d.fields.insert("link".into(), json!(!linked));
+                    }
+                    egui::Grid::new("mac_io").num_columns(2).spacing([6.0, 6.0]).show(ui, |ui| {
+                        for (k, l, single) in &MARGIN_FIELDS[2..] {
+                            caption_right(ui, &tr(if facing { l } else { single }), 72.0);
+                            measure_field(ui, d, k, 76.0);
+                            ui.end_row();
+                        }
+                    });
+                });
+            });
+            ui.add_space(8.0);
+            group_box(ui, &tr("Columns"), |ui| {
+                ui.horizontal(|ui| {
+                    caption_right(ui, &tr("Number:"), 72.0);
+                    text_field(ui, d, "columns", 76.0);
+                    ui.add_space(28.0);
+                    caption_right(ui, &tr("Gutter:"), 72.0);
+                    measure_field(ui, d, "gutter", 76.0);
+                });
+            });
+            ui.add_space(6.0);
+            check(ui, d, "adjustLayout", &tr("Adjust Layout"));
+            ui.add_space(4.0);
+            let all_pages = !d.fields.contains_key("parent");
+            target_row(app, ui, d, all_pages);
+        });
+        ui.add_space(24.0);
+        check(ui, d, "preview", &tr("Preview"));
+    });
+    link_margins(d);
+    layout_dialog_preview(app, d, "layout.marginsAndColumns", "Margins and Columns");
+    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+        ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+    }
+}
+
+/// Linked margins: a margin changed since the dialog last looked (typed, or set over the control
+/// channel) is all four.
+fn link_margins(d: &mut Dialog) {
+    let now: Vec<String> = MARGIN_FIELDS.iter().map(|(k, _, _)| d.s(k)).collect();
+    let seen: Vec<String> = d.fields.get("_margins").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_else(|| now.clone());
+    let mut now = now;
+    if d.b("link")
+        && let Some(i) = now.iter().zip(&seen).position(|(a, b)| a != b)
+    {
+        let v = now[i].clone();
+        for (k, _, _) in &MARGIN_FIELDS {
+            d.fields.insert((*k).into(), json!(v));
+        }
+        now = vec![v; MARGIN_FIELDS.len()];
+    }
+    d.fields.insert("_margins".into(), json!(now));
+}
+
+/// Layout › Create Guides, laid out as InDesign's: Rows and Columns side by side (Number,
+/// Gutter), Options (Fit Guides to: Margins or Page, Remove Existing Ruler Guides), and Preview.
+fn create_guides_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.horizontal_top(|ui| {
+                for (title, n, g, id) in [("Rows", "rows", "rowGutter", "cg_rows"), ("Columns", "columns", "columnGutter", "cg_cols")] {
+                    group_box(ui, &tr(title), |ui| {
+                        egui::Grid::new(id).num_columns(2).spacing([6.0, 6.0]).show(ui, |ui| {
+                            caption_right(ui, &tr("Number:"), 72.0);
+                            text_field(ui, d, n, 70.0);
+                            ui.end_row();
+                            caption_right(ui, &tr("Gutter:"), 72.0);
+                            measure_field(ui, d, g, 70.0);
+                            ui.end_row();
+                        });
+                    });
+                    ui.add_space(8.0);
+                }
+            });
+            ui.add_space(8.0);
+            group_box(ui, &tr("Options"), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(crate::rtl::widget(ui, tr("Fit Guides to:")));
+                    let page = d.s("fitTo") == "page";
+                    if ui.radio(!page, crate::rtl::widget(ui, tr("Margins"))).clicked() {
+                        d.fields.insert("fitTo".into(), json!("margins"));
+                    }
+                    if ui.radio(page, crate::rtl::widget(ui, tr("Page"))).clicked() {
+                        d.fields.insert("fitTo".into(), json!("page"));
+                    }
+                });
+                check(ui, d, "removeExisting", &tr("Remove Existing Ruler Guides"));
+            });
+            ui.add_space(4.0);
+            target_row(app, ui, d, false);
+        });
+        ui.add_space(24.0);
+        check(ui, d, "preview", &tr("Preview"));
+    });
+    layout_dialog_preview(app, d, "layout.createGuides", "Create Guides");
+    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+        ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+    }
+}
+
+/// A measure field: typed arithmetic ("0.4375 in*2") is worked out when the field is left, as
+/// InDesign shows it ("click in another field to see the value multiplied by two").
+fn measure_field(ui: &mut egui::Ui, d: &mut Dialog, key: &str, w: f32) {
+    let mut s = d.s(key);
+    let r = ui.add(egui::TextEdit::singleline(&mut s).desired_width(w).horizontal_align(egui::Align::Min));
+    if r.changed() {
+        d.fields.insert(key.into(), Value::String(s));
+    }
+    if r.lost_focus()
+        && let Some(v) = d.m(key).filter(|v| v.is_finite())
+    {
+        d.fields.insert(key.into(), json!(format_measure(v, d.unit)));
+    }
+}
+
+/// A titled group, as InDesign's dialogs draw them: the title, then the contents in a thin frame.
+fn group_box(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    ui.vertical(|ui| {
+        crate::rtl::label(ui, egui::RichText::new(title).font(semibold(12.0)));
+        egui::Frame::NONE.stroke(egui::Stroke::new(1.0, t.divider)).inner_margin(egui::Margin::same(8)).corner_radius(2.0).show(ui, add);
+    });
+}
+
+/// A field caption (the grid lines the fields up).
+fn caption_right(ui: &mut egui::Ui, text: &str, _w: f32) {
+    ui.add(egui::Label::new(crate::rtl::widget(ui, text)).wrap_mode(egui::TextWrapMode::Extend));
+}
+
+/// The command params of the Margins and Columns or Create Guides dialog. A measure that does
+/// not parse is an error to show, never a silent 0.
+fn layout_dialog_params(d: &Dialog) -> Result<Value, String> {
+    let measure =
+        |key: &str, what: &str| d.m(key).filter(|x| x.is_finite() && *x >= 0.0).ok_or_else(|| format!("Enter a valid {what}, e.g. 12 or 12 mm."));
+    if d.id == "createGuides" {
+        let (row_gutter, column_gutter) = (measure("rowGutter", "gutter")?, measure("columnGutter", "gutter")?);
+        let mut p = json!({"rows": d.n("rows").unwrap_or(0.0).max(0.0) as u64, "columns": d.n("columns").unwrap_or(0.0).max(0.0) as u64,
+            "rowGutter": row_gutter, "columnGutter": column_gutter, "fitTo": d.s("fitTo"),
+            "removeExisting": d.b("removeExisting"), "spread": d.fields.get("spread").cloned().unwrap_or(json!(0))});
+        // Without `page` the command covers every page of the spread.
+        if d.s("target") != "spread" {
+            p["page"] = d.fields.get("page").cloned().unwrap_or(json!(0));
+        }
+        return Ok(p);
+    }
+    let mut v = Map::new();
+    for (k, key) in [("top", "marginTop"), ("bottom", "marginBottom"), ("inside", "marginInside"), ("outside", "marginOutside")] {
+        v.insert(k.into(), json!(measure(key, &format!("{k} value"))?));
+    }
+    let gutter = measure("gutter", "gutter value")?;
+    let mut p =
+        json!({"margins": v, "columns": d.n("columns").unwrap_or(1.0).max(1.0) as u64, "gutter": gutter, "adjustLayout": d.b("adjustLayout")});
+    let spread_pages: Vec<u64> =
+        d.fields.get("spreadPages").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+    if let Some(pi) = d.fields.get("parent").and_then(Value::as_u64) {
+        p["parent"] = json!(pi);
+        p["pages"] =
+            if d.s("target") == "page" { json!([d.fields.get("parentPage").and_then(Value::as_u64).unwrap_or(0)]) } else { json!(spread_pages) };
+    } else {
+        match d.s("target").as_str() {
+            "all" => {}
+            "spread" if !spread_pages.is_empty() => p["pages"] = json!(spread_pages),
+            _ => p["pages"] = json!([d.fields.get("page").and_then(Value::as_u64).unwrap_or(0)]),
+        }
+    }
+    Ok(p)
+}
+
+/// Preview on: the change shows on the page (redone when a field changes) without an undo step;
+/// off, the page goes back.
+fn layout_dialog_preview(app: &mut DesignApp, d: &mut Dialog, cmd: &str, label: &str) {
+    let shown = d.fields.get(PREVIEWED).cloned();
+    if !d.b("preview") {
+        if shown.is_some() {
+            app.session.cancel_interaction();
+            d.fields.remove(PREVIEWED);
+            d.fields.remove("status");
+        }
+        return;
+    }
+    let params = match layout_dialog_params(d) {
+        Ok(p) => p,
+        Err(e) => {
+            d.fields.insert("status".into(), json!(e));
+            return;
+        }
+    };
+    if shown.as_ref() == Some(&params) {
+        return;
+    }
+    if shown.is_none()
+        && let Err(e) = app.session.begin_interaction(label)
+    {
+        d.fields.insert("status".into(), json!(e.to_string()));
+        return;
+    }
+    match app.session.preview(cmd, params.clone()) {
+        Ok(()) => d.fields.remove("status"),
+        Err(e) => d.fields.insert("status".into(), json!(e.to_string())),
+    };
+    d.fields.insert(PREVIEWED.into(), params);
+}
+
 /// "Apply to:" choice of the Create Guides and Margins and Columns dialogs, with the page it
 /// refers to spelled out so a wrong target is visible before the dialog is confirmed.
 fn target_row(app: &DesignApp, ui: &mut egui::Ui, d: &mut Dialog, all_pages: bool) {
@@ -1907,58 +2158,8 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         ui.end_row();
                     });
                 }
-                "createGuides" => {
-                    let u = d.unit.suffix();
-                    egui::Grid::new("cg").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                        for (key, label, unit) in [
-                            ("rows", "Rows: Number", false),
-                            ("rowGutter", "Rows: Gutter", true),
-                            ("columns", "Columns: Number", false),
-                            ("columnGutter", "Columns: Gutter", true),
-                        ] {
-                            let text = crate::i18n::tr(&app.ui.language, label);
-                            ui.label(crate::rtl::widget(ui, if unit { format!("{text} ({u})") } else { text.to_string() }));
-                            text_field(ui, &mut d, key, 80.0);
-                            ui.end_row();
-                        }
-                        ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Fit Guides to")));
-                        combo(ui, &mut d, "fitTo", &[("margins", "Margins"), ("page", "Page")]);
-                        ui.end_row();
-                    });
-                    ui.add_space(4.0);
-                    check(ui, &mut d, "removeExisting", crate::i18n::tr(&app.ui.language, "Remove Existing Ruler Guides"));
-                    target_row(app, ui, &mut d, false);
-                    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
-                        ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
-                    }
-                }
-                "marginsAndColumns" => {
-                    let u = d.unit.suffix();
-                    egui::Grid::new("mac").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                        ui.label(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Columns")));
-                        text_field(ui, &mut d, "columns", 80.0);
-                        ui.end_row();
-                        for (key, label) in [
-                            ("gutter", "Gutter"),
-                            ("marginTop", "Top"),
-                            ("marginBottom", "Bottom"),
-                            ("marginInside", "Inside"),
-                            ("marginOutside", "Outside"),
-                        ] {
-                            // The unit is shown next to every measurement so it is never a guess.
-                            ui.label(crate::rtl::widget(ui, format!("{} ({})", crate::i18n::tr(&app.ui.language, label), u)));
-                            text_field(ui, &mut d, key, 80.0);
-                            ui.end_row();
-                        }
-                    });
-                    ui.add_space(4.0);
-                    let all_pages = !d.fields.contains_key("parent");
-                    target_row(app, ui, &mut d, all_pages);
-                    check(ui, &mut d, "adjustLayout", crate::i18n::tr(&app.ui.language, "Adjust Layout"));
-                    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
-                        ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
-                    }
-                }
+                "createGuides" => create_guides_dialog(app, ui, &mut d),
+                "marginsAndColumns" => margins_and_columns_dialog(app, ui, &mut d),
                 "textFrameOptions" => {
                     seed_text_frame_options(app, &mut d);
                     text_frame_options_dialog(app, ui, &mut d);
@@ -2044,54 +2245,21 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         app.cancel_pdf_import();
     }
     match d.id.as_str() {
-        "createGuides" => {
-            let (Some(row_gutter), Some(column_gutter)) =
-                (d.m("rowGutter").filter(|x| *x >= 0.0), d.m("columnGutter").filter(|x| *x >= 0.0))
-            else {
+        "createGuides" | "marginsAndColumns" => {
+            // The preview goes; the change is made once, as one undo step.
+            if d.fields.contains_key(PREVIEWED) {
+                app.session.cancel_interaction();
+            }
+            let cmd = if d.id == "createGuides" { "layout.createGuides" } else { "layout.marginsAndColumns" };
+            let r = layout_dialog_params(&d).and_then(|p| app.run(cmd, p));
+            if let Err(e) = &r {
+                // A value that does not parse, or a refused one, keeps the dialog open to be fixed.
                 let mut d = d.clone();
-                d.fields.insert("status".into(), json!("Enter a valid gutter, e.g. 12 or 12 mm."));
+                d.fields.remove(PREVIEWED);
+                d.fields.insert("status".into(), json!(e));
                 app.ui.dialog = Some(d);
-                return Err("invalid gutter".into());
-            };
-            let mut p = json!({"rows": d.n("rows").unwrap_or(0.0).max(0.0) as u64, "columns": d.n("columns").unwrap_or(0.0).max(0.0) as u64,
-                "rowGutter": row_gutter, "columnGutter": column_gutter, "fitTo": d.s("fitTo"),
-                "removeExisting": d.b("removeExisting"), "spread": d.fields.get("spread").cloned().unwrap_or(json!(0))});
-            // Without `page` the command covers every page of the spread.
-            if d.s("target") != "spread" {
-                p["page"] = d.fields.get("page").cloned().unwrap_or(json!(0));
             }
-            app.run("layout.createGuides", p)
-        }
-        "marginsAndColumns" => {
-            // A value that does not parse is an error shown in the dialog, never a silent 0.
-            let mut v = Map::new();
-            for (k, key) in [("top", "marginTop"), ("bottom", "marginBottom"), ("inside", "marginInside"), ("outside", "marginOutside"), ("gutter", "gutter")] {
-                match d.m(key).filter(|x| *x >= 0.0) {
-                    Some(x) => {
-                        v.insert(k.into(), json!(x));
-                    }
-                    None => {
-                        let mut d = d.clone();
-                        d.fields.insert("status".into(), json!(format!("Enter a valid {k} value, e.g. 12 or 12 mm.")));
-                        app.ui.dialog = Some(d);
-                        return Err(format!("invalid {k}"));
-                    }
-                }
-            }
-            let gutter = v.remove("gutter").unwrap_or(json!(12.0));
-            let mut p = json!({"margins": v, "columns": d.n("columns").unwrap_or(1.0).max(1.0) as u64, "gutter": gutter, "adjustLayout": d.b("adjustLayout")});
-            let spread_pages: Vec<u64> = d.fields.get("spreadPages").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
-            if let Some(pi) = d.fields.get("parent").and_then(Value::as_u64) {
-                p["parent"] = json!(pi);
-                p["pages"] = if d.s("target") == "page" { json!([d.fields.get("parentPage").and_then(Value::as_u64).unwrap_or(0)]) } else { json!(spread_pages) };
-            } else {
-                match d.s("target").as_str() {
-                    "all" => {}
-                    "spread" if !spread_pages.is_empty() => p["pages"] = json!(spread_pages),
-                    _ => p["pages"] = json!([d.fields.get("page").and_then(Value::as_u64).unwrap_or(0)]),
-                }
-            }
-            app.run("layout.marginsAndColumns", p)
+            r
         }
         "newDocument" => {
             let margins = json!({"top": d.m("marginTop").unwrap_or(36.0), "bottom": d.m("marginBottom").unwrap_or(36.0), "inside": d.m("marginInside").unwrap_or(36.0), "outside": d.m("marginOutside").unwrap_or(36.0)});
@@ -4613,6 +4781,117 @@ mod tests {
         let d = app.ui.dialog.as_ref().unwrap();
         assert!(d.b("replace"));
         assert_eq!(toc_rows(d).iter().map(|r| r.style.as_str()).collect::<Vec<_>>(), ["Headline"]);
+    }
+
+    #[test]
+    fn margins_and_columns_link_arithmetic_preview_and_one_undo_step() {
+        // Adobe's "Set up a modern magazine layout" (1:41–3:04): linked margins to 0.4375 in, then
+        // 5 columns with a 0.1875 in gutter, unlinked, and "*2" typed after the outside margin.
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"preset": "A4", "pages": 3, "facingPages": true, "margins": 36})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0)));
+        open_margins_and_columns(&mut app);
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1178.0, 814.0));
+        let mut labels = vec![];
+        for _ in 0..3 {
+            labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        for expected in
+            ["Margins and Columns", "Margins", "Top:", "Bottom:", "Inside:", "Outside:", "Columns", "Number:", "Gutter:", "Adjust Layout", "Preview"]
+        {
+            visible_label(&labels, screen, expected);
+        }
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert!(d.b("link"), "four equal margins open linked");
+        // Linked: one margin typed is all four.
+        app.ui.dialog.as_mut().unwrap().fields.insert("marginTop".into(), json!("0.4375 in"));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert!(MARGIN_FIELDS.iter().all(|(k, _, _)| d.s(k) == "0.4375 in"), "{:?}", d.fields);
+        // Preview: the page changes, with no undo step.
+        let undo = app.session.doc().unwrap().history.undo.len();
+        app.ui.dialog.as_mut().unwrap().fields.insert("preview".into(), json!(true));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let top = |app: &DesignApp| app.session.doc().unwrap().doc.spreads[0].pages[0].margins.top;
+        assert!((top(&app) - 31.5).abs() < 1e-6, "previewed: {}", top(&app));
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), undo);
+        // Unlinked (the link button), the outside margin alone: "*2" typed after it is worked out
+        // when the field is left.
+        app.ui.dialog.as_mut().unwrap().fields.insert("link".into(), json!(false));
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        let key = |k| egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let field = labels
+            .iter()
+            .filter(|(t, _, _)| t.trim() == "0.4375 in")
+            .map(|(_, r, _)| *r)
+            .max_by(|a, b| (a.max.x + a.max.y).total_cmp(&(b.max.x + b.max.y)))
+            .unwrap();
+        click_dialog(&mut app, &ctx, screen, field.center());
+        dialog_frame(&mut app, &ctx, screen, vec![key(egui::Key::End), egui::Event::Text("*2".into())]);
+        dialog_frame(&mut app, &ctx, screen, vec![key(egui::Key::Tab)]);
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert!(
+            !d.s("marginOutside").contains('*') && (d.m("marginOutside").unwrap() - 63.0).abs() < 1e-6,
+            "worked out on leaving the field: {}",
+            d.s("marginOutside")
+        );
+        let d = app.ui.dialog.as_mut().unwrap();
+        d.fields.insert("link".into(), json!(false));
+        for (k, v) in [("marginOutside", "0.4375 in*2"), ("columns", "5"), ("gutter", "0.1875 in"), ("target", "all")] {
+            d.fields.insert(k.into(), json!(v));
+        }
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        confirm(&mut app).unwrap();
+        let pg = app.session.doc().unwrap().doc.spreads[1].pages[0].clone();
+        assert_eq!((pg.margins.top, pg.margins.outside, pg.columns.count), (31.5, 63.0, 5));
+        assert!((pg.columns.gutter - 13.5).abs() < 1e-6);
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), undo + 1, "one undo step");
+        // Cancel after a preview puts the page back.
+        open_margins_and_columns(&mut app);
+        let d = app.ui.dialog.as_mut().unwrap();
+        d.fields.insert("preview".into(), json!(true));
+        d.fields.insert("columns".into(), json!("2"));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        cancel(&mut app);
+        assert_eq!(app.session.doc().unwrap().doc.spreads[1].pages[0].columns.count, 5);
+    }
+
+    #[test]
+    fn create_guides_reads_like_indesigns_and_previews() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 1, "facingPages": false})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0)));
+        open_create_guides(&mut app);
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1178.0, 814.0));
+        let mut labels = vec![];
+        for _ in 0..3 {
+            labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        for expected in
+            ["Create Guides", "Rows", "Columns", "Options", "Fit Guides to:", "Margins", "Page", "Remove Existing Ruler Guides", "Preview"]
+        {
+            visible_label(&labels, screen, expected);
+        }
+        // Rows and Columns side by side.
+        let (r, c) = (visible_label(&labels, screen, "Rows"), visible_label(&labels, screen, "Columns"));
+        assert!((r.center().y - c.center().y).abs() < 2.0 && r.center().x < c.center().x);
+        // Thirds, single guides, fitted to the page: clicking the Page radio.
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "Page").center());
+        let d = app.ui.dialog.as_mut().unwrap();
+        assert_eq!(d.s("fitTo"), "page");
+        d.fields.insert("rows".into(), json!("3"));
+        d.fields.insert("rowGutter".into(), json!("0"));
+        d.fields.insert("preview".into(), json!(true));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let guides = |app: &DesignApp| app.session.doc().unwrap().doc.spreads[0].pages[0].guides.len();
+        assert_eq!(guides(&app), 2, "previewed");
+        confirm(&mut app).unwrap();
+        assert_eq!(guides(&app), 2, "made once");
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(guides(&app), 0, "one undo step");
     }
 
     fn dialog_context(language: &str) -> egui::Context {
