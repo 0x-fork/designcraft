@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::testing::{font_with, with_fs_type};
+use crate::testing::{font_with, font_with_wws, with_fs_type};
 
 /// An empty temporary folder unique to `name` and this process.
 fn temp_dir(name: &str) -> PathBuf {
@@ -165,4 +165,24 @@ fn restricted_licence_reads_the_embedding_bits() {
     }
     assert!(!db.face(FALLBACK_FAMILY, "Regular").restricted_licence(), "the bundled fonts are OFL");
     assert_eq!(db.face(FALLBACK_FAMILY, "Regular").source, FontSource::Bundled);
+}
+
+#[test]
+fn optical_size_face_is_found_by_its_wws_names() {
+    let folder = temp_dir("wws");
+    let bytes = font_with_wws("DocFont Kepler", "Light Display", "DocFont Kepler Display", "Light", &['k']).unwrap();
+    std::fs::write(folder.join("light-display.otf"), bytes).unwrap();
+    let db = FontDb::with_font_dirs(vec![]);
+    let r = db.load_document_fonts(&folder);
+    assert_eq!((r.faces, r.skipped.len()), (1, 0), "{:?}", r.skipped);
+    let fonts = db.scoped(r.scope);
+    assert!(fonts.has_family("DocFont Kepler Display"), "the WWS family counts as available");
+    assert_eq!(fonts.face("DocFont Kepler Display", "Light").style, "Light Display");
+    // `font.list` checks the style against these: "Light" isn't a missing style.
+    assert_eq!(fonts.styles("DocFont Kepler Display"), ["Light"]);
+    // The typographic names still find it.
+    assert!(fonts.has_family("DocFont Kepler"));
+    assert_eq!(fonts.face("DocFont Kepler", "Light Display").style, "Light Display");
+    assert_eq!(fonts.styles("DocFont Kepler"), ["Light Display"]);
+    let _ = std::fs::remove_dir_all(&folder);
 }
