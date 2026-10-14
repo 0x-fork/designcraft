@@ -476,11 +476,14 @@ pub fn specs() -> Vec<CommandSpec> {
                 let start = page - 1;
                 let p = p.clone();
                 s.edit(|d, _| {
+                    // The settings the command does not name stay as the section was: read it
+                    // before the list is rebuilt (#717).
+                    let existing = d.sections.iter().find(|x| x.start == start).cloned();
                     d.sections.retain(|x| x.start != start || start == 0);
                     if p.get("remove").and_then(Value::as_bool).unwrap_or(false) && start != 0 {
                         return ok();
                     }
-                    let mut sec = d.sections.iter().find(|x| x.start == start).cloned().unwrap_or(designcraft_doc::Section {
+                    let mut sec = existing.unwrap_or(designcraft_doc::Section {
                         start,
                         start_number: None,
                         style: Default::default(),
@@ -1033,6 +1036,28 @@ mod page_numbering_view_tests {
         assert_eq!((0..4).map(|i| s.page_label(i)).collect::<Vec<_>>(), ["1", "2", "3", "4"]);
         assert_eq!(s.resolve_page("1"), Some(0));
         assert_eq!(s.resolve_page("9"), None);
+    }
+
+    /// `layout.section` edits one named setting; the others stay as the section was (#717).
+    #[test]
+    fn updating_a_section_keeps_settings_the_command_does_not_name() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 4})).unwrap();
+        s.execute(
+            "layout.section",
+            &json!({"page": 2, "startNumber": 1, "style": "lowerRoman", "prefix": "A-", "includePrefix": true, "marker": "First"}),
+        )
+        .unwrap();
+        assert_eq!(s.page_label(1), "A-i");
+        s.execute("layout.section", &json!({"page": 2, "marker": "Second"})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let sec = d.sections.iter().find(|x| x.start == 1).expect("the page-2 section is still the only one there");
+        assert_eq!(sec.marker, "Second");
+        assert_eq!(sec.start_number, Some(1), "startNumber is kept");
+        assert_eq!(sec.style, designcraft_doc::NumberStyle::LowerRoman, "style is kept");
+        assert_eq!(sec.prefix, "A-", "prefix is kept");
+        assert!(sec.include_prefix, "includePrefix is kept");
+        assert_eq!(s.page_label(1), "A-i");
     }
 }
 
