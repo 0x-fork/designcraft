@@ -404,7 +404,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Spreads of up to 10 pages", "Dvoustrany až o 10 stránkách"),
     ("for", "na"),
     ("About DesignCraft", "O aplikaci DesignCraft"),
-    ("Quit DesignCraft", "Ukončit DesignCraft"),
     ("Accept All Changes", "Přijmout všechny změny"),
     ("Activate Document", "Aktivovat dokument"),
     ("Add Anchor Point", "Přidat kotevní bod"),
