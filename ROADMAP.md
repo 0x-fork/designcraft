@@ -132,6 +132,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 Newest first.
 
 - **2026-10-13** · Object › Fitting has InDesign's shortcuts: Fill Frame Proportionally ⌘⌥⇧C, Fit Content Proportionally ⌘⌥⇧E, Fit Frame to Content ⌘⌥C, Fit Content to Frame ⌘⌥E, Center Content ⌘⇧E. No readiness percentage change.
+- **2026-10-13** · Gradients between process colours blend as inks, as InDesign shows them: magenta to cyan passes through C 50 M 50 (a light lilac) on screen instead of the darker RGB mix, and a midpoint between CMYK or grey stops no longer turns the PDF shading RGB. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
   drag one (it snaps like frame drawing); Shift-click autoflows, Alt-click stays loaded on the
