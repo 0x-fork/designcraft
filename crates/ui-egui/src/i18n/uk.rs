@@ -1353,7 +1353,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Guide-Based", "На основі напрямних"),
     ("Resize Page", "Змінити розмір сторінки"),
     ("Liquid Page Rule:", "Правило гнучкої сторінки:"),
-    ("Objects Move with Page", "Об’єкти рухаються зі сторінкою"),
     ("Show Parent Page Overlay", "Показати накладення батьківської сторінки"),
     ("Controlled by Parent", "Керується батьківською сторінкою"),
     ("US Business Card", "Візитна картка (США)"),

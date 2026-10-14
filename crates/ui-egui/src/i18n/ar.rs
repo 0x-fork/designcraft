@@ -770,7 +770,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Guide-Based", "استنادًا إلى الأدلة"),
     ("Resize Page", "تغيير حجم الصفحة"),
     ("Liquid Page Rule:", "قاعدة الصفحة المرنة:"),
-    ("Objects Move with Page", "تحريك الكائنات مع الصفحة"),
     ("Show Parent Page Overlay", "إظهار تراكب الصفحة الأصل"),
     ("Controlled by Parent", "تتحكم فيه الصفحة الأصل"),
     ("US Business Card", "بطاقة عمل أمريكية"),

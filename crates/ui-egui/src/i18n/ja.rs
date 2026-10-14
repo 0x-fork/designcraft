@@ -1478,7 +1478,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Guide-Based", "ガイド基準"),
     ("Resize Page", "ページのサイズを変更"),
     ("Liquid Page Rule:", "リキッドページルール:"),
-    ("Objects Move with Page", "オブジェクトをページと共に移動"),
     ("Show Parent Page Overlay", "親ページオーバーレイを表示"),
     ("Controlled by Parent", "親ページで制御"),
     ("US Business Card", "US 名刺"),

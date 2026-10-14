@@ -3284,16 +3284,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ["Regel für flüssige Seiten:", "Règle de page liquide :", "Regla de página líquida:", "リキッドページルール:", "自适应页面规则："],
     ),
     (
-        "Objects Move with Page",
-        [
-            "Objekte mit Seite verschieben",
-            "Déplacer les objets avec la page",
-            "Los objetos se mueven con la página",
-            "オブジェクトをページと共に移動",
-            "对象随页面移动",
-        ],
-    ),
-    (
         "Show Parent Page Overlay",
         [
             "Überlagerung der übergeordneten Seite anzeigen",

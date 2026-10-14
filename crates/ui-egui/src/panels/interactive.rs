@@ -490,13 +490,12 @@ pub fn buttons(app: &mut DesignApp, ui: &mut egui::Ui) {
 }
 
 /// Liquid page rules in InDesign's order, with their menu labels.
-pub const LIQUID_RULES: [(designcraft_doc::LiquidRule, &str); 6] = [
+pub const LIQUID_RULES: [(designcraft_doc::LiquidRule, &str); 5] = [
     (designcraft_doc::LiquidRule::Off, "Off"),
     (designcraft_doc::LiquidRule::Scale, "Scale"),
     (designcraft_doc::LiquidRule::ReCenter, "Re-center"),
     (designcraft_doc::LiquidRule::ObjectBased, "Object-based"),
     (designcraft_doc::LiquidRule::GuideBased, "Guide-based"),
-    (designcraft_doc::LiquidRule::ControlledByParent, "Controlled by Parent"),
 ];
 
 /// A liquid page rule's menu label.
