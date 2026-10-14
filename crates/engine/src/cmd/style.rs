@@ -1900,6 +1900,51 @@ mod gradient_stroke_tests {
         assert!(a > 215 && b < 40, "dragged: {a} {b}");
         assert!(s.execute("object.gradient", &json!({"ids": [id], "target": "gap"})).is_err());
     }
+
+    /// A 20 pt horizontal line with a gradient on its stroke, drawn on screen and from its PDF.
+    fn line_with_stroke_gradient(g: serde_json::Value) -> (designcraft_render::Rendered, designcraft_render::Rendered) {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [20, 60], "b": [180, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "weight": 20})).unwrap();
+        let mut g = g;
+        g["ids"] = json!([id]);
+        g["target"] = json!("stroke");
+        s.execute("object.gradient", &g).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut rr = designcraft_render::Renderer::new();
+        let screen = rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap();
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "line.pdf", "x": 0, "y": 0, "width": 200})).unwrap();
+        let pd = p.doc().unwrap().doc.clone();
+        let placed = rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap();
+        (screen, placed)
+    }
+
+    #[test]
+    fn a_radial_gradient_on_a_straight_lines_stroke_shows_all_its_stops() {
+        // The line's box has no height: the gradient is a circle across the line's length.
+        let (screen, pdf) = line_with_stroke_gradient(
+            json!({"kind": "radial", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+        );
+        for (what, img) in [("screen", &screen), ("pdf", &pdf)] {
+            let (a, m, b) = along(img);
+            assert!(m < 40 && a > 180 && b > 180, "{what}: {a} {m} {b}");
+        }
+    }
+
+    #[test]
+    fn a_linear_gradient_across_a_straight_line_paints_its_stroke_alike_on_screen_and_in_pdf() {
+        let (screen, pdf) =
+            line_with_stroke_gradient(json!({"angle": 90, "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}));
+        let (s, p) = (screen.pixel(100, 60), pdf.pixel(100, 60));
+        // The line's box has no height: the gradient runs across the line's length, so the stroke
+        // shows its middle.
+        assert!(s[1] < 60 && s[0] > 80 && s[2] > 80, "screen: the stroke is painted, {s:?}");
+        assert!((0..3).all(|i| s[i].abs_diff(p[i]) < 40), "screen {s:?}, pdf {p:?}");
+    }
 }
 
 #[cfg(test)]

@@ -32,6 +32,21 @@ impl Default for Fill {
 }
 
 impl Fill {
+    /// A linear gradient's axis on an object whose bounds (in its own space) are `b`: the
+    /// Gradient Swatch tool's vector, or the box's extent along the gradient's angle through its
+    /// centre. A box with no extent along that angle (a straight line, across it) takes its longer
+    /// side.
+    pub fn linear_axis(&self, b: Rect) -> (Point, Point) {
+        if let Some([x0, y0, x1, y1]) = self.gradient_vector {
+            return (Point::new(x0, y0), Point::new(x1, y1));
+        }
+        let a = self.gradient_angle.unwrap_or(0.0).to_radians();
+        let half = (b.width() * a.cos().abs() + b.height() * a.sin().abs()) / 2.0;
+        let half = if half > 1e-9 { half } else { b.width().max(b.height()).max(1e-3) / 2.0 };
+        let d = designcraft_geom::Vec2::new(a.cos(), -a.sin()) * half;
+        (b.center() - d, b.center() + d)
+    }
+
     pub fn none() -> Self {
         Fill { swatch: designcraft_color::swatch::NONE.into(), tint: 1.0, gradient_angle: None, gradient_vector: None, overprint: false }
     }
