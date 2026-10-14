@@ -278,6 +278,9 @@ pub struct Session {
     pub(crate) text_drag: bool,
     /// Character formatting chosen at a bare caret, for the text typed there next.
     pub(crate) typing_format: Option<cmd::text::TypingFormat>,
+    /// Text an input method is composing (a dead key's accent), shown in the story as an
+    /// interaction preview until it commits: (document uid, byte length before the caret).
+    pub(crate) composition: Option<(u64, usize)>,
     /// The open Object Library (File › New / Open Library).
     pub library: Option<cmd::library::Library>,
     /// The open book (File › Open Book).
@@ -310,6 +313,7 @@ impl Session {
             transforms: Default::default(),
             text_drag: false,
             typing_format: None,
+            composition: None,
             library: None,
             conveyor: Vec::new(),
             book: None,
@@ -405,6 +409,10 @@ impl Session {
 
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // Text still being composed isn't part of the story: any other edit drops it first.
+        if id != "text.compose" && (spec.undoable || spec.journal) {
+            self.end_composition();
+        }
         if let Err(e) = (spec.enabled)(self) {
             // A command that takes `ids` acts on the objects the call names, so it needs no
             // selection: with a text caret or nothing selected, `{"ids": [5]}` still runs.
