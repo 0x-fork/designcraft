@@ -44,7 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Pathfinder",
             ["Object", "Pathfinder"],
             None,
-            "{op: add|subtract|intersect|exclude|minusBack, ids?} — combine the selected shapes into one (the backmost keeps its look; the frontmost for minusBack) → {id}",
+            "{op: add|subtract|intersect|exclude|minusBack, ids?} — combine the selected shapes into one, which keeps the frontmost object's look and content (a placed graphic stays in it); Subtract keeps the backmost → {id}",
             has_selection,
             pathfinder
         ),
@@ -145,7 +145,9 @@ fn pathfinder(s: &mut Session, p: &Value) -> Result<Value> {
         if order.len() < 2 {
             return Err(bad("object.pathfinder", "select two or more shapes on one spread (not text frames or groups)"));
         }
-        let keep = if op == Op::MinusBack { order[order.len() - 1] } else { order[0] };
+        // InDesign: the result takes the frontmost object's look and content (a photo placed over
+        // shapes shows through their intersection); Subtract keeps the backmost, the front cuts it.
+        let keep = if op == Op::Subtract { order[0] } else { order[order.len() - 1] };
         let shapes: Vec<PathData> =
             order.iter().filter_map(|id| spread_xf(d, *id).and_then(|(_, xf)| Some(d.item(*id)?.path.transformed(xf)))).collect();
         let Some(result) = combine(op, &shapes) else { return Err(bad("object.pathfinder", "the shapes don't overlap: nothing is left")) };
@@ -415,6 +417,55 @@ mod tests {
         let bb = d.item(ItemId(a)).unwrap().bounds();
         assert!((bb.x1 - 300.0).abs() < 0.5 && (bb.x0 - 100.0).abs() < 0.5, "{bb:?}");
         assert!(s.execute("object.pathfinder", &json!({"op": "nope"})).is_err());
+    }
+
+    /// The result keeps the frontmost object's look (Subtract: the backmost's), as InDesign's.
+    #[test]
+    fn pathfinder_keeps_the_frontmost_object() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("swatch.create", &json!({"name": "Red", "color": [255, 0, 0]})).unwrap();
+        for op in ["add", "intersect", "exclude", "minusBack"] {
+            let a = s.execute("frame.create", &json!({"rect": [100, 100, 300, 300]})).unwrap()["id"].as_u64().unwrap();
+            let b = s.execute("frame.create", &json!({"rect": [200, 100, 400, 300]})).unwrap()["id"].as_u64().unwrap();
+            s.execute("object.fill", &json!({"ids": [a], "swatch": "[Black]"})).unwrap();
+            s.execute("object.fill", &json!({"ids": [b], "swatch": "Red"})).unwrap();
+            let r = s.execute("object.pathfinder", &json!({"op": op, "ids": [a, b]})).unwrap();
+            assert_eq!(r["id"], b, "{op}: the front object stays");
+            let d = s.doc().unwrap().doc.clone();
+            assert!(d.item(ItemId(a)).is_none(), "{op}");
+            assert_eq!(d.item(ItemId(b)).unwrap().fill.swatch, "Red", "{op}");
+            s.execute("edit.clear", &json!({"ids": [b]})).unwrap();
+        }
+    }
+
+    /// A photo placed over strips and intersected with them shows through the strips (it was
+    /// dropped: the black strips were kept).
+    #[test]
+    fn pathfinder_intersect_keeps_a_placed_photo_in_front() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = s.execute("frame.create", &json!({"rect": [100, 100, 300, 140]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("frame.create", &json!({"rect": [100, 160, 300, 200]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.fill", &json!({"ids": [a, b], "swatch": "[Black]"})).unwrap();
+        let strips = s.execute("object.pathfinder", &json!({"op": "add", "ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+        let png = designcraft_render::Rendered { width: 20, height: 20, pixels: [255u8, 255, 255, 255].repeat(400) }.to_png();
+        let photo = s.execute("frame.create", &json!({"rect": [80, 80, 320, 220], "content": "graphic"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("file.place", &json!({"base64": super::super::base64_encode(&png), "name": "white.png", "frame": photo})).unwrap();
+        s.execute("object.fit", &json!({"mode": "fillProportionally", "ids": [photo]})).unwrap();
+        let r = s.execute("object.pathfinder", &json!({"op": "intersect", "ids": [strips, photo]})).unwrap();
+        assert_eq!(r["id"], photo);
+        let d = s.doc().unwrap().doc.clone();
+        assert!(d.item(ItemId(strips)).is_none());
+        let it = d.item(ItemId(photo)).unwrap();
+        assert!(matches!(it.content, Content::Graphic(_)), "the photo stays in the result");
+        assert_eq!(it.path.subpaths.len(), 2, "cut to the two strips");
+        let b = it.bounds();
+        assert!((b.x0 - 100.0).abs() < 0.5 && (b.y0 - 100.0).abs() < 0.5 && (b.x1 - 300.0).abs() < 0.5 && (b.y1 - 200.0).abs() < 0.5, "{b:?}");
+        let mut rr = designcraft_render::Renderer::new();
+        rr.threads = 0;
+        let img = rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap();
+        assert!(img.pixel(200, 120)[0] > 230, "the photo (white) shows in a strip: {:?}", img.pixel(200, 120));
     }
 
     #[test]
