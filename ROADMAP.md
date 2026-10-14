@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-14** · The Swatches panel has InDesign's header: a Fill/Stroke proxy, Formatting Affects Container/Text and the Tint of the colour in front (a tint alone keeps each object's own swatch). Clicking a swatch applies it to the fill or stroke in front (of the text, when formatting affects text), and the bottom row has New Color Group, New Swatch and Delete Swatch. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
   drag one (it snaps like frame drawing); Shift-click autoflows, Alt-click stays loaded on the
