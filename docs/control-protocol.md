@@ -42,7 +42,7 @@ so only enable it while you use it. Transport: `apps/designcraft/src/control_ser
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Synthetic keyboard input (typing into a text frame) |
 | `ui.ime` | `{preedit?, active?: [start, end], commit?}` | Input method events as the system IME sends them: marked text (shown in place, `active` is the clause being converted, in characters) and the committed text (typed as one `text.insert`) |
 | `ui.paste` | `{text}` | What Ctrl/Cmd+V delivers from the system clipboard: text into the text being edited, or SVG markup (vector art copied in Illustrator, VectorCraft or Figma) as editable paths in the middle of the view |
-| `ui.move` / `ui.click` / `ui.drag` | screen points, `button?: left\|right\|middle`, `count?: positive integer` (click/drag, default 1), `steps?: positive integer` (drag, default 8) | Real egui pointer input — reaches every widget, menu and panel |
+| `ui.move` / `ui.click` / `ui.drag` | screen points, `button?: left\|right\|middle`, `count?: 1–255` (click/drag, default 1), `steps?: positive integer` (drag, default 8) | Real egui pointer input — reaches every widget, menu and panel |
 | `ui.set` | `{brightness?, panel?, rulers?, guides?, frameEdges?, baselineGrid?, documentGrid?, textThreads?, screenMode?, zoom?, page?, fit?}` | UI state |
 | `ui.dialog.open` | `{id, fields?}` | Open a dialog by id (e.g. `paragraphStyleOptions` or `characterStyleOptions` with `{name, section}`, or `{new: true}` for a new style) |
 | `ui.dialog.set` / `ui.dialog.confirm` / `ui.dialog.cancel` | `{field, value}` | Fill and confirm the open dialog |
@@ -63,11 +63,11 @@ The MCP server (`designcraft-cli mcp`) wraps the same methods for Claude and oth
 ### Click and drag limits
 
 `ui.click` and `ui.drag` validate the whole gesture before queuing any input. They permit at
-most 10,003 pending synthetic events, including input already waiting for native frames. A
+most 10,003 pending synthetic events, including control input already waiting for native frames. A
 click uses `1 + 2 * count` events; a drag uses `1 + steps + 2 * count`. The count includes the
 initial click or drag; further clicks occur at its endpoint. An empty queue therefore accepts
-up to 5,001 clicks, or a single drag with up to 10,000 steps. `count` and `steps` must be positive
-JSON integers when supplied; invalid or over-budget requests return `ok: false` and leave pending
+a single drag with up to 10,000 steps. `count` is a JSON integer from 1 through 255 and `steps` a
+positive JSON integer when supplied; invalid or over-budget requests return `ok: false` and leave pending
 input unchanged. Oversized gestures are rejected rather than truncated. Wait for queued input
 to finish before retrying a request that would exceed the pending-event limit.
 

@@ -122,7 +122,11 @@ fn pointer_counts(p: &Value, drag: bool, pending: usize) -> Result<(u64, u64), S
         None => Ok(default),
         Some(v) => v.as_u64().filter(|n| *n > 0).ok_or_else(|| format!("`{name}` must be a positive integer")),
     };
-    let count = positive("count", 1)?;
+    // A click count past 255 means nothing to the tools (`PointerEvent::clicks` is a u8).
+    let count = match p.get("count") {
+        None => 1,
+        Some(v) => v.as_u64().filter(|n| (1..=255).contains(n)).ok_or("`count` must be an integer from 1 through 255")?,
+    };
     let steps = if drag { positive("steps", 8)? } else { 0 };
     // One initial move, two button events per click, and each drag step. Check the
     // arithmetic too: hostile counts must never overflow into a small budget.
@@ -231,7 +235,7 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
         // illustration app (pasted as editable paths when no text is being edited).
         "ui.paste" => {
             let Some(text) = s("text") else { return err("missing `text`") };
-            app.synthetic.push(egui::Event::Paste(text.to_string()));
+            app.control_synthetic.push(egui::Event::Paste(text.to_string()));
             ctx.request_repaint();
             ok(Value::Null)
         }
@@ -242,15 +246,8 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
             ok(Value::Null)
         }
         "ui.click" | "ui.drag" => {
-            let count = match p.get("count") {
-                None => 1,
-                Some(v) => match v.as_u64().filter(|n| (1..=255).contains(n)) {
-                    Some(n) => n,
-                    None => return err("`count` must be an integer from 1 through 255"),
-                },
-            };
             // Screen-space (egui points) pointer input through egui itself: reaches every widget.
-            let (count, steps) = match pointer_counts(p, req.method == "ui.drag", app.synthetic.len()) {
+            let (count, steps) = match pointer_counts(p, req.method == "ui.drag", app.control_synthetic.len()) {
                 Ok(counts) => counts,
                 Err(e) => return err(e),
             };
@@ -305,10 +302,10 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
             let n = |v: &Value| v.as_u64().and_then(|n| usize::try_from(n).ok());
             if let Some(text) = s("preedit") {
                 let active = p.get("active").and_then(Value::as_array).and_then(|a| Some(n(a.first()?)?..n(a.get(1)?)?));
-                app.synthetic.push(egui::Event::Ime(egui::ImeEvent::Preedit { text: text.to_string(), active_range_chars: active }));
+                app.control_synthetic.push(egui::Event::Ime(egui::ImeEvent::Preedit { text: text.to_string(), active_range_chars: active }));
             }
             if let Some(text) = s("commit") {
-                app.synthetic.push(egui::Event::Ime(egui::ImeEvent::Commit(text.to_string())));
+                app.control_synthetic.push(egui::Event::Ime(egui::ImeEvent::Commit(text.to_string())));
             }
             ctx.request_repaint();
             ok(Value::Null)
@@ -516,10 +513,10 @@ mod automation_contract_tests {
             ("ui.drag", json!({"steps": u64::MAX})),
             ("ui.drag", json!({"count": u64::MAX, "steps": u64::MAX})),
         ] {
-            app.synthetic = pending.clone();
+            app.control_synthetic = pending.clone();
             let reply = call(&mut app, &ctx, method, params);
             assert_eq!(reply["ok"], false, "{method}: {reply}");
-            assert_eq!(app.synthetic, pending, "a rejected gesture must not leave a press queued");
+            assert_eq!(app.control_synthetic, pending, "a rejected gesture must not leave a press queued");
         }
     }
     #[test]
@@ -527,7 +524,7 @@ mod automation_contract_tests {
         let mut app = app();
         let ctx = egui::Context::default();
         let pending = vec![egui::Event::PointerMoved(egui::pos2(12.0, 34.0))];
-        app.synthetic = pending.clone();
+        app.control_synthetic = pending.clone();
         for value in [json!(0), json!(-1), json!(1.5), Value::Null, json!("2"), json!(true), json!(18446744073709551616_f64)] {
             for (method, field) in [("ui.click", "count"), ("ui.drag", "count"), ("ui.drag", "steps")] {
                 let mut params = json!({});
@@ -535,7 +532,7 @@ mod automation_contract_tests {
                 let reply = call(&mut app, &ctx, method, params);
                 assert_eq!(reply["ok"], false, "{method}, {field}={value}: {reply}");
                 assert!(reply["error"].as_str().unwrap().contains(field));
-                assert_eq!(app.synthetic, pending);
+                assert_eq!(app.control_synthetic, pending);
             }
         }
     }
@@ -544,40 +541,42 @@ mod automation_contract_tests {
         let mut app = app();
         let ctx = egui::Context::default();
         for (method, params) in
-            [("ui.click", json!({"count": 5001})), ("ui.drag", json!({"steps": 10000})), ("ui.drag", json!({"steps": 9998, "count": 2}))]
+            [("ui.click", json!({"count": 255})), ("ui.drag", json!({"steps": 10000})), ("ui.drag", json!({"steps": 9998, "count": 2}))]
         {
-            app.synthetic.clear();
+            // A full click count fits on top of 9,492 pending events.
+            let pending = if method == "ui.click" { 10_003 - 511 } else { 0 };
+            app.control_synthetic = vec![egui::Event::PointerMoved(egui::pos2(12.0, 34.0)); pending];
             assert_eq!(call(&mut app, &ctx, method, params)["ok"], true, "{method}");
-            assert_eq!(app.synthetic.len(), 10003);
-            assert!(matches!(app.synthetic.last(), Some(egui::Event::PointerButton { pressed: false, .. })));
-            let queued = app.synthetic.clone();
+            assert_eq!(app.control_synthetic.len(), 10003);
+            assert!(matches!(app.control_synthetic.last(), Some(egui::Event::PointerButton { pressed: false, .. })));
+            let queued = app.control_synthetic.clone();
             assert_eq!(call(&mut app, &ctx, "ui.click", json!({}))["ok"], false);
-            assert_eq!(app.synthetic, queued, "a full queue retains its release events");
+            assert_eq!(app.control_synthetic, queued, "a full queue retains its release events");
         }
     }
     #[test]
     fn pointer_budget_counts_pending_input_and_recovers_when_it_drains() {
         let mut app = app();
         let ctx = egui::Context::default();
-        assert_eq!(call(&mut app, &ctx, "ui.click", json!({"count": 5000}))["ok"], true);
-        assert_eq!(app.synthetic.len(), 10001);
-        let queued = app.synthetic.clone();
+        assert_eq!(call(&mut app, &ctx, "ui.drag", json!({"steps": 9998}))["ok"], true);
+        assert_eq!(app.control_synthetic.len(), 10001);
+        let queued = app.control_synthetic.clone();
         assert_eq!(call(&mut app, &ctx, "ui.click", json!({}))["ok"], false);
-        assert_eq!(app.synthetic, queued);
+        assert_eq!(app.control_synthetic, queued);
         // The ordinary input hook consumes one pointer event per frame, freeing
         // enough room for a complete click without dropping earlier input.
         app.raw_input_hook(&mut egui::RawInput::default());
-        assert_eq!(app.synthetic.len(), 10000);
+        assert_eq!(app.control_synthetic.len(), 10000);
         assert_eq!(call(&mut app, &ctx, "ui.click", json!({}))["ok"], true);
-        assert_eq!(app.synthetic.len(), 10003);
+        assert_eq!(app.control_synthetic.len(), 10003);
 
-        app.synthetic.clear();
+        app.control_synthetic.clear();
         assert_eq!(call(&mut app, &ctx, "ui.move", json!({"x": 12, "y": 34}))["ok"], true);
-        let queued = app.synthetic.clone();
+        let queued = app.control_synthetic.clone();
         assert_eq!(call(&mut app, &ctx, "ui.drag", json!({"steps": 10000}))["ok"], false);
-        assert_eq!(app.synthetic, queued);
+        assert_eq!(app.control_synthetic, queued);
         assert_eq!(call(&mut app, &ctx, "ui.drag", json!({"steps": 9999}))["ok"], true);
-        assert_eq!(app.synthetic.len(), 10003);
+        assert_eq!(app.control_synthetic.len(), 10003);
     }
     #[test]
     fn ordinary_pointer_gestures_keep_their_defaults_and_event_order() {
@@ -587,19 +586,19 @@ mod automation_contract_tests {
         let end = egui::pos2(30.0, 40.0);
         assert_eq!(call(&mut app, &ctx, "ui.click", json!({"x": 10, "y": 20}))["ok"], true);
         assert_eq!(
-            app.synthetic,
+            app.control_synthetic,
             vec![
                 egui::Event::PointerMoved(a),
                 egui::Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
                 egui::Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
             ]
         );
-        app.synthetic.clear();
+        app.control_synthetic.clear();
         assert_eq!(call(&mut app, &ctx, "ui.drag", json!({"x": 10, "y": 20, "toX": 30, "toY": 40}))["ok"], true);
-        assert_eq!(app.synthetic.len(), 11, "default drag has eight steps");
-        assert_eq!(app.synthetic.get(9), Some(&egui::Event::PointerMoved(end)));
+        assert_eq!(app.control_synthetic.len(), 11, "default drag has eight steps");
+        assert_eq!(app.control_synthetic.get(9), Some(&egui::Event::PointerMoved(end)));
 
-        app.synthetic.clear();
+        app.control_synthetic.clear();
         assert_eq!(
             call(
                 &mut app,
@@ -612,7 +611,7 @@ mod automation_contract_tests {
         let modifiers = egui::Modifiers { shift: true, ..Default::default() };
         let button = egui::PointerButton::Secondary;
         assert_eq!(
-            app.synthetic,
+            app.control_synthetic,
             vec![
                 egui::Event::PointerMoved(a),
                 egui::Event::PointerButton { pos: a, button, pressed: true, modifiers },
@@ -793,5 +792,27 @@ mod deferred_clipboard_tests {
             assert!(app.synthetic.is_empty());
             assert!(!app.in_control);
         }
+    }
+
+    #[test]
+    fn control_ime_and_paste_keep_their_order_with_control_keys() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        for (method, params) in [("ui.ime", json!({"preedit":"ni"})), ("ui.key", json!({"key":"A"})), ("ui.paste", json!({"text":"p"}))] {
+            let (req, _) = ControlRequest::new(method, params);
+            assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(v) if v["ok"]==true), "{method}");
+        }
+        assert!(app.synthetic.is_empty(), "native menu events stay in their own queue");
+        let kinds: Vec<_> = app
+            .control_synthetic
+            .iter()
+            .map(|e| match e {
+                egui::Event::Ime(_) => "ime",
+                egui::Event::Key { .. } => "key",
+                egui::Event::Paste(_) => "paste",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["ime", "key", "key", "paste"]);
     }
 }
