@@ -132,7 +132,7 @@ fn export_epub(s: &mut Session, p: &Value) -> Result<Value> {
     let ropts = designcraft_render::RenderOptions { printing_only: true, ..Default::default() };
     // A cover image file (PNG or JPEG), else the first page rendered when `cover` asks for it.
     let cover = match p.get("coverImage").and_then(Value::as_str).filter(|_| !fixed) {
-        Some(path) => Some(std::fs::read(path).map_err(|e| crate::EngineError::Other(format!("{path}: {e}")))?),
+        Some(path) => Some(super::datamerge::read_path_capped(path, super::datamerge::MAX_IMAGE_FILE_BYTES).map_err(crate::EngineError::Other)?),
         None => (want_cover && !fixed).then(|| rr.render_page(&st.doc, &s.cache, 0, 2.0, false, &ropts).map(|img| img.to_png())).flatten(),
     };
     if let Some(c) = &cover

@@ -767,17 +767,23 @@ fn read_path(path: &str) -> std::result::Result<Vec<u8>, String> {
     read_path_capped(path, MAX_DATA_FILE_BYTES)
 }
 
-fn read_path_capped(path: &str, cap: u64) -> std::result::Result<Vec<u8>, String> {
-    match std::fs::metadata(path) {
-        Ok(m) if m.len() > cap => return Err(format!("{path}: the data file is larger than {} MiB", cap / (1024 * 1024))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(format!("{path}: the data file is missing")),
-        _ => {}
+/// The file at `path`, refused when it is larger than `cap` bytes. The read itself stops past
+/// `cap`, so a device or a file that grows while it is read can't exhaust memory.
+pub(crate) fn read_path_capped(path: &str, cap: u64) -> std::result::Result<Vec<u8>, String> {
+    use std::io::Read;
+    let too_big = || format!("{path}: the file is larger than {} MiB", cap / (1024 * 1024));
+    let missing = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::NotFound { format!("{path}: the file is missing") } else { format!("{path}: {e}") }
+    };
+    if std::fs::metadata(path).map_err(missing)?.len() > cap {
+        return Err(too_big());
     }
-    match std::fs::read(path) {
-        Ok(b) => Ok(b),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(format!("{path}: the data file is missing")),
-        Err(e) => Err(format!("{path}: {e}")),
+    let mut b = Vec::new();
+    std::fs::File::open(path).map_err(missing)?.take(cap.saturating_add(1)).read_to_end(&mut b).map_err(missing)?;
+    if b.len() as u64 > cap {
+        return Err(too_big());
     }
+    Ok(b)
 }
 
 fn parent_dir(path: &str) -> Option<PathBuf> {
