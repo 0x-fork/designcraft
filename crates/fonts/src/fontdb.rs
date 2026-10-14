@@ -845,6 +845,12 @@ pub fn base_style(style: &str) -> &str {
     style.split('{').next().unwrap_or(style).trim()
 }
 
+/// Do two style names name the same face? Spacing, punctuation and case don't count, as when a face
+/// is looked up (InDesign documents can carry `Regular ` with a trailing space).
+pub fn same_style(a: &str, b: &str) -> bool {
+    norm(a) == norm(b)
+}
+
 fn norm(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
 }
