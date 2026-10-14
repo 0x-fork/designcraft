@@ -552,6 +552,28 @@ fn split_chapters(body: &str) -> Vec<String> {
     out
 }
 
+/// `chapter` (the file `own`) with each in-document link (`href="#id"`) to an element in another
+/// chapter file pointed at that file.
+fn link_across_chapters(chapter: &str, own: &str, files: &BTreeMap<String, String>) -> String {
+    const HREF: &str = "href=\"#";
+    let mut out = String::with_capacity(chapter.len());
+    let mut rest = chapter;
+    while let Some(i) = rest.find(HREF) {
+        out.push_str(rest.get(..i).unwrap_or_default());
+        let tail = rest.get(i + HREF.len()..).unwrap_or_default();
+        let id = tail.split('"').next().unwrap_or_default();
+        match files.get(id) {
+            Some(file) if file != own => {
+                let _ = write!(out, "href=\"{file}#");
+            }
+            _ => out.push_str(HREF),
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The package file of chapter `k` (0-based): `content.xhtml`, then `content2.xhtml`, ….
 fn chapter_file(k: usize) -> String {
     if k == 0 { "content.xhtml".to_string() } else { format!("content{}.xhtml", k + 1) }
@@ -844,6 +866,8 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
             }
         }
     }
+    // Note links whose target ended up in another file (endnotes end the book) point at it.
+    let chapters: Vec<String> = chapters.iter().enumerate().map(|(k, c)| link_across_chapters(c, &chapter_file(k), &files)).collect();
     let mut nav_items = nav_list(&toc, &files);
     if nav_items.is_empty() {
         nav_items = format!("<li><a href=\"content.xhtml\">{}</a></li>", xml_text(&title));
@@ -1003,13 +1027,14 @@ mod tests {
         // A heading shallower than the one before it but deeper than its parent stays under the
         // parent: h1 A, h3 B, h2 C nest B and C under A.
         let e = |t: &str, l: u8| (t.to_string(), t.to_string(), l);
+        let l = |t: &str| link("content.xhtml", t, t);
         assert_eq!(
             nav_list(&[e("A", 1), e("B", 3), e("C", 2), e("D", 1)], &BTreeMap::new()),
-            format!("<li>{}<ol><li>{}</li><li>{}</li></ol></li><li>{}</li>", link("content.xhtml", "A", "A"), link("content.xhtml", "B", "B"), link("content.xhtml", "C", "C"), link("content.xhtml", "D", "D"))
+            format!("<li>{}<ol><li>{}</li><li>{}</li></ol></li><li>{}</li>", l("A"), l("B"), l("C"), l("D"))
         );
         assert_eq!(
             nav_list(&[e("A", 1), e("B", 2), e("C", 3), e("D", 1)], &BTreeMap::new()),
-            format!("<li>{}<ol><li>{}<ol><li>{}</li></ol></li></ol></li><li>{}</li>", link("content.xhtml", "A", "A"), link("content.xhtml", "B", "B"), link("content.xhtml", "C", "C"), link("content.xhtml", "D", "D"))
+            format!("<li>{}<ol><li>{}<ol><li>{}</li></ol></li></ol></li><li>{}</li>", l("A"), l("B"), l("C"), l("D"))
         );
     }
 
@@ -1060,6 +1085,24 @@ mod tests {
         // HTML stays one page, without the marks.
         let html = export_html(&d, &HtmlOptions::default());
         assert!(!html.contains(CHAPTER_MARK) && html.contains("Second text"));
+    }
+
+    /// Note links stay working across chapter files: a link whose target ended up in another
+    /// file (endnotes end the book) names that file; one in its own file stays as it is.
+    #[test]
+    fn note_links_point_at_the_chapter_file_of_their_target() {
+        let files: BTreeMap<String, String> =
+            [("enref-1", "content.xhtml"), ("fn-1", "content.xhtml"), ("fnref-1", "content.xhtml"), ("en-1", "content2.xhtml")]
+                .into_iter()
+                .map(|(id, f)| (id.to_string(), f.to_string()))
+                .collect();
+        let first = "<p>First<a id=\"enref-1\" href=\"#en-1\">1</a><a id=\"fnref-1\" href=\"#fn-1\">*</a></p><aside id=\"fn-1\"><a href=\"#fnref-1\">*</a></aside><a href=\"#gone\">x</a>";
+        assert_eq!(
+            link_across_chapters(first, "content.xhtml", &files),
+            "<p>First<a id=\"enref-1\" href=\"content2.xhtml#en-1\">1</a><a id=\"fnref-1\" href=\"#fn-1\">*</a></p><aside id=\"fn-1\"><a href=\"#fnref-1\">*</a></aside><a href=\"#gone\">x</a>"
+        );
+        let last = "<li id=\"en-1\"><a href=\"#enref-1\">1</a> End note</li>";
+        assert_eq!(link_across_chapters(last, "content2.xhtml", &files), "<li id=\"en-1\"><a href=\"content.xhtml#enref-1\">1</a> End note</li>");
     }
 
     #[test]
