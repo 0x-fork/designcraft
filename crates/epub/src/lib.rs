@@ -604,7 +604,8 @@ fn nav_list(entries: &[(String, String, u8)], files: &BTreeMap<String, String>) 
                 open.push(*level);
             }
             Some(_) => {
-                while open.len() > 1 && open.last().is_some_and(|t| t > level) {
+                // Close the levels whose parent is as deep as this entry or deeper.
+                while open.len() > 1 && open.len().checked_sub(2).and_then(|i| open.get(i)).is_some_and(|parent| *parent >= *level) {
                     open.pop();
                     out.push_str("</li></ol>");
                 }
@@ -999,6 +1000,17 @@ mod tests {
         plain.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 100.0), lid, "Opening\nrest", ParaFormat::default()).unwrap();
         let nav = read(&plain, &EpubOptions::default(), "OEBPS/nav.xhtml");
         assert!(nav.contains(&format!("<h1>Contents</h1><ol><li>{}</li></ol>", link("content.xhtml", "s0", "Opening"))), "{nav}");
+        // A heading shallower than the one before it but deeper than its parent stays under the
+        // parent: h1 A, h3 B, h2 C nest B and C under A.
+        let e = |t: &str, l: u8| (t.to_string(), t.to_string(), l);
+        assert_eq!(
+            nav_list(&[e("A", 1), e("B", 3), e("C", 2), e("D", 1)], &BTreeMap::new()),
+            format!("<li>{}<ol><li>{}</li><li>{}</li></ol></li><li>{}</li>", link("content.xhtml", "A", "A"), link("content.xhtml", "B", "B"), link("content.xhtml", "C", "C"), link("content.xhtml", "D", "D"))
+        );
+        assert_eq!(
+            nav_list(&[e("A", 1), e("B", 2), e("C", 3), e("D", 1)], &BTreeMap::new()),
+            format!("<li>{}<ol><li>{}<ol><li>{}</li></ol></li></ol></li><li>{}</li>", link("content.xhtml", "A", "A"), link("content.xhtml", "B", "B"), link("content.xhtml", "C", "C"), link("content.xhtml", "D", "D"))
+        );
     }
 
     /// #768: the book is split into one file per chapter, before each h1, with well-formed
