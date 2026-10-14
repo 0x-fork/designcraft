@@ -1573,6 +1573,7 @@ fn add_to_swatches(s: &mut Session, p: &Value) -> Result<Value> {
         if d.swatches.iter().any(|w| w.name == new) {
             return Err(bad("swatch.addToSwatches", format!("a swatch named `{new}` exists")));
         }
+        check_text_nesting(d, "swatch.addToSwatches")?;
         let w = d.swatches.iter_mut().find(|w| w.name == name).ok_or_else(|| bad("swatch.addToSwatches", format!("no swatch `{name}`")))?;
         w.name = new.clone();
         w.named = true;
@@ -1583,6 +1584,17 @@ fn add_to_swatches(s: &mut Session, p: &Value) -> Result<Value> {
         super::text::rename_typing_swatch(s, &name, new);
     }
     Ok(result)
+}
+
+/// Renaming a swatch walks every text inside a story (table cells, notes): refuse the whole edit
+/// for nesting deeper than 32 levels rather than leave deeper references at a removed name.
+fn check_text_nesting(d: &designcraft_doc::Document, id: &str) -> Result<()> {
+    fn within(st: &designcraft_doc::Story, depth: usize) -> bool {
+        depth <= 32
+            && st.tables.values().all(|t| t.cells.iter().all(|c| within(&c.text, depth + 1)))
+            && st.notes.iter().chain(&st.endnotes).all(|n| within(&n.text, depth + 1))
+    }
+    if d.stories.values().all(|st| within(st, 0)) { Ok(()) } else { Err(bad(id, "story nesting exceeds 32 levels")) }
 }
 
 /// Swatch Options: rename, Name with Color Value, colour type and value, a tint swatch's tint
@@ -1678,6 +1690,9 @@ fn swatch_options(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         let new = w2.name.clone();
+        if new != name {
+            check_text_nesting(d, ID)?;
+        }
         let slot = d.swatches.iter_mut().find(|x| x.name == name).ok_or_else(|| bad(ID, format!("no swatch `{name}`")))?;
         *slot = w2;
         d.rename_swatch_refs(&name, &new);
