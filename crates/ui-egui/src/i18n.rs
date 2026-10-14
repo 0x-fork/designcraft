@@ -3278,6 +3278,14 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Guide-based", ["Guide-based", "Basé sur les repères", "Guide-based", "Guide-based", "基于参考线"]),
     ("Object-Based", ["Object-Based", "Basé sur les objets", "Object-Based", "Object-Based", "基于对象"]),
     ("Guide-Based", ["Guide-Based", "Basé sur les repères", "Guide-Based", "Guide-Based", "基于参考线"]),
+    ("Page:", ["Seite:", "Page :", "Página:", "ページ:", "页面："]),
+    ("Content:", ["Inhalt:", "Contenu :", "Contenido:", "コンテンツ:", "内容："]),
+    ("Object Constraints:", ["Objektbeschränkungen:", "Contraintes d’objet :", "Restricciones de objeto:", "オブジェクトの制約:", "对象约束："]),
+    (
+        "Resize with Page:",
+        ["Mit Seite skalieren:", "Redimensionner avec la page :", "Cambiar tamaño con la página:", "ページと共にサイズ変更:", "随页面调整大小："],
+    ),
+    ("Pin:", ["Fixieren:", "Épingler :", "Fijar:", "固定:", "固定："]),
     ("Resize Page", ["Seitengröße ändern", "Redimensionner la page", "Cambiar tamaño de página", "ページのサイズを変更", "调整页面大小"]),
     (
         "Liquid Page Rule:",

@@ -382,6 +382,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "<",
             "cmd:layout.marginsAndColumns",
             "cmd:layout.createGuides",
+            "cmd:layout.createAlternate",
             "-",
             "ui:view.goToPage",
             "-",
