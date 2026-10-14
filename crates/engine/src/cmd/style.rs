@@ -144,7 +144,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Gradient",
             [],
             None,
-            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255)|{model: rgb|cmyk|gray, …}(0..1) | swatch: name (its colour, as dropped on the Gradient panel), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
+            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|{gray: 0–100}|[r,g,b](0..255)|{model: rgb|cmyk|gray, …}(0..1) | swatch: name (its colour, as dropped on the Gradient panel), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
             super::has_selection,
             apply_gradient
         ),
@@ -747,6 +747,8 @@ pub fn parse_color(v: &Value) -> Option<designcraft_color::Color> {
     use designcraft_color::Color;
     match v {
         Value::String(s) => Color::from_hex(s),
+        // `{model, …}` is the colour's own form (as `color.convert` takes it): fractions, never guessed.
+        Value::Object(o) if o.contains_key("model") => model_color(v),
         // One scale per colour, not per component: {c: 0.7, y: 12.2} is C 0.7 %, Y 12.2 %. Only a colour whose
         // components are all within 0..1 is read as fractions (the older form).
         Value::Array(a) if a.len() >= 3 => {
@@ -756,11 +758,29 @@ pub fn parse_color(v: &Value) -> Option<designcraft_color::Color> {
         }
         Value::Object(o) => {
             let g = |k: &str| o.get(k).and_then(Value::as_f64);
+            // {gray: 0–100} is a grey with that much black.
+            if let Some(k) = g("gray") {
+                return Some(Color::gray((k.clamp(0.0, 100.0) / 100.0) as f32));
+            }
             let v = [g("c")?, g("m")?, g("y")?, g("k")?];
             let scale = if v.iter().any(|&x| x > 1.0) { 100.0 } else { 1.0 };
             Some(Color::cmyk((v[0] / scale) as f32, (v[1] / scale) as f32, (v[2] / scale) as f32, (v[3] / scale) as f32))
         }
         _ => None,
+    }
+}
+
+/// `{model: rgb|cmyk|gray, …}` with every component in 0..=1; anything else is not a colour.
+fn model_color(v: &Value) -> Option<designcraft_color::Color> {
+    use designcraft_color::Color;
+    let color: Color = serde_json::from_value(v.clone()).ok()?;
+    // A float's last bit (100.0 / 100.0 ≠ 1.0 after an f32 round trip) is not out of range.
+    let unit = |x: f32| x.is_finite() && (-1e-4..=1.0 + 1e-4).contains(&x);
+    let q = |x: f32| x.clamp(0.0, 1.0);
+    match color {
+        Color::Rgb { r, g, b } => [r, g, b].into_iter().all(unit).then(|| Color::rgb(q(r), q(g), q(b))),
+        Color::Cmyk { c, m, y, k } => [c, m, y, k].into_iter().all(unit).then(|| Color::cmyk(q(c), q(m), q(y), q(k))),
+        Color::Gray { k } => unit(k).then_some(Color::Gray { k: q(k) }),
     }
 }
 
