@@ -168,6 +168,75 @@ impl Tool for PlaceGun {
 #[derive(Default)]
 pub struct PageTool {
     drag: Option<PageDrag>,
+    /// The pin or lock under the pointer (for its tooltip).
+    hover: Option<(LiquidControl, Point)>,
+}
+
+/// An object's liquid control on an object-based page: a side's pin (top, right, bottom, left) or
+/// the width/height lock.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LiquidControl {
+    Pin(usize),
+    Width,
+    Height,
+}
+
+impl LiquidControl {
+    /// The `liquid.object` parameter it toggles.
+    fn key(self) -> &'static str {
+        match self {
+            LiquidControl::Pin(0) => "pinTop",
+            LiquidControl::Pin(1) => "pinRight",
+            LiquidControl::Pin(2) => "pinBottom",
+            LiquidControl::Pin(_) => "pinLeft",
+            LiquidControl::Width => "resizeWidth",
+            LiquidControl::Height => "resizeHeight",
+        }
+    }
+
+    /// InDesign's tooltip for the control in its current state.
+    fn tip(self, l: &designcraft_doc::ObjectLiquid) -> &'static str {
+        match self {
+            LiquidControl::Pin(i) if [l.pin_top, l.pin_right, l.pin_bottom, l.pin_left][i.min(3)] => {
+                "Object is pinned relative to the page edge. Click to release."
+            }
+            LiquidControl::Pin(_) => "Click to pin the object relative to the page edge.",
+            LiquidControl::Width if l.resize_width => "The object changes width as the page changes width. Click to lock the object width.",
+            LiquidControl::Width => "The object's width is locked. Click to let the object change width as the page changes width.",
+            LiquidControl::Height if l.resize_height => "The object changes height as the page changes height. Click to lock the object height.",
+            LiquidControl::Height => "The object's height is locked. Click to let the object change height as the page changes height.",
+        }
+    }
+
+    fn value(self, l: &designcraft_doc::ObjectLiquid) -> bool {
+        match self {
+            LiquidControl::Pin(0) => l.pin_top,
+            LiquidControl::Pin(1) => l.pin_right,
+            LiquidControl::Pin(2) => l.pin_bottom,
+            LiquidControl::Pin(_) => l.pin_left,
+            LiquidControl::Width => l.resize_width,
+            LiquidControl::Height => l.resize_height,
+        }
+    }
+}
+
+/// Screen pixels between an object's edge and its pin (the canvas draws them there too).
+pub const PIN_OFFSET_PX: f64 = 14.0;
+/// Screen pixels between an object's centre and its width/height locks.
+pub const LOCK_OFFSET_PX: f64 = 10.0;
+
+/// Where an object's liquid controls sit (canvas): pins outside each edge's middle, the width lock
+/// right of the centre, the height lock above it.
+fn liquid_control_points(cx: &ToolContext, r: designcraft_geom::Rect) -> [(LiquidControl, Point); 6] {
+    let (c, o, k) = (r.center(), cx.tol(PIN_OFFSET_PX), cx.tol(LOCK_OFFSET_PX));
+    [
+        (LiquidControl::Pin(0), Point::new(c.x, r.y0 - o)),
+        (LiquidControl::Pin(1), Point::new(r.x1 + o, c.y)),
+        (LiquidControl::Pin(2), Point::new(c.x, r.y1 + o)),
+        (LiquidControl::Pin(3), Point::new(r.x0 - o, c.y)),
+        (LiquidControl::Width, Point::new(c.x + k, c.y)),
+        (LiquidControl::Height, Point::new(c.x, c.y - k)),
+    ]
 }
 
 /// A page handle being dragged.
@@ -202,7 +271,43 @@ pub fn rule_label(rule: designcraft_doc::LiquidRule) -> &'static str {
     }
 }
 
+/// Whether page `abs` follows the object-based rule (its own, or its parent page's).
+fn object_based(doc: &designcraft_doc::Document, abs: usize) -> bool {
+    use designcraft_doc::LiquidRule as R;
+    let Some((si, pi)) = doc.page_loc(abs) else { return false };
+    match doc.spreads[si].pages[pi].liquid {
+        R::ObjectBased => true,
+        R::ControlledByParent => {
+            doc.parent_page_for(abs).and_then(|(ppi, ppg)| doc.parents.get(ppi)?.pages.get(ppg).map(|p| p.liquid == R::ObjectBased)).unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
 impl PageTool {
+    /// The selected object's liquid settings, canvas bounds and page bounds when the Page tool
+    /// shows its pins: one object selected on the selected page, whose rule is object-based.
+    fn liquid_target(
+        cx: &ToolContext,
+    ) -> Option<(designcraft_doc::ItemId, designcraft_doc::ObjectLiquid, designcraft_geom::Rect, designcraft_geom::Rect)> {
+        let page = cx.selection.page?;
+        let [id] = cx.selection.items.as_slice() else { return None };
+        let (si, _) = cx.doc.page_loc(page)?;
+        if !object_based(cx.doc, page) || cx.doc.page_of_item(*id) != Some(page) {
+            return None;
+        }
+        let it = cx.doc.item(*id)?;
+        let l = it.liquid.unwrap_or(designcraft_doc::ObjectLiquid { resize_width: true, resize_height: true, ..Default::default() });
+        let r = cx.layout.xf(designcraft_doc::SpreadRef::Doc(si)).transform_rect_bbox(it.bounds());
+        Some((*id, l, r, cx.layout.page_rect(cx.doc, page)?))
+    }
+
+    /// The selected object's pin or lock under `p`.
+    fn control_at(cx: &ToolContext, p: Point) -> Option<(designcraft_doc::ItemId, designcraft_doc::ObjectLiquid, LiquidControl)> {
+        let (id, l, r, _) = Self::liquid_target(cx)?;
+        liquid_control_points(cx, r).into_iter().find(|(_, q)| (q.x - p.x).hypot(q.y - p.y) <= cx.tol(6.0)).map(|(c, _)| (id, l, c))
+    }
+
     /// The selected page's handle under `p`.
     fn handle_at(&self, cx: &ToolContext, p: Point) -> Option<(usize, usize)> {
         let page = cx.selection.page?;
@@ -255,12 +360,21 @@ impl Tool for PageTool {
                     self.drag = Some(PageDrag { page, handle, start: ev.pos, cur: ev.pos, size: (pg.width, pg.height), alt: ev.mods.alt });
                     return vec![Action::Begin("Resize Page".into())];
                 }
-                // A click selects the page under the pointer (none on the pasteboard).
+                // An object-based page's object: a click on a pin or lock toggles it.
+                if let Some((id, l, c)) = Self::control_at(cx, ev.pos) {
+                    return vec![Action::Exec("liquid.object".into(), json!({"ids": [id.0], c.key(): !c.value(&l)}))];
+                }
+                // A click selects the page under the pointer (none on the pasteboard), and on an
+                // object-based page the object clicked too.
                 let page = (0..cx.doc.page_count()).find(|p| cx.layout.page_rect(cx.doc, *p).is_some_and(|r| r.contains(ev.pos)));
-                if page == cx.selection.page {
+                let object = page
+                    .filter(|p| object_based(cx.doc, *p))
+                    .and_then(|p| cx.hit(ev.pos).map(|(_, id)| id).filter(|id| cx.doc.page_of_item(*id) == Some(p)));
+                let ids: Vec<u64> = object.map(|id| id.0).into_iter().collect();
+                if page == cx.selection.page && cx.selection.items.iter().map(|i| i.0).eq(ids.iter().copied()) {
                     return vec![];
                 }
-                vec![Action::Exec("layout.selectPage".into(), json!({"page": page.map(|p| p + 1)}))]
+                vec![Action::Exec("layout.selectPage".into(), json!({"page": page.map(|p| p + 1), "ids": ids}))]
             }
             PointerKind::Drag => {
                 let Some(d) = self.drag.as_mut() else { return vec![] };
@@ -285,7 +399,10 @@ impl Tool for PageTool {
                 let pg = &cx.doc.spreads[si].pages[pi];
                 vec![Action::Dialog("cmd:layout.pageSize".into(), json!({"pages": [page + 1], "width": pg.width, "height": pg.height}))]
             }
-            PointerKind::Move => vec![],
+            PointerKind::Move => {
+                self.hover = Self::control_at(cx, ev.pos).map(|(_, _, c)| (c, ev.pos));
+                vec![]
+            }
         }
     }
     fn overlays(&self, cx: &ToolContext) -> Vec<Overlay> {
@@ -294,6 +411,17 @@ impl Tool for PageTool {
         let Some((si, pi)) = cx.doc.page_loc(page) else { return vec![] };
         let pg = &cx.doc.spreads[si].pages[pi];
         let mut v = vec![Overlay::PageHandles(r), Overlay::Tag { p: Point::new(r.x0, r.y0 - cx.tol(6.0)), text: rule_label(pg.liquid).into() }];
+        if let Some((_, l, object, page)) = Self::liquid_target(cx) {
+            v.push(Overlay::LiquidPins {
+                object,
+                page,
+                pins: [l.pin_top, l.pin_right, l.pin_bottom, l.pin_left],
+                resize: [l.resize_width, l.resize_height],
+            });
+            if let Some((c, p)) = self.hover {
+                v.push(Overlay::Tip { p, text: c.tip(&l).into() });
+            }
+        }
         if let Some(d) = self.drag {
             v.push(Overlay::Measure {
                 p: d.cur,
@@ -307,6 +435,9 @@ impl Tool for PageTool {
         v
     }
     fn cursor(&self, cx: &ToolContext, p: Point, _m: Mods) -> Cursor {
+        if self.drag.is_none() && Self::control_at(cx, p).is_some() {
+            return Cursor::Hand;
+        }
         let handle = self.drag.map(|d| d.handle).or_else(|| self.handle_at(cx, p).map(|(_, h)| h));
         match handle {
             Some(1 | 7) => Cursor::ResizeV,
