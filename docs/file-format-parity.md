@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first version: every format InDesign 2026 declares, measured against the code) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every format InDesign 2026 reads or writes, with DesignCraft's support, fidelity and tests. The
 InDesign list comes from its bundle's `Info.plist` (`CFBundleDocumentTypes`,
@@ -22,7 +22,7 @@ score below).
 | InDesign document | `.indd` | read/write (native) | ✗ (#21; converters proposed in #98, #114) | ✗ | — | 30% |
 | InDesign template | `.indt` | read/write | ✗ | ✗ | — | 2% |
 | InDesign Markup | `.idml` | read/write | ✓ | ✓ | Synthetic fixtures in `crates/idml/src/tests.rs` (49 tests); exported files verified by opening in InDesign 2026 by hand; indd-utils' 98-document run imports 811 spreads / 2,866 stories / 5,812 items. Open: #193, #338, #339, #340, #211. No real-file corpus test | 20% |
-| DesignCraft native | `.designcraft` | — | ✓ | ✓ | zip + JSON, versioned; round-trip tests | — |
+| DesignCraft native | `.designcraft` | — | ✓ | ✓ | zip + JSON, versioned; round-trip tests. Asset loading and compaction index by content hash, then confirm byte equality; equal-sized distinct files no longer all share one search bucket (#727). Separate links, MIME types and PDF pages retain their identity | — |
 | InDesign book | `.indb` | read/write | ✗ (own `.dcbook`) | ✗ | Books are shallow (see gaps.md) | 2% |
 | InDesign library | `.indl`, `.inlx` | read/write | ✗ (own `.dclib`) | ✗ | | 1% |
 | Snippet | `.idms` | read/write | ✗ (own snippets) | ✗ | | 1% |
@@ -46,7 +46,7 @@ score below).
 | EPS export | `.eps` | ✓ | ✗ | | <1% |
 | Text Only / RTF / Tagged Text | `.txt`, `.rtf` | ✓ | ✓ (`file.exportText` txt, rtf, tagged) | | 1% |
 | XML | `.xml` | ✓ | ✓ export and import, DTD validate | depth unmeasured | 1% |
-| Print / PostScript | | ✓ printers, PPDs, separations | ~ PDF to `lpr` (no Windows, no PostScript) | | 3% |
+| Print / PostScript | | ✓ printers, PPDs, separations | ~ PDF to CUPS/Windows (craft-print; no PostScript) | | 3% |
 | Package | folder | ✓ fonts, links, IDML, PDF, report | ✓ (#340: IDML inside links to absolute paths) | | 2% |
 
 ## Placed and imported content
@@ -97,7 +97,7 @@ for real work** (estimated). INDD alone moves this dimension by up to 30 points.
 | INDD import via a clean-room converter (owner decision, #114) | 20–60 |
 | IDML real-file corpus, metric, fixes (#193, #338, #339, #340) | 60–100 |
 | PDF/X-1a and X-3 (transparency flattener), PDF presets and `.joboptions`, external validator | 40–70 |
-| Print path (Windows, PostScript level 3 output or system print APIs) | 25–45 |
+| Print fidelity, PostScript level 3 output and print presets | 25–45 |
 | ICML story import, IDMS snippets, INDT templates (once INDD reads) | 15–25 |
 | HTML / fixed-layout EPUB with live text | 20–35 |
 | JPEG export dialog, SVG export, EPS export | 10–20 |
@@ -107,4 +107,5 @@ for real work** (estimated). INDD alone moves this dimension by up to 30 points.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Asset loading and compaction use content fingerprints with exact equality checks; tests cover equal-sized distinct buffers, shared copies, independent links and missing data (#727) |
 | 2026-10-10 | major | Created from InDesign 2026's declared document types and filters, `plan/indesign/08-file-formats.md` and the code |
