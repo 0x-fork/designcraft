@@ -128,6 +128,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-14** · In a facing document, pages take their side from their section's page numbers, as InDesign shuffles them: a section that starts at 1 on a left page moves it to the right and the pages after it follow, with their objects. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
   drag one (it snaps like frame drawing); Shift-click autoflows, Alt-click stays loaded on the
