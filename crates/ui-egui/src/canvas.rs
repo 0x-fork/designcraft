@@ -182,6 +182,16 @@ pub fn view_centre(app: &DesignApp) -> Option<(SpreadRef, Point)> {
     Some((slot.spread, slot.to_spread(c)))
 }
 
+/// Where a file dropped on the window lands: the spread under the pointer, or under the view
+/// centre when the pointer isn't over the canvas, and that point in spread coordinates.
+pub fn drop_point(app: &DesignApp, screen: Option<Pos2>) -> Option<(SpreadRef, Point)> {
+    let rect = app.canvas_rect?;
+    let Some(pos) = screen.filter(|p| rect.contains(*p)) else { return view_centre(app) };
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    layout.spread_at(Xf::new(rect, app.view()?).to_canvas(pos))
+}
+
 /// Absolute page index under the view centre.
 pub fn current_page(app: &DesignApp) -> Option<usize> {
     let st = app.session.active()?;

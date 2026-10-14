@@ -1113,10 +1113,11 @@ impl DesignApp {
         }
         self.flush_window_commands(ctx);
         #[cfg(not(target_arch = "wasm32"))]
-        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+        let (dropped, pointer) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.hover_pos()));
+        for f in dropped {
             let p = f.path().to_string_lossy().to_string();
             if !p.is_empty() {
-                let _ = self.open_dropped(&p);
+                let _ = self.open_dropped_at(&p, pointer);
             }
         }
         self.handle_quit(ctx);
@@ -1267,16 +1268,35 @@ impl DesignApp {
     }
 
     /// A file dropped on the window: documents open, the swatches in a swatch exchange (.ase) file
-    /// are loaded, and anything else is placed. A file without an extension opens when its content
-    /// is a DesignCraft or IDML document.
+    /// are loaded, and anything else is placed on the spread in view (a parent spread while parents
+    /// are being edited). A file without an extension opens when its content is a DesignCraft or
+    /// IDML document.
     pub fn open_dropped(&mut self, path: &str) -> Result<Value, String> {
+        self.open_dropped_at(path, None)
+    }
+
+    /// [`Self::open_dropped`] at the pointer: a graphic's top left lands where the file was
+    /// dropped on the canvas, text goes to a new frame on the document page there.
+    pub fn open_dropped_at(&mut self, path: &str, pointer: Option<egui::Pos2>) -> Result<Value, String> {
         if path.to_ascii_lowercase().ends_with(".ase") {
             return self.run("swatch.load", json!({"path": path}));
         }
         let document = opens_as_document(path)
             || (std::path::Path::new(path).extension().is_none() && std::fs::read(path).is_ok_and(|b| designcraft_engine::cmd::is_document(&b)));
-        let cmd = if document { "file.open" } else { "file.place" };
-        self.open_file(cmd, json!({"path": path}))
+        if document {
+            return self.open_file("file.open", json!({"path": path}));
+        }
+        let mut params = json!({"path": path});
+        if let (Some((sr, at)), Some(o)) = (canvas::drop_point(self, pointer), params.as_object_mut()) {
+            o.insert("spread".into(), serde_json::to_value(sr).unwrap_or(Value::Null));
+            o.insert("x".into(), json!(at.x));
+            o.insert("y".into(), json!(at.y));
+            if let (designcraft_doc::SpreadRef::Doc(si), Some(st)) = (sr, self.session.active()) {
+                let pi = st.doc.spreads.get(si).and_then(|s| s.page_at_x(at.x)).unwrap_or(0);
+                o.insert("page".into(), json!(st.doc.first_page_of_spread(si) + pi + 1));
+            }
+        }
+        self.open_file("file.place", params)
     }
 
     /// Queue files the operating system asked the app to open. They can arrive before the window
@@ -2409,6 +2429,23 @@ mod tests {
             assert!(doc.swatches.iter().any(|s| s.name == "Dropped Teal"), "{name}");
             assert!(doc.assets.is_empty(), "{name} isn't placed");
         }
+    }
+
+    #[test]
+    fn a_file_dropped_while_a_parent_is_open_lands_on_the_parent() {
+        let mut app = DesignApp::new(Session::new(), Services::default());
+        app.run("file.new", json!({"pages": 3})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0)));
+        app.run("layout.parents.edit", json!({"on": true})).unwrap();
+        let _ = app.view_mut();
+        let path = std::env::temp_dir().join(format!("designcraft-ui-{}-drop.png", std::process::id()));
+        std::fs::write(&path, designcraft_render::Rendered { width: 10, height: 10, pixels: vec![200; 400] }.to_png()).unwrap();
+        let r = app.open_dropped(&path.to_string_lossy());
+        let _ = std::fs::remove_file(&path);
+        r.unwrap();
+        let d = &app.session.doc().unwrap().doc;
+        assert_eq!(d.parents[0].items.len(), 1, "the graphic is on the parent spread");
+        assert!(d.spreads.iter().all(|s| s.items.is_empty()), "no document page gets it");
     }
 
     #[test]
