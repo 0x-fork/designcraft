@@ -176,11 +176,16 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let cur_spread = doc.page_loc(cur).map(|l| l.0);
     let center = ui.available_width() / 2.0;
     let dragging = egui::DragAndDrop::has_any_payload(ui.ctx());
+    let tallest = doc.spreads.iter().flat_map(|sp| sp.pages.iter().map(|p| p.height)).fold(doc.settings.page_height, f64::max).max(1.0);
     for (si, sp) in doc.spreads.iter().enumerate() {
         let first = doc.first_page_of_spread(si);
-        let scale = THUMB_H / doc.settings.page_height.max(1.0) as f32;
+        // One scale for the whole document (pages of their own size show in proportion): the
+        // document's page size at the usual height, unless a taller page would pass 1.8 times it.
+        // Each row is as tall as its spread's tallest page.
+        let scale = (THUMB_H / doc.settings.page_height.max(1.0) as f32).min(1.8 * THUMB_H / tallest as f32);
+        let row_h = sp.pages.iter().map(|p| p.height as f32 * scale).fold(0.0, f32::max).max(THUMB_H * 0.25);
         let spine = sp.spine_x() as f32;
-        let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0 + THUMB_H + 22.0), Sense::hover());
+        let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0 + row_h + 22.0), Sense::hover());
         let top = row.min.y + 8.0;
         // Marker above the current spread.
         if cur_spread == Some(si) && !editing_parents {
@@ -262,15 +267,55 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             .color(t.text_dim),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons::button(ui, "trash", 20.0, false, crate::i18n::tr(&app.ui.language, "Delete Page")).clicked() {
+            if icons::button(ui, "trash", 20.0, false, crate::i18n::tr(&app.ui.language, "Delete selected pages")).clicked() {
                 let _ = app.run("layout.pages.delete", json!({"pages": [cur]}));
             }
-            if icons::button(ui, "plus", 20.0, false, crate::i18n::tr(&app.ui.language, "Insert Page")).clicked() {
+            // Create new page; a page dropped on it is duplicated at the end of the document.
+            let plus = icons::button(ui, "plus", 20.0, dragging, crate::i18n::tr(&app.ui.language, "Create new page"));
+            if let Some(payload) = plus.dnd_release_payload::<PageDrag>() {
+                if let PageDrag::Page(from) = *payload
+                    && let Some((si, _)) = doc.page_loc(from)
+                {
+                    let _ = app.run("layout.pages.duplicateSpread", json!({"spread": si, "atEnd": true}));
+                }
+            } else if plus.clicked() {
                 let _ = app.run("layout.pages.insert", json!({"after": cur, "count": 1}));
             }
+            // Edit page size: InDesign's presets for the current page, or Custom Page Size….
+            let size = icons::button(ui, "panel-pages", 20.0, false, crate::i18n::tr(&app.ui.language, "Edit page size"));
+            egui::Popup::menu(&size).show(|ui| {
+                let Some((si, pi)) = doc.page_loc(cur) else { return };
+                let pg = &doc.spreads[si].pages[pi];
+                let landscape = pg.width > pg.height;
+                let current = crate::panels::properties::preset_name(pg.width, pg.height);
+                for (name, w, h) in crate::panels::properties::PAGE_PRESETS {
+                    let (w, h) = if landscape { (h, w) } else { (w, h) };
+                    if ui.selectable_label(current == *name, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, name))).clicked() {
+                        let _ = app.run("layout.pageSize", json!({"pages": [cur + 1], "width": w, "height": h}));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Custom Page Size…"))).clicked() {
+                    app.ui.dialog =
+                        Some(crate::dialogs::Dialog::new("cmd:layout.pageSize", json!({"pages": [cur + 1], "width": pg.width, "height": pg.height})));
+                    ui.close();
+                }
+            });
         });
     });
+    // Alt-drag (InDesign's Option-drag) copies the page to where it's dropped.
+    let copy = ui.input(|i| i.modifiers.alt);
     match drop {
+        Some((PageDrag::Page(from), to)) if copy => {
+            if let Some((si, _)) = doc.page_loc(from)
+                && let Ok(r) = app.run("layout.pages.duplicateSpread", json!({"spread": si}))
+                && let Some(new) = r["page"].as_u64().map(|p| p as usize)
+                && new != to
+            {
+                let _ = app.run("layout.pages.move", json!({"from": new, "to": to}));
+            }
+        }
         Some((PageDrag::Page(from), to)) if from != to => {
             let _ = app.run("layout.pages.move", json!({"from": from, "to": to}));
         }
@@ -357,10 +402,13 @@ pub(crate) fn drag_ghost(ui: &egui::Ui, label: &str, t: &Tokens) {
 
 #[cfg(test)]
 mod tests {
-    use egui::{Event, Modifiers, PointerButton, vec2};
-    use egui_kittest::kittest::{NodeT, Queryable};
-    use serde_json::json;
+    use egui::{Event, Modifiers, PointerButton};
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
 
+    use super::*;
     use crate::test_window;
 
     #[test]
@@ -398,5 +446,50 @@ mod tests {
         let rev = (st.uid, st.revision);
         let thumbs = super::THUMBS.lock().unwrap();
         assert!(thumbs.as_ref().unwrap().keys().any(|k| (k.0, k.1) == rev && k.2 == super::ThumbOf::Parent(id)));
+    }
+
+    fn harness(app: DesignApp) -> Harness<'static, DesignApp> {
+        let mut h = Harness::builder().with_size(vec2(280.0, 520.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let key = egui::Id::new("test_fonts");
+                if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(key, true));
+                    return;
+                }
+                show(app, ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        h
+    }
+
+    /// Release a dragged page over `at`.
+    fn drop_page(h: &mut Harness<'_, DesignApp>, page: usize, at: egui::Pos2, alt: bool) {
+        let modifiers = egui::Modifiers { alt, ..Default::default() };
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers });
+        egui::DragAndDrop::set_payload(&h.ctx, PageDrag::Page(page));
+        h.event(egui::Event::PointerMoved(at));
+        h.run_steps(2);
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers });
+        h.run_steps(3);
+    }
+
+    #[test]
+    fn a_page_dropped_on_create_new_page_is_duplicated_at_the_end() {
+        // Chris Cicchino's Page Tool video (2:06): "click and drag onto my plus sign I can duplicate that".
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 252, "height": 144, "facingPages": false})).unwrap();
+        app.run("layout.pages.insert", json!({"count": 1})).unwrap();
+        app.run("layout.pageSize", json!({"pages": [2], "width": 612, "height": 792})).unwrap();
+        let mut h = harness(app);
+        let plus = h.get_by_label("Create new page").rect().center();
+        drop_page(&mut h, 1, plus, false);
+        let d = h.state().session.doc().unwrap().doc.clone();
+        assert_eq!(d.page_count(), 3);
+        let (si, pi) = d.page_loc(2).unwrap();
+        assert_eq!(d.spreads[si].pages[pi].width, 612.0, "a copy of the letterhead");
+        let _ = h.get_by_label("Edit page size");
     }
 }
