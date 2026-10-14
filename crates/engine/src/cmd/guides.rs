@@ -133,7 +133,14 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
         let mut out = Vec::new();
         for (o, pos, pi) in placed {
             let pg = sp.pages.get_mut(pi).ok_or_else(|| bad("guide.add", "no such page"))?;
-            pg.guides.push(Guide { orientation: o, position: pos, spread: spread_guide, locked: false, layer: Some(layer), liquid: liquid && !spread_guide });
+            pg.guides.push(Guide {
+                orientation: o,
+                position: pos,
+                spread: spread_guide,
+                locked: false,
+                layer: Some(layer),
+                liquid: liquid && !spread_guide,
+            });
             out.push(json!({"page": pi, "index": pg.guides.len() - 1}));
         }
         match <[Value; 1]>::try_from(out) {
