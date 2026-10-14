@@ -454,6 +454,19 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
             pen.line(&[(5.0, 10.0), (4.0, 10.0), (4.0, 17.0), (16.0, 17.0), (16.0, 10.0), (15.0, 10.0)]);
         }
         "screen-normal" => pen.rect(3.0, 4.0, 17.0, 16.0),
+        // View Options: a frame's dashed edges with a ruler's ticks above.
+        "view-options" => {
+            pen.w = 1.1;
+            for (x0, x1) in [(4.0, 6.5), (8.5, 11.5), (13.5, 16.0)] {
+                pen.line(&[(x0, 9.0), (x1, 9.0)]);
+                pen.line(&[(x0, 17.0), (x1, 17.0)]);
+            }
+            pen.line(&[(4.0, 9.0), (4.0, 17.0)]);
+            pen.line(&[(16.0, 9.0), (16.0, 17.0)]);
+            for x in [5.0, 8.0, 11.0, 14.0] {
+                pen.line(&[(x, 4.0), (x, 6.0)]);
+            }
+        }
         "screen-preview" => {
             pen.rect(3.0, 4.0, 17.0, 16.0);
             pen.frect(6.0, 7.0, 14.0, 13.0);
