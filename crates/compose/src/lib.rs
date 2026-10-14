@@ -936,6 +936,11 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     pi = j;
                     continue 'paras;
                 }
+                // An empty last paragraph (the story ends with a return) isn't overset text, as in
+                // InDesign: nothing of it is left to show.
+                if prange.is_empty() && prange.start >= story.text.len() {
+                    break 'paras;
+                }
                 out.overset_at = Some(glyphs.get(g0).map(|g| g.byte).unwrap_or(prange.start));
                 // The part of the paragraph that fits keeps its shading and border.
                 para_box_decos(&mut out, pi, &pp);
