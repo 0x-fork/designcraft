@@ -4429,8 +4429,9 @@ mod tests {
             let off = app.session.layout().xf(designcraft_engine::doc::SpreadRef::Doc(0)).translation();
             let x = off.x + before.doc.spreads[0].pages[0].x + 200.0;
             let y = off.y + 200.0;
+            // The Page tool opens Page Size on a double-click (a click selects the page).
             let events = if tool == "page" {
-                json!([{"kind": "up", "x": x, "y": y}])
+                json!([{"kind": "doubleclick", "x": x, "y": y}])
             } else {
                 json!([{"kind": "down", "x": x, "y": y}, {"kind": "up", "x": x, "y": y}])
             };
