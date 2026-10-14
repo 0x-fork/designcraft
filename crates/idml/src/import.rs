@@ -242,6 +242,40 @@ fn nums(s: &str) -> Vec<f64> {
     s.split_whitespace().filter_map(|v| v.parse().ok()).collect()
 }
 
+/// The viewBox size of an SVG whose root has a viewBox but no width/height (percentages count as
+/// none): InDesign places such a file at one viewBox unit to the point.
+fn svg_viewbox_size(data: &[u8]) -> Option<(f64, f64)> {
+    use quick_xml::events::Event;
+    if data.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'<') {
+        return None;
+    }
+    let mut r = quick_xml::Reader::from_reader(data);
+    let mut buf = Vec::new();
+    let root = loop {
+        match r.read_event_into(&mut buf).ok()? {
+            Event::Start(e) | Event::Empty(e) => break e.into_owned(),
+            Event::Eof => return None,
+            _ => buf.clear(),
+        }
+    };
+    if root.local_name().as_ref() != b"svg" {
+        return None;
+    }
+    let attr = |name: &[u8]| {
+        root.attributes().with_checks(false).flatten().find(|a| a.key.as_ref() == name).and_then(|a| a.unescape_value().ok().map(|v| v.to_string()))
+    };
+    let absolute = |name: &[u8]| attr(name).is_some_and(|v| !v.trim().ends_with('%'));
+    if absolute(b"width") || absolute(b"height") {
+        return None;
+    }
+    let vb: Vec<f64> =
+        attr(b"viewBox")?.split(|c: char| c.is_whitespace() || c == ',').filter(|v| !v.is_empty()).filter_map(|v| v.parse().ok()).collect();
+    match vb[..] {
+        [_, _, w, h] if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 => Some((w, h)),
+        _ => None,
+    }
+}
+
 fn parse_affine(s: Option<&str>) -> Affine {
     match s.map(nums) {
         Some(v) if v.len() == 6 => Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]),
@@ -2366,7 +2400,7 @@ impl<'r> Importer<'r> {
         let size = ((r - l).abs(), (b - t).abs());
         let link = g.find("Link");
         let uri = link.and_then(|k| k.get("LinkResourceURI")).map(uri_to_path);
-        let graphic = |asset| {
+        let graphic = |asset, size| {
             Content::Graphic(designcraft_doc::Graphic {
                 asset,
                 size,
@@ -2383,13 +2417,17 @@ impl<'r> Importer<'r> {
         {
             // Every placement of a linked file shares one asset; read the file once.
             if let Some(id) = self.linked_assets.get(p) {
-                return graphic(*id);
+                let size = self.assets.get(id).and_then(|a| svg_viewbox_size(&a.data)).unwrap_or(size);
+                return graphic(*id, size);
             }
             if let Some(d) = (self.read_link)(p) {
                 data = d;
                 read_from = Some(p.clone());
             }
         }
+        // InDesign draws a viewBox-only SVG at one unit to the point: its GraphicBounds are the
+        // art's bounds, which can overhang the viewBox, so they must not size the viewBox.
+        let size = svg_viewbox_size(&data).unwrap_or(size);
         let (mime, px) = sniff_image(&data);
         let mime = mime.map(str::to_string).unwrap_or_else(|| match link.and_then(|k| k.get("LinkResourceFormat")).unwrap_or("") {
             f if f.contains("JPEG") => "image/jpeg".into(),
@@ -2411,7 +2449,7 @@ impl<'r> Importer<'r> {
         if let Some(p) = read_from {
             self.linked_assets.insert(p, id);
         }
-        graphic(id)
+        graphic(id, size)
     }
 
     fn link_threads(&mut self) {
