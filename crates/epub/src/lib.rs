@@ -343,15 +343,9 @@ fn hex(doc: &Document, swatch: &str, tint: f32) -> Option<String> {
 
 fn char_css(doc: &Document, c: &CharProps, base_size: f64, generics: &BTreeMap<String, String>, out: &mut String) {
     let _ = write!(out, "font-family: \"{}\", {}; ", css_string(&c.font_family), generic_family(&c.font_family, generics));
-    let st = c.font_style.to_lowercase();
-    if st.contains("bold") {
-        out.push_str("font-weight: bold; ");
-    } else if st.contains("semibold") {
-        out.push_str("font-weight: 600; ");
-    }
-    if st.contains("italic") {
-        out.push_str("font-style: italic; ");
-    }
+    // The face's own weight, so an embedded Semibold or Light face is the one chosen.
+    let (weight, style) = css_weight_style(&c.font_style);
+    let _ = write!(out, "font-weight: {weight}; font-style: {style}; ");
     let _ = write!(out, "font-size: {:.3}em; ", c.size / base_size);
     if c.tracking != 0.0 {
         let _ = write!(out, "letter-spacing: {:.3}em; ", c.tracking / 1000.0);
@@ -990,6 +984,9 @@ mod tests {
         assert_eq!(css_weight_style("Bold"), (700, "normal"));
         assert_eq!(css_weight_style("Extra Bold"), (800, "normal"));
         assert_eq!(css_weight_style("Regular"), (400, "normal"));
+        assert_eq!(css_weight_style("Light"), (300, "normal"));
+        assert_eq!(css_weight_style("Thin Oblique"), (100, "italic"));
+        assert_eq!(css_weight_style("Black"), (900, "normal"));
 
         let mut d = Document::new(&NewDocument::default());
         let lid = d.default_layer();

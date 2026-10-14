@@ -321,6 +321,13 @@ impl FontFace {
         let fs_type = self.skrifa().and_then(|f| f.os2().ok()).map_or(0, |t| t.fs_type());
         fs_type & 0x0002 != 0 && fs_type & 0x000C == 0
     }
+
+    /// Does the font's licence allow embedding bitmaps only? OS/2 `fsType` bit 9: the outlines
+    /// may not be passed on, so the font file can't be packaged whole.
+    pub fn bitmap_only(&self) -> bool {
+        use skrifa::raw::TableProvider;
+        self.skrifa().and_then(|f| f.os2().ok()).is_some_and(|t| t.fs_type() & 0x0200 != 0)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
