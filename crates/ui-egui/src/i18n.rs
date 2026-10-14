@@ -612,6 +612,22 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Edit Page", ["Edit Page", "Edit Page", "Edit Page", "Edit Page", "编辑页面"]),
     ("Import File", ["Import File", "Import File", "Import File", "Import File", "导入文件"]),
     ("Insert Page", ["Insert Page", "Insert Page", "Insert Page", "Insert Page", "插入页面"]),
+    (
+        "Delete selected pages",
+        ["Ausgewählte Seiten löschen", "Supprimer les pages sélectionnées", "Eliminar páginas seleccionadas", "選択したページを削除", "删除选定页面"],
+    ),
+    ("Create new page", ["Neue Seite erstellen", "Créer une page", "Crear página nueva", "新規ページを作成", "新建页面"]),
+    ("Edit page size", ["Seitenformat bearbeiten", "Modifier le format de page", "Editar tamaño de página", "ページサイズを編集", "编辑页面大小"]),
+    (
+        "Custom Page Size…",
+        [
+            "Benutzerdefiniertes Seitenformat …",
+            "Format de page personnalisé…",
+            "Tamaño de página personalizado…",
+            "カスタムページサイズ…",
+            "自定页面大小…",
+        ],
+    ),
     ("Hide Bar", ["Hide Bar", "Hide Bar", "Hide Bar", "Hide Bar", "隐藏栏"]),
     ("Properties Panel", ["Properties Panel", "Properties Panel", "Properties Panel", "Properties Panel", "属性面板"]),
     ("New Workspace…", ["New Workspace…", "New Workspace…", "New Workspace…", "New Workspace…", "新建工作区…"]),

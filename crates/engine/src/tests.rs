@@ -569,3 +569,29 @@ fn commands_take_non_object_params_without_panicking() {
         assert!(r.is_ok(), "{p}: {r:?}");
     }
 }
+
+#[test]
+fn duplicating_a_page_keeps_its_own_size_rule_guides_and_objects() {
+    // Chris Cicchino's Page Tool video (2:06): the letterhead page is duplicated, then resized.
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 252, "height": 144, "facingPages": false})).unwrap();
+    s.execute("layout.pages.insert", &json!({"count": 1})).unwrap();
+    s.execute("layout.pageSize", &json!({"pages": [2], "width": 612, "height": 792})).unwrap();
+    s.execute("liquid.pageRule", &json!({"rule": "scale", "pages": [2]})).unwrap();
+    s.execute("guide.add", &json!({"spread": 1, "page": 0, "orientation": "vertical", "position": 300})).unwrap();
+    s.execute("frame.create", &json!({"spread": 1, "rect": [100, 100, 200, 200]})).unwrap();
+    let r = s.execute("layout.pages.duplicateSpread", &json!({"spread": 1})).unwrap();
+    assert_eq!(r["page"], 2);
+    let d = s.doc().unwrap().doc.clone();
+    let (si, pi) = d.page_loc(2).unwrap();
+    let pg = &d.spreads[si].pages[pi];
+    assert_eq!((pg.width, pg.height, pg.liquid), (612.0, 792.0, designcraft_doc::LiquidRule::Scale));
+    assert_eq!(pg.guides.len(), 1);
+    assert_eq!(d.spreads[si].items.len(), 1);
+    // At the end of the document (the New Page button): the business card, not the last page's size.
+    let r = s.execute("layout.pages.duplicateSpread", &json!({"spread": 0, "atEnd": true})).unwrap();
+    assert_eq!(r["page"], 3);
+    let d = s.doc().unwrap().doc.clone();
+    let (si, pi) = d.page_loc(3).unwrap();
+    assert_eq!((d.spreads[si].pages[pi].width, d.spreads[si].pages[pi].height), (252.0, 144.0));
+}
