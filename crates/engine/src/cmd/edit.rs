@@ -177,6 +177,8 @@ pub fn specs() -> Vec<CommandSpec> {
             st.doc = doc;
             st.selection = e.selection;
             st.bump_revision();
+            // Pending typing overrides belong to the current edit state, not a restored snapshot.
+            s.typing_format = None;
             Ok(json!({"undone": e.label}))
         }),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Shift+Z"), "{}", can_redo, |s, _| {
@@ -188,6 +190,7 @@ pub fn specs() -> Vec<CommandSpec> {
             st.doc = doc;
             st.selection = e.selection;
             st.bump_revision();
+            s.typing_format = None;
             Ok(json!({"redone": e.label}))
         }),
         cmd!(noundo "selection.set", "Select", [], None, "{ids: [id], add?: bool, content?: bool}", has_doc, |s, p| {

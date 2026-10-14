@@ -172,15 +172,20 @@ impl Story {
             return;
         }
         if !other.tables.is_empty() {
-            let mut next = self.tables.keys().max().copied().unwrap_or(0).saturating_add(1);
             let mut ids = std::collections::HashMap::new();
+            let mut next = crate::ids::next_local_id(self.tables.keys().copied());
             for (old, t) in std::mem::take(&mut other.tables) {
                 let new = next;
-                next = next.saturating_add(1);
                 let mut t = Arc::unwrap_or_clone(t);
                 t.id = new;
                 ids.insert(old, new);
                 self.tables.insert(new, Arc::new(t));
+                // Continue through free ids without rescanning the table map for its maximum.
+                // On exhaustion wrap to gaps; an allocated map cannot occupy every u64 id.
+                next = next.checked_add(1).unwrap_or(1);
+                while self.tables.contains_key(&next) {
+                    next = next.checked_add(1).unwrap_or(1);
+                }
             }
             for p in &mut other.paras {
                 p.table = p.table.and_then(|id| ids.get(&id).copied());
@@ -199,11 +204,11 @@ impl Story {
             self.notes.push(Arc::new(crate::notes::Footnote { id, text: n.text.clone() }));
         }
         for n in other.endnotes {
-            let id = self.endnotes.iter().map(|x| x.id).max().unwrap_or(0).saturating_add(1);
+            let id = crate::ids::next_local_id(self.endnotes.iter().map(|x| x.id));
             self.endnotes.push(Arc::new(crate::notes::Footnote { id, text: n.text.clone() }));
         }
         for n in other.editorial {
-            let id = self.editorial.iter().map(|x| x.id).max().unwrap_or(0).saturating_add(1);
+            let id = crate::ids::next_local_id(self.editorial.iter().map(|x| x.id));
             self.editorial.push(Arc::new(crate::endnotes::EditorialNote { id, ..(*n).clone() }));
         }
         self.anchors.extend(other.anchors);
@@ -276,6 +281,36 @@ mod tests {
         assert_eq!(part.text, a.text[2..e]);
         assert_eq!(part.notes.len(), 1);
         assert!(a.extract(2..8).notes.is_empty());
+    }
+
+    #[test]
+    fn append_tables_preserves_sparse_and_wrapping_ids() {
+        for existing in [vec![1, 3, u64::MAX], vec![1, 3, u64::MAX - 1], vec![1, 3, 8]] {
+            let story = |id, ids: &[u64]| {
+                let mut s = Story::with_text(StoryId(id), &vec![crate::TABLE_ANCHOR.to_string(); ids.len()].join("\n"), ParaFormat::default());
+                for (p, &tid) in s.paras.iter_mut().zip(ids) {
+                    p.table = Some(tid);
+                    let mut t = crate::table::Table::new(tid, 1, 1, 0, 0, 100.0);
+                    t.cells[0].text = Story::with_text(StoryId(0), &format!("{id}:{tid}"), ParaFormat::default());
+                    s.tables.insert(tid, Arc::new(t));
+                }
+                s
+            };
+            let mut a = story(1, &existing);
+            let b = story(2, &[1, 2, 3]);
+            a.check().unwrap();
+            b.check().unwrap();
+            a.append_story(b);
+            a.check().unwrap();
+            assert_eq!(a.tables.len(), 6);
+            for (p, tid) in a.paras.iter().take(3).zip(&existing) {
+                assert_eq!(p.table, Some(*tid));
+                assert_eq!(a.tables[tid].cells[0].text.text, format!("1:{tid}"));
+            }
+            for (p, tid) in a.paras.iter().skip(3).zip(1..=3) {
+                assert_eq!(a.tables[&p.table.unwrap()].cells[0].text.text, format!("2:{tid}"));
+            }
+        }
     }
 
     #[test]

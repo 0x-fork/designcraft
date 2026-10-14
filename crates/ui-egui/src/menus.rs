@@ -3206,6 +3206,10 @@ mod tests {
     fn formatting_affects_text_sends_swatches_to_the_text() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({})).unwrap();
+        for (name, color) in [("Cyan", "#00ffff"), ("Magenta", "#ff00ff")] {
+            let created = app.run("swatch.create", json!({"name": name, "color": color})).unwrap();
+            assert_eq!(created["name"], name);
+        }
         let r = app.run("frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "words", "caret": false})).unwrap();
         let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
         app.run("selection.set", json!({"ids": [fid]})).unwrap();

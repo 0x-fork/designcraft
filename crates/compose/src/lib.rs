@@ -576,7 +576,8 @@ pub struct FrameSpec {
 impl FrameSpec {
     pub fn columns(&self) -> Vec<Rect> {
         let a = self.area;
-        let n = self.opts.columns.max(1);
+        // Primary frames inherit the document limit (216), beyond the interactive frame editor's 40.
+        let n = self.opts.columns.clamp(1, 216);
         match self.opts.columns_kind {
             designcraft_doc::ColumnsKind::FixedWidth if self.opts.column_width > 0.0 => (0..n)
                 .map(|i| {
@@ -4557,4 +4558,50 @@ pub fn path_glyphs(
         }
     }
     runs
+}
+
+#[cfg(test)]
+mod column_allocation_safety_tests {
+    use super::*;
+
+    fn frame(kind: designcraft_doc::ColumnsKind) -> FrameSpec {
+        FrameSpec {
+            id: ItemId(1),
+            area: Rect::new(0., 0., 300., 100.),
+            opts: TextFrameOptions { columns: 217, columns_kind: kind, column_width: 20., gutter: 12., ..Default::default() },
+            vertical: false,
+            exclusions: vec![],
+            page_name: None,
+            page: None,
+            grid: None,
+            left_page: false,
+            page_rect: None,
+            outline: None,
+            section_marker: None,
+        }
+    }
+    fn check(kind: designcraft_doc::ColumnsKind) {
+        let mut f = frame(kind);
+        // Fail safely at a small boundary before exercising hostile native options.
+        assert_eq!(f.columns().len(), 216);
+        f.opts.columns = u32::MAX;
+        assert_eq!(f.columns().len(), 216);
+        f.opts.columns = 0;
+        assert_eq!(f.columns().len(), 1);
+        f.opts.columns = 2;
+        let expected = if kind == designcraft_doc::ColumnsKind::FixedWidth {
+            vec![Rect::new(0., 0., 20., 100.), Rect::new(32., 0., 52., 100.)]
+        } else {
+            vec![Rect::new(0., 0., 144., 100.), Rect::new(156., 0., 300., 100.)]
+        };
+        assert_eq!(f.columns(), expected);
+    }
+    #[test]
+    fn column_allocation_caps_equal_width_frame_count() {
+        check(designcraft_doc::ColumnsKind::FixedNumber);
+    }
+    #[test]
+    fn column_allocation_caps_fixed_width_frame_count() {
+        check(designcraft_doc::ColumnsKind::FixedWidth);
+    }
 }

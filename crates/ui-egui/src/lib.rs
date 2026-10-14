@@ -544,6 +544,10 @@ pub struct DesignApp {
     pub color_applied: bool,
     pub perf: Perf,
     pub synthetic: Vec<egui::Event>,
+    /// Control input stays separate from native-menu input until its frame is processed.
+    pub(crate) control_synthetic: Vec<egui::Event>,
+    control_input_frame: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    clipboard_guard_installed: bool,
     /// Story open in the Story Editor.
     pub story_editor: Option<story_editor::Target>,
     control_rx: Option<Receiver<ControlRequest>>,
@@ -627,6 +631,9 @@ impl DesignApp {
             color_applied: false,
             perf: Perf::default(),
             synthetic: vec![],
+            control_synthetic: vec![],
+            control_input_frame: Default::default(),
+            clipboard_guard_installed: false,
             story_editor: None,
             control_rx: None,
             pending_shots: vec![],
@@ -726,7 +733,7 @@ impl DesignApp {
             return r;
         }
         // Only user-initiated runs touch the system clipboard, never the control channel's.
-        let system_clipboard = !self.in_control;
+        let system_clipboard = !self.in_control && !self.control_input_frame.load(std::sync::atomic::Ordering::Relaxed);
         let mut params = if system_clipboard { self.with_system_clipboard(id, params) } else { params };
         // Vector art copied in another app (Illustrator, VectorCraft, Figma) is SVG markup on the
         // system clipboard: with no insertion point it pastes as editable paths where text would go.
@@ -1096,7 +1103,7 @@ impl DesignApp {
             self.drain_inbox();
             self.open_os_documents();
         }
-        if !self.synthetic.is_empty() {
+        if !self.synthetic.is_empty() || !self.control_synthetic.is_empty() {
             ctx.request_repaint();
         }
         self.collect_screenshots(ctx);
@@ -1343,19 +1350,39 @@ impl DesignApp {
         }
     }
 
-    /// Inject synthetic events (one pointer event per frame).
-    pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
-        if self.synthetic.is_empty() {
+    /// Keep widget clipboard output private while a queued control event is running.
+    pub(crate) fn install_clipboard_guard(&mut self, ctx: &egui::Context) {
+        if self.clipboard_guard_installed {
             return;
         }
-        let n = match self.synthetic[0] {
+        let private = self.control_input_frame.clone();
+        ctx.on_end_pass(
+            "control clipboard",
+            std::sync::Arc::new(move |ui| {
+                if private.load(std::sync::atomic::Ordering::Relaxed) {
+                    ui.ctx().output_mut(|o| {
+                        o.commands.retain(|cmd| !matches!(cmd, egui::OutputCommand::CopyText(_) | egui::OutputCommand::CopyImage(_)))
+                    });
+                }
+            }),
+        );
+        self.clipboard_guard_installed = true;
+    }
+
+    /// Inject synthetic events (one pointer event per frame), retaining control provenance.
+    pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        let private = !self.control_synthetic.is_empty();
+        self.control_input_frame.store(private, std::sync::atomic::Ordering::Relaxed);
+        let events = if private { &mut self.control_synthetic } else { &mut self.synthetic };
+        let Some(first) = events.first() else { return };
+        let n = match first {
             egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } => 1,
-            _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
+            _ => events.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(events.len(), |i| i + 1),
         };
-        if let Some(egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. }) = self.synthetic.first() {
+        if let egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. } = first {
             raw.events.push(egui::Event::PointerMoved(*p));
         }
-        raw.events.extend(self.synthetic.drain(..n));
+        raw.events.extend(events.drain(..n));
     }
 
     /// Lay out the whole window.

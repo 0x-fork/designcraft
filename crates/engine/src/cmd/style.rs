@@ -225,7 +225,7 @@ pub fn specs() -> Vec<CommandSpec> {
             [],
             None,
             "{color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255)|{model: rgb|cmyk|gray, r,g,b|c,m,y,k|k}(0..1), target?: fill|stroke, text?: bool, ids?} — an unnamed colour (not in the Swatches panel until Add to Swatches) on the selection; `text`: on the selected text, or the text of the selected frames (Formatting Affects Text)",
-            |s| super::has_text(s).or_else(|_| super::has_selection(s)),
+            has_text_or_selection,
             apply_color
         ),
         cmd!(
@@ -234,7 +234,7 @@ pub fn specs() -> Vec<CommandSpec> {
             [],
             None,
             "{at: [x,y] (spread coords), spread?, target?: fill|stroke, ids?, matchFrom?: id} → {color: \"#rrggbb\", swatch, from: image id} — the Eyedropper on a placed image: the image's colour at the point (an unnamed colour) fills the selected text, else the selected objects. With no opaque image pixel there, `matchFrom` gives the object whose attributes apply instead (object.matchAttributes)",
-            |s| super::has_text(s).or_else(|_| super::has_selection(s)),
+            has_text_or_selection,
             sample_color
         ),
         cmd!(
@@ -813,15 +813,9 @@ fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
         && let Some(target) = super::text::format_targets_pub(s).first()
     {
         let st = s.doc()?;
-        let story = st.doc.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
         // Match paragraph fromSelection's first-character/caret policy, but keep paragraph
         // attributes inherited instead of freezing the fully resolved character properties.
-        let mut format =
-            if target.range.is_empty() { story.char_format_at(target.range.start) } else { story.format_after(target.range.start) }.clone();
-        // A bare caret: what typing there would get, as `type.selectionAttrs` reports.
-        if target.range.is_empty() {
-            super::text::with_typing_format(s, &mut format);
-        }
+        let format = super::text::effective_char_format(s, target)?;
         let mut captured = st.doc.styles.char_style_attrs(&format.style);
         captured.merge(&format.over);
         // Replay the explicit fields so null clears a captured value rather than looking absent.
@@ -1383,56 +1377,18 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
 fn apply_color(s: &mut Session, p: &Value) -> Result<Value> {
     let color = p.get("color").and_then(parse_color).ok_or_else(|| bad("object.color", "missing or bad color"))?;
     let stroke = str_param(p, "target") == Some("stroke");
-    let text = (p.get("text").and_then(Value::as_bool).unwrap_or(false) || s.doc()?.selection.text.is_some())
-        && p.get("ids").is_none()
-        && p.get("id").is_none();
+    let named = p.get("ids").is_some() || p.get("id").is_some();
+    let text = !named
+        && (p.get("text").and_then(Value::as_bool).unwrap_or(false) || s.doc()?.selection.text.is_some() || s.doc()?.selection.cells.is_some());
     let (ids, texts) = if text { (vec![], super::text::format_targets_pub(s)) } else { (super::targets(s, p)?, vec![]) };
+    if text && texts.is_empty() {
+        return Err(bad("object.color", "select the text to colour"));
+    }
     // A caret: the colour is for the next typing (once the swatch exists).
     let caret = matches!(texts.as_slice(), [t] if t.range.is_empty());
     let r = s.edit(|d, _| {
-        // Reuse a swatch holding this colour to the precision its name shows (whole CMYK percents,
-        // 0-255 RGB), else add an unnamed one: values a fraction of a percent apart would otherwise
-        // add hidden "C=0 M=50 Y=100 K=0 2" twins.
-        let shown = value_name(color);
-        let process = |w: &&Swatch| match &w.value {
-            SwatchValue::Color { color: c, color_type: designcraft_color::ColorType::Process } => Some(*c),
-            _ => None,
-        };
-        let existing = d
-            .swatches
-            .iter()
-            .find(|w| process(w) == Some(color))
-            .or_else(|| {
-                d.swatches
-                    .iter()
-                    .find(|w| process(w).is_some_and(|c| std::mem::discriminant(&c) == std::mem::discriminant(&color) && value_name(c) == shown))
-            })
-            .map(|w| w.name.clone());
-        let name = match existing {
-            Some(n) => n,
-            None => {
-                let name = Styles::unique_name(|n| d.swatch(n).is_some(), &shown);
-                d.swatches.push(Swatch {
-                    name: name.clone(),
-                    value: SwatchValue::Color { color, color_type: designcraft_color::ColorType::Process },
-                    locked: false,
-                    named: false,
-                    hidden: true,
-                });
-                name
-            }
-        };
-        for id in &ids {
-            if let Some(it) = d.item_mut(*id) {
-                if stroke {
-                    it.stroke.swatch = name.clone();
-                    it.stroke.tint = 1.0;
-                } else {
-                    it.fill.swatch = name.clone();
-                    it.fill.tint = 1.0;
-                }
-            }
-        }
+        let name = color_swatch(d, color);
+        color_items(d, &ids, &name, stroke);
         if !caret {
             let a = if stroke {
                 CharAttrs { stroke: Some(name.clone()), stroke_tint: Some(1.0), ..Default::default() }
@@ -1448,6 +1404,58 @@ fn apply_color(s: &mut Session, p: &Value) -> Result<Value> {
         super::text::format_chars(s, &attrs)?;
     }
     Ok(r)
+}
+
+/// A process swatch holding this colour to the precision its name shows (whole CMYK percents,
+/// 0-255 RGB), else a new unnamed one (hidden from the Swatches panel until Add to Swatches):
+/// values a fraction of a percent apart would otherwise add hidden "C=0 M=50 Y=100 K=0 2" twins.
+fn color_swatch(d: &mut designcraft_doc::Document, color: designcraft_color::Color) -> String {
+    let shown = value_name(color);
+    let process = |w: &&Swatch| match &w.value {
+        SwatchValue::Color { color: c, color_type: designcraft_color::ColorType::Process } => Some(*c),
+        _ => None,
+    };
+    let existing = d
+        .swatches
+        .iter()
+        .find(|w| process(w) == Some(color))
+        .or_else(|| {
+            d.swatches
+                .iter()
+                .find(|w| process(w).is_some_and(|c| std::mem::discriminant(&c) == std::mem::discriminant(&color) && value_name(c) == shown))
+        })
+        .map(|w| w.name.clone());
+    if let Some(n) = existing {
+        return n;
+    }
+    let name = Styles::unique_name(|n| d.swatch(n).is_some(), &shown);
+    d.swatches.push(Swatch {
+        name: name.clone(),
+        value: SwatchValue::Color { color, color_type: designcraft_color::ColorType::Process },
+        locked: false,
+        named: false,
+        hidden: true,
+    });
+    name
+}
+
+fn color_items(d: &mut designcraft_doc::Document, ids: &[designcraft_doc::ItemId], name: &str, stroke: bool) {
+    for id in ids {
+        if let Some(it) = d.item_mut(*id) {
+            if stroke {
+                it.stroke.swatch = name.to_string();
+                it.stroke.tint = 1.0;
+            } else {
+                it.fill.swatch = name.to_string();
+                it.fill.tint = 1.0;
+            }
+        }
+    }
+}
+
+fn has_text_or_selection(s: &Session) -> std::result::Result<(), String> {
+    has_doc(s)?;
+    if s.active().is_some_and(|d| d.selection.text.is_some() || d.selection.cells.is_some()) { Ok(()) } else { super::has_selection(s) }
 }
 
 /// The Eyedropper on a placed image (InDesign samples the pixel under the pointer): that colour,
@@ -1555,7 +1563,7 @@ fn add_to_swatches(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let rename = str_param(p, "name").map(str::to_string);
-    s.edit(|d, _| {
+    let result = s.edit(|d, _| {
         let w = d.swatches.iter_mut().find(|w| w.name == name).ok_or_else(|| bad("swatch.addToSwatches", format!("no swatch `{name}`")))?;
         if w.locked {
             return Err(bad("swatch.addToSwatches", "special swatches are already listed"));
@@ -1570,7 +1578,11 @@ fn add_to_swatches(s: &mut Session, p: &Value) -> Result<Value> {
         w.named = true;
         d.rename_swatch_refs(&name, &new);
         Ok(json!({"name": new}))
-    })
+    })?;
+    if let Some(new) = result.get("name").and_then(Value::as_str) {
+        super::text::rename_typing_swatch(s, &name, new);
+    }
+    Ok(result)
 }
 
 /// Swatch Options: rename, Name with Color Value, colour type and value, a tint swatch's tint
@@ -1590,7 +1602,7 @@ fn swatch_options(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let base = str_param(p, "base").map(str::to_string);
-    s.edit(|d, _| {
+    let result = s.edit(|d, _| {
         let w = d.swatch(&name).cloned().ok_or_else(|| bad(ID, format!("no swatch `{name}`")))?;
         let mut w2 = w.clone();
         if w.locked {
@@ -1670,7 +1682,11 @@ fn swatch_options(s: &mut Session, p: &Value) -> Result<Value> {
         *slot = w2;
         d.rename_swatch_refs(&name, &new);
         Ok(json!({"name": new}))
-    })
+    })?;
+    if let Some(new) = result.get("name").and_then(Value::as_str) {
+        super::text::rename_typing_swatch(s, &name, new);
+    }
+    Ok(result)
 }
 
 /// #777: the params descriptions name the attributes, and a wrong one is the command's error.
@@ -2739,6 +2755,8 @@ mod sample_color_tests {
         s.execute("text.select", &json!({"story": story.0, "anchor": 1, "focus": 1})).unwrap();
         // A caret: the sampled colour is for the next typing.
         let r = s.execute("color.sample", &json!({"at": [100, 100]})).unwrap();
+        assert_eq!(s.execute("type.selectionAttrs", &json!({})).unwrap()["chars"]["fill"], r["swatch"]);
+        assert_eq!(s.doc().unwrap().doc.story(story).unwrap().text, "Hi", "caret color waits for typing");
         s.execute("text.insert", &json!({"text": "X"})).unwrap();
         let st = s.doc().unwrap().doc.story(story).unwrap().clone();
         assert_eq!(st.format_after(1).over.fill.as_deref(), r["swatch"].as_str(), "{r}");
@@ -3029,3 +3047,7 @@ mod gradient_stroke_tests {
         assert!((0..3).all(|i| s[i].abs_diff(p[i]) < 40), "screen {s:?}, pdf {p:?}");
     }
 }
+
+#[cfg(test)]
+#[path = "text_color_tests.rs"]
+mod text_color_tests;

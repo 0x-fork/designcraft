@@ -429,12 +429,7 @@ pub(crate) fn default_fill_stroke(app: &mut DesignApp) -> Result<Value, String> 
 /// Swap Fill and Stroke (Shift+X): the text's fill and stroke, or each selected object's, trade
 /// places, tints included.
 pub(crate) fn swap_fill_stroke(app: &mut DesignApp) -> Result<Value, String> {
-    if crate::panels::colors_affect_text(app) {
-        let (fill, fill_tint, stroke, stroke_tint) = crate::panels::color_target(app).ok_or("no text to color")?;
-        let attrs = json!({"fill": stroke, "fillTint": stroke_tint, "stroke": fill, "strokeTint": fill_tint});
-        return app.run("type.char", json!({ "attrs": attrs }));
-    }
-    app.run("object.swapFillStroke", json!({}))
+    if crate::panels::colors_affect_text(app) { app.run("type.swapFillStroke", json!({})) } else { app.run("object.swapFillStroke", json!({})) }
 }
 
 /// Fill/Stroke toggle (X): brings the other of fill and stroke to the front of the proxy.
@@ -639,5 +634,85 @@ mod tests {
         let front = app.ui.stroke_front;
         press(&mut app, &ctx, Key::X, Modifiers::NONE);
         assert_eq!(app.ui.stroke_front, front, "X while typing leaves the proxy alone");
+    }
+}
+
+#[cfg(test)]
+mod text_color_tests {
+    use super::*;
+    use designcraft_doc::{ItemId, StoryId};
+
+    #[test]
+    fn integration_color_swap_preserves_each_run_and_frame() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let mut frames = vec![];
+        let mut stories = vec![];
+        for text in ["abcd", "efgh"] {
+            let f = app.run("frame.create", json!({"rect":[36,36,300,200],"content":"text","text":text})).unwrap();
+            frames.push(f["id"].clone());
+            stories.push(f["story"].as_u64().unwrap());
+        }
+        let pairs = [("[Paper]", "[Black]", 0.2, 0.8), ("[Black]", "[Paper]", 0.4, 0.6)];
+        for (i, sid) in stories.iter().enumerate() {
+            for j in 0..2 {
+                let (fill, stroke, ft, st) = pairs[(i + j) % 2];
+                app.run("text.select", json!({"story":sid,"anchor":j*2,"focus":j*2+2})).unwrap();
+                app.run("type.char", json!({"fill":fill,"stroke":stroke,"fillTint":ft,"strokeTint":st})).unwrap();
+            }
+        }
+        app.run("selection.set", json!({"ids":frames})).unwrap();
+        app.run("app.formattingAffectsText", json!({"on":true})).unwrap();
+        let before = serde_json::to_value(app.session.doc().unwrap().doc.as_ref()).unwrap();
+        let n = app.session.doc().unwrap().history.undo.len();
+        swap_fill_stroke(&mut app).unwrap();
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), n + 1);
+        for (i, sid) in stories.iter().enumerate() {
+            let story = app.session.doc().unwrap().doc.story(StoryId(*sid)).unwrap();
+            for j in 0..2 {
+                let (fill, stroke, ft, st) = pairs[(i + j) % 2];
+                let a = &story.format_after(j * 2).over;
+                assert_eq!((a.fill.as_deref(), a.stroke.as_deref(), a.fill_tint, a.stroke_tint), (Some(stroke), Some(fill), Some(st), Some(ft)));
+            }
+        }
+        let swapped = serde_json::to_value(app.session.doc().unwrap().doc.as_ref()).unwrap();
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(serde_json::to_value(app.session.doc().unwrap().doc.as_ref()).unwrap(), before);
+        app.run("edit.redo", json!({})).unwrap();
+        assert_eq!(serde_json::to_value(app.session.doc().unwrap().doc.as_ref()).unwrap(), swapped);
+    }
+
+    #[test]
+    fn integration_color_toolbar_picker_targets_selected_frame_text() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let f = app.run("frame.create", json!({"rect":[36,36,300,200],"content":"text","text":"hello"})).unwrap();
+        app.run("selection.set", json!({"ids":[f["id"]]})).unwrap();
+        app.run("app.formattingAffectsText", json!({"on":true})).unwrap();
+        let before = app.session.doc().unwrap().doc.item(ItemId(f["id"].as_u64().unwrap())).unwrap().fill.clone();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(0.001).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(6);
+        let at = h.get_by_label("Fill (X)").rect().center();
+        h.hover_at(at);
+        h.step();
+        for pressed in [true, false, true, false] {
+            h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+            h.step();
+        }
+        h.run_steps(3);
+        let d = h.state().ui.dialog.clone().unwrap();
+        assert_eq!(d.id, "colorPicker");
+        assert_eq!(d.fields["text"], true);
+        h.state_mut().run("object.color", json!({"color":"#123456","target":"fill","text":d.fields["text"]})).unwrap();
+        let doc = &h.state().session.doc().unwrap().doc;
+        assert_eq!(doc.item(ItemId(f["id"].as_u64().unwrap())).unwrap().fill, before);
+        assert!(doc.story(StoryId(f["story"].as_u64().unwrap())).unwrap().format_after(0).over.fill.is_some());
     }
 }

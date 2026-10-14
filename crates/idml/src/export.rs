@@ -1502,7 +1502,7 @@ impl<'a> Ex<'a> {
         n!(drop_cap_lines, "DropCapLines");
         n!(drop_cap_chars, "DropCapCharacters");
         if a.drop_cap_align_left.is_some() || a.drop_cap_scale_descenders.is_some() {
-            let d = designcraft_doc::ParaProps::default();
+            let d = parent.map(|name| self.d.styles.resolve_para_style(name).0).unwrap_or_default();
             let bits = u32::from(a.drop_cap_align_left.unwrap_or(d.drop_cap_align_left))
                 | u32::from(a.drop_cap_scale_descenders.unwrap_or(d.drop_cap_scale_descenders)) << 1;
             el.set("DropcapDetail", bits);

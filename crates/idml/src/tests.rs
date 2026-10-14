@@ -3725,3 +3725,46 @@ fn a_preview_keeps_the_links_format_and_pixel_size_and_is_shared() {
     assert_eq!(logo.mime, "application/pdf", "a placed PDF stays a PDF, for IDML export");
     assert!(std::sync::Arc::ptr_eq(&photo.data, &png) && std::sync::Arc::ptr_eq(&logo.data, &png), "the preview's bytes are not copied");
 }
+
+#[test]
+fn frame_preference_import_caps_column_count_without_composition() {
+    for (raw, expected) in [("4000000000", 216), ("1e300", 216), ("-100", 1), ("0", 1), ("NaN", 1), ("inf", 1), ("-inf", 1)] {
+        for attribute in [true, false] {
+            let preference = if attribute {
+                format!(r#"<TextFramePreference TextColumnCount="{raw}"/>"#)
+            } else {
+                format!(
+                    r#"<TextFramePreference><Properties><TextColumnCount type="number">{raw}</TextColumnCount></Properties></TextFramePreference>"#
+                )
+            };
+            let document = format!(
+                r#"<Document><Story Self="s"/><Spread Self="spread"><Page Self="page"/><TextFrame Self="frame" ParentStory="s">{preference}</TextFrame></Spread></Document>"#
+            );
+            let d = import_idml_with(&zip_files(&[("designmap.xml", &document)]), &|_| None).unwrap();
+            let frame = d.spreads[0].items[0].text_frame().unwrap();
+            // Inspect imported data only: never compose an unbounded input value.
+            assert_eq!(frame.options.columns, expected, "{raw}, attribute={attribute}");
+        }
+    }
+}
+
+#[test]
+fn frame_preference_property_color_resolves_for_frames_and_object_styles() {
+    let document = r#"<Document>
+<Color Self="Color/Near" Model="Process" Space="RGB" ColorValue="255 0 0" Name="Near" Visible="true"/>
+<Color Self="Color/Far" Model="Process" Space="RGB" ColorValue="0 0 255" Name="Far" Visible="true"/>
+<RootObjectStyleGroup Self="root">
+<ObjectStyle Self="ObjectStyle/Base" Name="Base" EnableTextFrameGeneralOptions="true"><TextFramePreference ColumnRuleStrokeColor="Color/Far"/></ObjectStyle>
+<ObjectStyle Self="ObjectStyle/Child" Name="Child" EnableTextFrameGeneralOptions="true"><Properties><BasedOn type="object">ObjectStyle/Base</BasedOn></Properties><TextFramePreference><Properties><ColumnRuleStrokeColor type="object">Color/Near</ColumnRuleStrokeColor></Properties></TextFramePreference></ObjectStyle>
+</RootObjectStyleGroup>
+<Story Self="s"/><Spread Self="spread"><Page Self="page"/>
+<TextFrame Self="local" ParentStory="s" AppliedObjectStyle="ObjectStyle/Base"><TextFramePreference><Properties><ColumnRuleStrokeColor type="object">Color/Near</ColumnRuleStrokeColor></Properties></TextFramePreference></TextFrame>
+<TextFrame Self="inherited" ParentStory="s" AppliedObjectStyle="ObjectStyle/Child"/>
+<TextFrame Self="attribute" ParentStory="s" AppliedObjectStyle="ObjectStyle/Child"><TextFramePreference ColumnRuleStrokeColor="Color/Far"><Properties><ColumnRuleStrokeColor type="object">Color/Near</ColumnRuleStrokeColor></Properties></TextFramePreference></TextFrame>
+<TextFrame Self="invalid" ParentStory="s" AppliedObjectStyle="ObjectStyle/Child"><TextFramePreference><Properties><ColumnRuleStrokeColor type="object">missing</ColumnRuleStrokeColor></Properties></TextFramePreference></TextFrame>
+</Spread></Document>"#;
+    let d = import_idml_with(&zip_files(&[("designmap.xml", document)]), &|_| None).unwrap();
+    let colors: Vec<_> = d.spreads[0].items.iter().map(|it| it.text_frame().unwrap().options.column_rule_color.as_str()).collect();
+    assert_eq!(colors, vec!["Near", "Near", "Far", designcraft_color::swatch::NONE]);
+    assert_eq!(d.styles.object_style("Child").unwrap().text_frame.as_ref().unwrap().column_rule_color, "Near");
+}

@@ -36,13 +36,13 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "text.select", "Select Text", [], None, "{story, anchor, focus} (UTF-8 byte offsets into the story text, as find.find reports them: á or — counts 2 or 3)", has_doc, |s, p| {
             let sid = StoryId(p.get("story").and_then(Value::as_u64).unwrap_or(0));
-            s.typing_format = None;
             let st = s.doc_mut()?;
             let text = &st.doc.story(sid).ok_or_else(|| bad("text.select", "no such story"))?.text;
             let a = floor_char_boundary(text, p.get("anchor").and_then(Value::as_u64).unwrap_or(0) as usize);
             let f = floor_char_boundary(text, p.get("focus").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(a));
             st.selection = Selection::text(TextSel { story: sid, anchor: a, focus: f, frame: None, cell: None });
             st.bump_revision();
+            s.typing_format = None;
             ok()
         }),
         cmd!("text.insert", "Type", [], None, "{text, raw?: bool (no typographer's quotes)} — replaces the selected text", has_text, insert),
@@ -173,6 +173,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{on?: bool} — the family's italic style, keeping the weight (style linking); toggles when `on` is left out",
             has_text_or_frames,
             |s, p| link_style(s, p, false)
+        ),
+        cmd!(
+            "type.swapFillStroke",
+            "Swap Text Fill and Stroke",
+            [],
+            None,
+            "{} — swap each selected character's resolved fill/stroke and tints; at a caret, swap the next typing's colors",
+            has_text_or_frames,
+            swap_fill_stroke
         ),
         cmd!("type.underline", "Underline", [], Some("Cmd+Shift+U"), "{}", has_text_or_frames, |s, _| format_chars(s, &json!({"underline": true}))),
         cmd!("type.allCaps", "All Caps", [], Some("Cmd+Shift+K"), "{}", has_text_or_frames, |s, _| format_chars(
@@ -544,11 +553,7 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let tracking = s.doc()?.doc.settings.track_changes;
     let autocorrect = (s.prefs.autocorrect && !tracking && !raw).then(|| s.prefs.autocorrect_list.clone());
     let typing = typing_format(s).cloned();
-    // A preview (IME marked text) leaves the typing format to the text typed in the end.
-    if s.active().is_none_or(|d| d.interaction.is_none()) {
-        s.typing_format = None;
-    }
-    s.edit(|d, sel| {
+    let result = s.edit(|d, sel| {
         let t = sel.text.ok_or_else(|| bad("text.insert", "no insertion point"))?;
         let st = d.text_story_mut(t.story, t.cell).ok_or(designcraft_doc::DocError::NoStory(t.story))?;
         let r = t.range();
@@ -630,7 +635,12 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         let pos = r.start + text.len() - trail;
         sel.text = Some(TextSel { anchor: pos, focus: pos, ..t });
         Ok(json!({"pos": pos}))
-    })
+    });
+    // A preview (IME marked text) leaves the typing format to the text typed in the end.
+    if result.is_ok() && s.active().is_none_or(|d| d.interaction.is_none()) {
+        s.typing_format = None;
+    }
+    result
 }
 
 fn smart_quotes(s: &Session, text: &str) -> String {
@@ -1554,10 +1564,7 @@ fn selection_attrs(s: &mut Session, p: &Value) -> Result<Value> {
     let pi = story.para_at(r.start);
     let pf = &story.paras[pi];
     let (pp, base) = st.doc.styles.resolve_para(pf);
-    let mut cf = if r.is_empty() { story.char_format_at(r.start) } else { story.format_after(r.start) }.clone();
-    if let Some(f) = typing_format(s) {
-        apply_typing_format(&mut cf, f);
-    }
+    let cf = effective_char_format(s, &Target { story: sid, cell, range: r.clone() })?;
     let cp = st.doc.styles.resolve_char(&base, &cf);
     // The selected text (its start, on one line), for previews such as the font menu's.
     let selected = selected_text_preview(story.text.get(r.start..r.end).unwrap_or_default().chars());
@@ -1588,11 +1595,108 @@ fn mixed_para_attrs(doc: &designcraft_doc::Document, targets: &[Target]) -> Vec<
     mixed.into_iter().collect()
 }
 
-/// `cf` with the typing format chosen at the active document's caret, if any.
-pub(crate) fn with_typing_format(s: &Session, cf: &mut designcraft_doc::CharFormat) {
-    if let Some(f) = typing_format(s) {
-        apply_typing_format(cf, f);
+/// The first target character, with any pending caret overrides. Keep character-style
+/// inheritance separate from paragraph defaults for style creation from the selection.
+pub(crate) fn effective_char_format(s: &Session, target: &Target) -> Result<designcraft_doc::CharFormat> {
+    let story = s.doc()?.doc.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
+    let mut format = if target.range.is_empty() { story.char_format_at(target.range.start) } else { story.format_after(target.range.start) }.clone();
+    if let Some(pending) = typing_format(s)
+        && target.story == pending.at.story
+        && target.cell == pending.at.cell
+        && target.range == pending.at.range()
+    {
+        apply_typing_format(&mut format, pending);
     }
+    Ok(format)
+}
+
+/// A swatch promoted to a named color keeps any not-yet-inserted text pointing at it.
+pub(crate) fn rename_typing_swatch(s: &mut Session, from: &str, to: &str) {
+    let Some(uid) = s.active().map(|st| st.uid) else { return };
+    if let Some(pending) = &mut s.typing_format
+        && pending.doc == uid
+    {
+        for name in [&mut pending.attrs.fill, &mut pending.attrs.stroke, &mut pending.attrs.underline_color, &mut pending.attrs.strikethrough_color]
+            .into_iter()
+            .flatten()
+        {
+            if name == from {
+                *name = to.to_string();
+            }
+        }
+    }
+}
+
+fn swapped_colors(cp: &designcraft_doc::CharProps) -> CharAttrs {
+    CharAttrs {
+        fill: Some(cp.stroke.clone()),
+        fill_tint: Some(cp.stroke_tint),
+        stroke: Some(cp.fill.clone()),
+        stroke_tint: Some(cp.fill_tint),
+        ..Default::default()
+    }
+}
+
+/// Resolve each paragraph/run before editing: a mixed selection must not take the first run's colors.
+fn swap_fill_stroke(s: &mut Session, _p: &Value) -> Result<Value> {
+    const ID: &str = "type.swapFillStroke";
+    let targets = format_targets(s);
+    if let [target] = targets.as_slice()
+        && target.range.is_empty()
+        && s.doc()?.selection.text.is_some()
+    {
+        let st = s.doc()?;
+        let story = st.doc.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
+        let pf = story.paras.get(story.para_at(target.range.start)).ok_or_else(|| bad(ID, "missing paragraph"))?;
+        let (_, base) = st.doc.styles.resolve_para(pf);
+        let cp = st.doc.styles.resolve_char(&base, &effective_char_format(s, target)?);
+        return format_chars(s, &json!({"fill": cp.stroke, "fillTint": cp.stroke_tint, "stroke": cp.fill, "strokeTint": cp.fill_tint}));
+    }
+    let mut edits = Vec::new();
+    let d = &s.doc()?.doc;
+    for target in targets {
+        let story = d.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
+        if story.is_empty() {
+            let pf = story.paras.first().ok_or_else(|| bad(ID, "missing paragraph"))?;
+            let (_, base) = d.styles.resolve_para(pf);
+            let attrs = swapped_colors(&d.styles.resolve_char(&base, story.char_format_at(0)));
+            validate_char_fill(d, &attrs, ID)?;
+            edits.push((target, attrs));
+            continue;
+        }
+        let mut runs = story.runs().peekable();
+        for (pi, para) in story.para_ranges().into_iter().enumerate() {
+            let start = para.start.max(target.range.start);
+            let end = para.end.saturating_add(1).min(story.len()).min(target.range.end);
+            if start >= end {
+                continue;
+            }
+            let pf = story.paras.get(pi).ok_or_else(|| bad(ID, "missing paragraph"))?;
+            let (_, base) = d.styles.resolve_para(pf);
+            while let Some((range, format)) = runs.peek() {
+                if range.end <= start {
+                    runs.next();
+                    continue;
+                }
+                if range.start >= end {
+                    break;
+                }
+                let attrs = swapped_colors(&d.styles.resolve_char(&base, format));
+                validate_char_fill(d, &attrs, ID)?;
+                edits.push((Target { range: start.max(range.start)..end.min(range.end), ..target.clone() }, attrs));
+                if range.end > end {
+                    break;
+                }
+                runs.next();
+            }
+        }
+    }
+    s.edit(|d, _| {
+        for (target, attrs) in &edits {
+            apply_char_attrs(d, std::slice::from_ref(target), attrs, &[]);
+        }
+        ok()
+    })
 }
 
 fn apply_typing_format(cf: &mut designcraft_doc::CharFormat, f: &TypingFormat) {
