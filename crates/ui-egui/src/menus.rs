@@ -87,6 +87,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.screenMode", "Screen Mode", None, "{mode: normal|preview|bleed|slug|presentation}"),
     ("view.togglePreview", "Toggle Normal/Preview", Some("W"), "{}"),
     (
+        "app.formattingAffectsText",
+        "Formatting Affects Text",
+        Some("J"),
+        "{on?: bool} — with text frames selected, colours go to their text (on) or the frames (off); toggles without `on`",
+    ),
+    (
         "color.defaultFillStroke",
         "Default Fill and Stroke",
         Some("D"),
@@ -163,6 +169,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("window.panel.close", "Close Panel", None, "{panel} — hide a panel"),
     ("window.dockPanel", "Dock Panel", None, "{panel} — back into the dock's icon column"),
     ("window.controlBar", "Control", Some("Cmd+Alt+6"), "{}"),
+    // Object › Fitting with InDesign's shortcuts (one `object.fit` mode each).
+    ("fit.fillFrameProportionally", "Fill Frame Proportionally", Some("Cmd+Alt+Shift+C"), "{} — object.fit {mode: fillProportionally}"),
+    ("fit.contentProportionally", "Fit Content Proportionally", Some("Cmd+Alt+Shift+E"), "{} — object.fit {mode: fitProportionally}"),
+    ("fit.frameToContent", "Fit Frame to Content", Some("Cmd+Alt+C"), "{} — object.fit {mode: fitFrameToContent}"),
+    ("fit.contentToFrame", "Fit Content to Frame", Some("Cmd+Alt+E"), "{} — object.fit {mode: fitContentToFrame}"),
+    ("fit.centerContent", "Center Content", Some("Cmd+Shift+E"), "{} — object.fit {mode: centerContent}"),
     ("window.split", "Split Window", None, "{on?: bool} — two views of the document side by side, each with its own zoom and scroll"),
     ("window.newWindow", "New Window", None, "{on?: bool} — another view of the active document in its own window"),
     ("window.taskBar", "Contextual Task Bar", None, "{}"),
@@ -308,6 +320,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "<",
             "cmd:layout.marginsAndColumns",
             "cmd:layout.createGuides",
+            "cmd:layout.createAlternate",
             "-",
             "ui:view.goToPage",
             "-",
@@ -552,11 +565,11 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:anchored.release",
             "<",
             ">Fitting",
-            "cmd:object.fit|Fill Frame Proportionally|{\"mode\":\"fillProportionally\"}",
-            "cmd:object.fit|Fit Content Proportionally|{\"mode\":\"fitProportionally\"}",
-            "cmd:object.fit|Fit Frame to Content|{\"mode\":\"fitFrameToContent\"}",
-            "cmd:object.fit|Fit Content to Frame|{\"mode\":\"fitContentToFrame\"}",
-            "cmd:object.fit|Center Content|{\"mode\":\"centerContent\"}",
+            "ui:fit.fillFrameProportionally",
+            "ui:fit.contentProportionally",
+            "ui:fit.frameToContent",
+            "ui:fit.contentToFrame",
+            "ui:fit.centerContent",
             "-",
             "ui:app.fittingOptions",
             "<",
@@ -752,6 +765,15 @@ pub fn ui_label(id: &str) -> Option<(&'static str, Option<&'static str>)> {
 
 /// Run a UI command; `None` if `id` isn't one.
 pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    let was_find = app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange");
+    let result = run_ui_inner(app, id, p);
+    if was_find && app.ui.dialog.as_ref().is_none_or(|d| d.id != "findChange") {
+        app.session.reset_find_scope();
+    }
+    result
+}
+
+fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = crate::panel_docking::command(app, id, p) {
         return Some(result);
     }
@@ -957,6 +979,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
         }
         "app.findChange" => {
+            app.session.reset_find_scope();
             app.ui.dialog = Some(crate::dialogs::Dialog::new("findChange", json!({})));
             Ok(Value::Null)
         }
@@ -1269,6 +1292,16 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
             Ok(Value::Null)
         }
+        "fit.fillFrameProportionally" | "fit.contentProportionally" | "fit.frameToContent" | "fit.contentToFrame" | "fit.centerContent" => {
+            let mode = match id {
+                "fit.fillFrameProportionally" => "fillProportionally",
+                "fit.contentProportionally" => "fitProportionally",
+                "fit.frameToContent" => "fitFrameToContent",
+                "fit.contentToFrame" => "fitContentToFrame",
+                _ => "centerContent",
+            };
+            app.run("object.fit", json!({"mode": mode}))
+        }
         "app.keyboardShortcuts" => {
             app.ui.dialog = Some(crate::dialogs::Dialog::new("keyboardShortcuts", json!({"query": "", "recording": ""})));
             Ok(Value::Null)
@@ -1319,6 +1352,10 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
                 "smartSpacing": ui.smart_spacing,
                 "zone": ui.snap_zone,
             }))
+        }
+        "app.formattingAffectsText" => {
+            app.ui.formatting_affects_text = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.formatting_affects_text);
+            Ok(json!({"on": app.ui.formatting_affects_text}))
         }
         "window.richBlack" => {
             app.ui.rich_black = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.rich_black);
@@ -1856,6 +1893,9 @@ pub fn checked(app: &DesignApp, id: &str, params: &Value) -> Option<bool> {
 
 /// Enablement for menu display (UI commands need a document unless they're app/window-level).
 pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
+    if id.starts_with("fit.") {
+        return enabled(app, "object.fit");
+    }
     if ui_label(id).is_some() {
         return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.");
     }
@@ -1880,12 +1920,24 @@ pub fn close_document(app: &mut DesignApp, index: Option<usize>) {
 /// A menu item was chosen. An engine command whose label ends in "…" and that takes parameters
 /// opens a dialog built from its parameter documentation (see [`crate::dialogs::command_fields`]).
 pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
+    let was_find = app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange");
+    activate_inner(app, id, params);
+    if was_find && app.ui.dialog.as_ref().is_none_or(|d| d.id != "findChange") {
+        app.session.reset_find_scope();
+    }
+}
+
+fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
     if params.is_null() && id == "file.close" {
         close_document(app, None);
         return;
     }
     if params.is_null() && id == "layout.documentSetup" {
         crate::dialogs::open_document_setup(app);
+        return;
+    }
+    if params.is_null() && id == "toc.generate" {
+        crate::dialogs::open_toc(app);
         return;
     }
     if params.is_null() && id == "file.print" {
@@ -2488,6 +2540,35 @@ mod tests {
     }
 
     #[test]
+    fn formatting_affects_text_sends_swatches_to_the_text() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        for (name, color) in [("Cyan", "#00ffff"), ("Magenta", "#ff00ff")] {
+            let created = app.run("swatch.create", json!({"name": name, "color": color})).unwrap();
+            assert_eq!(created["name"], name);
+        }
+        let r = app.run("frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "words", "caret": false})).unwrap();
+        let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
+        app.run("selection.set", json!({"ids": [fid]})).unwrap();
+        let text_fill = |app: &crate::DesignApp| {
+            let st = app.session.active().unwrap().doc.story(designcraft_doc::StoryId(sid)).unwrap().clone();
+            st.char_format_at(2).over.fill.clone()
+        };
+        let frame_fill = |app: &crate::DesignApp| app.session.active().unwrap().doc.item(designcraft_doc::ItemId(fid)).unwrap().fill.swatch.clone();
+        assert!(!crate::panels::colors_affect_text(&app));
+        crate::panels::apply_swatch(&mut app, false, "Cyan", None).unwrap();
+        assert_eq!(frame_fill(&app), "Cyan");
+        assert_eq!(text_fill(&app), None);
+        let r = run_ui(&mut app, "app.formattingAffectsText", &json!({})).unwrap().unwrap();
+        assert_eq!(r["on"], true, "toggles on");
+        assert!(crate::panels::colors_affect_text(&app));
+        crate::panels::apply_swatch(&mut app, false, "Magenta", Some(0.5)).unwrap();
+        assert_eq!(frame_fill(&app), "Cyan", "the frame is left alone");
+        assert_eq!(text_fill(&app).as_deref(), Some("Magenta"));
+        assert_eq!(crate::panels::color_target(&mut app).map(|t| (t.0, t.1)), Some(("Magenta".to_string(), 0.5)));
+    }
+
+    #[test]
     fn transform_menu_items_open_their_dialogs() {
         for id in ["transform.move", "transform.scale", "transform.rotate", "transform.shear"] {
             let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -2878,6 +2959,47 @@ mod tests {
     }
 
     #[test]
+    fn fitting_has_indesigns_shortcuts() {
+        // LYH Studio episode 6 (7:00): "Fit Content to Frame (Ctrl + Shift + Alt + C)" fills the
+        // photo frames proportionally.
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
+        let f = app.run("frame.create", json!({"rect": [100, 100, 300, 300]})).unwrap()["id"].as_u64().unwrap();
+        app.run("file.place", json!({"base64": designcraft_engine::cmd::base64_encode(&png), "name": "a.png", "frame": f})).unwrap();
+        app.run("selection.set", json!({"ids": [f]})).unwrap();
+        let width = |app: &crate::DesignApp| {
+            let it = app.session.doc().unwrap().doc.item(designcraft_doc::ItemId(f)).unwrap().clone();
+            let designcraft_doc::Content::Graphic(g) = &it.content else { panic!("graphic") };
+            it.xf.transform_rect_bbox(g.xf.transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1))).width()
+        };
+        for (id, keys) in [
+            ("fit.fillFrameProportionally", "Cmd+Alt+Shift+C"),
+            ("fit.contentProportionally", "Cmd+Alt+Shift+E"),
+            ("fit.frameToContent", "Cmd+Alt+C"),
+            ("fit.contentToFrame", "Cmd+Alt+E"),
+            ("fit.centerContent", "Cmd+Shift+E"),
+        ] {
+            assert_eq!(shortcut_of(&app, id).as_deref(), Some(keys));
+        }
+        let ctx = egui::Context::default();
+        let press = |app: &mut crate::DesignApp, key: egui::Key| {
+            let modifiers =
+                egui::Modifiers { alt: true, ctrl: !cfg!(target_os = "macos"), shift: true, mac_cmd: cfg!(target_os = "macos"), command: true };
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }],
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| shortcuts(app, &ui.ctx().clone()));
+            out.textures_delta.clear();
+        };
+        press(&mut app, egui::Key::C);
+        assert!((width(&app) - 400.0).abs() < 1e-6, "filled: {}", width(&app));
+        press(&mut app, egui::Key::E);
+        assert!((width(&app) - 200.0).abs() < 1e-6, "fitted: {}", width(&app));
+    }
+
+    #[test]
     fn tab_hides_panels_and_documents_cycle() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         assert_eq!(shortcut_of(&app, "window.hidePanels").as_deref(), Some("Tab"));
@@ -3133,6 +3255,117 @@ mod tests {
     }
 
     #[test]
+    fn copy_and_paste_keys_work_for_objects_without_a_native_menu() {
+        // Without a native menu the paste key arrives only as a paste event, which needs text on
+        // the system clipboard (#164, #185).
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+            out.platform_output.commands
+        };
+        let count = |app: &crate::DesignApp| app.session.active().unwrap().doc.spreads[0].items.len();
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        let id = app.session.execute("frame.create", &json!({"rect": [72, 72, 200, 160]})).unwrap()["id"].clone();
+        app.session.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        let n = count(&app);
+        let copied = frame(&mut app, vec![egui::Event::Copy])
+            .into_iter()
+            .find_map(|c| match c {
+                egui::OutputCommand::CopyText(t) => Some(t),
+                _ => None,
+            })
+            .expect("copying objects puts text on the system clipboard");
+        assert!(!copied.is_empty());
+        frame(&mut app, vec![egui::Event::Paste(copied.clone())]);
+        assert_eq!(count(&app), n + 1, "the paste key pastes the copied rectangle");
+
+        // Pasting into text anchors the copied object; the clipboard placeholder isn't typed.
+        let r = app.session.execute("frame.create", &json!({"rect": [72, 300, 400, 400], "content": "text", "text": "Hello"})).unwrap();
+        let story = r["story"].as_u64().unwrap();
+        app.session.execute("tool.select", &json!({"tool": "type"})).unwrap();
+        app.session.execute("text.select", &json!({"story": story, "anchor": 5, "focus": 5})).unwrap();
+        frame(&mut app, vec![egui::Event::Paste(copied.clone())]);
+        // Shift pastes without formatting.
+        frame(&mut app, vec![egui::Event::ModifiersChanged(egui::Modifiers::SHIFT), egui::Event::Paste(copied)]);
+        let text = app.session.active().unwrap().doc.story(designcraft_doc::StoryId(story)).unwrap().text.clone();
+        assert!(text.starts_with("Hello") && !text.contains('\u{FFFC}'), "{text:?}");
+        assert!(text.contains(designcraft_doc::OBJECT_MARK), "{text:?}");
+    }
+
+    #[test]
+    fn paste_with_no_insertion_point_makes_a_text_frame_from_other_apps_text() {
+        // #518: text copied in another app pastes as a new, selected text frame; the text an
+        // object copy stands for still pastes the objects. One paste each way, with and without
+        // a native menu.
+        let selected_text = |app: &crate::DesignApp| {
+            let d = app.session.active().unwrap();
+            let it = d.doc.item(*d.selection.items.first()?)?;
+            Some(d.doc.story(it.text_frame()?.story)?.text.clone())
+        };
+        let ctx = egui::Context::default();
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        native_frame(&mut app, &ctx, vec![], None);
+        native_frame(&mut app, &ctx, vec![], None);
+        // The paste keys without a native menu: a paste event.
+        native_frame(&mut app, &ctx, vec![egui::Event::Paste("From elsewhere".into())], None);
+        assert_eq!(document_items(&app), (1, 1), "pasted once");
+        assert_eq!(selected_text(&app).as_deref(), Some("From elsewhere"));
+        let id = app.session.execute("frame.create", &json!({"rect": [72, 72, 200, 160]})).unwrap()["id"].clone();
+        app.session.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        let copied = native_frame(&mut app, &ctx, vec![egui::Event::Copy], None)
+            .platform_output
+            .commands
+            .into_iter()
+            .find_map(|c| match c {
+                egui::OutputCommand::CopyText(t) => Some(t),
+                _ => None,
+            })
+            .expect("copying objects puts text on the system clipboard");
+        native_frame(&mut app, &ctx, vec![egui::Event::Paste(copied)], None);
+        assert_eq!(document_items(&app), (3, 1));
+        assert_eq!(selected_text(&app), None, "the copied rectangle, not a text frame");
+
+        // A native menu: Paste reads the system clipboard.
+        let clip = std::rc::Rc::new(std::cell::RefCell::new(Some("Menu text".to_string())));
+        let read = clip.clone();
+        let services = crate::Services { clipboard_text: Some(Box::new(move || read.borrow().clone())), ..Default::default() };
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), services);
+        app.native_menu = true;
+        app.session.execute("file.new", &json!({})).unwrap();
+        native_frame(&mut app, &ctx, vec![], None);
+        native_frame(&mut app, &ctx, vec![], None);
+        native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        native_frame(&mut app, &ctx, vec![], None);
+        assert_eq!(document_items(&app), (1, 1), "pasted once");
+        assert_eq!(selected_text(&app).as_deref(), Some("Menu text"));
+        // Objects copied since that text was copied paste as objects.
+        let id = app.session.execute("frame.create", &json!({"rect": [72, 72, 200, 160]})).unwrap()["id"].clone();
+        app.session.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        native_frame(&mut app, &ctx, vec![], Some("edit.copy"));
+        native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        assert_eq!(document_items(&app), (3, 1));
+        assert_eq!(selected_text(&app), None, "the copied rectangle, not a text frame");
+        // Newer text from another app wins.
+        *clip.borrow_mut() = Some("Newer".into());
+        native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        assert_eq!(document_items(&app), (4, 1));
+        assert_eq!(selected_text(&app).as_deref(), Some("Newer"));
+    }
+
+    #[test]
     fn sample_scripts_run() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", &json!({})).unwrap();
@@ -3363,7 +3596,7 @@ mod tests {
         });
         assert!(special.is_some_and(|c| c.iter().any(|i| matches!(i, Item::Sub(n, _) if n == "Symbols"))));
         // Fixed-parameter variants keep their own labels.
-        assert!(all.iter().any(|(l, id, p)| l == "Fill Frame Proportionally" && id == "object.fit" && p["mode"] == "fillProportionally"));
+        assert!(all.iter().any(|(l, id, _)| l == "Fill Frame Proportionally" && id == "fit.fillFrameProportionally"));
     }
 
     #[test]
