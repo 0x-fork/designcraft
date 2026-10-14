@@ -222,6 +222,7 @@ Installers and executables are code-signed.
 | Flatpak | `designcraft-<ver>-linux-x86_64.flatpak` | `designcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `designcraft-<ver>-linux-x86_64.deb` | `designcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `designcraft-<ver>-linux-x86_64.rpm` | `designcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux/Manjaro | `designcraft-<ver>-linux-x86_64.pkg.tar.zst` | `designcraft-<ver>-linux-aarch64.pkg.tar.zst` | `sudo pacman -U <file>`; installs as `ai.storyteller.designcraft`, replacing an AUR package |
 | Tarball | `designcraft-<ver>-linux-x86_64.tar.gz` | `designcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
 RISC-V (riscv64): `designcraft-<ver>-linux-riscv64.tar.gz` only, cross-compiled; needs glibc 2.39+ (Ubuntu 24.04 or newer).
