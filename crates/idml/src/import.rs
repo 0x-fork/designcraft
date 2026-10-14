@@ -2423,6 +2423,7 @@ impl<'r> Importer<'r> {
                 liquid: Default::default(),
                 transition: None,
                 view_rotation: if i == 0 { view_rotation } else { 0 },
+                show_parent_overlay: false,
             });
         }
         let overrides: Vec<Vec<String>> =

@@ -465,9 +465,47 @@ pub fn specs() -> Vec<CommandSpec> {
             "Page Size",
             [],
             None,
-            "{pages: [1-based page numbers], width?, height?, preset?: \"A4\"|\"Letter\"|…} — pages of their own size (Page tool); objects on the pages keep their place on them",
+            "{pages: [1-based page numbers], width?, height?, preset?: \"A4\"|\"Letter\"|…, anchor?: 0–8 (reference point that stays put, row-major from the top-left; default 0)} — pages of their own size (Page tool); objects keep their place relative to the anchor, or follow the page's liquid rule",
             has_doc,
             page_size
+        ),
+        cmd!(
+            "layout.pageOptions",
+            "Page Options",
+            [],
+            None,
+            "{pages: [1-based], showParentOverlay?: bool} — Page tool options (Show Parent Page Overlay: the parent page's size drawn over the page)",
+            has_doc,
+            page_options
+        ),
+        cmd!(
+            noundo "layout.selectPage",
+            "Select Page",
+            [],
+            None,
+            "{page: 1-based | null, ids?: [item ids] (objects selected with it: the Page tool on an object-based page)} — the page the Page tool selects (its handles, the Control panel)",
+            has_doc,
+            |s, p| {
+            let n = s.doc()?.doc.page_count();
+            let page = match p.get("page") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.as_u64().filter(|v| *v >= 1 && *v as usize <= n).ok_or_else(|| bad("layout.selectPage", format!("`page`: 1–{n}")))? as usize - 1),
+            };
+            let ids: Vec<designcraft_doc::ItemId> = {
+                let d = &s.doc()?.doc;
+                p.get("ids")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_u64).map(designcraft_doc::ItemId).filter(|id| d.item(*id).is_some()).collect())
+                    .unwrap_or_default()
+            };
+            let st = s.doc_mut()?;
+            if page.is_some() {
+                st.selection = designcraft_doc::Selection::items(ids);
+            }
+            st.selection.page = page;
+            st.revision += 1;
+            Ok(json!({"page": page.map(|p| p + 1)}))
+        }
         ),
         cmd!(
             "layout.section",
@@ -793,8 +831,32 @@ fn page_size(s: &mut crate::Session, p: &Value) -> Result<Value> {
         w = Some(pr.width);
         h = Some(pr.height);
     }
+    let anchor = match p.get("anchor") {
+        None | Some(Value::Null) => 0,
+        Some(v) => v.as_u64().filter(|a| *a <= 8).ok_or_else(|| bad("layout.pageSize", "`anchor`: 0–8"))? as usize,
+    };
     s.edit(|d, _| {
-        resize_pages(d, &pages, w, h);
+        resize_pages_from(d, &pages, w, h, anchor);
+        Ok(json!({"pages": pages.len()}))
+    })
+}
+
+fn page_options(s: &mut crate::Session, p: &Value) -> Result<Value> {
+    let pages: Vec<usize> =
+        p.get("pages").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect()).unwrap_or_default();
+    let n = s.doc()?.doc.page_count();
+    if pages.is_empty() || pages.iter().any(|x| *x == 0 || *x > n) {
+        return Err(bad("layout.pageOptions", "give `pages` (1-based)"));
+    }
+    let overlay = p.get("showParentOverlay").and_then(Value::as_bool);
+    s.edit(|d, _| {
+        for page in &pages {
+            let Some((si, pi)) = d.page_loc(page - 1) else { continue };
+            let pg = &mut std::sync::Arc::make_mut(&mut d.spreads[si]).pages[pi];
+            if let Some(v) = overlay {
+                pg.show_parent_overlay = v;
+            }
+        }
         Ok(json!({"pages": pages.len()}))
     })
 }
@@ -802,14 +864,35 @@ fn page_size(s: &mut crate::Session, p: &Value) -> Result<Value> {
 /// Give `pages` (1-based) their own size. Objects stay on their page; pages with a liquid rule
 /// re-flow their objects by it.
 pub(crate) fn resize_pages(d: &mut designcraft_doc::Document, pages: &[usize], w: Option<f64>, h: Option<f64>) {
+    resize_pages_from(d, pages, w, h, 0);
+}
+
+/// [`resize_pages`] keeping reference point `anchor` (0–8, row-major from the top-left) in place:
+/// the page grows away from it, so objects keep their place relative to it.
+pub(crate) fn resize_pages_from(d: &mut designcraft_doc::Document, pages: &[usize], w: Option<f64>, h: Option<f64>, anchor: usize) {
+    let (fx, fy) = ((anchor % 3) as f64 / 2.0, (anchor / 3).min(2) as f64 / 2.0);
     {
         for page in pages {
             let Some((si, pi)) = d.page_loc(page - 1) else { continue };
             let sp = std::sync::Arc::make_mut(&mut d.spreads[si]);
             let old: Vec<f64> = sp.pages.iter().map(|x| x.x).collect();
             let old_bounds = sp.pages[pi].bounds();
+            // The page's own objects (outer pages take the pasteboard beside them).
+            let last = sp.pages.len() - 1;
+            let (lo, hi) = (if pi == 0 { f64::NEG_INFINITY } else { old_bounds.x0 }, if pi == last { f64::INFINITY } else { old_bounds.x1 });
+            let own: Vec<usize> = sp
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, it)| {
+                    let c = it.bounds().center().x;
+                    c >= lo && c < hi
+                })
+                .map(|(i, _)| i)
+                .collect();
             let pg = &mut sp.pages[pi];
             let dw = w.map_or(0.0, |w| w.max(1.0) - pg.width);
+            let dh = h.map_or(0.0, |h| h.max(1.0) - pg.height);
             if let Some(w) = w {
                 pg.width = w.max(1.0);
             }
@@ -846,8 +929,22 @@ pub(crate) fn resize_pages(d: &mut designcraft_doc::Document, pages: &[usize], w
                     }
                 }
             }
-            // Liquid rules: objects were carried along with the page's left edge.
-            let moved = old_bounds + designcraft_geom::Vec2::new(new[pi] - old[pi], 0.0);
+            // Growing away from the anchor: the page's objects and guides keep their place
+            // relative to it.
+            let shift = designcraft_geom::Vec2::new(fx * dw, fy * dh);
+            if shift != designcraft_geom::Vec2::ZERO {
+                for i in &own {
+                    if let Some(it) = sp.items.get_mut(*i) {
+                        let it = std::sync::Arc::make_mut(it);
+                        it.xf = designcraft_geom::Affine::translate(shift) * it.xf;
+                    }
+                }
+                for g in &mut sp.pages[pi].guides {
+                    g.position += if g.orientation == designcraft_doc::Orientation::Vertical { shift.x } else { shift.y };
+                }
+            }
+            // Liquid rules: objects were carried along with the page's left edge (and the anchor).
+            let moved = old_bounds + designcraft_geom::Vec2::new(new[pi] - old[pi], 0.0) + shift;
             super::liquid::apply(d, designcraft_doc::SpreadRef::Doc(si), pi, moved);
         }
     }
