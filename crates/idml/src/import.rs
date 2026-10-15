@@ -3228,4 +3228,3 @@ mod frame_preference_scalar_tests {
         assert_eq!(Prefs(&[&exact]).prop("ColumnRuleStrokeColor").as_deref(), Some(" Color/Named "));
     }
 }
-
