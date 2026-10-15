@@ -2834,13 +2834,17 @@ mod scale_tests {
         s.execute("file.new", &json!({})).unwrap();
         let (f, story) = text_frame(&mut s, [100.0, 100.0, 300.0, 200.0], "Learn\nmore");
         s.execute("text.select", &json!({"story": story.0, "anchor": 0, "focus": 5})).unwrap();
-        s.execute("type.char", &json!({"attrs": {"size": 20, "leading": {"kind": "points", "value": 24}, "baselineShift": 2, "tracking": -50}})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"size": 20, "leading": {"kind": "points", "value": 24}, "baselineShift": 2, "tracking": -50}}))
+            .unwrap();
         s.execute("type.para", &json!({"attrs": {"leftIndent": 4, "spaceAfter": 6}})).unwrap();
         s.execute("edit.deselectAll", &json!({})).unwrap();
         // The handle drag: from the top-left, twice as wide and high.
         s.execute("transform.resize", &json!({"ids": [f.0], "from": [100, 100, 300, 200], "to": [100, 100, 500, 300], "content": true})).unwrap();
         let (pp, cp) = props_at(&s, story, 0);
-        assert_eq!((cp.size, cp.leading, cp.baseline_shift, cp.tracking, cp.h_scale), (40.0, designcraft_doc::Leading::Points(48.0), 4.0, -50.0, 1.0));
+        assert_eq!(
+            (cp.size, cp.leading, cp.baseline_shift, cp.tracking, cp.h_scale),
+            (40.0, designcraft_doc::Leading::Points(48.0), 4.0, -50.0, 1.0)
+        );
         assert_eq!((pp.left_indent, pp.space_after), (8.0, 12.0));
         // The second paragraph's size came from the paragraph style: it is set too.
         assert_eq!(props_at(&s, story, 7).1.size, 24.0);
