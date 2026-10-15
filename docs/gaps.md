@@ -160,7 +160,7 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   Window ▸ Arrange (2-up … 6-up), Trap Presets, Overlays, Edit ▸ Assign Profiles / Convert to
   Profile / Edit Original, File ▸ File Info / Open PDF / Document and Print Presets / User
   Settings, Type ▸ Size presets, Table ▸ Table Options / Cell Options submenus, Paste Before/After,
-  Convert Rows/Columns, Object ▸ Interactive ▸ Convert to (form fields), Flex Layout (new in 2026),
+  Convert Rows/Columns, Object ▸ Interactive ▸ Convert to (form fields),
   View ▸ Extras badges and Story Editor options.
 - **Estimate:** 40–70 h (most are thin wrappers over existing engine features).
 - **Doc:** [ui-parity.md](ui-parity.md)
