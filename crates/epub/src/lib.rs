@@ -4,6 +4,8 @@
 //! frame); paragraph styles become CSS classes (`p.<slug>`), character styles become `span`
 //! classes, local overrides become inline styles. Placed graphics become `<figure>` elements at
 //! their position in the reading order. Parent-page items (folios, running heads) are skipped.
+//! Tables become `<table>` elements, footnotes linked `aside`s after the paragraph that refers to
+//! them, and endnotes a linked section at the end.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -11,7 +13,10 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Write;
 
-use designcraft_doc::{Align, CharAttrs, CharProps, Content, Document, Item, ItemId, ParaProps, SpreadRef, StoryId, Styles, story};
+use designcraft_doc::{
+    Align, CharAttrs, CharProps, Content, Document, ENDNOTE_REF, FOOTNOTE_REF, Item, ItemId, ParaProps, SpreadRef, Story, StoryId, Styles, Table,
+    story,
+};
 
 #[derive(Clone, Debug)]
 pub struct EpubOptions {
@@ -443,71 +448,169 @@ fn class_selector(tag: &str, class: &str) -> Option<String> {
     Some(selector)
 }
 
-/// One story as XHTML paragraphs (anchored objects left out; see [`story_html_with`]).
-pub fn story_html(doc: &Document, sid: StoryId) -> String {
-    story_html_with(doc, sid, None, &mut |_| String::new())
+/// Nesting limit for stories inside stories (table cells, footnotes, tables in cells), so a deeply
+/// nested or cyclic document can't recurse without bound.
+const MAX_DEPTH: usize = 8;
+
+/// Writes stories with their tables and notes, numbering notes across the stories of one export.
+struct StoryWriter<'a> {
+    doc: &'a Document,
+    pc: BTreeMap<&'a str, String>,
+    cc: BTreeMap<&'a str, String>,
+    /// EPUB structural semantics (`epub:type`); plain HTML doesn't declare the namespace.
+    epub: bool,
+    /// Notes written so far, for unique element ids.
+    footnote_ids: u32,
+    endnote_ids: u32,
+    /// Number shown on the next footnote and endnote of the current story.
+    next_footnote: u32,
+    next_endnote: u32,
+    /// Endnotes met so far: (number, list item markup).
+    endnotes: Vec<(u32, String)>,
 }
 
-/// One story as XHTML paragraphs, each anchored object written where it is anchored as the
-/// markup `object` returns for it. With `ids`, every heading (`h1`–`h6`) gets an `id`,
-/// `{prefix}-p{paragraph index}`: the targets of the table of contents.
-fn story_html_with(
-    doc: &Document,
-    sid: StoryId,
-    ids: Option<&str>,
-    object: &mut dyn FnMut(&designcraft_doc::AnchoredObject) -> String,
-) -> String {
-    let Some(st) = doc.story(sid) else { return String::new() };
-    let (pc, cc) = (para_classes(&doc.styles), char_classes(&doc.styles));
-    let mut out = String::new();
-    // Consecutive `li` paragraphs share one list (`ol` for a numbered style, `ul` for a bulleted
-    // one, an unmarked `ul` when the style has no list type of its own, e.g. typed bullets), and
-    // consecutive `pre` paragraphs of one style one block, their lines separated by newlines.
-    let mut list: Option<&str> = None;
-    let mut pre: Option<(String, bool)> = None;
-    for (pi, r) in st.para_ranges().iter().enumerate() {
-        let pf = &st.paras[pi];
-        // Export Tagging: the style's element and class.
-        let (tag, class) = export_mapping(&doc.styles, &pf.style, false, &pc);
-        let text_empty = st.text[r.clone()].trim().is_empty();
-        let props = doc.styles.resolve_para(pf).0;
-        let rtl = props.direction == designcraft_doc::TextDirection::RightToLeft;
-        let continues_pre = tag == "pre" && pre.as_ref() == Some(&(class.clone(), rtl));
-        if !continues_pre && pre.take().is_some() {
-            out.push_str("</pre>\n");
+impl<'a> StoryWriter<'a> {
+    fn new(doc: &'a Document, epub: bool) -> Self {
+        StoryWriter {
+            doc,
+            pc: para_classes(&doc.styles),
+            cc: char_classes(&doc.styles),
+            epub,
+            footnote_ids: 0,
+            endnote_ids: 0,
+            next_footnote: 1,
+            next_endnote: 1,
+            endnotes: Vec::new(),
         }
-        let list_tag = (tag == "li").then_some(match props.list_type {
-            designcraft_doc::ListType::Numbers => "ol",
-            designcraft_doc::ListType::Bullets => "ul",
-            designcraft_doc::ListType::None => "ul style=\"list-style:none\"",
-        });
-        if list != list_tag {
-            if let Some(l) = list {
+    }
+
+    fn epub_type(&self, t: &str) -> String {
+        if self.epub { format!(" epub:type=\"{t}\"") } else { String::new() }
+    }
+
+    /// One document story: paragraphs, tables, and each footnote after the paragraph that refers
+    /// to it.
+    /// With `ids`, every heading (`h1`–`h6`) gets an `id`, `{prefix}-p{paragraph index}` (the
+    /// targets of the table of contents), and each `h1` starts a chapter. Each anchored object is
+    /// written where it is anchored as the markup `object` returns for it.
+    fn story(&mut self, sid: StoryId, ids: Option<&str>, object: &mut dyn FnMut(&designcraft_doc::AnchoredObject) -> String) -> String {
+        let Some(st) = self.doc.story(sid) else { return String::new() };
+        self.next_footnote = self.doc.footnote_start(sid);
+        self.next_endnote = self.doc.endnote_start(sid);
+        let mut out = String::new();
+        self.paragraphs(st, 0, "", ids, object, &mut out);
+        out
+    }
+
+    /// `st`'s paragraphs. `lead` (a note's number) starts the first paragraph. Consecutive `li`
+    /// paragraphs share one list (`ol` for a numbered style, `ul` for a bulleted one, an unmarked
+    /// `ul` when the style has no list type of its own, e.g. typed bullets), and consecutive `pre`
+    /// paragraphs of one style one block, their lines separated by newlines.
+    fn paragraphs(
+        &mut self,
+        st: &Story,
+        depth: usize,
+        lead: &str,
+        ids: Option<&str>,
+        object: &mut dyn FnMut(&designcraft_doc::AnchoredObject) -> String,
+        out: &mut String,
+    ) {
+        let doc = self.doc;
+        let mut lead = lead;
+        let mut list: Option<&str> = None;
+        let mut pre: Option<(String, bool)> = None;
+        // Closes an open `pre` block and list, before anything that can't go inside them.
+        fn close(out: &mut String, list: &mut Option<&str>, pre: &mut Option<(String, bool)>) {
+            if pre.take().is_some() {
+                out.push_str("</pre>\n");
+            }
+            if let Some(l) = list.take() {
                 let _ = writeln!(out, "</{}>", l.split(' ').next().unwrap_or(l));
             }
-            if let Some(l) = list_tag {
-                let _ = writeln!(out, "<{l}>");
+        }
+        for (pi, (r, pf)) in st.para_ranges().into_iter().zip(&st.paras).enumerate() {
+            let Some(text) = st.text.get(r.clone()) else { continue };
+            let table = pf.table.and_then(|id| st.tables.get(&id)).filter(|_| text.contains(story::TABLE_ANCHOR));
+            let only_table = table.is_some() && text.chars().all(|c| c == story::TABLE_ANCHOR || c.is_whitespace());
+            if !only_table || !lead.is_empty() {
+                // Export Tagging: the style's element and class.
+                let (tag, class) = export_mapping(&doc.styles, &pf.style, false, &self.pc);
+                let props = doc.styles.resolve_para(pf).0;
+                let rtl = props.direction == designcraft_doc::TextDirection::RightToLeft;
+                let continues_pre = tag == "pre" && lead.is_empty() && pre.as_ref() == Some(&(class.clone(), rtl));
+                if !continues_pre && pre.take().is_some() {
+                    out.push_str("</pre>\n");
+                }
+                let list_tag = (tag == "li").then_some(match props.list_type {
+                    designcraft_doc::ListType::Numbers => "ol",
+                    designcraft_doc::ListType::Bullets => "ul",
+                    designcraft_doc::ListType::None => "ul style=\"list-style:none\"",
+                });
+                if list != list_tag {
+                    if let Some(l) = list {
+                        let _ = writeln!(out, "</{}>", l.split(' ').next().unwrap_or(l));
+                    }
+                    if let Some(l) = list_tag {
+                        let _ = writeln!(out, "<{l}>");
+                    }
+                    list = list_tag;
+                }
+                if continues_pre {
+                    out.push('\n');
+                } else {
+                    let id = match ids {
+                        Some(prefix) if heading_level(tag).is_some() => format!(" id=\"{prefix}-p{pi}\""),
+                        _ => String::new(),
+                    };
+                    if ids.is_some() && heading_level(tag) == Some(1) {
+                        out.push_str(CHAPTER_MARK);
+                    }
+                    let _ = write!(out, "<{tag}{id} class=\"{}\"{}>", xml_attr(&class), if rtl { " dir=\"rtl\"" } else { "" });
+                }
+                out.push_str(lead);
+                if lead.is_empty() && text.trim().is_empty() {
+                    out.push_str("&#160;");
+                }
+                lead = "";
+                let mut after = String::new();
+                if !only_table {
+                    self.runs(st, r, depth, object, out, &mut after);
+                }
+                if tag == "pre" {
+                    // Closed when the next paragraph isn't a line of the same block.
+                    pre = Some((class, rtl));
+                } else {
+                    let _ = writeln!(out, "</{tag}>");
+                }
+                if !after.is_empty() {
+                    close(out, &mut list, &mut pre);
+                    out.push_str(&after);
+                }
             }
-            list = list_tag;
-        }
-        if continues_pre {
-            out.push('\n');
-        } else {
-            let id = match ids {
-                Some(prefix) if heading_level(tag).is_some() => format!(" id=\"{prefix}-p{pi}\""),
-                _ => String::new(),
-            };
-            if ids.is_some() && heading_level(tag) == Some(1) {
-                out.push_str(CHAPTER_MARK);
+            if let Some(t) = table
+                && depth < MAX_DEPTH
+            {
+                close(out, &mut list, &mut pre);
+                self.table(t, depth + 1, object, out);
             }
-            let _ = write!(out, "<{tag}{id} class=\"{}\"{}>", xml_attr(&class), if rtl { " dir=\"rtl\"" } else { "" });
         }
-        if text_empty {
-            out.push_str("&#160;");
-        }
+        close(out, &mut list, &mut pre);
+    }
+
+    /// The runs of paragraph `para` of `st`; footnotes go to `after`.
+    fn runs(
+        &mut self,
+        st: &Story,
+        para: std::ops::Range<usize>,
+        depth: usize,
+        object: &mut dyn FnMut(&designcraft_doc::AnchoredObject) -> String,
+        out: &mut String,
+        after: &mut String,
+    ) {
+        let doc = self.doc;
         for (rr, f) in st.runs() {
-            let a = rr.start.max(r.start);
-            let b = rr.end.min(r.end);
+            let a = rr.start.max(para.start);
+            let b = rr.end.min(para.end);
             if a >= b {
                 continue;
             }
@@ -515,35 +618,33 @@ fn story_html_with(
             if f.over.conditions.as_deref().is_some_and(|c| doc.conditions_hide(c)) || f.over.change == Some(designcraft_doc::ChangeMark::Deleted) {
                 continue;
             }
-            let raw = &st.text[a..b];
-            // Text with variables substituted; each anchored object's markup in place of its mark.
-            let text = |seg: &str| {
-                if seg.chars().any(|c| designcraft_doc::vars::var_index(c).is_some()) {
-                    let sub: String = seg
-                        .chars()
-                        .map(|c| match designcraft_doc::vars::var_index(c) {
-                            Some(i) => doc.variable_value(i, None).unwrap_or_default(),
-                            None => c.to_string(),
-                        })
-                        .collect();
-                    story_markup(&sub)
-                } else {
-                    story_markup(seg)
-                }
-            };
-            let mut mark = st.text.get(..a).map_or(0, |t| t.matches(designcraft_doc::OBJECT_MARK).count());
+            let Some(raw) = st.text.get(a..b) else { continue };
             let mut t = String::new();
-            for (i, seg) in raw.split(designcraft_doc::OBJECT_MARK).enumerate() {
-                if i > 0 {
+            let mut seg_start = 0;
+            // Each anchored object's markup in place of its mark.
+            let mut mark = st.text.get(..a).map_or(0, |t| t.matches(designcraft_doc::OBJECT_MARK).count());
+            for (i, c) in raw.char_indices() {
+                if c != FOOTNOTE_REF && c != ENDNOTE_REF && c != designcraft_doc::OBJECT_MARK {
+                    continue;
+                }
+                t.push_str(&run_text(doc, raw.get(seg_start..i).unwrap_or_default()));
+                seg_start = i + c.len_utf8();
+                if c == designcraft_doc::OBJECT_MARK {
                     if let Some(o) = st.objects.get(mark) {
                         t.push_str(&object(o));
                     }
                     mark += 1;
+                } else if depth < MAX_DEPTH {
+                    if c == FOOTNOTE_REF {
+                        self.footnote(st, a + i, depth, object, &mut t, after);
+                    } else {
+                        self.endnote(st, a + i, depth, object, &mut t);
+                    }
                 }
-                t.push_str(&text(seg));
             }
+            t.push_str(&run_text(doc, raw.get(seg_start..).unwrap_or_default()));
             let (ctag, cls) = if f.style != story::NO_CHAR_STYLE {
-                let (tag, class) = export_mapping(&doc.styles, &f.style, true, &cc);
+                let (tag, class) = export_mapping(&doc.styles, &f.style, true, &self.cc);
                 (tag, format!(" class=\"{}\"", xml_attr(&class)))
             } else {
                 ("span", String::new())
@@ -556,20 +657,155 @@ fn story_html_with(
                 let _ = write!(out, "<{ctag}{cls}{style_attr}>{t}</{ctag}>");
             }
         }
-        if tag == "pre" {
-            // Closed when the next paragraph isn't a line of the same block.
-            pre = Some((class, rtl));
-        } else {
-            let _ = writeln!(out, "</{tag}>");
+    }
+
+    /// The footnote whose reference is at byte `pos` of `st`: a note reference in `out`, the note
+    /// itself in `after`.
+    fn footnote(
+        &mut self,
+        st: &Story,
+        pos: usize,
+        depth: usize,
+        object: &mut dyn FnMut(&designcraft_doc::AnchoredObject) -> String,
+        out: &mut String,
+        after: &mut String,
+    ) {
+        let Some(note) = st.notes.get(st.notes_before(pos)) else { return };
+        let doc = self.doc;
+        let o = &doc.footnote_options;
+        let n = self.next_footnote;
+        self.next_footnote = n.saturating_add(1);
+        self.footnote_ids = self.footnote_ids.saturating_add(1);
+        let id = self.footnote_ids;
+        let _ = write!(
+            out,
+            "<sup><a{} role=\"doc-noteref\" id=\"fnref-{id}\" href=\"#fn-{id}\">{}</a></sup>",
+            self.epub_type("noteref"),
+            xml_text(&o.label(n, false))
+        );
+        let lead = format!("<a href=\"#fnref-{id}\">{}</a> ", xml_text(&o.label(n, true)));
+        let mut body = String::new();
+        self.paragraphs(&note.text, depth + 1, &lead, None, object, &mut body);
+        let _ = write!(after, "<aside{} role=\"doc-footnote\" id=\"fn-{id}\">\n{body}</aside>\n", self.epub_type("footnote"));
+    }
+
+    /// The endnote whose reference is at byte `pos` of `st`: a note reference in `out`; the note
+    /// joins the endnotes section.
+    fn endnote(
+        &mut self,
+        st: &Story,
+        pos: usize,
+        depth: usize,
+        object: &mut dyn FnMut(&designcraft_doc::AnchoredObject) -> String,
+        out: &mut String,
+    ) {
+        let Some(note) = st.endnotes.get(st.endnotes_before(pos)) else { return };
+        let n = self.next_endnote;
+        self.next_endnote = n.saturating_add(1);
+        self.endnote_ids = self.endnote_ids.saturating_add(1);
+        let id = self.endnote_ids;
+        let label = xml_text(&self.doc.endnote_options.label(n));
+        let _ = write!(out, "<sup><a{} role=\"doc-noteref\" id=\"enref-{id}\" href=\"#en-{id}\">{label}</a></sup>", self.epub_type("noteref"));
+        let mut body = String::new();
+        self.paragraphs(&note.text, depth + 1, &format!("<a href=\"#enref-{id}\">{label}</a> "), None, object, &mut body);
+        let item = format!("<li{} id=\"en-{id}\">\n{body}</li>\n", self.epub_type("endnote"));
+        self.endnotes.push((n, item));
+    }
+
+    /// The endnotes met so far, in number order, as one section (empty when there are none).
+    fn endnotes_section(&mut self) -> String {
+        if self.endnotes.is_empty() {
+            return String::new();
         }
+        self.endnotes.sort_by_key(|(n, _)| *n);
+        let doc = self.doc;
+        let o = &doc.endnote_options;
+        let mut out = format!("<section{} role=\"doc-endnotes\" id=\"endnotes\">\n", self.epub_type("endnotes"));
+        if !o.heading.trim().is_empty() {
+            let (tag, class) = export_mapping(&doc.styles, &o.heading_style, false, &self.pc);
+            let _ = writeln!(out, "<{tag} class=\"{}\">{}</{tag}>", xml_attr(&class), xml_text(&o.heading));
+        }
+        out.push_str("<ol style=\"list-style: none; padding-left: 0\">\n");
+        for (_, item) in &self.endnotes {
+            out.push_str(item);
+        }
+        out.push_str("</ol>\n</section>\n");
+        out
     }
-    if pre.is_some() {
-        out.push_str("</pre>\n");
+
+    /// A table: header rows as `thead`, footer rows as `tfoot`, merged cells as row and column
+    /// spans (kept within their row group).
+    fn table(&mut self, t: &Table, depth: usize, object: &mut dyn FnMut(&designcraft_doc::AnchoredObject) -> String, out: &mut String) {
+        let (nr, nc) = (t.nrows(), t.ncols());
+        if nr.checked_mul(nc) != Some(t.cells.len()) {
+            return;
+        }
+        let (h, f) = (t.header_rows(), t.footer_rows());
+        let body_end = nr.saturating_sub(f).max(h);
+        let mut covered = vec![false; t.cells.len()];
+        out.push_str("<table>\n");
+        for (rows, group, cell_tag) in [(0..h, "thead", "th"), (h..body_end, "tbody", "td"), (body_end..nr, "tfoot", "td")] {
+            if rows.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "<{group}>");
+            for r in rows.clone() {
+                out.push_str("<tr>");
+                for c in 0..nc {
+                    let i = r * nc + c;
+                    if covered.get(i).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    let Some(cell) = t.cells.get(i) else { continue };
+                    let rs = (cell.row_span.max(1) as usize).min(rows.end - r);
+                    let cs = (cell.col_span.max(1) as usize).min(nc - c);
+                    for rr in r..r + rs {
+                        for cc in c..c + cs {
+                            if let Some(slot) = covered.get_mut(rr * nc + cc) {
+                                *slot = true;
+                            }
+                        }
+                    }
+                    let _ = write!(out, "<{cell_tag}");
+                    if rs > 1 {
+                        let _ = write!(out, " rowspan=\"{rs}\"");
+                    }
+                    if cs > 1 {
+                        let _ = write!(out, " colspan=\"{cs}\"");
+                    }
+                    out.push('>');
+                    self.paragraphs(&cell.text, depth, "", None, object, out);
+                    let _ = writeln!(out, "</{cell_tag}>");
+                }
+                out.push_str("</tr>\n");
+            }
+            let _ = writeln!(out, "</{group}>");
+        }
+        out.push_str("</table>\n");
     }
-    if let Some(l) = list {
-        let _ = writeln!(out, "</{}>", l.split(' ').next().unwrap_or(l));
+}
+
+/// Run text with variables replaced by their values.
+fn run_text(doc: &Document, raw: &str) -> String {
+    if raw.chars().any(|c| designcraft_doc::vars::var_index(c).is_some()) {
+        let sub: String = raw
+            .chars()
+            .map(|c| match designcraft_doc::vars::var_index(c) {
+                Some(i) => doc.variable_value(i, None).unwrap_or_default(),
+                None => c.to_string(),
+            })
+            .collect();
+        story_markup(&sub)
+    } else {
+        story_markup(raw)
     }
-    out
+}
+
+/// One story as XHTML: paragraphs, tables, and each footnote after the paragraph that refers to
+/// it (anchored objects left out). Endnote references link to the endnotes section that the
+/// full export ends with.
+pub fn story_html(doc: &Document, sid: StoryId) -> String {
+    StoryWriter::new(doc, true).story(sid, None, &mut |_| String::new())
 }
 
 /// Where the EPUB body splits into chapter files: before each `h1`.
@@ -839,14 +1075,18 @@ fn graphic_html<'a>(
 fn body_html<'a>(
     doc: &'a Document,
     img_src: &dyn Fn(&str, &str, &[u8]) -> String,
-    heading_ids: bool,
+    epub: bool,
 ) -> (String, BTreeMap<String, (&'a str, &'a [u8])>, Vec<(String, String, u8)>) {
     let order = reading_order(doc);
+    let mut writer = StoryWriter::new(doc, epub);
     let mut body = String::new();
     let mut images: BTreeMap<String, (&str, &[u8])> = BTreeMap::new();
-    let toc = toc_entries(doc, &order);
+    let mut toc = toc_entries(doc, &order);
     for (k, b) in order.iter().enumerate() {
         match b {
+            // The endnote frame's text is generated from the endnotes, which end the body as a
+            // linked section instead.
+            Block::Story(sid) if doc.endnote_story == Some(*sid) => {}
             Block::Story(sid) => {
                 let anchor = format!("s{k}");
                 // Anchored objects go where they are anchored: their graphics in the text, an
@@ -870,7 +1110,7 @@ fn body_html<'a>(
                         _ => out,
                     }
                 };
-                let _ = write!(body, "<section id=\"{anchor}\">\n{}</section>\n", story_html_with(doc, *sid, heading_ids.then_some(anchor.as_str()), &mut object));
+                let _ = write!(body, "<section id=\"{anchor}\">\n{}</section>\n", writer.story(*sid, epub.then_some(anchor.as_str()), &mut object));
             }
             Block::Image(iid) => {
                 let Some(it) = doc.item(*iid) else { continue };
@@ -892,6 +1132,14 @@ fn body_html<'a>(
                 let _ = writeln!(body, "<figure{style}>{markup}</figure>");
             }
         }
+    }
+    let endnotes = writer.endnotes_section();
+    if !endnotes.is_empty() {
+        let heading = &doc.endnote_options.heading;
+        if !heading.trim().is_empty() {
+            toc.push(("endnotes".into(), heading.clone(), 1));
+        }
+        body.push_str(&endnotes);
     }
     (body, images, toc)
 }
@@ -1036,7 +1284,7 @@ mod tests {
     use super::*;
     use designcraft_doc::build::NewDocument;
     use designcraft_doc::geom::{Affine, Rect, shapes};
-    use designcraft_doc::{Asset, AssetId, Content, Graphic, Item, ItemId, ParaFormat, Shape, SpreadRef};
+    use designcraft_doc::{Asset, AssetId, Content, Graphic, Item, ItemId, ParaFormat, Shape, SpreadRef, Story, StoryId, Table};
     use std::io::Read;
     use std::sync::Arc;
 
@@ -1446,5 +1694,88 @@ mod tests {
         assert!(opf.contains("<dc:identifier id=\"bookid\">notes&amp;edition</dc:identifier>"));
         assert!(opf.contains("<dc:creator>A &amp; B</dc:creator>"));
         assert!(opf.contains("media-type=\"image/png\""));
+    }
+
+    /// "Body¹ text", a 2×2 table, then "Closing" with an endnote.
+    fn tables_and_notes() -> Document {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 400.0), lid, "Body text", ParaFormat::default()).unwrap();
+        let st = d.story_mut(sid).unwrap();
+        st.insert_note(4, "Foot note text", ParaFormat::default());
+        let mut t = Table::new(1, 2, 2, 0, 0, 200.0);
+        for (r, c, s) in [(0, 0, "Cell A1"), (0, 1, "Cell B1"), (1, 0, "Cell A2"), (1, 1, "Cell B2")] {
+            t.cell_mut(r, c).unwrap().text = Story::with_text(StoryId(0), s, ParaFormat::default());
+        }
+        let end = st.len();
+        st.insert_table(end, t);
+        let end = st.len();
+        st.insert(end, "Closing");
+        let end = st.len();
+        st.insert_endnote(end, "End note text", ParaFormat::default());
+        d
+    }
+
+    #[test]
+    fn tables_footnotes_and_endnotes_are_exported() {
+        let d = tables_and_notes();
+        let bytes = export_epub(&d, &EpubOptions::default()).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut html = String::new();
+        z.by_name("OEBPS/content.xhtml").unwrap().read_to_string(&mut html).unwrap();
+        let (t0, t1) = (html.find("<table>").unwrap(), html.find("</table>").unwrap());
+        for cell in ["Cell A1", "Cell B1", "Cell A2", "Cell B2"] {
+            let at = html.find(&format!("<td><p class=\"basic-paragraph\">{cell}</p>\n</td>")).unwrap_or_else(|| panic!("{cell} in a cell:\n{html}"));
+            assert!(t0 < at && at < t1);
+        }
+        assert_eq!(html.matches("<tr>").count(), 2);
+
+        let noteref = "Body<sup><a epub:type=\"noteref\" role=\"doc-noteref\" id=\"fnref-1\" href=\"#fn-1\">1</a></sup> text";
+        assert!(html.contains(noteref), "footnote reference:\n{html}");
+        let aside = html.find("<aside epub:type=\"footnote\" role=\"doc-footnote\" id=\"fn-1\">").unwrap();
+        let aside_end = aside + html[aside..].find("</aside>").unwrap();
+        assert!(html[aside..aside_end].contains("<a href=\"#fnref-1\">1</a> Foot note text"));
+        assert!(aside < t0, "the footnote follows its paragraph");
+
+        assert!(html.contains("Closing<sup><a epub:type=\"noteref\" role=\"doc-noteref\" id=\"enref-1\" href=\"#en-1\">1</a></sup>"));
+        let section = html.find("<section epub:type=\"endnotes\" role=\"doc-endnotes\" id=\"endnotes\">").unwrap();
+        assert!(section > html.find("Closing").unwrap());
+        assert!(html[section..].contains("<li epub:type=\"endnote\" id=\"en-1\">"));
+        assert!(html[section..].contains("<a href=\"#enref-1\">1</a> End note text"));
+        let mut nav = String::new();
+        z.by_name("OEBPS/nav.xhtml").unwrap().read_to_string(&mut nav).unwrap();
+        assert!(nav.contains("href=\"content.xhtml#endnotes\""));
+
+        let page = export_html(&d, &HtmlOptions::default());
+        assert!(page.contains("<aside role=\"doc-footnote\" id=\"fn-1\">") && page.contains("Cell B2") && page.contains("End note text"));
+        assert!(!page.contains("epub:type"), "plain HTML has no EPUB namespace");
+    }
+
+    #[test]
+    fn table_rows_groups_and_merged_cells() {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 400.0), lid, "", ParaFormat::default()).unwrap();
+        // One header row, two body rows, one footer row; the header spans both columns and the
+        // first body cell spans both body rows and runs into the footer.
+        let mut t = Table::new(1, 2, 2, 1, 1, 200.0);
+        for (r, c, s) in [(0, 0, "Head"), (1, 0, "Tall"), (1, 1, "B1"), (2, 1, "B2"), (3, 0, "F1"), (3, 1, "F2")] {
+            t.cell_mut(r, c).unwrap().text = Story::with_text(StoryId(0), s, ParaFormat::default());
+        }
+        t.cell_mut(0, 0).unwrap().col_span = 2;
+        t.cell_mut(1, 0).unwrap().row_span = 3;
+        d.story_mut(sid).unwrap().insert_table(0, t);
+        let html = story_html(&d, sid);
+        let p = |s: &str| format!("<p class=\"basic-paragraph\">{s}</p>\n");
+        let expected = format!(
+            "<table>\n<thead>\n<tr><th colspan=\"2\">{}</th>\n</tr>\n</thead>\n<tbody>\n<tr><td rowspan=\"2\">{}</td>\n<td>{}</td>\n</tr>\n<tr><td>{}</td>\n</tr>\n</tbody>\n<tfoot>\n<tr><td>{}</td>\n<td>{}</td>\n</tr>\n</tfoot>\n</table>\n",
+            p("Head"),
+            p("Tall"),
+            p("B1"),
+            p("B2"),
+            p("F1"),
+            p("F2")
+        );
+        assert!(html.contains(&expected), "{html}");
     }
 }
