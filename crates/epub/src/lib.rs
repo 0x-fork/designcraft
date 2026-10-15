@@ -29,6 +29,93 @@ pub struct EpubOptions {
     pub cover: Option<Vec<u8>>,
     /// Title of the navigation (table of contents); from `language` when absent.
     pub toc_title: Option<String>,
+    /// Generic CSS family (`serif`, `sans-serif`, `monospace`, `cursive`, `fantasy`) per font
+    /// family, from the fonts' classification; families not in it are guessed from their name.
+    pub generic_families: BTreeMap<String, String>,
+    /// Font files packaged with the book and declared with `@font-face`.
+    pub fonts: Vec<EmbeddedFont>,
+}
+
+/// A font file packaged with an EPUB: the face of `family` in `style` (`Bold Italic`…).
+#[derive(Clone, Debug)]
+pub struct EmbeddedFont {
+    pub family: String,
+    pub style: String,
+    pub data: Vec<u8>,
+}
+
+/// The `(family, style)` pairs the stylesheet names, one each, in style order: the fonts an
+/// export can embed.
+pub fn stylesheet_fonts(doc: &Document) -> Vec<(String, String)> {
+    let st: &Styles = &doc.styles;
+    let mut out: Vec<(String, String)> = Vec::new();
+    for ps in &st.paragraph {
+        if ps.name == designcraft_doc::NO_PARA_STYLE {
+            continue;
+        }
+        let (_, cp) = st.resolve_para_style(&ps.name);
+        let f = (cp.font_family.clone(), cp.font_style.clone());
+        if !f.0.is_empty() && !out.contains(&f) {
+            out.push(f);
+        }
+    }
+    out
+}
+
+/// The CSS generic family for `family`: the known one, else a guess from the name
+/// (`… Mono`/`Courier`/`… Code` → monospace, `… Sans`/`Gothic`/`Grotesk`/`Helvetica`/`Arial`/
+/// `Verdana` → sans-serif), else serif.
+fn generic_family<'a>(family: &str, known: &'a BTreeMap<String, String>) -> &'a str {
+    const GENERIC: [&str; 6] = ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui"];
+    if let Some(g) = known.get(family).and_then(|g| GENERIC.iter().find(|x| **x == g.as_str())) {
+        return g;
+    }
+    let f = family.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| f.contains(w));
+    if has(&["mono", "courier", " code", "consol"]) {
+        "monospace"
+    } else if has(&["sans", "gothic", "grotesk", "grotesque", "helvetica", "arial", "verdana"]) {
+        "sans-serif"
+    } else {
+        "serif"
+    }
+}
+
+/// CSS weight and style of a style name (`Semibold Italic` → 600, italic).
+fn css_weight_style(style: &str) -> (u16, &'static str) {
+    let s = style.to_lowercase().replace([' ', '-'], "");
+    let weight = [
+        ("thin", 100),
+        ("extralight", 200),
+        ("ultralight", 200),
+        ("light", 300),
+        ("medium", 500),
+        ("semibold", 600),
+        ("demibold", 600),
+        ("extrabold", 800),
+        ("ultrabold", 800),
+        ("bold", 700),
+        ("black", 900),
+        ("heavy", 900),
+    ]
+    .iter()
+    .find(|(n, _)| s.contains(n))
+    .map_or(400, |(_, w)| *w);
+    (weight, if s.contains("italic") || s.contains("oblique") { "italic" } else { "normal" })
+}
+
+/// Package path and media type of an embedded font (`fonts/{k}-{family}-{style}.{ext}`).
+fn font_file(k: usize, f: &EmbeddedFont) -> (String, &'static str) {
+    let (ext, mime) = match f.data.get(..4) {
+        Some(b"OTTO") => ("otf", "font/otf"),
+        Some(b"wOFF") => ("woff", "font/woff"),
+        Some(b"wOF2") => ("woff2", "font/woff2"),
+        _ => ("ttf", "font/ttf"),
+    };
+    let name: String =
+        format!("{}-{}", f.family, f.style).chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    let name = name.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    (format!("fonts/{k}-{name}.{ext}"), mime)
 }
 
 /// The table of contents' title in `language` (a BCP 47 tag or a language name's code), English
@@ -123,7 +210,16 @@ pub fn export_fixed_epub(doc: &Document, pages: &[FixedPage], opts: &EpubOptions
 
 impl Default for EpubOptions {
     fn default() -> Self {
-        EpubOptions { title: None, author: None, language: "en".into(), identifier: None, cover: None, toc_title: None }
+        EpubOptions {
+            title: None,
+            author: None,
+            language: "en".into(),
+            identifier: None,
+            cover: None,
+            toc_title: None,
+            generic_families: BTreeMap::new(),
+            fonts: Vec::new(),
+        }
     }
 }
 
@@ -269,17 +365,11 @@ fn hex(doc: &Document, swatch: &str, tint: f32) -> Option<String> {
     Some(format!("#{r:02x}{g:02x}{b:02x}"))
 }
 
-fn char_css(doc: &Document, c: &CharProps, base_size: f64, out: &mut String) {
-    let _ = write!(out, "font-family: \"{}\", serif; ", css_string(&c.font_family));
-    let st = c.font_style.to_lowercase();
-    if st.contains("bold") {
-        out.push_str("font-weight: bold; ");
-    } else if st.contains("semibold") {
-        out.push_str("font-weight: 600; ");
-    }
-    if st.contains("italic") {
-        out.push_str("font-style: italic; ");
-    }
+fn char_css(doc: &Document, c: &CharProps, base_size: f64, generics: &BTreeMap<String, String>, out: &mut String) {
+    let _ = write!(out, "font-family: \"{}\", {}; ", css_string(&c.font_family), generic_family(&c.font_family, generics));
+    // The face's own weight, so an embedded Semibold or Light face is the one chosen.
+    let (weight, style) = css_weight_style(&c.font_style);
+    let _ = write!(out, "font-weight: {weight}; font-style: {style}; ");
     let _ = write!(out, "font-size: {:.3}em; ", c.size / base_size);
     if c.tracking != 0.0 {
         let _ = write!(out, "letter-spacing: {:.3}em; ", c.tracking / 1000.0);
@@ -326,10 +416,27 @@ fn para_css(p: &ParaProps, base_size: f64, line_px: f64, out: &mut String) {
 
 /// The stylesheet for all paragraph and character styles.
 pub fn stylesheet(doc: &Document) -> String {
+    stylesheet_with(doc, &BTreeMap::new(), &[])
+}
+
+/// [`stylesheet`] with the generic families to fall back on and `@font-face` rules for the
+/// embedded fonts (packaged as [`font_file`] names them).
+fn stylesheet_with(doc: &Document, generics: &BTreeMap<String, String>, fonts: &[EmbeddedFont]) -> String {
     let st: &Styles = &doc.styles;
+    let mut faces = String::new();
+    for (k, f) in fonts.iter().enumerate() {
+        let (path, _) = font_file(k, f);
+        let (weight, style) = css_weight_style(&f.style);
+        let _ = writeln!(
+            faces,
+            "@font-face {{ font-family: \"{}\"; src: url(\"{path}\"); font-weight: {weight}; font-style: {style}; }}",
+            css_string(&f.family)
+        );
+    }
     let (_, basic) = st.resolve_para_style(story::BASIC_PARAGRAPH);
     let base = basic.size.max(1.0);
-    let mut css = String::from(
+    let mut css = faces;
+    css.push_str(
         "body { margin: 0 5%; font-size: 1em; }\nfigure { margin: 1em 0; text-align: center; }\nfigure img { max-width: 100%; }\nh1, h2, h3 { font-size: inherit; margin: 0; }\n",
     );
     let (pc, cc) = (para_classes(st), char_classes(st));
@@ -344,7 +451,7 @@ pub fn stylesheet(doc: &Document) -> String {
         };
         let mut rule = String::new();
         para_css(&pp, base, lead, &mut rule);
-        char_css(doc, &cp, base, &mut rule);
+        char_css(doc, &cp, base, generics, &mut rule);
         let (tag, class) = export_mapping(st, &ps.name, false, &pc);
         if let Some(selector) = class_selector(tag, &class) {
             let _ = writeln!(css, "{selector} {{ {rule}}}");
@@ -1177,6 +1284,8 @@ pub fn images_without_alt(doc: &Document) -> Vec<String> {
 pub struct HtmlOptions {
     pub title: Option<String>,
     pub language: Option<String>,
+    /// Generic CSS family per font family (see [`EpubOptions::generic_families`]).
+    pub generic_families: BTreeMap<String, String>,
 }
 
 /// File › Export › HTML: one self-contained page (styles inline, images as data URIs) with the
@@ -1189,7 +1298,7 @@ pub fn export_html(doc: &Document, opts: &HtmlOptions) -> String {
     format!(
         "<!DOCTYPE html>\n<html lang=\"{lang}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"generator\" content=\"DesignCraft\">\n<title>{}</title>\n<style>\nbody {{ max-width: 40em; margin: 2em auto; padding: 0 1em; }}\nfigure {{ margin: 1em 0; }} figure img {{ max-width: 100%; height: auto; }}\n{}</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
         xml_text(&title),
-        stylesheet(doc)
+        stylesheet_with(doc, &opts.generic_families, &[])
     )
 }
 
@@ -1255,6 +1364,10 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
     for (k, (name, (mime, _))) in images.iter().enumerate() {
         let _ = writeln!(manifest, "<item id=\"img{k}\" href=\"{}\" media-type=\"{}\"/>", xml_attr(name), xml_attr(mime));
     }
+    for (k, f) in opts.fonts.iter().enumerate() {
+        let (name, mime) = font_file(k, f);
+        let _ = writeln!(manifest, "<item id=\"font{k}\" href=\"{}\" media-type=\"{mime}\"/>", xml_attr(&name));
+    }
     // Cover: an image page first in reading order.
     if opts.cover.is_some() {
         manifest.push_str("<item id=\"cover-img\" href=\"images/cover.png\" media-type=\"image/png\" properties=\"cover-image\"/>\n<item id=\"cover\" href=\"cover.xhtml\" media-type=\"application/xhtml+xml\"/>\n");
@@ -1278,7 +1391,7 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
             ("META-INF/container.xml", container.as_bytes()),
             ("OEBPS/content.opf", opf.as_bytes()),
             ("OEBPS/nav.xhtml", nav.as_bytes()),
-            ("OEBPS/style.css", stylesheet(doc).as_bytes()),
+            ("OEBPS/style.css", stylesheet_with(doc, &opts.generic_families, &opts.fonts).as_bytes()),
         ] {
             z.start_file(name, deflate).map_err(zerr)?;
             z.write_all(data).map_err(io)?;
@@ -1290,6 +1403,10 @@ pub fn export_epub(doc: &Document, opts: &EpubOptions) -> Result<Vec<u8>, EpubEr
         for (name, (_, data)) in &images {
             z.start_file(format!("OEBPS/{name}"), stored).map_err(zerr)?;
             z.write_all(data).map_err(io)?;
+        }
+        for (k, f) in opts.fonts.iter().enumerate() {
+            z.start_file(format!("OEBPS/{}", font_file(k, f).0), deflate).map_err(zerr)?;
+            z.write_all(&f.data).map_err(io)?;
         }
         if let Some(c) = &opts.cover {
             z.start_file("OEBPS/images/cover.png", stored).map_err(zerr)?;
@@ -1646,7 +1763,7 @@ mod tests {
         let mut d = Document::new(&NewDocument::default());
         let lid = d.default_layer();
         d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 100.0), lid, "Hello <web>", ParaFormat::default()).unwrap();
-        let html = export_html(&d, &HtmlOptions { title: Some("T".into()), language: None });
+        let html = export_html(&d, &HtmlOptions { title: Some("T".into()), language: None, ..Default::default() });
         assert!(html.starts_with("<!DOCTYPE html>") && html.contains("<title>T</title>") && html.contains("Hello &lt;web&gt;"));
         assert!(html.contains("p.basic-paragraph"), "styles inline");
         assert_eq!(base64(b"Man"), "TWFu");
@@ -1692,6 +1809,68 @@ mod tests {
         assert!(z.by_name(&format!("OEBPS/images/anim-frame-1-{a}.gif")).is_ok());
     }
 
+    /// #775: the generic fallback follows the font, and embedded fonts are packaged and declared.
+    #[test]
+    fn generic_fallbacks_and_embedded_fonts() {
+        let none = BTreeMap::new();
+        for (family, want) in [
+            ("Source Serif 4", "serif"),
+            ("Source Sans 3", "sans-serif"),
+            ("Microsoft Sans Serif", "sans-serif"),
+            ("JetBrains Mono", "monospace"),
+            ("Courier New", "monospace"),
+            ("Franklin Gothic", "sans-serif"),
+            ("Garamond", "serif"),
+        ] {
+            assert_eq!(generic_family(family, &none), want, "{family}");
+        }
+        let known: BTreeMap<String, String> =
+            [("Montserrat".to_string(), "sans-serif".to_string()), ("Odd".to_string(), "nonsense".to_string())].into();
+        assert_eq!(generic_family("Montserrat", &known), "sans-serif");
+        assert_eq!(generic_family("Odd", &known), "serif", "only CSS generic families are used");
+        assert_eq!(css_weight_style("Semibold Italic"), (600, "italic"));
+        assert_eq!(css_weight_style("Bold"), (700, "normal"));
+        assert_eq!(css_weight_style("Extra Bold"), (800, "normal"));
+        assert_eq!(css_weight_style("Regular"), (400, "normal"));
+        assert_eq!(css_weight_style("Light"), (300, "normal"));
+        assert_eq!(css_weight_style("Thin Oblique"), (100, "italic"));
+        assert_eq!(css_weight_style("Black"), (900, "normal"));
+
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 100.0), lid, "Hello", ParaFormat::default()).unwrap();
+        if let Some(basic) = d.styles_mut().paragraph.iter_mut().find(|s| s.name == story::BASIC_PARAGRAPH) {
+            basic.chars.font_family = Some("Montserrat".into());
+            basic.chars.font_style = Some("Bold Italic".into());
+        }
+        assert_eq!(stylesheet_fonts(&d), vec![("Montserrat".to_string(), "Bold Italic".to_string())]);
+        let opts = EpubOptions {
+            generic_families: known,
+            fonts: vec![EmbeddedFont { family: "Montserrat".into(), style: "Bold Italic".into(), data: b"OTTO font".to_vec() }],
+            ..Default::default()
+        };
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(export_epub(&d, &opts).unwrap())).unwrap();
+        let mut read = |path: &str| {
+            let mut s = String::new();
+            z.by_name(path).unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        let css = read("OEBPS/style.css");
+        assert!(
+            css.starts_with(
+                "@font-face { font-family: \"Montserrat\"; src: url(\"fonts/0-montserrat-bold-italic.otf\"); font-weight: 700; font-style: italic; }"
+            ),
+            "{css}"
+        );
+        assert!(css.contains("font-family: \"Montserrat\", sans-serif;"), "{css}");
+        let opf = read("OEBPS/content.opf");
+        assert!(opf.contains("<item id=\"font0\" href=\"fonts/0-montserrat-bold-italic.otf\" media-type=\"font/otf\"/>"), "{opf}");
+        assert_eq!(read("OEBPS/fonts/0-montserrat-bold-italic.otf"), "OTTO font");
+        // HTML takes the generic families too, and embeds nothing.
+        let html = export_html(&d, &HtmlOptions { generic_families: opts.generic_families.clone(), ..Default::default() });
+        assert!(html.contains("\"Montserrat\", sans-serif;") && !html.contains("@font-face"), "{html}");
+    }
+
     #[test]
     fn metadata_is_serialized_for_its_output_context() {
         let mut d = Document::new(&NewDocument::default());
@@ -1732,7 +1911,7 @@ mod tests {
 
         let story = story_html(&d, sid);
         assert!(story.contains("<h2 class=\"Primary &quot;Copy&quot;\">A&amp;B &lt;C&gt; &quot;D&quot;</h2>"));
-        let html = export_html(&d, &HtmlOptions { title: None, language: Some("English (US)".into()) });
+        let html = export_html(&d, &HtmlOptions { title: None, language: Some("English (US)".into()), ..Default::default() });
         assert!(html.contains("<html lang=\"und\">"));
         assert!(html.contains("<title>Field Notes &amp; &lt;Edition&gt;</title>"));
         assert!(html.contains("alt=\"Cover &quot;A&quot; &amp; B\""));
@@ -1749,7 +1928,7 @@ mod tests {
                 language: "English (US)".into(),
                 identifier: Some("notes&edition".into()),
                 cover: None,
-                toc_title: None,
+                ..Default::default()
             },
         )
         .unwrap();
