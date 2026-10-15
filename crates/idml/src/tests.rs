@@ -579,6 +579,36 @@ fn round_trips_small_document() {
 }
 
 #[test]
+fn round_trips_overridden_parent_items() {
+    let mut d = Document::new(&NewDocument { pages: 1, ..Default::default() });
+    let lid = d.default_layer();
+    let (ppi, ppage) = d.parent_page_for(0).unwrap();
+    let px = d.parents[ppi].pages[ppage].x;
+    let pid = designcraft_doc::ItemId(d.alloc());
+    let frame = designcraft_doc::Item::new(pid, lid, Shape::Rectangle, shapes::rectangle(Rect::new(px + 40.0, 40.0, px + 200.0, 120.0)));
+    d.insert_item(SpreadRef::Parent(ppi), frame.clone(), None).unwrap();
+    // What layout.overrideParentItems leaves behind: a linked local copy, and the parent item listed on the page.
+    let mut copy = frame;
+    copy.id = designcraft_doc::ItemId(d.alloc());
+    copy.xf = designcraft_geom::Affine::translate((d.spreads[0].pages[0].x - px, 0.0)) * copy.xf;
+    copy.overrides = Some(pid);
+    d.insert_item(SpreadRef::Doc(0), copy, None).unwrap();
+    std::sync::Arc::make_mut(&mut d.spreads[0]).pages[0].overridden.push(pid);
+
+    let back = import_idml(&export_idml(&d)).unwrap();
+    let parent_ids: Vec<_> = back.parents[ppi].items.iter().map(|i| i.id).collect();
+    assert_eq!(parent_ids.len(), 1);
+    let page = &back.spreads[0].pages[0];
+    assert_eq!(page.overridden, parent_ids);
+    let local: Vec<_> = back.spreads[0].items.iter().collect();
+    assert_eq!(local.len(), 1);
+    assert_eq!(local[0].overrides, Some(parent_ids[0]));
+    // Rendering skips overridden parent items, so page 1 shows only the local copy.
+    let shown_parent = back.parents[ppi].items.iter().filter(|i| !page.overridden.contains(&i.id)).count();
+    assert_eq!(shown_parent + local.len(), 1);
+}
+
+#[test]
 fn uri_and_base64_helpers() {
     assert_eq!(import::uri_to_path("file:/a%20b/c.png"), "/a b/c.png");
     assert_eq!(import::uri_to_path("file:///C:/x/y.jpg"), "C:/x/y.jpg");
