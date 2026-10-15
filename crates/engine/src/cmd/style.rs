@@ -75,6 +75,28 @@ mod redefine_tests {
         assert_eq!(s.doc().unwrap().doc, before);
         assert_eq!(s.doc().unwrap().history.undo.len(), undo);
     }
+
+    #[test]
+    fn redefine_character_at_a_caret_cleans_the_source_run_but_keeps_other_overrides() {
+        let (mut s, story, _) = sample();
+        s.execute("style.character.create", &json!({"name":"Emphasis","chars":{"underline":true}})).unwrap();
+        for (start, end, size) in [(0, 5, 24), (6, 12, 32)] {
+            s.execute("text.select", &json!({"story":story,"anchor":start,"focus":end})).unwrap();
+            s.execute("style.character.apply", &json!({"name":"Emphasis"})).unwrap();
+            s.execute("type.char", &json!({"size":size})).unwrap();
+        }
+        let before = s.doc().unwrap().doc.clone();
+        s.execute("text.select", &json!({"story":story,"anchor":2,"focus":2})).unwrap();
+        s.execute("style.character.redefine", &json!({"name":"Emphasis"})).unwrap();
+        s.execute("style.character.edit", &json!({"name":"Emphasis","chars":{"size":30}})).unwrap();
+        for (start, end, size) in [(0, 5, 30.0), (6, 12, 32.0)] {
+            s.execute("text.select", &json!({"story":story,"anchor":start,"focus":end})).unwrap();
+            assert_eq!(s.execute("type.selectionAttrs", &json!({})).unwrap()["chars"]["size"], size);
+        }
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before);
+    }
 }
 
 use designcraft_color::{Swatch, SwatchValue};
@@ -530,8 +552,24 @@ fn redefine(s: &mut Session, p: &Value, paragraph: bool) -> Result<Value> {
         let styles = d.styles.clone();
         for target in &targets {
             let Some(story) = d.text_story_mut(target.story, target.cell) else { continue };
-            let end = if target.range.is_empty() { target.range.start } else { target.range.end.saturating_sub(1) };
-            let (first, last) = (story.para_at(target.range.start), story.para_at(end));
+            // At a character-style caret, the sampled format belongs to the containing run
+            // (the preceding run at a boundary). Normalize that source run too, otherwise its
+            // old local values would mask the next edit of the redefined style.
+            let mut selected_range = target.range.clone();
+            if !paragraph && selected_range.is_empty() {
+                let caret = selected_range.start;
+                let mut start = 0usize;
+                for run in &story.chars {
+                    let end = start.saturating_add(run.len).min(story.len());
+                    if caret < end || (caret == end && caret > start) {
+                        selected_range = start..end;
+                        break;
+                    }
+                    start = end;
+                }
+            }
+            let end = if selected_range.is_empty() { selected_range.start } else { selected_range.end.saturating_sub(1) };
+            let (first, last) = (story.para_at(selected_range.start), story.para_at(end));
             for (index, range) in story.para_ranges().into_iter().enumerate().take(last.saturating_add(1)).skip(first) {
                 let Some(pf) = story.paras.get_mut(index) else { continue };
                 if paragraph && pf.style != name {
@@ -545,7 +583,7 @@ fn redefine(s: &mut Session, p: &Value, paragraph: bool) -> Result<Value> {
                 }
                 let (_, base) = styles.resolve_para(pf);
                 let end = range.end.saturating_add(1).min(story.len());
-                let range = if paragraph { range.start..end } else { range.start.max(target.range.start)..end.min(target.range.end) };
+                let range = if paragraph { range.start..end } else { range.start.max(selected_range.start)..end.min(selected_range.end) };
                 story.format_chars(range, |format| {
                     if !paragraph && format.style != name {
                         return;

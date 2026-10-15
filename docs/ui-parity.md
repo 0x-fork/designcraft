@@ -61,6 +61,9 @@ context menus, typing at a caret) are things a layout artist does every minute, 
 
 ## Remaining effort
 
+Redefining a character style at a caret also normalizes the sampled source run, so subsequent
+style edits reach that text while different local overrides in adjacent runs remain intact.
+
 The selected style's context menu now offers Redefine Style for paragraph and character styles.
 It incorporates the source text's local changes, updates every use, and removes matching source
 overrides in one undo step. Named character styles remain separate when redefining a paragraph
