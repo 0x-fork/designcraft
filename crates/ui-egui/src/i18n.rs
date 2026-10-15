@@ -55,6 +55,17 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Cut", ["Ausschneiden", "Couper", "Cortar", "カット", "剪切"]),
     ("Copy", ["Kopieren", "Copier", "Copiar", "コピー", "复制"]),
     ("Paste", ["Einfügen", "Coller", "Pegar", "ペースト", "粘贴"]),
+    (
+        "Bulleted & Numbered Lists",
+        [
+            "Aufzählungszeichen und nummerierte Listen",
+            "Listes à puces et numérotées",
+            "Listas con viñetas y numeradas",
+            "箇条書き",
+            "项目符号列表和编号列表",
+        ],
+    ),
+    ("Current Page Number", ["Aktuelle Seitenzahl", "Numéro de page actuelle", "Número de página actual", "現在のページ番号", "当前页码"]),
     ("Reverse Path", ["Pfadrichtung umkehren", "Inverser le tracé", "Invertir trazado", "パスの方向反転", "反转路径"]),
     ("Set Anchor", ["Ankerpunkt festlegen", "Définir le point d’ancrage", "Definir punto de ancla", "アンカーポイントを設定", "设置锚点"]),
     ("Clear", ["Löschen", "Effacer", "Borrar", "消去", "清除"]),

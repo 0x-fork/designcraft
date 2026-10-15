@@ -31,6 +31,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Вирізати"),
     ("Copy", "Копіювати"),
     ("Paste", "Вставити"),
+    ("Bulleted & Numbered Lists", "Марковані й нумеровані списки"),
+    ("Current Page Number", "Номер поточної сторінки"),
     ("Reverse Path", "Розвернути контур"),
     ("Set Anchor", "Задати прив’язку"),
     ("Clear", "Очистити"),

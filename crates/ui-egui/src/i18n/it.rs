@@ -28,6 +28,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Taglia"),
     ("Copy", "Copia"),
     ("Paste", "Incolla"),
+    ("Bulleted & Numbered Lists", "Elenchi puntati e numerati"),
+    ("Current Page Number", "Numero di pagina corrente"),
     ("Reverse Path", "Inverti tracciato"),
     ("Set Anchor", "Imposta ancoraggio"),
     ("Clear", "Cancella"),
