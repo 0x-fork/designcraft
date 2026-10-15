@@ -1254,6 +1254,7 @@ impl DesignApp {
         if presenting || self.ui.hidden_panels != 0 {
             panel_docking::cancel_gesture(self, &ctx);
         }
+        canvas::begin_frame(&ctx);
         let dbg = std::env::var_os("DESIGNCRAFT_DEBUG_LAYOUT").is_some();
         if dbg {
             eprintln!("root start {:?}", ui.available_rect_before_wrap());

@@ -1197,6 +1197,19 @@ fn ime_caret_id() -> egui::Id {
     egui::Id::new("canvas_ime_caret")
 }
 
+/// A text field had keyboard focus when this frame began, per window: egui keeps one focus per
+/// viewport, so a field focused in the main window must not mute the second window's canvas.
+fn field_focused_id(ctx: &egui::Context) -> egui::Id {
+    egui::Id::new("canvas_field_focused").with(ctx.viewport_id())
+}
+
+/// Called before the panels draw. A panel field gives up focus on Enter or Tab while it draws,
+/// before the canvas: without this the canvas would take that same key for the text.
+pub fn begin_frame(ctx: &egui::Context) {
+    let (id, focused) = (field_focused_id(ctx), ctx.text_edit_focused());
+    ctx.data_mut(|d| d.insert_temp(id, focused));
+}
+
 /// The input method is composing text (sent to `text.compose`) that it hasn't committed.
 fn ime_composing_id() -> egui::Id {
     egui::Id::new("canvas_ime_composing")
@@ -1845,7 +1858,9 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
         resp.request_focus();
     }
     // Both split panes show the same document, but only the focused pane dispatches its keys.
-    if app.pane != app.focus_pane || (ui.ctx().text_edit_focused() && !resp.has_focus()) {
+    let field_id = field_focused_id(ui.ctx());
+    let field = ui.ctx().text_edit_focused() || ui.data(|d| d.get_temp::<bool>(field_id)).unwrap_or(false);
+    if app.pane != app.focus_pane || (field && !resp.has_focus()) {
         return;
     }
     // The engine drops composed text when something else edits or the caret moves; the input
@@ -2665,6 +2680,32 @@ mod tests {
         assert_eq!(lines(-30.0, 12.0, 30.0), [6.0, 18.0], "a start above the page keeps its rhythm");
         assert_eq!(lines(f64::NAN, 12.0, 792.0), [0.0; 0]);
         assert_eq!(baseline_grid_lines(0.0, 12.0, f64::INFINITY).count(), MAX_BASELINES);
+    }
+
+    #[test]
+    fn enter_or_tab_in_a_panel_field_leave_the_selected_text_alone() {
+        for key in [egui::Key::Enter, egui::Key::Tab] {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({})).unwrap();
+            let f = app.run("frame.create", json!({"rect": [36, 36, 300, 200], "content": "text", "text": "Hello"})).unwrap();
+            app.select_tool("type");
+            app.run("text.select", json!({"story": f["story"], "anchor": 1, "focus": 4})).unwrap();
+            assert!(app.session.wants_text());
+            let mut h = harness(app);
+            let size = h.get_all_by_role(egui::accesskit::Role::TextInput).find(|n| n.value().as_deref() == Some("12 pt")).unwrap();
+            size.focus();
+            h.run_steps(1);
+            h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            h.run_steps(1);
+            h.event(egui::Event::Text("18".into()));
+            h.run_steps(1);
+            h.key_press(key);
+            h.run_steps(3);
+            let text = h.state_mut().session.execute("story.get", &json!({"story": f["story"]})).unwrap()["text"].clone();
+            assert_eq!(text, "Hello", "{key:?} confirms the field and leaves the story alone");
+            let size = crate::panels::text_attrs(h.state_mut()).unwrap()["chars"]["size"].clone();
+            assert_eq!(size, 18.0, "{key:?} applies the typed size");
+        }
     }
 }
 
