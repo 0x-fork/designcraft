@@ -55,7 +55,7 @@ score below).
 |---|---|---|---|---|---|
 | PDF / AI (PDF-compatible) | `.pdf`, `.ai` | ✓ page boxes, layers, pages | ✓ rendered with hayro, embedded as vector in PDF export, crop to page boxes | layer visibility depth; editable vectors not offered (#227) | 3% |
 | JPEG, PNG, GIF, BMP, WebP | | ✓ | ✓ | CMYK JPEG/TIFF keep inks in PDF (#35) | 2% |
-| TIFF | `.tif` | ✓ incl. CMYK, alpha, paths | ✓ incl. CMYK | clipping paths from 8BIM resources unverified | 1% |
+| TIFF | `.tif` | ✓ incl. CMYK, alpha, indexed colour, paths | ✓ incl. CMYK | clipping paths from 8BIM resources unverified | 1% |
 | PSD | `.psd` | ✓ layers, comps, alpha, paths | ~ composite + Object Layer Options | layer comps partial | 1% |
 | EPS | `.eps` | ✓ (PostScript) | ~ preview only (no interpreter) | | <1% |
 | SVG | `.svg` | ✓ | ✓ (usvg) | | <1% |
