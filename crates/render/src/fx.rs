@@ -217,11 +217,9 @@ impl Renderer {
             let (sigma, choke) = split(g.size, g.choke);
             let paint = color_of(&c, g.opacity.clamp(0.0, 1.0));
             if g.center {
-                self.with_filters(ctx, f, reach, sigma, |_, c, fr| {
+                self.with_blended_filters(ctx, f, reach, sigma, Mix::Screen, |_, c, fr| {
                     c.set_transform(fr.view * xf);
                     c.push_clip_layer(bp);
-                    c.set_transform(Affine::IDENTITY);
-                    c.push_layer(None, Some(BlendMode::new(Mix::Screen, Compose::SrcOver)), None, None, None);
                     c.set_transform(fr.view);
                     c.push_layer(None, None, None, None, Some(blur(sigma)));
                     c.set_transform(fr.view * xf);
@@ -234,7 +232,6 @@ impl Renderer {
                     c.set_paint(peniko::Color::BLACK);
                     c.set_stroke(kurbo::Stroke::new((g.size - choke).max(0.5) * 2.0).with_join(kurbo::Join::Round));
                     c.stroke_path(bp);
-                    c.pop_layer();
                     c.pop_layer();
                     c.pop_layer();
                     c.pop_layer();
@@ -252,11 +249,9 @@ impl Renderer {
             let sigma = st.size.max(0.0) / 2.0;
             let paint = color_of(&c, st.opacity.clamp(0.0, 1.0));
             let invert = st.invert;
-            self.with_filters(ctx, f, reach, sigma, |_, c, fr| {
+            self.with_blended_filters(ctx, f, reach, sigma, Mix::Multiply, |_, c, fr| {
                 c.set_transform(fr.view * xf);
                 c.push_clip_layer(bp);
-                c.set_transform(Affine::IDENTITY);
-                c.push_layer(None, Some(BlendMode::new(Mix::Multiply, Compose::SrcOver)), None, None, None);
                 c.set_transform(fr.view);
                 c.push_layer(None, None, None, None, Some(blur(sigma)));
                 if invert {
@@ -273,7 +268,6 @@ impl Renderer {
                 c.push_layer(None, Some(BlendMode::new(Mix::Normal, Compose::Xor)), None, None, None);
                 c.set_transform(fr.view * Affine::translate(-off) * xf);
                 c.fill_path(bp);
-                c.pop_layer();
                 c.pop_layer();
                 c.pop_layer();
                 c.pop_layer();
@@ -311,13 +305,9 @@ impl Renderer {
         paint: peniko::Color,
         mix: Mix,
     ) {
-        self.with_filters(ctx, f, reach, sigma, |_, c, fr| {
+        self.with_blended_filters(ctx, f, reach, sigma, mix, |_, c, fr| {
             c.set_transform(fr.view * xf);
             c.push_clip_layer(bp);
-            if mix != Mix::Normal {
-                c.set_transform(Affine::IDENTITY);
-                c.push_layer(None, Some(BlendMode::new(mix, Compose::SrcOver)), None, None, None);
-            }
             c.set_transform(fr.view);
             c.push_layer(None, None, None, None, Some(blur(sigma)));
             // Everything outside the offset shape, so the colour bleeds in from the edges.
@@ -336,11 +326,29 @@ impl Renderer {
                 c.stroke_path(&shape);
             }
             c.pop_layer();
-            if mix != Mix::Normal {
-                c.pop_layer();
-            }
             c.pop_layer();
         });
+    }
+
+    /// The effect's blend must see the object's backdrop, outside its clipping and offscreen
+    /// filter layers. Putting it inside the clip blends with transparent pixels instead.
+    fn with_blended_filters(
+        &mut self,
+        ctx: &mut RenderContext,
+        f: &Frame,
+        reach: Rect,
+        sigma: f64,
+        mix: Mix,
+        draw: impl FnOnce(&mut Self, &mut RenderContext, &Frame),
+    ) {
+        if mix != Mix::Normal {
+            ctx.set_transform(Affine::IDENTITY);
+            ctx.push_layer(None, Some(BlendMode::new(mix, Compose::SrcOver)), None, None, None);
+        }
+        self.with_filters(ctx, f, reach, sigma, draw);
+        if mix != Mix::Normal {
+            ctx.pop_layer();
+        }
     }
 
     /// Run `draw`, which pushes filter layers. Single-threaded contexts draw directly. On a
