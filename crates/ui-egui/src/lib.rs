@@ -2295,11 +2295,16 @@ pub(crate) mod test_window {
     }
 
     /// The window at `size` with a new document open.
-    pub fn open(mut app: crate::DesignApp, size: egui::Vec2) -> Harness<'static, Window> {
+    pub fn open(app: crate::DesignApp, size: egui::Vec2) -> Harness<'static, Window> {
+        open_scaled(app, size, 1.0)
+    }
+
+    /// The window at a size in points and a scale, with a new document open.
+    pub fn open_scaled(mut app: crate::DesignApp, size: egui::Vec2, pixels_per_point: f32) -> Harness<'static, Window> {
         if app.session.active().is_none() {
             app.run("file.new", serde_json::json!({})).unwrap();
         }
-        let mut h = Harness::builder().with_size(size).with_max_steps(1000).build_ui_state(
+        let mut h = Harness::builder().with_size(size).with_pixels_per_point(pixels_per_point).with_max_steps(1000).build_ui_state(
             |ui, w: &mut Window| {
                 // The builder runs a frame before the texture size can be raised: skip it.
                 if !w.ready {
