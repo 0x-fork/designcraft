@@ -2,7 +2,7 @@
 //! (`ui.dialog.set {field, value}`) and confirm them (`ui.dialog.confirm`) like a user would.
 
 use designcraft_geom::{Unit, format_measure, units::parse_measure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::DesignApp;
@@ -31,6 +31,22 @@ impl Dialog {
             "insertXref" => json!({"linkTo": "paragraph", "style": "", "target": "", "format": ""}),
             "findChange" => json!({"find": "", "change": "", "grep": false, "caseSensitive": false, "wholeWord": false, "scope": "document"}),
             "documentSetup" => json!({}),
+            "pdfExport" => {
+                json!({
+                    "preset": "Desktop Printing",
+                    "standard": "none",
+                    "compressImages": false,
+                    "flatten": "",
+                    "spreads": false,
+                    "bleed": true,
+                    "marksCrop": false,
+                    "marksBleed": false,
+                    "marksPageInfo": false,
+                    "marksWeight": "0.25",
+                    "marksOffset": "6",
+                    "tagged": true
+                })
+            }
             _ => json!({}),
         };
         if let Value::Object(d) = defaults {
@@ -61,6 +77,16 @@ impl Dialog {
         }
         Dialog { id: id.into(), fields }
     }
+    /// Set a field and report a genuine Find domain/mode transition to the caller.
+    pub(crate) fn set_field(&mut self, key: &str, value: Value) -> bool {
+        let before =
+            (self.id == "findChange" && matches!(key, "scope" | "story" | "objectMode")).then(|| (self.b("objectMode"), find_change_params(self)));
+        self.fields.insert(key.into(), value);
+        before.is_some_and(|(object_mode, params)| {
+            object_mode != self.b("objectMode") || !designcraft_engine::cmd::same_find_domain(&params, &find_change_params(self))
+        })
+    }
+
     fn s(&self, k: &str) -> String {
         match self.fields.get(k) {
             Some(Value::String(s)) => s.clone(),
@@ -235,6 +261,22 @@ pub fn open_print(app: &mut DesignApp) {
     ));
 }
 
+/// File › Export PDF…: the "Export PDF" options dialog, seeded from the persisted settings
+/// (`UiState.pdf_export`) and the active document. `pages` is per-job (not persisted); `flatten`
+/// falls back to the global flattener preset when the persisted value is empty.
+pub fn open_pdf_export(app: &mut DesignApp) {
+    let mut fields = serde_json::to_value(&app.ui.pdf_export).unwrap_or_else(|_| json!({}));
+    if let Value::Object(m) = &mut fields {
+        let title = app.session.active().map(|st| st.doc.title.clone()).unwrap_or_default();
+        m.insert("title".into(), json!(title));
+        m.insert("pages".into(), json!("all"));
+        if app.ui.pdf_export.flatten.is_empty() {
+            m.insert("flatten".into(), json!(app.ui.flattener));
+        }
+    }
+    app.ui.dialog = Some(Dialog::new("pdfExport", fields));
+}
+
 fn print_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     let printers: Vec<String> = d
         .fields
@@ -282,6 +324,99 @@ fn print_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
         });
         ui.end_row();
     });
+}
+
+/// The presets offered by the Export PDF dialog, in display order. The stored value is the
+/// English name; the caption is translated.
+const PDF_EXPORT_PRESETS: &[&str] = &["Desktop Printing", "Commercial Printing", "Screen and Email", "PDF/X-4", "PDF/A-2b", "Custom"];
+
+/// Apply a preset's dependent fields. Flatten is only touched by "Screen and Email"; "Custom"
+/// (and any unknown value) changes nothing.
+fn apply_pdf_preset(d: &mut Dialog, preset: &str) {
+    let (standard, compress, crop, bleed, page_info, flatten) = match preset {
+        "Desktop Printing" => ("none", false, false, false, false, None),
+        "Commercial Printing" => ("none", true, true, true, false, None),
+        "Screen and Email" => ("none", true, false, false, false, Some("low")),
+        "PDF/X-4" => ("x4", false, true, true, false, None),
+        "PDF/A-2b" => ("a2b", false, false, false, false, None),
+        _ => return,
+    };
+    d.fields.insert("standard".into(), json!(standard));
+    d.fields.insert("compressImages".into(), json!(compress));
+    d.fields.insert("marksCrop".into(), json!(crop));
+    d.fields.insert("marksBleed".into(), json!(bleed));
+    d.fields.insert("marksPageInfo".into(), json!(page_info));
+    if let Some(f) = flatten {
+        d.fields.insert("flatten".into(), json!(f));
+    }
+}
+
+/// File › Export PDF: the "Export PDF" options (General / Compression / Marks and Bleeds /
+/// Advanced). Selecting a preset fills the dependent fields; editing any other control flips the
+/// preset back to "Custom".
+fn pdf_export(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = app.ui.language.as_str();
+    let head = |ui: &mut egui::Ui, t: &str| {
+        ui.add_space(6.0);
+        crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, t)).font(semibold(12.0)));
+    };
+    // Snapshot the non-preset fields so a manual edit can be detected after drawing.
+    let before = d.fields.clone();
+    let mut preset_clicked = false;
+
+    head(ui, "General");
+    ui.horizontal(|ui| {
+        crate::rtl::label(ui, crate::i18n::tr(lang, "Preset:"));
+        let cur = d.s("preset");
+        egui::ComboBox::from_id_salt("pdf_preset").selected_text(crate::rtl::widget(ui, crate::i18n::tr(lang, &cur))).width(200.0).show_ui(
+            ui,
+            |ui| {
+                for p in PDF_EXPORT_PRESETS {
+                    if ui.selectable_label(cur == *p, crate::rtl::widget(ui, crate::i18n::tr(lang, p))).clicked() {
+                        d.fields.insert("preset".into(), json!(*p));
+                        preset_clicked = true;
+                    }
+                }
+            },
+        );
+    });
+    if preset_clicked {
+        let p = d.s("preset");
+        apply_pdf_preset(d, &p);
+    }
+    ui.horizontal(|ui| {
+        crate::rtl::label(ui, crate::i18n::tr(lang, "Page Range:"));
+        text_field(ui, d, "pages", 160.0);
+    });
+    check(ui, d, "spreads", crate::i18n::tr(lang, "Spreads"));
+
+    head(ui, "Compression");
+    check(ui, d, "compressImages", crate::i18n::tr(lang, "Compress images"));
+
+    head(ui, "Marks and Bleeds");
+    check(ui, d, "bleed", crate::i18n::tr(lang, "Include document bleed"));
+    check(ui, d, "marksCrop", crate::i18n::tr(lang, "Crop Marks"));
+    check(ui, d, "marksBleed", crate::i18n::tr(lang, "Bleed Marks"));
+    check(ui, d, "marksPageInfo", crate::i18n::tr(lang, "Page Information"));
+    ui.horizontal(|ui| {
+        crate::rtl::label(ui, crate::i18n::tr(lang, "Weight:"));
+        text_field(ui, d, "marksWeight", 60.0);
+        ui.add_space(8.0);
+        crate::rtl::label(ui, crate::i18n::tr(lang, "Offset:"));
+        text_field(ui, d, "marksOffset", 60.0);
+    });
+
+    head(ui, "Advanced");
+    ui.horizontal(|ui| {
+        crate::rtl::label(ui, crate::i18n::tr(lang, "Standard:"));
+        translated_combo(lang, ui, d, "standard", &[("none", "None"), ("x4", "PDF/X-4"), ("a2b", "PDF/A-2b")]);
+    });
+    check(ui, d, "tagged", crate::i18n::tr(lang, "Tagged PDF"));
+
+    // Any edit other than picking a preset means the settings are no longer that preset.
+    if !preset_clicked && d.fields != before {
+        d.fields.insert("preset".into(), json!("Custom"));
+    }
 }
 
 /// The options of the selected text frame (the first selected item, or the frame of the caret).
@@ -576,7 +711,7 @@ fn document_setup(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
 
 /// Preferences: a section list and the section's options. Application options always; units and
 /// increments when a document is open (InDesign keeps those with the document).
-fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog, max_height: f32) {
     let has_doc = d.fields.contains_key("horizontalUnits");
     let sections: &[(&str, &str)] = if has_doc {
         &[
@@ -615,21 +750,26 @@ fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     };
     let cur = d.s("section");
     ui.horizontal_top(|ui| {
-        // A fixed height: the separator would otherwise take the whole window.
-        ui.set_min_height(240.0);
-        ui.set_max_height(240.0);
+        // Bound both panes independently so selecting a lower section keeps its options visible.
+        let height = max_height.min(440.0);
+        ui.set_min_height(240.0_f32.min(height));
+        ui.set_max_height(height);
         ui.vertical(|ui| {
             ui.set_width(150.0);
-            for (id, label) in sections {
-                if ui.selectable_label(cur == *id, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
-                    d.fields.insert("section".into(), json!(id));
+            egui::ScrollArea::vertical().id_salt("preferences_sections").min_scrolled_height(1.0).max_height(height).show(ui, |ui| {
+                for (id, label) in sections {
+                    if ui.selectable_label(cur == *id, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
+                        d.fields.insert("section".into(), json!(id));
+                    }
                 }
-            }
+            });
         });
         ui.separator();
         ui.vertical(|ui| {
             ui.set_min_width(300.0);
-            match cur.as_str() {
+            egui::ScrollArea::vertical().id_salt(("preferences_options", &cur)).min_scrolled_height(1.0).max_height(height).show(ui, |ui| match cur
+                .as_str()
+            {
                 "dictionary" => {
                     ui.label(crate::rtl::widget(
                         ui,
@@ -963,7 +1103,7 @@ fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
                     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Page Numbering")).font(semibold(12.0)));
                     check(ui, d, "absolutePageNumbers", crate::i18n::tr(&app.ui.language, "Absolute Numbering (instead of Section Numbering)"));
                 }
-            }
+            });
         });
     });
 }
@@ -1015,6 +1155,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "preferences" => crate::i18n::tr(&app.ui.language, "Preferences"),
         "print" => crate::i18n::tr(&app.ui.language, "Print"),
         "pdfImport" => crate::i18n::tr(&app.ui.language, "Place PDF"),
+        "pdfExport" => crate::i18n::tr(&app.ui.language, "Export PDF"),
         "colorSettings" => crate::i18n::tr(&app.ui.language, "Color Settings"),
         "layerOptions" => crate::i18n::tr(&app.ui.language, "Object Layer Options"),
         "keyboardShortcuts" => crate::i18n::tr(&app.ui.language, "Keyboard Shortcuts"),
@@ -1024,14 +1165,21 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             None => crate::i18n::tr(&app.ui.language, "Dialog"),
         },
     };
-    egui::Modal::new(egui::Id::new("dialog")).show(ctx, |ui| {
-        ui.set_min_width(380.0);
-        ui.set_max_width(match d.id.as_str() {
+    let host = egui::Id::new("dialog");
+    let instance = host.with(&d.id);
+    crate::modal_drag::modal(ctx, host, instance).show(ctx, |ui| {
+        let frame_margin = egui::Frame::popup(ui.style()).total_margin().sum();
+        let available = (ctx.content_rect().size() - frame_margin - egui::vec2(16.0, 16.0)).max(egui::Vec2::splat(1.0));
+        let preferred_width: f32 = match d.id.as_str() {
             "alert" => 440.0,
             "closeDocument" => 380.0,
             "newDocument" if crate::i18n::is_rtl(&app.ui.language) => 380.0,
             _ => 640.0,
-        });
+        };
+        let width = preferred_width.min(available.x);
+        ui.set_min_width(380.0_f32.min(width));
+        ui.set_max_width(width);
+        let title_top = ui.cursor().top();
         if crate::i18n::is_rtl(&app.ui.language) {
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1041,533 +1189,652 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         } else {
             crate::rtl::label(ui, egui::RichText::new(title).font(semibold(16.0)));
         }
+        let margin = egui::Frame::popup(ui.style()).inner_margin;
+        let title_row = egui::Rect::from_min_max(
+            egui::pos2(ui.max_rect().left() - margin.leftf(), title_top - margin.topf()),
+            egui::pos2(ui.max_rect().right() + margin.rightf(), ui.min_rect().bottom()),
+        );
+        crate::modal_drag::title_drag(ui, instance, title_row);
         ui.add_space(10.0);
-        match d.id.as_str() {
-            "newDocument" => {
-                ui.horizontal(|ui| {
-                    ui.with_layout(if crate::i18n::is_rtl(&app.ui.language) { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) }, |ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Preset"));
-                    let cur = d.s("preset");
-                    egui::ComboBox::from_id_salt("preset").selected_text(&cur).width(180.0).show_ui(ui, |ui| {
-                        for p in designcraft_doc::build::PRESETS {
-                            if ui.selectable_label(cur == p.name, p.name).clicked() {
-                                d.fields.insert("preset".into(), json!(p.name));
-                                d.fields.insert("width".into(), json!(format_measure(p.width, p.units)));
-                                d.fields.insert("height".into(), json!(format_measure(p.height, p.units)));
-                                d.fields.insert("facingPages".into(), json!(p.intent == designcraft_doc::Intent::Print));
-                            }
-                        }
+        // Keep the title and action buttons outside the scrollable body. Oversized
+        // forms remain reachable at large UI scales, without shrinking their text.
+        let footer_height = ui.spacing().interact_size.y.max(ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y);
+        let body_height = (available.y - ui.min_size().y - footer_height - 12.0 - 2.0 * ui.spacing().item_spacing.y).max(1.0);
+        egui::ScrollArea::both()
+            .id_salt(("dialog_body", &d.id))
+            .min_scrolled_width(1.0)
+            .min_scrolled_height(1.0)
+            .max_width(width)
+            .max_height(body_height)
+            .show(ui, |ui| match d.id.as_str() {
+                "newDocument" => {
+                    ui.horizontal(|ui| {
+                        ui.with_layout(
+                            if crate::i18n::is_rtl(&app.ui.language) {
+                                egui::Layout::right_to_left(egui::Align::Center)
+                            } else {
+                                egui::Layout::left_to_right(egui::Align::Center)
+                            },
+                            |ui| {
+                                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Preset"));
+                                let cur = d.s("preset");
+                                egui::ComboBox::from_id_salt("preset").selected_text(&cur).width(180.0).show_ui(ui, |ui| {
+                                    for p in designcraft_doc::build::PRESETS {
+                                        if ui.selectable_label(cur == p.name, p.name).clicked() {
+                                            d.fields.insert("preset".into(), json!(p.name));
+                                            d.fields.insert("width".into(), json!(format_measure(p.width, p.units)));
+                                            d.fields.insert("height".into(), json!(format_measure(p.height, p.units)));
+                                            d.fields.insert("facingPages".into(), json!(p.intent == designcraft_doc::Intent::Print));
+                                        }
+                                    }
+                                });
+                            },
+                        );
                     });
-                    });
-                });
-                if crate::i18n::is_rtl(&app.ui.language) {
-                    // egui Grid currently supports LTR only. Use explicit RTL rows;
-                    // the numeric editors retain LTR alignment and logical values.
-                    for (first, key, second, other, toggle) in [
-                        ("Width", "width", "Height", "height", false),
-                        ("Pages", "pages", "Facing Pages", "facingPages", true),
-                        ("Columns", "columns", "Gutter", "gutter", false),
-                        ("Top", "marginTop", "Bottom", "marginBottom", false),
-                        ("Inside", "marginInside", "Outside", "marginOutside", false),
-                        ("Bleed", "bleed", "Primary Text Frame", "primaryTextFrame", true),
-                    ] {
-                        ui.horizontal(|ui| {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, first));
-                                text_field(ui, &mut d, key, 80.0);
-                                if toggle {
-                                    check(ui, &mut d, other, crate::i18n::tr(&app.ui.language, second));
-                                } else {
-                                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, second));
-                                    text_field(ui, &mut d, other, 80.0);
-                                }
+                    if crate::i18n::is_rtl(&app.ui.language) {
+                        // egui Grid currently supports LTR only. Use explicit RTL rows;
+                        // the numeric editors retain LTR alignment and logical values.
+                        for (first, key, second, other, toggle) in [
+                            ("Width", "width", "Height", "height", false),
+                            ("Pages", "pages", "Facing Pages", "facingPages", true),
+                            ("Columns", "columns", "Gutter", "gutter", false),
+                            ("Top", "marginTop", "Bottom", "marginBottom", false),
+                            ("Inside", "marginInside", "Outside", "marginOutside", false),
+                            ("Bleed", "bleed", "Primary Text Frame", "primaryTextFrame", true),
+                        ] {
+                            ui.horizontal(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, first));
+                                    text_field(ui, &mut d, key, 80.0);
+                                    if toggle {
+                                        check(ui, &mut d, other, crate::i18n::tr(&app.ui.language, second));
+                                    } else {
+                                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, second));
+                                        text_field(ui, &mut d, other, 80.0);
+                                    }
+                                });
                             });
+                        }
+                    } else {
+                        egui::Grid::new("nd").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Width"));
+                            text_field(ui, &mut d, "width", 80.0);
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Height"));
+                            text_field(ui, &mut d, "height", 80.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Pages"));
+                            text_field(ui, &mut d, "pages", 80.0);
+                            ui.label("");
+                            check(ui, &mut d, "facingPages", crate::i18n::tr(&app.ui.language, "Facing Pages"));
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Columns"));
+                            text_field(ui, &mut d, "columns", 80.0);
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Gutter"));
+                            text_field(ui, &mut d, "gutter", 80.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Top"));
+                            text_field(ui, &mut d, "marginTop", 80.0);
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Bottom"));
+                            text_field(ui, &mut d, "marginBottom", 80.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Inside"));
+                            text_field(ui, &mut d, "marginInside", 80.0);
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Outside"));
+                            text_field(ui, &mut d, "marginOutside", 80.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Bleed"));
+                            text_field(ui, &mut d, "bleed", 80.0);
+                            ui.label("");
+                            check(ui, &mut d, "primaryTextFrame", crate::i18n::tr(&app.ui.language, "Primary Text Frame"));
+                            ui.end_row();
                         });
                     }
-                } else {
-                egui::Grid::new("nd").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Width"));
-                    text_field(ui, &mut d, "width", 80.0);
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Height"));
-                    text_field(ui, &mut d, "height", 80.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Pages"));
-                    text_field(ui, &mut d, "pages", 80.0);
-                    ui.label("");
-                    check(ui, &mut d, "facingPages", crate::i18n::tr(&app.ui.language, "Facing Pages"));
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Columns"));
-                    text_field(ui, &mut d, "columns", 80.0);
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Gutter"));
-                    text_field(ui, &mut d, "gutter", 80.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Top"));
-                    text_field(ui, &mut d, "marginTop", 80.0);
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Bottom"));
-                    text_field(ui, &mut d, "marginBottom", 80.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Inside"));
-                    text_field(ui, &mut d, "marginInside", 80.0);
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Outside"));
-                    text_field(ui, &mut d, "marginOutside", 80.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Bleed"));
-                    text_field(ui, &mut d, "bleed", 80.0);
-                    ui.label("");
-                    check(ui, &mut d, "primaryTextFrame", crate::i18n::tr(&app.ui.language, "Primary Text Frame"));
-                    ui.end_row();
-                });
                 }
-            }
-            "frameSize" => {
-                egui::Grid::new("fs").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Width"));
-                    text_field(ui, &mut d, "width", 90.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Height"));
-                    text_field(ui, &mut d, "height", 90.0);
-                    ui.end_row();
-                });
-            }
-            "findChange" => {
-                ui.horizontal(|ui| {
-                    for (label, grep) in [("Text", false), ("GREP", true)] {
-                        if ui.selectable_label(!d.b("objectMode") && d.b("grep") == grep, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
-                            d.fields.insert("grep".into(), json!(grep));
-                            d.fields.insert("objectMode".into(), json!(false));
+                "frameSize" => {
+                    egui::Grid::new("fs").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Width"));
+                        text_field(ui, &mut d, "width", 90.0);
+                        ui.end_row();
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Height"));
+                        text_field(ui, &mut d, "height", 90.0);
+                        ui.end_row();
+                    });
+                }
+                "findChange" => {
+                    ui.horizontal(|ui| {
+                        for (label, grep) in [("Text", false), ("GREP", true)] {
+                            if ui
+                                .selectable_label(
+                                    !d.b("objectMode") && d.b("grep") == grep,
+                                    crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label)),
+                                )
+                                .clicked()
+                            {
+                                if d.set_field("objectMode", json!(false)) {
+                                    app.session.reset_find_scope();
+                                }
+                                d.fields.insert("grep".into(), json!(grep));
+                            }
+                        }
+                        if ui.selectable_label(d.b("objectMode"), crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Object"))).clicked()
+                            && d.set_field("objectMode", json!(true))
+                        {
+                            app.session.reset_find_scope();
+                        }
+                    });
+                    if d.b("objectMode") {
+                        // Find/Change › Object: objects by fill and kind; change their fill or opacity.
+                        let swatches: Vec<String> = app
+                            .session
+                            .active()
+                            .map(|st| st.doc.swatches.iter().filter(|w| !w.hidden).map(|w| w.name.clone()).collect())
+                            .unwrap_or_default();
+                        egui::Grid::new("fco").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                            for (key, label, any) in [("objFill", "Find fill:", "(any)"), ("objChangeFill", "Change fill to:", "(unchanged)")] {
+                                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, label));
+                                let cur = d.s(key);
+                                egui::ComboBox::from_id_salt(key)
+                                    .selected_text(if cur.is_empty() { any } else { cur.as_str() })
+                                    .width(180.0)
+                                    .show_ui(ui, |ui| {
+                                        if ui
+                                            .selectable_label(cur.is_empty(), crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, any)))
+                                            .clicked()
+                                        {
+                                            d.fields.insert(key.into(), json!(""));
+                                        }
+                                        for w in &swatches {
+                                            if ui.selectable_label(*w == cur, w).clicked() {
+                                                d.fields.insert(key.into(), json!(w));
+                                            }
+                                        }
+                                    });
+                                ui.end_row();
+                            }
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Kind:"));
+                            let cur = d.s("objKind");
+                            egui::ComboBox::from_id_salt("objKind").selected_text(if cur.is_empty() { "(any)" } else { cur.as_str() }).show_ui(
+                                ui,
+                                |ui| {
+                                    for v in ["", "text", "graphic", "shape", "line", "group"] {
+                                        if ui
+                                            .selectable_label(
+                                                cur == v,
+                                                crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, if v.is_empty() { "(any)" } else { v })),
+                                            )
+                                            .clicked()
+                                        {
+                                            d.fields.insert("objKind".into(), json!(v));
+                                        }
+                                    }
+                                },
+                            );
+                            ui.end_row();
+                        });
+                        let mut crit = json!({});
+                        if !d.s("objFill").is_empty() {
+                            crit["fill"] = json!(d.s("objFill"));
+                        }
+                        if !d.s("objKind").is_empty() {
+                            crit["kind"] = json!(d.s("objKind"));
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Find All"))).clicked() {
+                                let n = app.run("find.objects", crit.clone()).ok().and_then(|r| r["ids"].as_array().map(Vec::len)).unwrap_or(0);
+                                d.fields.insert("status".into(), json!(format!("{n} found")));
+                            }
+                            if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Change All"))).clicked()
+                                && !d.s("objChangeFill").is_empty()
+                            {
+                                let mut p = crit.clone();
+                                p["change"] = json!({"fill": d.s("objChangeFill")});
+                                let n = app.run("find.changeObjects", p).ok().and_then(|r| r["changed"].as_u64()).unwrap_or(0);
+                                d.fields.insert("status".into(), json!(format!("{n} changed")));
+                            }
+                        });
+                        ui.label(d.s("status"));
+                    } else {
+                        egui::Grid::new("fc").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Find what:"));
+                            text_field(ui, &mut d, "find", 260.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Change to:"));
+                            text_field(ui, &mut d, "change", 260.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Search:"));
+                            let cur = d.s("scope");
+                            egui::ComboBox::from_id_salt("fcscope")
+                                .selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, &cur)))
+                                .show_ui(ui, |ui| {
+                                    for v in ["document", "story", "selection"] {
+                                        if ui.selectable_label(cur == v, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, v))).clicked()
+                                            && d.set_field("scope", json!(v))
+                                        {
+                                            app.session.reset_find_scope();
+                                        }
+                                    }
+                                });
+                            ui.end_row();
+                        });
+                        ui.horizontal(|ui| {
+                            check(ui, &mut d, "caseSensitive", crate::i18n::tr(&app.ui.language, "Case sensitive"));
+                            check(ui, &mut d, "wholeWord", crate::i18n::tr(&app.ui.language, "Whole word"));
+                        });
+                        ui.horizontal(|ui| {
+                            let params0 = find_change_params(&d);
+                            let params = || params0.clone();
+                            if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Find Next"))).clicked() {
+                                let r = app.run("find.next", params());
+                                let msg = match r {
+                                    Ok(Value::Null) => "No matches".to_string(),
+                                    Ok(_) => "Found".to_string(),
+                                    Err(e) => e,
+                                };
+                                d.fields.insert("status".into(), json!(msg));
+                            }
+                            if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Change All"))).clicked() {
+                                let msg = match app.run("find.change", params()) {
+                                    Ok(v) => format!("{} replacement(s) made", v["count"]),
+                                    Err(e) => e,
+                                };
+                                d.fields.insert("status".into(), json!(msg));
+                            }
+                            if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Count"))).clicked() {
+                                let msg = match app.run("find.find", params()) {
+                                    Ok(v) => format!("{} match(es)", v.as_array().map(|a| a.len()).unwrap_or(0)),
+                                    Err(e) => e,
+                                };
+                                d.fields.insert("status".into(), json!(msg));
+                            }
+                        });
+                        if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+                            ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
                         }
                     }
-                    if ui.selectable_label(d.b("objectMode"),crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Object"))).clicked() {
-                        d.fields.insert("objectMode".into(), json!(true));
+                }
+                "paragraphStyleOptions" => paragraph_style_options(app, ui, &mut d),
+                "characterStyleOptions" => character_style_options(app, ui, &mut d),
+                "footnoteOptions" => footnote_options(app, ui, &mut d),
+                "paragraphRules" => {
+                    let current = d.fields.get("current").cloned().unwrap_or_default();
+                    paragraph_rules(app, ui, &mut d, "", &current);
+                }
+                "insertXref" => insert_xref(app, ui, &mut d),
+                "findFont" => find_font(app, ui, &mut d),
+                "colorPicker" => color_picker(ui, &mut d),
+                "preferences" => preferences(app, ui, &mut d, body_height),
+                "print" => print_dialog(app, ui, &mut d),
+                "pdfImport" => {
+                    ui.label(egui::RichText::new(if d.b("async") { d.s("name") } else { d.s("path") }).size(11.0));
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(
+                            ui,
+                            crate::i18n::tr(&app.ui.language, "Page (1–{count}):").replace("{count}", &d.n("pages").unwrap_or(1.0).to_string()),
+                        );
+                        text_field(ui, &mut d, "page", 60.0);
+                    });
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Crop to:"));
+                        let cur = d.s("crop");
+                        let label = |v: &str| match v {
+                            "trim" => crate::i18n::tr(&app.ui.language, "Trim"),
+                            "bleed" => crate::i18n::tr(&app.ui.language, "Bleed"),
+                            "art" => crate::i18n::tr(&app.ui.language, "Art"),
+                            "media" => crate::i18n::tr(&app.ui.language, "Media"),
+                            _ => crate::i18n::tr(&app.ui.language, "Crop"),
+                        };
+                        egui::ComboBox::from_id_salt("pdf_crop").selected_text(crate::rtl::widget(ui, label(&cur))).show_ui(ui, |ui| {
+                            for v in ["crop", "trim", "bleed", "art", "media"] {
+                                if ui.selectable_label(label(&cur) == label(v), label(v)).clicked() {
+                                    d.fields.insert("crop".into(), json!(v));
+                                }
+                            }
+                        });
+                    });
+                }
+                "layerOptions" => {
+                    let mut layers = d.fields.get("layers").and_then(Value::as_array).cloned().unwrap_or_default();
+                    if layers.is_empty() {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "This PDF has no layers."));
                     }
-                });
-                if d.b("objectMode") {
-                    // Find/Change › Object: objects by fill and kind; change their fill or opacity.
-                    let swatches: Vec<String> = app.session.active().map(|st| st.doc.swatches.iter().filter(|w| !w.hidden).map(|w| w.name.clone()).collect()).unwrap_or_default();
-                    egui::Grid::new("fco").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                        for (key, label, any) in [("objFill", "Find fill:", "(any)"), ("objChangeFill", "Change fill to:", "(unchanged)")] {
+                    for l in &mut layers {
+                        let mut on = l["visible"].as_bool().unwrap_or(true);
+                        if ui.checkbox(&mut on, l["name"].as_str().unwrap_or("")).changed() {
+                            l["visible"] = json!(on);
+                        }
+                    }
+                    d.fields.insert("layers".into(), json!(layers));
+                }
+                "colorSettings" => {
+                    let profiles = d.fields.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default();
+                    egui::Grid::new("color_settings").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                        for (key, label, kind) in [("rgb", "RGB:", "rgb"), ("cmyk", "CMYK:", "cmyk")] {
                             crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, label));
                             let cur = d.s(key);
-                            egui::ComboBox::from_id_salt(key).selected_text(if cur.is_empty() { any } else { cur.as_str() }).width(180.0).show_ui(ui, |ui| {
-                                if ui.selectable_label(cur.is_empty(), crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, any))).clicked() {
-                                    d.fields.insert(key.into(), json!(""));
-                                }
-                                for w in &swatches {
-                                    if ui.selectable_label(*w == cur, w).clicked() {
-                                        d.fields.insert(key.into(), json!(w));
+                            egui::ComboBox::from_id_salt(("ws", key)).selected_text(&cur).width(260.0).show_ui(ui, |ui| {
+                                for pr in profiles.iter().filter(|p| p["kind"] == kind) {
+                                    let name = pr["name"].as_str().unwrap_or("");
+                                    if ui.selectable_label(name == cur, name).clicked() {
+                                        d.fields.insert(key.into(), json!(name));
                                     }
                                 }
                             });
                             ui.end_row();
                         }
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Kind:"));
-                        let cur = d.s("objKind");
-                        egui::ComboBox::from_id_salt("objKind").selected_text(if cur.is_empty() { "(any)" } else { cur.as_str() }).show_ui(ui, |ui| {
-                            for v in ["", "text", "graphic", "shape", "line", "group"] {
-                                if ui.selectable_label(cur == v, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, if v.is_empty() { "(any)" } else { v }))).clicked() {
-                                    d.fields.insert("objKind".into(), json!(v));
-                                }
-                            }
-                        });
-                        ui.end_row();
-                    });
-                    let mut crit = json!({});
-                    if !d.s("objFill").is_empty() {
-                        crit["fill"] = json!(d.s("objFill"));
-                    }
-                    if !d.s("objKind").is_empty() {
-                        crit["kind"] = json!(d.s("objKind"));
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Find All"))).clicked() {
-                            let n = app.run("find.objects", crit.clone()).ok().and_then(|r| r["ids"].as_array().map(Vec::len)).unwrap_or(0);
-                            d.fields.insert("status".into(), json!(format!("{n} found")));
-                        }
-                        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Change All"))).clicked() && !d.s("objChangeFill").is_empty() {
-                            let mut p = crit.clone();
-                            p["change"] = json!({"fill": d.s("objChangeFill")});
-                            let n = app.run("find.changeObjects", p).ok().and_then(|r| r["changed"].as_u64()).unwrap_or(0);
-                            d.fields.insert("status".into(), json!(format!("{n} changed")));
-                        }
-                    });
-                    ui.label(d.s("status"));
-                } else {
-                egui::Grid::new("fc").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Find what:"));
-                    text_field(ui, &mut d, "find", 260.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Change to:"));
-                    text_field(ui, &mut d, "change", 260.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Search:"));
-                    let cur = d.s("scope");
-                    egui::ComboBox::from_id_salt("fcscope").selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, &cur))).show_ui(ui, |ui| {
-                        for v in ["document", "story", "selection"] {
-                            if ui.selectable_label(cur == v, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, v))).clicked() {
-                                d.fields.insert("scope".into(), json!(v));
-                            }
-                        }
-                    });
-                    ui.end_row();
-                });
-                ui.horizontal(|ui| {
-                    check(ui, &mut d, "caseSensitive", crate::i18n::tr(&app.ui.language, "Case sensitive"));
-                    check(ui, &mut d, "wholeWord", crate::i18n::tr(&app.ui.language, "Whole word"));
-                });
-                ui.horizontal(|ui| {
-                    let params0 = json!({"find": d.s("find"), "change": d.s("change"), "grep": d.b("grep"), "caseSensitive": d.b("caseSensitive"), "wholeWord": d.b("wholeWord"), "scope": d.s("scope")});
-                    let params = || params0.clone();
-                    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Find Next"))).clicked() {
-                        let r = app.run("find.next", params());
-                        let msg = match r {
-                            Ok(Value::Null) => "No matches".to_string(),
-                            Ok(_) => "Found".to_string(),
-                            Err(e) => e,
-                        };
-                        d.fields.insert("status".into(), json!(msg));
-                    }
-                    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Change All"))).clicked() {
-                        let msg = match app.run("find.change", params()) {
-                            Ok(v) => format!("{} replacement(s) made", v["count"]),
-                            Err(e) => e,
-                        };
-                        d.fields.insert("status".into(), json!(msg));
-                    }
-                    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Count"))).clicked() {
-                        let msg = match app.run("find.find", params()) {
-                            Ok(v) => format!("{} match(es)", v.as_array().map(|a| a.len()).unwrap_or(0)),
-                            Err(e) => e,
-                        };
-                        d.fields.insert("status".into(), json!(msg));
-                    }
-                });
-                if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
-                    ui.label(egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
-                }
-                }
-            }
-            "paragraphStyleOptions" => paragraph_style_options(app, ui, &mut d),
-            "characterStyleOptions" => character_style_options(app, ui, &mut d),
-            "footnoteOptions" => footnote_options(app, ui, &mut d),
-            "paragraphRules" => {
-                let current = d.fields.get("current").cloned().unwrap_or_default();
-                paragraph_rules(app, ui, &mut d, "", &current);
-            }
-            "insertXref" => insert_xref(app, ui, &mut d),
-            "findFont" => find_font(app, ui, &mut d),
-            "colorPicker" => color_picker(ui, &mut d),
-            "preferences" => preferences(app, ui, &mut d),
-            "print" => print_dialog(app, ui, &mut d),
-            "pdfImport" => {
-                ui.label(egui::RichText::new(if d.b("async") { d.s("name") } else { d.s("path") }).size(11.0));
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Page (1–{count}):").replace("{count}", &d.n("pages").unwrap_or(1.0).to_string()));
-                    text_field(ui, &mut d, "page", 60.0);
-                });
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Crop to:"));
-                    let cur = d.s("crop");
-                    let label = |v: &str| match v {
-                        "trim" => crate::i18n::tr(&app.ui.language, "Trim"),
-                        "bleed" => crate::i18n::tr(&app.ui.language, "Bleed"),
-                        "art" => crate::i18n::tr(&app.ui.language, "Art"),
-                        "media" => crate::i18n::tr(&app.ui.language, "Media"),
-                        _ => crate::i18n::tr(&app.ui.language, "Crop"),
-                    };
-                    egui::ComboBox::from_id_salt("pdf_crop").selected_text(crate::rtl::widget(ui, label(&cur))).show_ui(ui, |ui| {
-                        for v in ["crop", "trim", "bleed", "art", "media"] {
-                            if ui.selectable_label(label(&cur) == label(v), label(v)).clicked() {
-                                d.fields.insert("crop".into(), json!(v));
-                            }
-                        }
-                    });
-                });
-            }
-            "layerOptions" => {
-                let mut layers = d.fields.get("layers").and_then(Value::as_array).cloned().unwrap_or_default();
-                if layers.is_empty() {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "This PDF has no layers."));
-                }
-                for l in &mut layers {
-                    let mut on = l["visible"].as_bool().unwrap_or(true);
-                    if ui.checkbox(&mut on, l["name"].as_str().unwrap_or("")).changed() {
-                        l["visible"] = json!(on);
-                    }
-                }
-                d.fields.insert("layers".into(), json!(layers));
-            }
-            "colorSettings" => {
-                let profiles = d.fields.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default();
-                egui::Grid::new("color_settings").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    for (key, label, kind) in [("rgb", "RGB:", "rgb"), ("cmyk", "CMYK:", "cmyk")] {
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, label));
-                        let cur = d.s(key);
-                        egui::ComboBox::from_id_salt(("ws", key)).selected_text(&cur).width(260.0).show_ui(ui, |ui| {
-                            for pr in profiles.iter().filter(|p| p["kind"] == kind) {
-                                let name = pr["name"].as_str().unwrap_or("");
-                                if ui.selectable_label(name == cur, name).clicked() {
-                                    d.fields.insert(key.into(), json!(name));
-                                }
-                            }
-                        });
-                        ui.end_row();
-                    }
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Intent:"));
-                    let cur = d.s("intent");
-                    egui::ComboBox::from_id_salt("ws_intent")
-                        .selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, designcraft_color::cms::Intent::parse(&cur).map_or("", |i| i.label()))))
-                        .show_ui(ui, |ui| {
-                            for i in designcraft_color::cms::Intent::ALL {
-                                if ui.selectable_label(i.id() == cur, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, i.label()))).clicked() {
-                                    d.fields.insert("intent".into(), json!(i.id()));
-                                }
-                            }
-                        });
-                    ui.end_row();
-                });
-                check(ui, &mut d, "bpc", crate::i18n::tr(&app.ui.language, "Use Black Point Compensation"));
-                if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Load Profile…"))).clicked()
-                    && let Some(path) = app.services.pick_open.as_mut().and_then(|f| f("icc"))
-                {
-                    match app.session.execute("color.loadProfile", &json!({"path": path})) {
-                        Ok(_) => {
-                            let f = app.session.execute("color.settings", &json!({})).unwrap_or_default();
-                            d.fields.insert("profiles".into(), f["profiles"].clone());
-                        }
-                        Err(e) => app.status(format!("Color Settings: {e}")),
-                    }
-                }
-            }
-            "keyboardShortcuts" => keyboard_shortcuts(app, ui, &mut d),
-            "userDictionary" => user_dictionary(app, ui, &mut d),
-            "menus" => {
-                text_field(ui, &mut d, "query", 260.0);
-                let q = d.s("query").to_lowercase();
-                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                    for (menu, label) in crate::menus::all_menu_items().into_iter().filter(|(m, l)| q.is_empty() || m.to_lowercase().contains(&q) || l.to_lowercase().contains(&q)) {
-                        let key = crate::menus::menu_key(&menu, &label);
-                        let mut visible = !app.ui.hidden_menu_items.contains(&key);
-                        if ui.checkbox(&mut visible, crate::rtl::widget(ui, format!("{} › {}", crate::i18n::tr(&app.ui.language, &menu), crate::i18n::tr(&app.ui.language, &label)))).changed() {
-                            let _ = app.run("window.hideMenuItem", json!({"item": key, "hidden": !visible}));
-                        }
-                    }
-                });
-            }
-            "importOptions" => {
-                ui.label(egui::RichText::new(d.s("path")).size(10.5));
-                check(ui, &mut d, "removeStyles", crate::i18n::tr(&app.ui.language, "Remove Styles and Formatting from Text and Tables"));
-                if !d.b("removeStyles") {
-                    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Style Name Conflicts")).font(semibold(12.0)));
-                    let conflicts: Vec<String> = d.fields.get("conflicts").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
-                    ui.label(if conflicts.is_empty() { crate::i18n::tr(&app.ui.language, "No conflicts").to_string() } else { format!("{} conflict(s): {}", conflicts.len(), conflicts.join(", ")) });
-                    let cur = d.s("styleConflicts");
-                    ui.horizontal(|ui| {
-                        for (v, l) in [("useExisting", "Use Document Style Definition"), ("redefine", "Redefine Document Style"), ("autoRename", "Auto Rename")] {
-                            if ui.radio(cur == v, l).clicked() {
-                                d.fields.insert("styleConflicts".into(), json!(v));
-                            }
-                        }
-                    });
-                    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Style Mapping")).font(semibold(12.0)));
-                    let names: Vec<String> = app.session.active().map(|s| s.doc.styles.paragraph.iter().map(|p| p.name.clone()).collect()).unwrap_or_default();
-                    let imported: Vec<String> = d.fields.get("styles").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
-                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                        egui::Grid::new("imp_map").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-                            for w in &imported {
-                                ui.label(w);
-                                let mapped = d.fields.get("map").and_then(|m| m.get(w)).and_then(Value::as_str).unwrap_or("").to_string();
-                                let shown = if mapped.is_empty() { "(import)".to_string() } else { mapped.clone() };
-                                egui::ComboBox::from_id_salt(("imp_map", w)).selected_text(crate::rtl::widget(ui, &shown)).width(170.0).show_ui(ui, |ui| {
-                                    if ui.selectable_label(mapped.is_empty(),crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "(import)"))).clicked()
-                                        && let Some(m) = d.fields.get_mut("map").and_then(Value::as_object_mut)
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Intent:"));
+                        let cur = d.s("intent");
+                        egui::ComboBox::from_id_salt("ws_intent")
+                            .selected_text(crate::rtl::widget(
+                                ui,
+                                crate::i18n::tr(&app.ui.language, designcraft_color::cms::Intent::parse(&cur).map_or("", |i| i.label())),
+                            ))
+                            .show_ui(ui, |ui| {
+                                for i in designcraft_color::cms::Intent::ALL {
+                                    if ui
+                                        .selectable_label(i.id() == cur, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, i.label())))
+                                        .clicked()
                                     {
-                                        m.remove(w);
+                                        d.fields.insert("intent".into(), json!(i.id()));
                                     }
-                                    for n in &names {
-                                        if ui.selectable_label(*n == mapped, n).clicked()
-                                            && let Some(m) = d.fields.get_mut("map").and_then(Value::as_object_mut)
-                                        {
-                                            m.insert(w.clone(), json!(n));
-                                        }
+                                }
+                            });
+                        ui.end_row();
+                    });
+                    check(ui, &mut d, "bpc", crate::i18n::tr(&app.ui.language, "Use Black Point Compensation"));
+                    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Load Profile…"))).clicked()
+                        && let Some(path) = app.services.pick_open.as_mut().and_then(|f| f("icc"))
+                    {
+                        match app.session.execute("color.loadProfile", &json!({"path": path})) {
+                            Ok(_) => {
+                                let f = app.session.execute("color.settings", &json!({})).unwrap_or_default();
+                                d.fields.insert("profiles".into(), f["profiles"].clone());
+                            }
+                            Err(e) => app.status(format!("Color Settings: {e}")),
+                        }
+                    }
+                }
+                "keyboardShortcuts" => keyboard_shortcuts(app, ui, &mut d),
+                "userDictionary" => user_dictionary(app, ui, &mut d),
+                "menus" => {
+                    text_field(ui, &mut d, "query", 260.0);
+                    let q = d.s("query").to_lowercase();
+                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for (menu, label) in crate::menus::all_menu_items()
+                            .into_iter()
+                            .filter(|(m, l)| q.is_empty() || m.to_lowercase().contains(&q) || l.to_lowercase().contains(&q))
+                        {
+                            let key = crate::menus::menu_key(&menu, &label);
+                            let mut visible = !app.ui.hidden_menu_items.contains(&key);
+                            if ui
+                                .checkbox(
+                                    &mut visible,
+                                    crate::rtl::widget(
+                                        ui,
+                                        format!("{} › {}", crate::i18n::tr(&app.ui.language, &menu), crate::i18n::tr(&app.ui.language, &label)),
+                                    ),
+                                )
+                                .changed()
+                            {
+                                let _ = app.run("window.hideMenuItem", json!({"item": key, "hidden": !visible}));
+                            }
+                        }
+                    });
+                }
+                "importOptions" => {
+                    ui.label(egui::RichText::new(d.s("path")).size(10.5));
+                    check(ui, &mut d, "removeStyles", crate::i18n::tr(&app.ui.language, "Remove Styles and Formatting from Text and Tables"));
+                    if !d.b("removeStyles") {
+                        crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Style Name Conflicts")).font(semibold(12.0)));
+                        let conflicts: Vec<String> = d
+                            .fields
+                            .get("conflicts")
+                            .and_then(Value::as_array)
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                            .unwrap_or_default();
+                        ui.label(if conflicts.is_empty() {
+                            crate::i18n::tr(&app.ui.language, "No conflicts").to_string()
+                        } else {
+                            format!("{} conflict(s): {}", conflicts.len(), conflicts.join(", "))
+                        });
+                        let cur = d.s("styleConflicts");
+                        ui.horizontal(|ui| {
+                            for (v, l) in [
+                                ("useExisting", "Use Document Style Definition"),
+                                ("redefine", "Redefine Document Style"),
+                                ("autoRename", "Auto Rename"),
+                            ] {
+                                if ui.radio(cur == v, l).clicked() {
+                                    d.fields.insert("styleConflicts".into(), json!(v));
+                                }
+                            }
+                        });
+                        crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Style Mapping")).font(semibold(12.0)));
+                        let names: Vec<String> =
+                            app.session.active().map(|s| s.doc.styles.paragraph.iter().map(|p| p.name.clone()).collect()).unwrap_or_default();
+                        let imported: Vec<String> = d
+                            .fields
+                            .get("styles")
+                            .and_then(Value::as_array)
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                            .unwrap_or_default();
+                        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                            egui::Grid::new("imp_map").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+                                for w in &imported {
+                                    ui.label(w);
+                                    let mapped = d.fields.get("map").and_then(|m| m.get(w)).and_then(Value::as_str).unwrap_or("").to_string();
+                                    let shown = if mapped.is_empty() { "(import)".to_string() } else { mapped.clone() };
+                                    egui::ComboBox::from_id_salt(("imp_map", w)).selected_text(crate::rtl::widget(ui, &shown)).width(170.0).show_ui(
+                                        ui,
+                                        |ui| {
+                                            if ui
+                                                .selectable_label(
+                                                    mapped.is_empty(),
+                                                    crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "(import)")),
+                                                )
+                                                .clicked()
+                                                && let Some(m) = d.fields.get_mut("map").and_then(Value::as_object_mut)
+                                            {
+                                                m.remove(w);
+                                            }
+                                            for n in &names {
+                                                if ui.selectable_label(*n == mapped, n).clicked()
+                                                    && let Some(m) = d.fields.get_mut("map").and_then(Value::as_object_mut)
+                                                {
+                                                    m.insert(w.clone(), json!(n));
+                                                }
+                                            }
+                                        },
+                                    );
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                    }
+                }
+                "closeDocument" => {
+                    let text = crate::i18n::tr(&app.ui.language, "“{}” has changes that are not saved. Save them before closing?")
+                        .replace("{}", &d.s("title"));
+                    crate::rtl::label(ui, text);
+                }
+                "newWorkspace" => {
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Name:"));
+                        text_field(ui, &mut d, "name", 220.0);
+                    });
+                    crate::rtl::label(
+                        ui,
+                        egui::RichText::new(crate::i18n::tr(&app.ui.language, "Saves which bars show and where the panels are.")).size(10.5),
+                    );
+                }
+                "fittingOptions" => {
+                    check(ui, &mut d, "autoFit", crate::i18n::tr(&app.ui.language, "Auto-Fit"));
+                    ui.add_space(4.0);
+                    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Content Fitting")).font(semibold(12.0)));
+                    let cur = d.s("fitting");
+                    let label = |v: &str| match v {
+                        "fillProportionally" => crate::i18n::tr(&app.ui.language, "Fill Frame Proportionally"),
+                        "fitProportionally" => crate::i18n::tr(&app.ui.language, "Fit Content Proportionally"),
+                        "fitContentToFrame" => crate::i18n::tr(&app.ui.language, "Fit Content to Frame"),
+                        "centerContent" => crate::i18n::tr(&app.ui.language, "Center Content"),
+                        _ => crate::i18n::tr(&app.ui.language, "None"),
+                    };
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Fitting:"));
+                        egui::ComboBox::from_id_salt("ff_fit").selected_text(crate::rtl::widget(ui, label(&cur))).width(200.0).show_ui(ui, |ui| {
+                            for v in ["none", "fillProportionally", "fitProportionally", "fitContentToFrame", "centerContent"] {
+                                if ui.selectable_label(cur == v, crate::rtl::widget(ui, label(v))).clicked() {
+                                    d.fields.insert("fitting".into(), json!(v));
+                                }
+                            }
+                        });
+                    });
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Align From:"));
+                        let a = d.n("align").unwrap_or(4.0) as u8;
+                        egui::Grid::new("ff_align").spacing([2.0, 2.0]).show(ui, |ui| {
+                            for row in 0..3u8 {
+                                for col in 0..3u8 {
+                                    let i = row * 3 + col;
+                                    let (r, resp) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
+                                    let c = ui.visuals().text_color();
+                                    if a == i {
+                                        ui.painter().rect_filled(r.shrink(2.0), 1.0, c);
+                                    } else {
+                                        ui.painter().rect_stroke(r.shrink(3.0), 1.0, egui::Stroke::new(1.0, c), egui::StrokeKind::Inside);
                                     }
-                                });
+                                    if resp.clicked() {
+                                        d.fields.insert("align".into(), json!(i));
+                                    }
+                                }
                                 ui.end_row();
                             }
                         });
                     });
-                }
-            }
-            "closeDocument" => {
-                let text = crate::i18n::tr(&app.ui.language, "“{}” has changes that are not saved. Save them before closing?").replace("{}", &d.s("title"));
-                crate::rtl::label(ui, text);
-            }
-            "newWorkspace" => {
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Name:"));
-                    text_field(ui, &mut d, "name", 220.0);
-                });
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Saves which bars show and where the panels are.")).size(10.5));
-            }
-            "fittingOptions" => {
-                check(ui, &mut d, "autoFit", crate::i18n::tr(&app.ui.language, "Auto-Fit"));
-                ui.add_space(4.0);
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Content Fitting")).font(semibold(12.0)));
-                let cur = d.s("fitting");
-                let label = |v: &str| match v {
-                    "fillProportionally" => crate::i18n::tr(&app.ui.language, "Fill Frame Proportionally"),
-                    "fitProportionally" => crate::i18n::tr(&app.ui.language, "Fit Content Proportionally"),
-                    "fitContentToFrame" => crate::i18n::tr(&app.ui.language, "Fit Content to Frame"),
-                    "centerContent" => crate::i18n::tr(&app.ui.language, "Center Content"),
-                    _ => crate::i18n::tr(&app.ui.language, "None"),
-                };
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Fitting:"));
-                    egui::ComboBox::from_id_salt("ff_fit").selected_text(crate::rtl::widget(ui, label(&cur))).width(200.0).show_ui(ui, |ui| {
-                        for v in ["none", "fillProportionally", "fitProportionally", "fitContentToFrame", "centerContent"] {
-                            if ui.selectable_label(cur == v, crate::rtl::widget(ui, label(v))).clicked() {
-                                d.fields.insert("fitting".into(), json!(v));
-                            }
+                    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Crop Amount")).font(semibold(12.0)));
+                    egui::Grid::new("ff_crop").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
+                        for (k, l) in [("cropTop", "Top:"), ("cropLeft", "Left:")] {
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, l));
+                            text_field(ui, &mut d, k, 70.0);
                         }
+                        ui.end_row();
+                        for (k, l) in [("cropBottom", "Bottom:"), ("cropRight", "Right:")] {
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, l));
+                            text_field(ui, &mut d, k, 70.0);
+                        }
+                        ui.end_row();
                     });
-                });
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Align From:"));
-                    let a = d.n("align").unwrap_or(4.0) as u8;
-                    egui::Grid::new("ff_align").spacing([2.0, 2.0]).show(ui, |ui| {
-                        for row in 0..3u8 {
-                            for col in 0..3u8 {
-                                let i = row * 3 + col;
-                                let (r, resp) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
-                                let c = ui.visuals().text_color();
-                                if a == i {
-                                    ui.painter().rect_filled(r.shrink(2.0), 1.0, c);
-                                } else {
-                                    ui.painter().rect_stroke(r.shrink(3.0), 1.0, egui::Stroke::new(1.0, c), egui::StrokeKind::Inside);
-                                }
-                                if resp.clicked() {
-                                    d.fields.insert("align".into(), json!(i));
+                }
+                "qrCode" => {
+                    let cur = d.s("type");
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Type:"));
+                        let label = |v: &str| match v {
+                            "text" => crate::i18n::tr(&app.ui.language, "Plain Text"),
+                            "sms" => crate::i18n::tr(&app.ui.language, "Text Message"),
+                            "email" => crate::i18n::tr(&app.ui.language, "Email"),
+                            "vcard" => crate::i18n::tr(&app.ui.language, "Business Card"),
+                            _ => crate::i18n::tr(&app.ui.language, "Web Hyperlink"),
+                        };
+                        egui::ComboBox::from_id_salt("qr_type").selected_text(crate::rtl::widget(ui, label(&cur))).width(160.0).show_ui(ui, |ui| {
+                            for v in ["url", "text", "sms", "email", "vcard"] {
+                                if ui.selectable_label(cur == v, crate::rtl::widget(ui, label(v))).clicked() {
+                                    d.fields.insert("type".into(), json!(v));
                                 }
                             }
+                        });
+                    });
+                    let fields: &[(&str, &str)] = match cur.as_str() {
+                        "sms" => &[("number", "Cell Number:"), ("message", "Message:")],
+                        "email" => &[("to", "Email Address:"), ("subject", "Subject:"), ("body", "Message:")],
+                        "vcard" => &[("name", "Name:"), ("org", "Organization:"), ("phone", "Phone:"), ("email", "Email:"), ("url", "URL:")],
+                        "text" => &[("content", "Text:")],
+                        _ => &[("content", "URL:")],
+                    };
+                    egui::Grid::new("qr_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                        for (k, l) in fields {
+                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, l));
+                            text_field(ui, &mut d, k, 260.0);
                             ui.end_row();
                         }
-                    });
-                });
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Crop Amount")).font(semibold(12.0)));
-                egui::Grid::new("ff_crop").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
-                    for (k, l) in [("cropTop", "Top:"), ("cropLeft", "Left:")] {
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, l));
-                        text_field(ui, &mut d, k, 70.0);
-                    }
-                    ui.end_row();
-                    for (k, l) in [("cropBottom", "Bottom:"), ("cropRight", "Right:")] {
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, l));
-                        text_field(ui, &mut d, k, 70.0);
-                    }
-                    ui.end_row();
-                });
-            }
-            "qrCode" => {
-                let cur = d.s("type");
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Type:"));
-                    let label = |v: &str| match v {
-                        "text" => crate::i18n::tr(&app.ui.language, "Plain Text"),
-                        "sms" => crate::i18n::tr(&app.ui.language, "Text Message"),
-                        "email" => crate::i18n::tr(&app.ui.language, "Email"),
-                        "vcard" => crate::i18n::tr(&app.ui.language, "Business Card"),
-                        _ => crate::i18n::tr(&app.ui.language, "Web Hyperlink"),
-                    };
-                    egui::ComboBox::from_id_salt("qr_type").selected_text(crate::rtl::widget(ui, label(&cur))).width(160.0).show_ui(ui, |ui| {
-                        for v in ["url", "text", "sms", "email", "vcard"] {
-                            if ui.selectable_label(cur == v, crate::rtl::widget(ui, label(v))).clicked() {
-                                d.fields.insert("type".into(), json!(v));
-                            }
-                        }
-                    });
-                });
-                let fields: &[(&str, &str)] = match cur.as_str() {
-                    "sms" => &[("number", "Cell Number:"), ("message", "Message:")],
-                    "email" => &[("to", "Email Address:"), ("subject", "Subject:"), ("body", "Message:")],
-                    "vcard" => &[("name", "Name:"), ("org", "Organization:"), ("phone", "Phone:"), ("email", "Email:"), ("url", "URL:")],
-                    "text" => &[("content", "Text:")],
-                    _ => &[("content", "URL:")],
-                };
-                egui::Grid::new("qr_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    for (k, l) in fields {
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, l));
-                        text_field(ui, &mut d, k, 260.0);
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Color:"));
+                        text_field(ui, &mut d, "color", 160.0);
                         ui.end_row();
-                    }
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Color:"));
-                    text_field(ui, &mut d, "color", 160.0);
-                    ui.end_row();
-                });
-            }
-            "polygonSettings" => {
-                egui::Grid::new("poly").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Number of Sides:"));
-                    text_field(ui, &mut d, "sides", 60.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Star Inset:"));
-                    ui.horizontal(|ui| {
-                        text_field(ui, &mut d, "starInset", 60.0);
-                        ui.label("%");
                     });
-                    ui.end_row();
-                });
-            }
-            id if id.starts_with("cmd:") => command_form(app, ui, &mut d),
-            "goToPage" => {
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Page"));
-                    text_field(ui, &mut d, "page", 80.0);
-                });
-            }
-            "ruby" => {
-                ui.horizontal(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Ruby:"));
-                    text_field(ui, &mut d, "text", 200.0);
-                });
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Set over the selected text; empty removes it.")).size(11.0));
-            }
-            "insertTable" => {
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Table Dimensions")).font(semibold(12.0)));
-                egui::Grid::new("ins_table").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Body Rows"));
-                    text_field(ui, &mut d, "bodyRows", 60.0);
-                    crate::rtl::label(ui, crate::i18n::tr_context(&app.ui.language, "Columns", "table"));
-                    text_field(ui, &mut d, "columns", 60.0);
-                    ui.end_row();
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Header Rows"));
-                    text_field(ui, &mut d, "headerRows", 60.0);
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Footer Rows"));
-                    text_field(ui, &mut d, "footerRows", 60.0);
-                    ui.end_row();
-                });
-            }
-            "textFrameOptions" => {
-                seed_text_frame_options(app, &mut d);
-                text_frame_options_dialog(app, ui, &mut d);
-            }
-            "documentSetup" => document_setup(app, ui, &mut d),
-            "alert" => {
-                let file = d.s("file");
-                if !file.is_empty() {
-                    crate::rtl::label(ui, egui::RichText::new(crate::rtl::isolate(&file)).font(semibold(13.0)));
-                    ui.add_space(4.0);
                 }
-                crate::rtl::label(ui, d.s("message"));
-            }
-            _ => {}
-        }
+                "polygonSettings" => {
+                    egui::Grid::new("poly").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Number of Sides:"));
+                        text_field(ui, &mut d, "sides", 60.0);
+                        ui.end_row();
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Star Inset:"));
+                        ui.horizontal(|ui| {
+                            text_field(ui, &mut d, "starInset", 60.0);
+                            ui.label("%");
+                        });
+                        ui.end_row();
+                    });
+                }
+                STEP_AND_REPEAT => step_and_repeat_dialog(app, ui, &mut d),
+                TOC => toc_dialog(app, ui, &mut d),
+                id if id.starts_with("cmd:") => command_form(app, ui, &mut d),
+                "goToPage" => {
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Page"));
+                        text_field(ui, &mut d, "page", 80.0);
+                    });
+                }
+                "ruby" => {
+                    ui.horizontal(|ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Ruby:"));
+                        text_field(ui, &mut d, "text", 200.0);
+                    });
+                    crate::rtl::label(
+                        ui,
+                        egui::RichText::new(crate::i18n::tr(&app.ui.language, "Set over the selected text; empty removes it.")).size(11.0),
+                    );
+                }
+                "insertTable" => {
+                    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Table Dimensions")).font(semibold(12.0)));
+                    egui::Grid::new("ins_table").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Body Rows"));
+                        text_field(ui, &mut d, "bodyRows", 60.0);
+                        crate::rtl::label(ui, crate::i18n::tr_context(&app.ui.language, "Columns", "table"));
+                        text_field(ui, &mut d, "columns", 60.0);
+                        ui.end_row();
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Header Rows"));
+                        text_field(ui, &mut d, "headerRows", 60.0);
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Footer Rows"));
+                        text_field(ui, &mut d, "footerRows", 60.0);
+                        ui.end_row();
+                    });
+                }
+                "textFrameOptions" => {
+                    seed_text_frame_options(app, &mut d);
+                    text_frame_options_dialog(app, ui, &mut d);
+                }
+                "documentSetup" => document_setup(app, ui, &mut d),
+                "pdfExport" => pdf_export(app, ui, &mut d),
+                "alert" => {
+                    let file = d.s("file");
+                    if !file.is_empty() {
+                        crate::rtl::label(ui, egui::RichText::new(crate::rtl::isolate(&file)).font(semibold(13.0)));
+                        ui.add_space(4.0);
+                    }
+                    crate::rtl::label(ui, d.s("message"));
+                }
+                _ => {}
+            });
         ui.add_space(12.0);
         let ok_label = if d.id == "closeDocument" { "  Save  " } else { "  OK  " };
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
-                        egui::Button::new(crate::rtl::widget(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, ok_label)).color(egui::Color32::WHITE)))
-                            .fill(crate::theme::Tokens::get(ui.ctx()).accent_strong),
+                        egui::Button::new(crate::rtl::widget(
+                            ui,
+                            egui::RichText::new(crate::i18n::tr(&app.ui.language, ok_label)).color(egui::Color32::WHITE),
+                        ))
+                        .fill(crate::theme::Tokens::get(ui.ctx()).accent_strong),
                     )
                     .clicked()
                     || ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -1591,12 +1858,32 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         Some(true) => {
             let _ = confirm(app);
         }
-        Some(false) => {
-            app.ui.dialog = None;
-            app.cancel_pdf_import();
-        }
+        Some(false) => cancel(app),
         None => {}
     }
+}
+
+/// Close the open dialog without applying it (Cancel, Esc, the control channel): a previewing
+/// dialog puts the document back as it was.
+pub fn cancel(app: &mut DesignApp) {
+    if app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange") {
+        app.session.reset_find_scope();
+    }
+    if app.ui.dialog.take().is_some_and(|d| d.fields.contains_key(PREVIEWED)) {
+        app.session.cancel_interaction();
+    }
+    app.cancel_pdf_import();
+}
+
+fn find_change_params(d: &Dialog) -> Value {
+    let mut p = json!({
+        "find": d.s("find"), "change": d.s("change"), "grep": d.b("grep"),
+        "caseSensitive": d.b("caseSensitive"), "wholeWord": d.b("wholeWord"), "scope": d.s("scope"),
+    });
+    if let Some(story) = d.fields.get("story") {
+        p["story"] = story.clone();
+    }
+    p
 }
 
 /// Apply the open dialog.
@@ -1759,7 +2046,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         }
         "colorPicker" => {
             let hex = d.s("hex");
-            app.run("object.color", json!({"color": hex, "target": d.s("target")}))
+            app.run("object.color", json!({"color": hex, "target": d.s("target"), "text": d.b("text")}))
         }
         "layerOptions" => {
             let hidden: Vec<Value> = d.fields.get("layers").and_then(Value::as_array).map(|a| a.iter().filter(|l| l["visible"] == false).map(|l| l["name"].clone()).collect()).unwrap_or_default();
@@ -1779,7 +2066,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             if let Some(target) = d.fields.get("target").and_then(Value::as_u64) {
                 app.activate_import_target(&crate::ImportRequest { purpose: "place".into(), target: Some(target) })?;
             }
-            app.open_file("file.place", json!({"path": d.s("path"), "pdfPage": d.n("page").unwrap_or(1.0).max(1.0) as u64, "pdfCrop": if crop.is_empty() { "crop".to_string() } else { crop }}))
+            app.place_file(json!({"path": d.s("path"), "pdfPage": d.n("page").unwrap_or(1.0).max(1.0) as u64, "pdfCrop": if crop.is_empty() { "crop".to_string() } else { crop }}))
         }
         "print" => {
             let pages = if d.s("range") == "all" { Value::Null } else { json!(d.s("pages")) };
@@ -1791,6 +2078,57 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             )?;
             app.status(format!("Sent {} page(s) to {}", r["pages"], r["printer"].as_str().unwrap_or("the default printer")));
             Ok(r)
+        }
+        "pdfExport" => {
+            // Remember the last-used options; `pages` and `title` are per-job and not persisted.
+            app.ui.pdf_export.preset = d.s("preset");
+            app.ui.pdf_export.standard = d.s("standard");
+            app.ui.pdf_export.compress_images = d.b("compressImages");
+            app.ui.pdf_export.flatten = d.s("flatten");
+            app.ui.pdf_export.spreads = d.b("spreads");
+            app.ui.pdf_export.bleed = d.b("bleed");
+            app.ui.pdf_export.marks_crop = d.b("marksCrop");
+            app.ui.pdf_export.marks_bleed = d.b("marksBleed");
+            app.ui.pdf_export.marks_page_info = d.b("marksPageInfo");
+            app.ui.pdf_export.marks_weight = d.s("marksWeight");
+            app.ui.pdf_export.marks_offset = d.s("marksOffset");
+            app.ui.pdf_export.tagged = d.b("tagged");
+
+            let mut params = json!({
+                "standard": d.s("standard"),
+                "compressImages": d.b("compressImages"),
+                "spreads": d.b("spreads"),
+                "bleed": d.b("bleed"),
+                "tagged": d.b("tagged"),
+                "marks": {
+                    "crop": d.b("marksCrop"),
+                    "bleed": d.b("marksBleed"),
+                    "pageInfo": d.b("marksPageInfo"),
+                    "weight": d.pt("marksWeight").unwrap_or(0.25),
+                    "offset": d.pt("marksOffset").unwrap_or(6.0),
+                },
+            });
+            let flatten = d.s("flatten");
+            if !flatten.is_empty() {
+                params["flatten"] = json!(flatten);
+            }
+            let pages = d.s("pages");
+            if !pages.trim().is_empty() && pages != "all" {
+                params["pages"] = json!(pages);
+            }
+            let title = d.s("title");
+            if !title.is_empty() {
+                params["title"] = json!(title);
+            }
+            let name = if title.is_empty() { "Export.pdf".to_string() } else { format!("{title}.pdf") };
+            match app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+                Some(path) => {
+                    params["path"] = json!(path);
+                    crate::menus::export_pdf(app, &params)
+                }
+                // The user cancelled the save dialog: export nothing.
+                None => Ok(Value::Null),
+            }
         }
         "preferences" => {
             app.run(
@@ -1809,7 +2147,10 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 let words: Vec<String> = d.s("userWords").lines().map(str::to_string).collect();
                 app.run("spelling.setWords", json!({"words": words}))?;
             }
-            app.ui.story_editor_size = d.n("storyEditorSize").unwrap_or(14.0) as f32;
+            // The slider's range. A size that isn't finite is saved as `null`, and ui.json then fails to load.
+            if let Some(size) = d.n("storyEditorSize").filter(|v| v.is_finite()) {
+                app.ui.story_editor_size = size.clamp(8.0, 36.0) as f32;
+            }
             // Highlight options change the screen view only.
             app.canvas.shown = None;
             let view = match d.s("displayQuality").as_str() {
@@ -1885,6 +2226,9 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         "closeDocument" => {
             // The document may have moved in the tab row (or gone) while the dialog was open.
             let uid = d.fields.get("uid").and_then(Value::as_u64);
+            if d.b("quitting") {
+                return app.confirm_quit_document(uid.ok_or("Missing document in quit confirmation")?, d.b("discard"));
+            }
             let index = |app: &DesignApp| app.session.documents().iter().position(|doc| Some(doc.uid) == uid);
             let Some(i) = index(app) else { return Ok(Value::Null) };
             if !d.b("discard") {
@@ -1969,8 +2313,35 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.run("footnote.options", p)
         }
         "alert" => Ok(Value::Null),
-        "findChange" if d.b("objectMode") => Ok(Value::Null),
-        "findChange" => app.run("find.change", json!({"find": d.s("find"), "change": d.s("change"), "grep": d.b("grep"), "caseSensitive": d.b("caseSensitive"), "wholeWord": d.b("wholeWord"), "scope": d.s("scope")})),
+        "findChange" => {
+            let result = if d.b("objectMode") { Ok(Value::Null) } else { app.run("find.change", find_change_params(&d)) };
+            // Confirmation consumes retained bounds before closing, even on an error.
+            app.session.reset_find_scope();
+            result
+        }
+        STEP_AND_REPEAT => {
+            // The preview goes; the copies are made once, as one undo step.
+            if d.fields.contains_key(PREVIEWED) {
+                app.session.cancel_interaction();
+            }
+            let r = step_and_repeat_params(app, &d).and_then(|p| app.run("edit.stepAndRepeat", p));
+            if let Err(e) = &r {
+                let mut d = d.clone();
+                d.fields.remove(PREVIEWED);
+                d.fields.insert("status".into(), json!(e));
+                app.ui.dialog = Some(d);
+            }
+            r
+        }
+        TOC => {
+            let r = app.run("toc.generate", toc_params(app, &d));
+            if let Err(e) = &r {
+                let mut d = d.clone();
+                d.fields.insert("status".into(), json!(e));
+                app.ui.dialog = Some(d);
+            }
+            r
+        }
         id if id.starts_with("cmd:") => {
             let cid = &id[4..];
             let doc = designcraft_engine::find_command(cid).map_or("", |c| c.params);
@@ -2095,6 +2466,41 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                 });
             }
             "nested" => {
+                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Drop Caps")).font(semibold(12.0)));
+                egui::Grid::new("psdc").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    for (label, key, max) in [
+                        ("Lines:", "dropCapLines", designcraft_compose::MAX_DROP_CAP_LINES),
+                        ("Characters:", "dropCapChars", designcraft_compose::MAX_DROP_CAP_CHARS),
+                    ] {
+                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, label));
+                        let v = cur(d, &format!("p.{key}"), &pv[key]).as_f64();
+                        if let Some(n) = crate::widgets::number(ui, &format!("ps{key}"), v, "", 60.0, 0) {
+                            d.fields.insert(format!("p.{key}"), json!((n.max(0.0) as u64).min(max as u64)));
+                        }
+                        ui.end_row();
+                    }
+                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Character Style:"));
+                    let style = cur(d, "p.dropCapStyle", &pv["dropCapStyle"]).as_str().unwrap_or("").to_string();
+                    let style = if style.is_empty() { designcraft_doc::NO_CHAR_STYLE.to_string() } else { style };
+                    egui::ComboBox::from_id_salt("ps_dropcap_style")
+                        .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, &style)))
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            for c in &cnames {
+                                if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, c))).clicked() {
+                                    d.fields.insert("p.dropCapStyle".into(), json!(c));
+                                }
+                            }
+                        });
+                    ui.end_row();
+                });
+                for (label, key) in [("Align Left Edge", "dropCapAlignLeft"), ("Scale for Descenders", "dropCapScaleDescenders")] {
+                    let mut on = cur(d, &format!("p.{key}"), &pv[key]).as_bool().unwrap_or(false);
+                    if ui.checkbox(&mut on, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).changed() {
+                        d.fields.insert(format!("p.{key}"), json!(on));
+                    }
+                }
+                ui.add_space(8.0);
                 crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Nested Styles")).font(semibold(12.0)));
                 let mut list: Vec<Value> = cur(d, "p.nestedStyles", &pv["nestedStyles"]).as_array().cloned().unwrap_or_default();
                 let mut changed = false;
@@ -2150,9 +2556,19 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                             ))
                             .width(100.0)
                             .show_ui(ui, |ui| {
-                                for k in
-                                    ["sentences", "words", "characters", "letters", "digits", "tab", "forcedLineBreak", "emSpace", "enSpace", "chars"]
-                                {
+                                for k in [
+                                    "sentences",
+                                    "words",
+                                    "characters",
+                                    "letters",
+                                    "digits",
+                                    "tab",
+                                    "forcedLineBreak",
+                                    "emSpace",
+                                    "enSpace",
+                                    "dropcap",
+                                    "chars",
+                                ] {
                                     if ui.selectable_label(k == kind, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, k))).clicked() {
                                         ns["until"] = if k == "chars" { json!({"kind": "chars", "chars": ":"}) } else { json!({"kind": k}) };
                                         changed = true;
@@ -2864,6 +3280,9 @@ fn character_color(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, cf: &CharField
         crate::rtl::label(ui, crate::i18n::tr(lang, "Weight:"));
         char_number(ui, d, cf, "strokeWeight", " pt", 1.0, (0.0, 800.0));
         ui.end_row();
+        ui.label("");
+        char_check(ui, d, cf, "strokeBehindFill", crate::i18n::tr(lang, "Stroke Behind Fill"));
+        ui.end_row();
     });
 }
 
@@ -3135,7 +3554,14 @@ fn footnote_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
                 ui,
                 d,
                 "firstBaseline",
-                &[("ascent", "Ascent"), ("capHeight", "Cap Height"), ("leading", "Leading"), ("xHeight", "x Height"), ("fixed", "Fixed")],
+                &[
+                    ("ascent", "Ascent"),
+                    ("capHeight", "Cap Height"),
+                    ("leading", "Leading"),
+                    ("xHeight", "x Height"),
+                    ("emboxHeight", "Em Box Height"),
+                    ("fixed", "Fixed"),
+                ],
             );
             ui.end_row();
             crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Min:"));
@@ -3362,6 +3788,337 @@ fn command_form(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     }
 }
 
+const STEP_AND_REPEAT: &str = "cmd:edit.stepAndRepeat";
+const TOC: &str = "cmd:toc.generate";
+
+/// One included style of the Table of Contents dialog, as `toc.generate` takes it, with the
+/// separator in the dialog's notation (`^t` a tab).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+struct TocRow {
+    style: String,
+    level: u8,
+    entry_style: String,
+    page_number: String,
+    separator: String,
+}
+
+fn toc_separator_shown(s: &str) -> String {
+    s.replace('\t', "^t").replace('\u{2003}', "^m").replace('\u{2002}', "^>")
+}
+
+fn toc_separator_typed(s: &str) -> String {
+    s.replace("^t", "\t").replace("^m", "\u{2003}").replace("^>", "\u{2002}")
+}
+
+fn toc_rows(d: &Dialog) -> Vec<TocRow> {
+    d.fields.get("included").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
+/// Layout › Table of Contents…: prefilled from the document's table of contents when it has one.
+pub fn open_toc(app: &mut DesignApp) {
+    let Some(st) = app.session.active() else { return };
+    let d = &st.doc;
+    let styles: Vec<&str> = d.styles.paragraph.iter().map(|p| p.name.as_str()).filter(|n| *n != designcraft_doc::NO_PARA_STYLE).collect();
+    let toc = d.toc.as_ref().filter(|t| d.story(t.story).is_some());
+    let rows: Vec<TocRow> = toc
+        .map(|t| {
+            t.entries
+                .iter()
+                .map(|e| TocRow {
+                    style: e.style.clone(),
+                    level: e.level,
+                    entry_style: e.entry_style.clone().unwrap_or_default(),
+                    page_number: match (t.page_numbers, e.page_number) {
+                        (false, _) | (_, designcraft_doc::TocPageNumber::None) => "none",
+                        (_, designcraft_doc::TocPageNumber::Before) => "before",
+                        _ => "after",
+                    }
+                    .into(),
+                    separator: toc_separator_shown(e.separator.as_deref().unwrap_or("\t")),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let fields = json!({
+        "title": toc.map_or("Contents", |t| t.title.as_str()),
+        "titleStyle": toc.and_then(|t| t.title_style.clone()).unwrap_or_default(),
+        "included": rows,
+        "selected": 0,
+        "styles": styles,
+        "hasToc": toc.is_some(),
+        "replace": toc.is_some(),
+    });
+    app.ui.dialog = Some(Dialog::new(TOC, fields));
+}
+
+/// The dialog's fields as `toc.generate` params. A new frame goes on the page in view.
+fn toc_params(app: &DesignApp, d: &Dialog) -> Value {
+    let entries: Vec<Value> = toc_rows(d)
+        .iter()
+        .map(|r| {
+            let mut e = json!({"style": r.style, "level": r.level, "separator": toc_separator_typed(&r.separator)});
+            if !r.entry_style.is_empty() {
+                e["entryStyle"] = json!(r.entry_style);
+            }
+            if !r.page_number.is_empty() {
+                e["pageNumber"] = json!(r.page_number);
+            }
+            e
+        })
+        .collect();
+    let mut p = json!({"title": d.s("title"), "entries": entries, "replace": d.b("replace")});
+    let title_style = d.s("titleStyle");
+    if !title_style.is_empty() {
+        p["titleStyle"] = json!(title_style);
+    }
+    if let Some(page) = crate::canvas::current_page(app) {
+        p["page"] = json!(page + 1);
+    }
+    p
+}
+
+/// A paragraph style menu whose first choice, stored as "", is the generated style `auto`.
+fn toc_style_combo(ui: &mut egui::Ui, salt: &str, styles: &[String], auto: &str, cur: &mut String) -> bool {
+    let shown = if cur.is_empty() { auto.to_string() } else { cur.clone() };
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(("toc_style", salt)).selected_text(shown).width(200.0).show_ui(ui, |ui| {
+        if ui.selectable_label(cur.is_empty(), auto).clicked() {
+            cur.clear();
+            changed = true;
+        }
+        for n in styles.iter().filter(|n| *n != auto) {
+            if ui.selectable_label(cur == n, n.as_str()).clicked() {
+                *cur = n.clone();
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// Layout › Table of Contents: the title and its style, the paragraph styles to include (Add /
+/// Remove between the two lists) and, for the selected one, its entry style, page number
+/// position, separator and level.
+fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
+    let styles: Vec<String> = d.fields.get("styles").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let mut rows = toc_rows(d);
+    let mut sel = d.n("selected").map_or(0, |n| n.max(0.0) as usize);
+    let mut other = d.s("other");
+    let mut title_style = d.s("titleStyle");
+    egui::Grid::new("toc_title").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
+        crate::rtl::label(ui, tr("Title:"));
+        text_field(ui, d, "title", 200.0);
+        crate::rtl::label(ui, tr("Style:"));
+        toc_style_combo(ui, "title", &styles, "TOC Title", &mut title_style);
+        ui.end_row();
+    });
+    ui.add_space(8.0);
+    crate::rtl::label(ui, egui::RichText::new(tr("Styles in Table of Contents")).font(semibold(12.0)));
+    let others: Vec<&String> = styles.iter().filter(|n| !rows.iter().any(|r| &r.style == *n)).collect();
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            crate::rtl::label(ui, tr("Include Paragraph Styles:"));
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(200.0);
+                egui::ScrollArea::vertical().id_salt("toc_included").max_height(150.0).min_scrolled_height(150.0).show(ui, |ui| {
+                    for (i, r) in rows.iter().enumerate() {
+                        let indent = "  ".repeat(usize::from(r.level.saturating_sub(1)));
+                        if ui.selectable_label(i == sel, format!("{indent}{}", r.style)).clicked() {
+                            sel = i;
+                        }
+                    }
+                });
+            });
+        });
+        ui.vertical(|ui| {
+            ui.add_space(40.0);
+            if ui.button(tr("« Add")).clicked() && others.iter().any(|n| **n == other) {
+                let level = u8::try_from(rows.len() + 1).unwrap_or(9).min(9);
+                rows.push(TocRow { style: other.clone(), level, page_number: "after".into(), separator: "^t".into(), ..Default::default() });
+                sel = rows.len() - 1;
+                other.clear();
+            }
+            if ui.button(tr("Remove »")).clicked() && sel < rows.len() {
+                other = rows.remove(sel).style;
+                sel = sel.min(rows.len().saturating_sub(1));
+            }
+        });
+        ui.vertical(|ui| {
+            crate::rtl::label(ui, tr("Other Styles:"));
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(200.0);
+                egui::ScrollArea::vertical().id_salt("toc_other").max_height(150.0).min_scrolled_height(150.0).show(ui, |ui| {
+                    for n in styles.iter().filter(|n| !rows.iter().any(|r| &r.style == *n)) {
+                        if ui.selectable_label(*n == other, n.as_str()).clicked() {
+                            other = n.clone();
+                        }
+                    }
+                });
+            });
+        });
+    });
+    if let Some(r) = rows.get_mut(sel) {
+        ui.add_space(8.0);
+        crate::rtl::label(ui, egui::RichText::new(format!("{} {}", tr("Style:"), r.style)).font(semibold(12.0)));
+        egui::Grid::new("toc_entry").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+            crate::rtl::label(ui, tr("Entry Style:"));
+            let auto = format!("TOC Level {}", r.level.clamp(1, 9));
+            toc_style_combo(ui, "entry", &styles, &auto, &mut r.entry_style);
+            ui.end_row();
+            crate::rtl::label(ui, tr("Page Number:"));
+            let choices = [("after", "After Entry"), ("before", "Before Entry"), ("none", "No Page Number")];
+            let cur = choices.iter().find(|(v, _)| *v == r.page_number).map_or("After Entry", |(_, l)| l);
+            egui::ComboBox::from_id_salt("toc_page_number").selected_text(tr(cur)).width(200.0).show_ui(ui, |ui| {
+                for (v, l) in choices {
+                    if ui.selectable_label(r.page_number == v, tr(l)).clicked() {
+                        r.page_number = v.into();
+                    }
+                }
+            });
+            ui.end_row();
+            crate::rtl::label(ui, tr("Between Entry and Number:"));
+            ui.add(egui::TextEdit::singleline(&mut r.separator).desired_width(80.0).horizontal_align(egui::Align::Min));
+            ui.end_row();
+            crate::rtl::label(ui, tr("Level:"));
+            egui::ComboBox::from_id_salt("toc_level").selected_text(r.level.to_string()).width(60.0).show_ui(ui, |ui| {
+                for l in 1..=9u8 {
+                    if ui.selectable_label(r.level == l, l.to_string()).clicked() {
+                        r.level = l;
+                    }
+                }
+            });
+            ui.end_row();
+        });
+    }
+    ui.add_space(8.0);
+    crate::rtl::label(ui, egui::RichText::new(tr("Options")).font(semibold(12.0)));
+    let has_toc = d.b("hasToc");
+    ui.add_enabled_ui(has_toc, |ui| check(ui, d, "replace", &tr("Replace Existing Table of Contents")));
+    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+        ui.add_space(6.0);
+        crate::rtl::label(ui, egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+    }
+    d.fields.insert("included".into(), json!(rows));
+    d.fields.insert("selected".into(), json!(sel));
+    d.fields.insert("other".into(), json!(other));
+    d.fields.insert("titleStyle".into(), json!(title_style));
+}
+/// The params a previewing dialog shows on the page (its interaction is open while it is set).
+const PREVIEWED: &str = "_previewed";
+
+/// Edit › Step and Repeat, as in InDesign: Repeat (Count, or Rows and Columns with Create as a
+/// grid), Offset (Vertical, Horizontal, in the document's ruler units) and Preview, which shows
+/// the copies on the page while the dialog is open.
+fn step_and_repeat_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let (hu, vu) = app.session.active().map_or((Unit::Picas, Unit::Picas), |s| (s.doc.settings.horizontal_units, s.doc.settings.vertical_units));
+    for (k, v) in [
+        ("count", json!("1")),
+        ("rows", json!("1")),
+        ("columns", json!("1")),
+        ("vertical", json!(format_measure(12.0, vu))),
+        ("horizontal", json!(format_measure(12.0, hu))),
+    ] {
+        d.fields.entry(k).or_insert(v);
+    }
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            crate::rtl::label(ui, egui::RichText::new(tr("Repeat")).font(semibold(12.0)));
+            egui::Grid::new("sr_repeat").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                let grid = d.b("grid");
+                let fields: &[(&str, &str)] = if grid { &[("rows", "Rows:"), ("columns", "Columns:")] } else { &[("count", "Count:")] };
+                for (k, l) in fields {
+                    crate::rtl::label(ui, tr(l));
+                    text_field(ui, d, k, 70.0);
+                    ui.end_row();
+                }
+                crate::rtl::label(ui, "");
+                check(ui, d, "grid", &tr("Create as a grid"));
+                ui.end_row();
+            });
+            ui.add_space(10.0);
+            crate::rtl::label(ui, egui::RichText::new(tr("Offset")).font(semibold(12.0)));
+            ui.horizontal(|ui| {
+                for (k, l) in [("vertical", "Vertical:"), ("horizontal", "Horizontal:")] {
+                    crate::rtl::label(ui, tr(l));
+                    text_field(ui, d, k, 80.0);
+                    ui.add_space(12.0);
+                }
+            });
+        });
+        ui.add_space(32.0);
+        check(ui, d, "preview", &tr("Preview"));
+    });
+    step_and_repeat_preview(app, d);
+    if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+        ui.add_space(6.0);
+        crate::rtl::label(ui, egui::RichText::new(st).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+    }
+}
+
+/// `edit.stepAndRepeat`'s params from the dialog: whole counts, offsets in the ruler units
+/// (or any unit typed: "-0.75 in", "3p"). Empty fields are 1 copy and 1p0.
+fn step_and_repeat_params(app: &DesignApp, d: &Dialog) -> Result<Value, String> {
+    let (hu, vu) = app.session.active().map_or((Unit::Picas, Unit::Picas), |s| (s.doc.settings.horizontal_units, s.doc.settings.vertical_units));
+    let invalid = |s: &str| format!("{}: {}", crate::i18n::tr(&app.ui.language, "Invalid value"), s.trim());
+    // Fields not shown yet (a dialog confirmed over the control channel) take the defaults.
+    let whole = |k: &str| {
+        let s = d.s(k);
+        if s.trim().is_empty() { Ok(1) } else { s.trim().parse::<u64>().map_err(|_| invalid(&s)) }
+    };
+    let measure = |k: &str, u: Unit| {
+        let s = d.s(k);
+        if s.trim().is_empty() {
+            return Ok(12.0);
+        }
+        parse_measure(&s, u).ok().filter(|v| v.is_finite()).ok_or_else(|| invalid(&s))
+    };
+    let (dx, dy) = (measure("horizontal", hu)?, measure("vertical", vu)?);
+    Ok(if d.b("grid") {
+        json!({"rows": whole("rows")?, "columns": whole("columns")?, "dx": dx, "dy": dy})
+    } else {
+        json!({"count": whole("count")?, "dx": dx, "dy": dy})
+    })
+}
+
+/// Preview on: the copies show on the page (redone when a field changes); off: they go.
+fn step_and_repeat_preview(app: &mut DesignApp, d: &mut Dialog) {
+    let shown = d.fields.get(PREVIEWED).cloned();
+    if !d.b("preview") {
+        if shown.is_some() {
+            app.session.cancel_interaction();
+            d.fields.remove(PREVIEWED);
+            d.fields.remove("status");
+        }
+        return;
+    }
+    let params = match step_and_repeat_params(app, d) {
+        Ok(p) => p,
+        Err(e) => {
+            d.fields.insert("status".into(), json!(e));
+            return;
+        }
+    };
+    if shown.as_ref() == Some(&params) {
+        return;
+    }
+    if shown.is_none()
+        && let Err(e) = app.session.begin_interaction("Step and Repeat")
+    {
+        d.fields.insert("status".into(), json!(e.to_string()));
+        return;
+    }
+    match app.session.preview("edit.stepAndRepeat", params.clone()) {
+        Ok(()) => d.fields.remove("status"),
+        Err(e) => d.fields.insert("status".into(), json!(e.to_string())),
+    };
+    d.fields.insert(PREVIEWED.into(), params);
+}
+
 /// New Cross-Reference: link to a paragraph (paragraph styles on the left, their paragraphs on
 /// the right) or a text anchor, with a cross-reference format.
 fn insert_xref(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
@@ -3547,6 +4304,1107 @@ fn find_font(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn step_and_repeat_dialog_previews_and_makes_the_copies_as_one_undo_step() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [72, 600, 540, 640]})).unwrap()["id"].as_u64().unwrap();
+        app.run("selection.set", json!({"ids": [id]})).unwrap();
+        let open = |app: &mut DesignApp| {
+            crate::menus::activate(app, "edit.stepAndRepeat", &Value::Null);
+            assert_eq!(app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some(STEP_AND_REPEAT));
+        };
+        let set = |app: &mut DesignApp, k: &str, v: Value| {
+            app.ui.dialog.as_mut().unwrap().fields.insert(k.into(), v);
+        };
+        let items = |app: &DesignApp| app.session.doc().unwrap().doc.spreads[0].items.len();
+        let undo = |app: &DesignApp| app.session.doc().unwrap().history.undo.len();
+        let (n0, u0) = (items(&app), undo(&app));
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        open(&mut app);
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in ["Step and Repeat", "Repeat", "Count:", "Create as a grid", "Offset", "Vertical:", "Horizontal:", "Preview", "OK", "Cancel"] {
+            visible_label(&labels, screen, expected);
+        }
+        // Preview: the copies show, and change with the fields, without an undo step.
+        set(&mut app, "count", json!("5"));
+        set(&mut app, "vertical", json!("-0.75 in"));
+        set(&mut app, "horizontal", json!("0"));
+        set(&mut app, "preview", json!(true));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        assert_eq!((items(&app), undo(&app)), (n0 + 5, u0));
+        set(&mut app, "count", json!("3"));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        assert_eq!(items(&app), n0 + 3);
+        set(&mut app, "preview", json!(false));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        assert_eq!(items(&app), n0, "Preview off takes them away");
+        set(&mut app, "preview", json!(true));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        assert_eq!(items(&app), n0 + 3);
+        // Cancel puts the document back.
+        cancel(&mut app);
+        assert!(app.ui.dialog.is_none());
+        assert_eq!((items(&app), undo(&app)), (n0, u0));
+        // OK after a preview makes the copies once, as one undo step, 0.75 in apart.
+        app.run("selection.set", json!({"ids": [id]})).unwrap();
+        open(&mut app);
+        set(&mut app, "count", json!("2"));
+        set(&mut app, "vertical", json!("-0.75 in"));
+        set(&mut app, "horizontal", json!("0"));
+        set(&mut app, "preview", json!(true));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let r = confirm(&mut app).unwrap();
+        assert_eq!((items(&app), undo(&app)), (n0 + 2, u0 + 1));
+        let last = r["ids"][1].as_u64().unwrap();
+        let top = app.session.doc().unwrap().doc.item(designcraft_doc::ItemId(last)).unwrap().bounds().min_y();
+        assert!((top - (600.0 - 108.0)).abs() < 1e-6, "{top}");
+        // Create as a grid: Rows × Columns cells, the original being one.
+        app.run("selection.set", json!({"ids": [id]})).unwrap();
+        open(&mut app);
+        set(&mut app, "grid", json!(true));
+        set(&mut app, "rows", json!("2"));
+        set(&mut app, "columns", json!("3"));
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        visible_label(&labels, screen, "Rows:");
+        visible_label(&labels, screen, "Columns:");
+        assert_eq!(confirm(&mut app).unwrap()["created"], 5);
+        // A value that isn't a measure keeps the dialog open and says so.
+        open(&mut app);
+        set(&mut app, "vertical", json!("up"));
+        assert!(confirm(&mut app).is_err());
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!(d.s("status"), "Invalid value: up");
+    }
+
+    #[test]
+    fn toc_dialog_adds_a_style_and_ok_makes_the_table_of_contents() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.newSample", json!({})).unwrap();
+        crate::menus::activate(&mut app, "toc.generate", &Value::Null);
+        assert_eq!(app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some(TOC));
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in
+            ["Table of Contents", "Title:", "Include Paragraph Styles:", "Other Styles:", "« Add", "Remove »", "Replace Existing Table of Contents"]
+        {
+            visible_label(&labels, screen, expected);
+        }
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "Headline").center());
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "« Add").center());
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in ["Entry Style:", "TOC Level 1", "After Entry", "Between Entry and Number:", "Level:"] {
+            visible_label(&labels, screen, expected);
+        }
+        let undo = app.session.doc().unwrap().history.undo.len();
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "OK").center());
+        assert!(app.ui.dialog.is_none());
+        let d = &app.session.doc().unwrap().doc;
+        let toc = d.toc.clone().unwrap();
+        assert_eq!(toc.entries, vec![designcraft_doc::TocEntry::new("Headline", 1)]);
+        let text = &d.story(toc.story).unwrap().text;
+        assert!(text.starts_with("Contents\n") && text.contains("\nNotes on the Grid\t"), "{text}");
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), undo + 1);
+        // Reopened, the dialog shows the table of contents and replaces it.
+        crate::menus::activate(&mut app, "toc.generate", &Value::Null);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert!(d.b("replace"));
+        assert_eq!(toc_rows(d).iter().map(|r| r.style.as_str()).collect::<Vec<_>>(), ["Headline"]);
+    }
+
+    fn dialog_context(language: &str) -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, language);
+        crate::theme::apply(&ctx, &crate::theme::Tokens::for_brightness(crate::theme::Brightness::default()));
+        ctx
+    }
+
+    fn dialog_frame(app: &mut DesignApp, ctx: &egui::Context, screen: egui::Rect, events: Vec<egui::Event>) -> Vec<(String, egui::Rect, egui::Rect)> {
+        let time = ctx.input(|i| i.time) + 1.0 / 60.0;
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), time: Some(time), events, ..Default::default() }, |ui| {
+            show(app, ui.ctx());
+        });
+        output.textures_delta.clear();
+        fn collect(shape: &egui::Shape, clip: egui::Rect, labels: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => labels.push((t.galley.job.text.clone(), t.visual_bounding_rect(), clip)),
+                egui::Shape::Vec(shapes) => {
+                    for s in shapes {
+                        collect(s, clip, labels);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut labels = Vec::new();
+        for shape in output.shapes {
+            collect(&shape.shape, shape.clip_rect, &mut labels);
+        }
+        labels
+    }
+
+    fn visible_label(labels: &[(String, egui::Rect, egui::Rect)], screen: egui::Rect, expected: &str) -> egui::Rect {
+        let (_, rect, clip) = labels.iter().find(|(text, _, _)| text.trim() == expected).unwrap_or_else(|| panic!("{expected} is painted"));
+        assert!(screen.contains_rect(*rect), "{expected} must stay on screen: {rect:?}");
+        assert!(clip.contains_rect(*rect), "{expected} must not be clipped: {rect:?}, {clip:?}");
+        *rect
+    }
+
+    fn click_dialog(app: &mut DesignApp, ctx: &egui::Context, screen: egui::Rect, pos: egui::Pos2) {
+        for pressed in [true, false] {
+            dialog_frame(
+                app,
+                ctx,
+                screen,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+                ],
+            );
+        }
+    }
+
+    fn scroll_dialog(app: &mut DesignApp, ctx: &egui::Context, screen: egui::Rect, pos: egui::Pos2, delta: egui::Vec2) {
+        dialog_frame(
+            app,
+            ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, phase: egui::TouchPhase::Move, modifiers: egui::Modifiers::NONE },
+            ],
+        );
+        // Let smooth wheel scrolling and scrollbar visibility settle before clicking.
+        for _ in 0..30 {
+            dialog_frame(app, ctx, screen, vec![]);
+        }
+    }
+
+    fn scope_control(app: &mut DesignApp, ctx: &egui::Context, method: &str, params: Value) -> Value {
+        let (request, _reply) = crate::control::ControlRequest::new(method, params);
+        let crate::control::Outcome::Done(value) = crate::control::handle(app, ctx, &request) else { panic!("ordinary control response") };
+        assert_eq!(value["ok"], true, "{value}");
+        value["result"].clone()
+    }
+
+    fn scope_click(app: &mut DesignApp, ctx: &egui::Context, screen: egui::Rect, label: &str) {
+        let labels = dialog_frame(app, ctx, screen, vec![]);
+        let pos = visible_label(&labels, screen, label).center();
+        click_dialog(app, ctx, screen, pos);
+    }
+
+    fn scope_dialog() -> (DesignApp, egui::Context, egui::Rect, designcraft_engine::doc::StoryId) {
+        scope_dialog_with_selection("red red | red", 7)
+    }
+
+    fn scope_dialog_with_selection(text: &str, end: usize) -> (DesignApp, egui::Context, egui::Rect, designcraft_engine::doc::StoryId) {
+        scope_dialog_with_tool(text, end, None)
+    }
+
+    fn scope_dialog_with_tool(
+        text: &str,
+        end: usize,
+        tool: Option<&str>,
+    ) -> (DesignApp, egui::Context, egui::Rect, designcraft_engine::doc::StoryId) {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.ui.language = "en".into();
+        app.run("file.new", json!({})).unwrap();
+        let frame = app.run("frame.create", json!({"rect": [36, 36, 100, 100], "content": "text", "text": text})).unwrap();
+        let sid = designcraft_engine::doc::StoryId(frame["story"].as_u64().unwrap());
+        let ctx = dialog_context("en");
+        if let Some(tool) = tool {
+            scope_control(&mut app, &ctx, "ui.tool.select", json!({"tool": tool}));
+        }
+        app.run("text.select", json!({"story": sid.0, "anchor": 0, "focus": end})).unwrap();
+        app.run("app.findChange", json!({})).unwrap();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1178.0, 814.0));
+        for (field, value) in [("find", "red"), ("change", "unused")] {
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": field, "value": value}));
+        }
+        for _ in 0..3 {
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        scope_click(&mut app, &ctx, screen, "document");
+        scope_click(&mut app, &ctx, screen, "selection");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("scope"), "selection");
+        (app, ctx, screen, sid)
+    }
+
+    fn scope_selected(app: &DesignApp, sid: designcraft_engine::doc::StoryId, a: usize, b: usize) {
+        let t = app.session.doc().unwrap().selection.text.unwrap();
+        assert_eq!((t.story, t.range(), t.cell), (sid, a..b, None));
+    }
+
+    fn scope_state_unchanged(app: &DesignApp, before: &designcraft_engine::DocState) {
+        let after = app.session.doc().unwrap();
+        assert!(std::sync::Arc::ptr_eq(&before.doc, &after.doc));
+        assert_eq!(after.uid, before.uid);
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.selection, before.selection);
+        assert_eq!(after.history.limit, before.history.limit);
+        for (actual, expected) in [(&after.history.undo, &before.history.undo), (&after.history.redo, &before.history.redo)] {
+            assert_eq!(actual.len(), expected.len());
+            for (a, b) in actual.iter().zip(expected) {
+                assert_eq!(a.label, b.label);
+                assert_eq!(a.selection, b.selection);
+                assert!(std::sync::Arc::ptr_eq(&a.doc, &b.doc));
+            }
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_control_effective_noops_retain_bounds() {
+        for (field, value) in [("objectMode", json!(false)), ("story", Value::Null)] {
+            let (mut app, ctx, screen, sid) = scope_dialog();
+            assert!(!app.ui.dialog.as_ref().unwrap().fields.contains_key(field));
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+            scope_click(&mut app, &ctx, screen, "Count");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 3);
+            let before = app.session.doc().unwrap().clone();
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": field, "value": value}));
+            assert_eq!(app.ui.dialog.as_ref().unwrap().fields[field], value);
+            scope_state_unchanged(&app, &before);
+            scope_click(&mut app, &ctx, screen, "Count");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 4, 7);
+            scope_click(&mut app, &ctx, screen, "Change All");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 replacement(s) made");
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue blue | red");
+            assert_eq!(app.session.doc().unwrap().history.undo.len(), before.history.undo.len() + 1);
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_explicit_story_ignored_scope_preserves_grep_cursor() {
+        for physical in [false, true] {
+            for (text, pattern, hits, changed) in [
+                ("é", "é|(?:)", vec![(0, 2)], "X"),
+                ("é🙂", "é|(?:)", vec![(0, 2), (6, 6)], "X🙂X"),
+                ("é🙂", "(?:)", vec![(0, 0), (2, 2), (6, 6)], "XéX🙂X"),
+            ] {
+                let (mut app, ctx, screen, sid) = scope_dialog_with_selection(text, 0);
+                for (field, value) in [("find", json!(pattern)), ("change", json!("X")), ("story", json!(sid.0))] {
+                    scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": field, "value": value}));
+                }
+                scope_click(&mut app, &ctx, screen, "GREP");
+                scope_click(&mut app, &ctx, screen, "Count");
+                assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), format!("{} match(es)", hits.len()));
+                for &(a, b) in &hits {
+                    scope_click(&mut app, &ctx, screen, "Find Next");
+                    assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "Found");
+                    scope_selected(&app, sid, a, b);
+                    let before = app.session.doc().unwrap().clone();
+                    let cur = app.ui.dialog.as_ref().unwrap().s("scope");
+                    let next = if cur == "selection" { "document" } else { "selection" };
+                    if physical {
+                        scope_click(&mut app, &ctx, screen, &cur);
+                        scope_click(&mut app, &ctx, screen, next);
+                    } else {
+                        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "scope", "value": next}));
+                    }
+                    assert_eq!(app.ui.dialog.as_ref().unwrap().s("scope"), next);
+                    assert_eq!(app.ui.dialog.as_ref().unwrap().fields["story"], json!(sid.0));
+                    scope_state_unchanged(&app, &before);
+                    scope_click(&mut app, &ctx, screen, "Count");
+                    assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), format!("{} match(es)", hits.len()));
+                }
+                scope_click(&mut app, &ctx, screen, "Find Next");
+                assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "No matches");
+                // An ignored scope change must not revive an exhausted endpoint either.
+                let before = app.session.doc().unwrap().clone();
+                let cur = app.ui.dialog.as_ref().unwrap().s("scope");
+                let next = if cur == "selection" { "document" } else { "selection" };
+                if physical {
+                    scope_click(&mut app, &ctx, screen, &cur);
+                    scope_click(&mut app, &ctx, screen, next);
+                } else {
+                    scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "scope", "value": next}));
+                }
+                scope_click(&mut app, &ctx, screen, "Find Next");
+                assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "No matches");
+                scope_state_unchanged(&app, &before);
+                scope_click(&mut app, &ctx, screen, "Change All");
+                assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), format!("{} replacement(s) made", hits.len()));
+                assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, changed);
+            }
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_explicit_story_transitions_reset_cursor() {
+        for remove_override in [false, true] {
+            let (mut app, ctx, screen, sid) = scope_dialog_with_selection("é🙂", 0);
+            let other = app.run("frame.create", json!({"rect": [180, 36, 100, 100], "content": "text", "text": "other"})).unwrap();
+            app.run("text.select", json!({"story": sid.0, "anchor": 0, "focus": 0})).unwrap();
+            for (field, value) in [("find", json!("(?:)")), ("story", json!(sid.0))] {
+                scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": field, "value": value}));
+            }
+            scope_click(&mut app, &ctx, screen, "GREP");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 0);
+            let before = app.session.doc().unwrap().clone();
+            let value = if remove_override { Value::Null } else { other["story"].clone() };
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "story", "value": value}));
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "story", "value": sid.0}));
+            scope_state_unchanged(&app, &before);
+            // Away and back still releases continuation even if no Find command intervenes.
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 0);
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 2, 2);
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "é🙂");
+            let other_sid = designcraft_engine::doc::StoryId(other["story"].as_u64().unwrap());
+            assert_eq!(app.session.doc().unwrap().doc.story(other_sid).unwrap().text, "other");
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_control_mode_changes_release_bounds() {
+        for object_mode in [false, true] {
+            let (mut app, ctx, _, sid) = scope_dialog();
+            if object_mode {
+                scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "objectMode", "value": true}));
+            }
+            // Direct Session consumers share the retained domain even while Object is shown.
+            let p = json!({"find": "red", "change": "blue", "scope": "selection"});
+            let count = scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.find", "params": p}));
+            assert_eq!(count.as_array().unwrap().len(), 2);
+            scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.next", "params": p}));
+            scope_selected(&app, sid, 0, 3);
+            let before = app.session.doc().unwrap().clone();
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "objectMode", "value": !object_mode}));
+            assert_eq!(app.ui.dialog.as_ref().unwrap().b("objectMode"), !object_mode);
+            scope_state_unchanged(&app, &before);
+            let count = scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.find", "params": p}));
+            assert_eq!(count, json!([{"story": sid.0, "start": 0, "end": 3, "text": "red"}]));
+            let changed = scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.change", "params": p}));
+            assert_eq!(changed, json!({"count": 1}));
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue red | red");
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_tool_replacement_releases_bounds() {
+        for (tool, replacement) in [("page", "cmd:layout.pageSize"), ("rectangleFrame", "frameSize")] {
+            let (mut app, ctx, screen, sid) = scope_dialog_with_tool("red red | red", 7, Some(tool));
+            assert_eq!(app.session.tool_id(), tool);
+            scope_click(&mut app, &ctx, screen, "Count");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 3);
+            let before = app.session.doc().unwrap().clone();
+            let active = (app.session.active_index(), app.session.documents().len());
+            let off = app.session.layout().xf(designcraft_engine::doc::SpreadRef::Doc(0)).translation();
+            let x = off.x + before.doc.spreads[0].pages[0].x + 200.0;
+            let y = off.y + 200.0;
+            // The Page tool opens Page Size on a double-click (a click selects the page).
+            let events = if tool == "page" {
+                json!([{"kind": "doubleclick", "x": x, "y": y}])
+            } else {
+                json!([{"kind": "down", "x": x, "y": y}, {"kind": "up", "x": x, "y": y}])
+            };
+            // Real tool -> Action::Dialog -> after_engine; no injected UI request.
+            scope_control(&mut app, &ctx, "ui.pointer", json!({"events": events}));
+            assert_eq!(app.ui.dialog.as_ref().unwrap().id, replacement);
+            assert!(app.session.ui_requests.is_empty());
+            assert_eq!((app.session.active_index(), app.session.documents().len()), active);
+            scope_state_unchanged(&app, &before);
+            scope_click(&mut app, &ctx, screen, "Cancel");
+            assert!(app.ui.dialog.is_none());
+            assert_eq!((app.session.active_index(), app.session.documents().len()), active);
+            scope_state_unchanged(&app, &before);
+            let p = json!({"find": "red", "change": "blue", "scope": "selection"});
+            let count = scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.find", "params": p}));
+            assert_eq!(count, json!([{"story": sid.0, "start": 0, "end": 3, "text": "red"}]));
+            scope_state_unchanged(&app, &before);
+            let changed = scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.change", "params": p}));
+            assert_eq!(changed, json!({"count": 1}));
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue red | red");
+            assert_eq!(app.session.doc().unwrap().history.undo.len(), before.history.undo.len() + 1);
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_tool_without_replacement_retains_bounds() {
+        for tool in ["page", "rectangleFrame"] {
+            let (mut app, ctx, screen, sid) = scope_dialog_with_tool("red red | red", 7, Some(tool));
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+            scope_click(&mut app, &ctx, screen, "Count");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 3);
+            let before = app.session.doc().unwrap().clone();
+            let fields = app.ui.dialog.as_ref().unwrap().fields.clone();
+            scope_control(&mut app, &ctx, "ui.pointer", json!({"events": [{"kind": "move", "x": 200, "y": 200}]}));
+            assert_eq!(app.ui.dialog.as_ref().unwrap().id, "findChange");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().fields, fields);
+            scope_state_unchanged(&app, &before);
+            scope_click(&mut app, &ctx, screen, "Count");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 4, 7);
+            scope_click(&mut app, &ctx, screen, "Change All");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 replacement(s) made");
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue blue | red");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn find_scope_dialog_native_pdf_replacement_releases_bounds() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("three.pdf");
+        std::fs::write(&path, crate::browser_import_tests::pdf()).unwrap();
+        for dismissal in ["Cancel", "Escape", "control"] {
+            let (mut app, ctx, screen, sid) = scope_dialog();
+            let picked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let seen_pick = picked.clone();
+            let seen_read = read.clone();
+            let pick_path = path.to_string_lossy().to_string();
+            let read_path = pick_path.clone();
+            app.services.pick_open = Some(Box::new(move |purpose| {
+                assert_eq!(purpose, "place");
+                seen_pick.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Some(pick_path.clone())
+            }));
+            app.services.read = Some(Box::new(move |path| {
+                assert_eq!(path, read_path);
+                seen_read.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::fs::read(path).map_err(|e| e.to_string())
+            }));
+            scope_click(&mut app, &ctx, screen, "Count");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 3);
+            let before = app.session.doc().unwrap().clone();
+            let active = (app.session.active_index(), app.session.documents().len());
+            // Exercise engine.execute -> UiRequest::Pick -> native host PDF replacement.
+            scope_control(&mut app, &ctx, "engine.execute", json!({"command": "file.place", "params": {}}));
+            assert_eq!(picked.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(read.load(std::sync::atomic::Ordering::SeqCst), 1);
+            let dialog = app.ui.dialog.as_ref().unwrap();
+            assert_eq!(dialog.id, "pdfImport");
+            assert_eq!(dialog.s("path"), path.to_string_lossy());
+            assert_eq!(dialog.fields["pages"], 3);
+            assert_eq!(dialog.s("page"), "1");
+            assert!(!dialog.b("async"));
+            assert_eq!(dialog.fields["target"], json!(before.uid));
+            assert!(app.session.ui_requests.is_empty());
+            assert!(app.pending_pdf.is_none());
+            assert_eq!((app.session.active_index(), app.session.documents().len()), active);
+            scope_state_unchanged(&app, &before);
+            match dismissal {
+                "Cancel" => scope_click(&mut app, &ctx, screen, "Cancel"),
+                "Escape" => {
+                    dialog_frame(
+                        &mut app,
+                        &ctx,
+                        screen,
+                        vec![egui::Event::Key {
+                            key: egui::Key::Escape,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }],
+                    );
+                }
+                "control" => {
+                    scope_control(&mut app, &ctx, "ui.dialog.cancel", json!({}));
+                }
+                _ => panic!("known dismissal"),
+            }
+            assert!(app.ui.dialog.is_none());
+            assert!(app.pending_pdf.is_none());
+            assert_eq!(picked.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(read.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!((app.session.active_index(), app.session.documents().len()), active);
+            scope_state_unchanged(&app, &before);
+            let p = json!({"find": "red", "change": "blue", "scope": "selection"});
+            let count = scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.find", "params": p}));
+            assert_eq!(count, json!([{"story": sid.0, "start": 0, "end": 3, "text": "red"}]));
+            scope_state_unchanged(&app, &before);
+            let changed = scope_control(&mut app, &ctx, "engine.execute", json!({"command": "find.change", "params": p}));
+            assert_eq!(changed, json!({"count": 1}));
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue red | red");
+            assert_eq!(app.session.doc().unwrap().history.undo.len(), before.history.undo.len() + 1);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn find_scope_dialog_native_picker_cancel_retains_bounds() {
+        let (mut app, ctx, screen, sid) = scope_dialog();
+        let picked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = picked.clone();
+        app.services.pick_open = Some(Box::new(move |purpose| {
+            assert_eq!(purpose, "place");
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            None
+        }));
+        let read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen_read = read.clone();
+        app.services.read = Some(Box::new(move |_| {
+            seen_read.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("canceled picker must not read".into())
+        }));
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        let before = app.session.doc().unwrap().clone();
+        let active = (app.session.active_index(), app.session.documents().len());
+        let fields = app.ui.dialog.as_ref().unwrap().fields.clone();
+        scope_control(&mut app, &ctx, "engine.execute", json!({"command": "file.place", "params": {}}));
+        assert_eq!(picked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(read.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(app.ui.dialog.as_ref().unwrap().id, "findChange");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().fields, fields);
+        assert_eq!((app.session.active_index(), app.session.documents().len()), active);
+        scope_state_unchanged(&app, &before);
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 4, 7);
+        scope_click(&mut app, &ctx, screen, "Change All");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 replacement(s) made");
+        assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue blue | red");
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), before.history.undo.len() + 1);
+    }
+
+    #[test]
+    fn find_scope_dialog_exact_baseline_buttons() {
+        let (mut app, ctx, screen, sid) = scope_dialog_with_selection("red red", 3);
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "1 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_click(&mut app, &ctx, screen, "Change All");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "1 replacement(s) made");
+        assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue red");
+    }
+
+    #[test]
+    fn find_scope_dialog_grep_tab_alone_restarts_original_selection() {
+        let (mut app, ctx, screen, sid) = scope_dialog();
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_click(&mut app, &ctx, screen, "GREP");
+        assert!(app.ui.dialog.as_ref().unwrap().b("grep"));
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("find"), "red");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 4, 7);
+        scope_click(&mut app, &ctx, screen, "Text");
+        assert!(!app.ui.dialog.as_ref().unwrap().b("grep"));
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+    }
+
+    #[test]
+    fn find_scope_dialog_buttons_retain_nonempty_hits_and_change_all() {
+        let (mut app, ctx, screen, sid) = scope_dialog();
+        let history = app.session.doc().unwrap().history.undo.len();
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 4, 7);
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "No matches");
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), history);
+        scope_click(&mut app, &ctx, screen, "Change All");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 replacement(s) made");
+        assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue blue | red");
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), history + 1);
+        scope_click(&mut app, &ctx, screen, "Cancel");
+        assert!(app.ui.dialog.is_none());
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "red red | red");
+        app.run("edit.redo", json!({})).unwrap();
+        let native = app.run("file.serialize", json!({})).unwrap();
+        app.run("file.openBytes", json!({"name": "scope.designcraft", "base64": native["base64"]})).unwrap();
+        assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue blue | red");
+    }
+
+    fn scope_confirm_case(action: &str) {
+        let (mut app, ctx, screen, sid) = scope_dialog();
+        scope_click(&mut app, &ctx, screen, "Count");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+        match action {
+            "OK" => scope_click(&mut app, &ctx, screen, "OK"),
+            "Enter" => {
+                dialog_frame(
+                    &mut app,
+                    &ctx,
+                    screen,
+                    vec![egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+            "control" => {
+                assert_eq!(scope_control(&mut app, &ctx, "ui.dialog.confirm", json!({}))["count"], 2);
+            }
+            _ => panic!("known confirmation route"),
+        }
+        assert!(app.ui.dialog.is_none());
+        assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue blue | red");
+        // The closed dialog cannot leave its old seven-byte range for a later direct query.
+        let matches = app.run("find.find", json!({"find": "blue", "scope": "selection"})).unwrap();
+        assert_eq!(matches.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn find_scope_dialog_ok_consumes_retained_bounds() {
+        scope_confirm_case("OK");
+    }
+
+    #[test]
+    fn find_scope_dialog_enter_consumes_retained_bounds() {
+        scope_confirm_case("Enter");
+    }
+
+    #[test]
+    fn find_scope_dialog_control_confirm_consumes_retained_bounds() {
+        scope_confirm_case("control");
+    }
+
+    #[test]
+    fn find_scope_dialog_query_reselection_cancel_and_reopen() {
+        let (mut app, ctx, screen, sid) = scope_dialog();
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "grep", "value": true}));
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "find", "value": "r.d"}));
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_control(&mut app, &ctx, "ui.dialog.cancel", json!({}));
+        assert_eq!(app.run("find.find", json!({"find": "red", "scope": "selection"})).unwrap().as_array().unwrap().len(), 1);
+        app.run("text.select", json!({"story": sid.0, "anchor": 0, "focus": 7})).unwrap();
+        app.run("find.next", json!({"find": "red", "scope": "selection"})).unwrap();
+        scope_control(&mut app, &ctx, "ui.dialog.open", json!({"id": "findChange", "fields": {"find": "red", "scope": "selection"}}));
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "1 match(es)");
+        app.run("text.select", json!({"story": sid.0, "anchor": 4, "focus": 7})).unwrap();
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 4, 7);
+        app.run("app.findChange", json!({})).unwrap();
+        for (field, value) in [("find", "red"), ("scope", "selection")] {
+            scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": field, "value": value}));
+        }
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "1 match(es)");
+    }
+
+    #[test]
+    fn find_scope_dialog_word_reselection_limits_count_and_change_buttons() {
+        let (mut app, ctx, screen, sid) = scope_dialog();
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+        scope_click(&mut app, &ctx, screen, "Find Next");
+        scope_selected(&app, sid, 0, 3);
+        let selected = app.session.doc().unwrap().selection.clone();
+        let frame = selected.text.unwrap().frame.unwrap();
+        let point = {
+            let st = app.session.doc().unwrap();
+            let cs = app.session.cache.get(&st.doc, sid, None);
+            let (fi, x, baseline, ascent, _) = designcraft_compose::caret(&cs, 1).unwrap();
+            let inner = designcraft_geom::Point::new(x, baseline - ascent * 0.5);
+            assert_eq!(cs.frames[fi].frame, frame);
+            assert_eq!(designcraft_compose::hit(&cs, fi, inner), Some(1));
+            let loc = st.doc.find(frame).unwrap();
+            st.doc.parent_xf(&loc) * st.doc.text_xf(st.doc.item(frame).unwrap()) * inner
+        };
+        let before = app.session.doc().unwrap().doc.clone();
+        let revision = app.session.doc().unwrap().revision;
+        app.run("text.selectWord", json!({"frame": frame.0, "point": [point.x, point.y]})).unwrap();
+        assert_eq!(app.session.doc().unwrap().selection, selected);
+        assert_eq!(app.session.doc().unwrap().revision, revision + 1);
+        assert!(std::sync::Arc::ptr_eq(&before, &app.session.doc().unwrap().doc));
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "1 match(es)");
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+        scope_click(&mut app, &ctx, screen, "Change All");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "1 replacement(s) made");
+        assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue red | red");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn find_scope_dialog_failed_native_drop_alert_releases_bounds() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("broken.designcraft");
+        std::fs::write(&path, b"not a native document").unwrap();
+        for dismissal in ["OK", "Escape", "control"] {
+            let (mut app, ctx, screen, sid) = scope_dialog();
+            scope_click(&mut app, &ctx, screen, "Count");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "2 match(es)");
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 3);
+            let before = app.session.doc().unwrap().doc.clone();
+            let selected = app.session.doc().unwrap().selection.clone();
+            let revision = app.session.doc().unwrap().revision;
+            let history = app.session.doc().unwrap().history.undo.len();
+            let uid = app.session.doc().unwrap().uid;
+            let error = app.open_dropped(&path.to_string_lossy()).unwrap_err();
+            let alert = app.ui.dialog.as_ref().unwrap();
+            assert_eq!(alert.id, "alert");
+            assert_eq!(alert.s("title"), "Can't Open the File");
+            assert_eq!(alert.s("message"), error);
+            assert!(std::sync::Arc::ptr_eq(&before, &app.session.doc().unwrap().doc));
+            assert_eq!(app.session.doc().unwrap().selection, selected);
+            assert_eq!(app.session.doc().unwrap().revision, revision);
+            assert_eq!(app.session.doc().unwrap().uid, uid);
+            assert_eq!(app.session.doc().unwrap().history.undo.len(), history);
+            match dismissal {
+                "OK" => scope_click(&mut app, &ctx, screen, "OK"),
+                "Escape" => {
+                    dialog_frame(
+                        &mut app,
+                        &ctx,
+                        screen,
+                        vec![egui::Event::Key {
+                            key: egui::Key::Escape,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }],
+                    );
+                }
+                "control" => {
+                    scope_control(&mut app, &ctx, "ui.dialog.cancel", json!({}));
+                }
+                _ => panic!("known dismissal"),
+            }
+            assert!(app.ui.dialog.is_none());
+            let p = json!({"find": "red", "change": "blue", "scope": "selection"});
+            assert_eq!(app.run("find.find", p.clone()).unwrap(), json!([{"story": sid.0, "start": 0, "end": 3, "text": "red"}]));
+            assert_eq!(app.run("find.change", p).unwrap(), json!({"count": 1}));
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "blue red | red");
+            assert_eq!(app.session.doc().unwrap().history.undo.len(), history + 1);
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_child_errors_and_explicit_parent() {
+        let (mut app, ctx, screen, sid) = scope_dialog();
+        app.run("text.select", json!({"story": sid.0, "anchor": 13, "focus": 13})).unwrap();
+        app.run("table.insert", json!({"rows": 1, "cols": 1})).unwrap();
+        app.run("text.insert", json!({"text": "red child", "raw": true})).unwrap();
+        let child = app.session.doc().unwrap().selection.text.unwrap();
+        let before = app.session.doc().unwrap().doc.clone();
+        let selection = app.session.doc().unwrap().selection.clone();
+        let history = app.session.doc().unwrap().history.undo.len();
+        for label in ["Count", "Find Next", "Change All"] {
+            scope_click(&mut app, &ctx, screen, label);
+            assert!(app.ui.dialog.as_ref().unwrap().s("status").contains("not supported"));
+            assert!(std::sync::Arc::ptr_eq(&before, &app.session.doc().unwrap().doc));
+            assert_eq!(app.session.doc().unwrap().selection, selection);
+            assert_eq!(app.session.doc().unwrap().history.undo.len(), history);
+        }
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "change", "value": "blue"}));
+        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "story", "value": sid.0}));
+        scope_click(&mut app, &ctx, screen, "Count");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "3 match(es)");
+        scope_click(&mut app, &ctx, screen, "Change All");
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("status"), "3 replacement(s) made");
+        assert_eq!(app.session.doc().unwrap().doc.text_story(sid, child.cell).unwrap().text, "red child");
+        assert!(app.session.doc().unwrap().doc.story(sid).unwrap().text.starts_with("blue blue | blue"));
+    }
+
+    #[test]
+    fn find_scope_dialog_error_confirmation_and_escape_release_context() {
+        for escape in [false, true] {
+            let (mut app, ctx, screen, sid) = scope_dialog();
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            scope_selected(&app, sid, 0, 3);
+            if escape {
+                dialog_frame(
+                    &mut app,
+                    &ctx,
+                    screen,
+                    vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            } else {
+                scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "find", "value": "["}));
+                scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "grep", "value": true}));
+                scope_click(&mut app, &ctx, screen, "OK");
+            }
+            assert!(app.ui.dialog.is_none());
+            assert_eq!(app.session.doc().unwrap().doc.story(sid).unwrap().text, "red red | red");
+            assert_eq!(app.run("find.find", json!({"find": "red", "scope": "selection"})).unwrap().as_array().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn find_scope_dialog_domain_and_object_changes_release_original_range() {
+        for route in ["scope", "object", "menu", "command"] {
+            let (mut app, ctx, screen, _) = scope_dialog();
+            scope_click(&mut app, &ctx, screen, "Find Next");
+            match route {
+                "scope" => {
+                    for scope in ["story", "selection"] {
+                        scope_control(&mut app, &ctx, "ui.dialog.set", json!({"field": "scope", "value": scope}));
+                    }
+                }
+                "object" => {
+                    scope_click(&mut app, &ctx, screen, "Object");
+                    scope_click(&mut app, &ctx, screen, "Text");
+                }
+                "menu" => crate::menus::activate(&mut app, "app.newDocumentDialog", &Value::Null),
+                "command" => {
+                    app.run("app.newDocumentDialog", json!({})).unwrap();
+                }
+                _ => panic!("known reset route"),
+            }
+            assert_eq!(app.run("find.find", json!({"find": "red", "scope": "selection"})).unwrap().as_array().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn dialog_title_and_actions_fit_scaled_viewports() {
+        for language in ["en", "ar"] {
+            for size in [egui::vec2(1178.0, 814.0), egui::vec2(589.0, 407.0), egui::vec2(392.0, 271.0), egui::vec2(450.0, 280.0)] {
+                for (command, title) in [("app.preferences", "Preferences"), ("app.newDocumentDialog", "New Document")] {
+                    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+                    app.ui.language = language.into();
+                    app.run("file.new", json!({})).unwrap();
+                    app.run(command, json!({})).unwrap();
+                    let ctx = dialog_context(language);
+                    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                    for _ in 0..3 {
+                        dialog_frame(&mut app, &ctx, screen, vec![]);
+                    }
+                    let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+                    for expected in [title, "OK", "Cancel"] {
+                        visible_label(&labels, screen, crate::i18n::tr(language, expected));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preferences_sidebar_scroll_keeps_selected_options_visible() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("app.preferences", json!({})).unwrap();
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(589.0, 407.0));
+        for _ in 0..3 {
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        let sidebar = visible_label(&labels, screen, "General").center();
+        assert!(
+            !labels.iter().any(|(text, rect, clip)| text == "File Handling" && clip.contains_rect(*rect)),
+            "last section starts below the sidebar"
+        );
+        scroll_dialog(&mut app, &ctx, screen, sidebar, egui::vec2(0.0, -600.0));
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        let files = visible_label(&labels, screen, "File Handling").center();
+        click_dialog(&mut app, &ctx, screen, files);
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("section"), "files");
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in ["Document Recovery Data", "Save recovery data every:", "OK", "Cancel"] {
+            visible_label(&labels, screen, expected);
+        }
+    }
+
+    #[test]
+    fn preferences_horizontal_scroll_reaches_clipped_options() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("app.preferences", json!({})).unwrap();
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(450.0, 280.0));
+        for _ in 0..3 {
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        let body = visible_label(&labels, screen, "When Scaling").center();
+        let option = "Absolute Numbering (instead of Section Numbering)";
+        let (_, rect, clip) = labels.iter().find(|(text, _, _)| text == option).unwrap();
+        assert!(rect.right() > clip.right(), "rightmost option starts horizontally clipped: {rect:?}, {clip:?}");
+        scroll_dialog(&mut app, &ctx, screen, body, egui::vec2(-600.0, 0.0));
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in [option, "Preferences", "OK", "Cancel"] {
+            visible_label(&labels, screen, expected);
+        }
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, option).center());
+        assert!(app.ui.dialog.as_ref().unwrap().b("absolutePageNumbers"));
+    }
+
+    #[test]
+    fn preferences_ok_saves_a_story_editor_size_that_loads_back() {
+        // `ui.dialog.set` takes any value; a size that isn't finite is saved as `null`.
+        let sizes = [(json!("nan"), 20.0), (json!("inf"), 20.0), (json!(null), 20.0), (json!(1e39), 36.0), (json!(3), 8.0), (json!(11), 11.0)];
+        for (size, want) in sizes {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({})).unwrap();
+            app.ui.story_editor_size = 20.0;
+            app.run("app.preferences", json!({})).unwrap();
+            app.ui.dialog.as_mut().unwrap().fields.insert("storyEditorSize".into(), size);
+            confirm(&mut app).unwrap();
+            let saved = serde_json::to_vec(&app.ui).unwrap();
+            assert_eq!(crate::UiState::from_preferences_json(&saved).unwrap().story_editor_size, want);
+        }
+    }
+
+    #[test]
+    fn new_document_vertical_scroll_reaches_last_field() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("app.newDocumentDialog", json!({})).unwrap();
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(392.0, 271.0));
+        for _ in 0..3 {
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        let body = visible_label(&labels, screen, "Width").center();
+        let (_, rect, clip) = labels.iter().find(|(text, _, _)| text == "Primary Text Frame").unwrap();
+        assert!(rect.bottom() > clip.bottom(), "last field starts vertically clipped");
+        scroll_dialog(&mut app, &ctx, screen, body, egui::vec2(0.0, -600.0));
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        for expected in ["Primary Text Frame", "New Document", "OK", "Cancel"] {
+            visible_label(&labels, screen, expected);
+        }
+        click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "Primary Text Frame").center());
+        assert!(app.ui.dialog.as_ref().unwrap().b("primaryTextFrame"));
+    }
+
+    #[test]
+    fn arabic_new_document_leftmost_fields_remain_reachable() {
+        for size in [egui::vec2(392.0, 271.0), egui::vec2(450.0, 280.0)] {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.ui.language = "ar".into();
+            app.run("app.newDocumentDialog", json!({})).unwrap();
+            let fields = [("height", "66p1"), ("gutter", "1p2"), ("marginBottom", "3p3"), ("marginOutside", "3p4")];
+            for (field, value) in fields {
+                app.ui.dialog.as_mut().unwrap().fields.insert(field.into(), json!(value));
+            }
+            let ctx = dialog_context("ar");
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            for _ in 0..3 {
+                dialog_frame(&mut app, &ctx, screen, vec![]);
+            }
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            for (_, value) in fields {
+                visible_label(&labels, screen, value);
+            }
+            let body = visible_label(&labels, screen, "66p1").center();
+            for x in [-600.0, 600.0] {
+                scroll_dialog(&mut app, &ctx, screen, body, egui::vec2(x, 0.0));
+                let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+                for (_, value) in fields {
+                    visible_label(&labels, screen, value);
+                }
+            }
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "66p1").center());
+            dialog_frame(
+                &mut app,
+                &ctx,
+                screen,
+                vec![
+                    egui::Event::Key {
+                        key: egui::Key::A,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers { ctrl: true, command: true, ..Default::default() },
+                    },
+                    egui::Event::Text("88p8".into()),
+                ],
+            );
+            assert_eq!(app.ui.dialog.as_ref().unwrap().s("height"), "88p8", "leftmost numeric field accepts edits");
+            scroll_dialog(&mut app, &ctx, screen, body, egui::vec2(0.0, -600.0));
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            let label = crate::i18n::tr("ar", "Primary Text Frame");
+            click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, label).center());
+            assert!(app.ui.dialog.as_ref().unwrap().b("primaryTextFrame"), "leftmost checkbox remains clickable after scrolling");
+        }
+    }
+
+    #[test]
+    fn resized_dialogs_cancel_and_reopen_without_applying_edits() {
+        for (command, title, field) in [("app.preferences", "Preferences", "recoveryMinutes"), ("app.newDocumentDialog", "New Document", "pages")] {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run(command, json!({})).unwrap();
+            let original = app.ui.dialog.as_ref().unwrap().fields[field].clone();
+            app.ui.dialog.as_mut().unwrap().fields.insert(field.into(), json!(42));
+            let ctx = dialog_context("en");
+            for size in [egui::vec2(1178.0, 814.0), egui::vec2(392.0, 271.0), egui::vec2(589.0, 407.0)] {
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                for _ in 0..3 {
+                    dialog_frame(&mut app, &ctx, screen, vec![]);
+                }
+                let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+                for expected in [title, "OK", "Cancel"] {
+                    visible_label(&labels, screen, expected);
+                }
+            }
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(589.0, 407.0));
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            click_dialog(&mut app, &ctx, screen, visible_label(&labels, screen, "Cancel").center());
+            assert!(app.ui.dialog.is_none());
+            assert!(app.session.active().is_none(), "cancelling must not create a document");
+            app.run(command, json!({})).unwrap();
+            assert_eq!(app.ui.dialog.as_ref().unwrap().fields[field], original, "cancelled edits must not survive reopening");
+            for _ in 0..3 {
+                dialog_frame(&mut app, &ctx, screen, vec![]);
+            }
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            visible_label(&labels, screen, title);
+            dialog_frame(
+                &mut app,
+                &ctx,
+                screen,
+                vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
+            );
+            assert!(app.ui.dialog.is_none(), "Escape must also close the reopened dialog");
+        }
+    }
 
     fn draw(app: &mut DesignApp, ctx: &egui::Context) {
         let input =
@@ -3762,6 +5620,207 @@ mod tests {
         }
     }
 
+    #[test]
+    fn pdf_export_defaults() {
+        let d = Dialog::new("pdfExport", json!({}));
+        let keys: Vec<&str> = d.fields.iter().map(|(k, _)| k.as_str()).collect();
+        // serde_json::Map keeps keys sorted.
+        let expected = [
+            "bleed",
+            "compressImages",
+            "flatten",
+            "marksBleed",
+            "marksCrop",
+            "marksOffset",
+            "marksPageInfo",
+            "marksWeight",
+            "preset",
+            "spreads",
+            "standard",
+            "tagged",
+        ];
+        assert_eq!(keys, expected);
+        assert_eq!(d.fields["preset"].as_str(), Some("Desktop Printing"));
+        assert_eq!(d.fields["standard"].as_str(), Some("none"));
+        assert_eq!(d.fields["compressImages"].as_bool(), Some(false));
+        assert_eq!(d.fields["flatten"].as_str(), Some(""));
+        assert_eq!(d.fields["spreads"].as_bool(), Some(false));
+        assert_eq!(d.fields["bleed"].as_bool(), Some(true));
+        assert_eq!(d.fields["marksCrop"].as_bool(), Some(false));
+        assert_eq!(d.fields["marksBleed"].as_bool(), Some(false));
+        assert_eq!(d.fields["marksPageInfo"].as_bool(), Some(false));
+        assert_eq!(d.fields["marksWeight"].as_str(), Some("0.25"));
+        assert_eq!(d.fields["marksOffset"].as_str(), Some("6"));
+        assert_eq!(d.fields["tagged"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn pdf_export_override_keeps_override() {
+        let d = Dialog::new("pdfExport", json!({"bleed": false}));
+        assert_eq!(d.fields["bleed"].as_bool(), Some(false));
+        assert_eq!(d.fields["preset"].as_str(), Some("Desktop Printing"));
+        assert_eq!(d.fields["tagged"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn pdf_export_preset_high_quality_print_keeps_flatten() {
+        let mut d = Dialog::new("pdfExport", json!({}));
+        d.fields.insert("flatten".into(), json!("medium"));
+        apply_pdf_preset(&mut d, "Desktop Printing");
+        assert_eq!(d.s("standard"), "none");
+        assert!(!d.b("compressImages"));
+        assert!(!d.b("marksCrop"));
+        assert!(!d.b("marksBleed"));
+        assert!(!d.b("marksPageInfo"));
+        assert_eq!(d.s("flatten"), "medium", "a leave-unchanged preset must not touch flatten");
+    }
+
+    #[test]
+    fn pdf_export_preset_press_quality_keeps_flatten() {
+        let mut d = Dialog::new("pdfExport", json!({}));
+        d.fields.insert("flatten".into(), json!("high"));
+        apply_pdf_preset(&mut d, "Commercial Printing");
+        assert_eq!(d.s("standard"), "none");
+        assert!(d.b("compressImages"));
+        assert!(d.b("marksCrop"));
+        assert!(d.b("marksBleed"));
+        assert!(!d.b("marksPageInfo"));
+        assert_eq!(d.s("flatten"), "high");
+    }
+
+    #[test]
+    fn pdf_export_preset_smallest_file_size_sets_flatten_low() {
+        let mut d = Dialog::new("pdfExport", json!({}));
+        apply_pdf_preset(&mut d, "Screen and Email");
+        assert_eq!(d.s("standard"), "none");
+        assert!(d.b("compressImages"));
+        assert!(!d.b("marksCrop"));
+        assert!(!d.b("marksBleed"));
+        assert!(!d.b("marksPageInfo"));
+        assert_eq!(d.s("flatten"), "low");
+    }
+
+    #[test]
+    fn pdf_export_preset_pdf_x4_keeps_flatten() {
+        let mut d = Dialog::new("pdfExport", json!({}));
+        d.fields.insert("flatten".into(), json!("medium"));
+        apply_pdf_preset(&mut d, "PDF/X-4");
+        assert_eq!(d.s("standard"), "x4");
+        assert!(!d.b("compressImages"));
+        assert!(d.b("marksCrop"));
+        assert!(d.b("marksBleed"));
+        assert!(!d.b("marksPageInfo"));
+        assert_eq!(d.s("flatten"), "medium");
+    }
+
+    #[test]
+    fn pdf_export_preset_pdf_a2b_keeps_flatten() {
+        let mut d = Dialog::new("pdfExport", json!({}));
+        d.fields.insert("flatten".into(), json!("low"));
+        apply_pdf_preset(&mut d, "PDF/A-2b");
+        assert_eq!(d.s("standard"), "a2b");
+        assert!(!d.b("compressImages"));
+        assert!(!d.b("marksCrop"));
+        assert!(!d.b("marksBleed"));
+        assert!(!d.b("marksPageInfo"));
+        assert_eq!(d.s("flatten"), "low");
+    }
+
+    #[test]
+    fn open_pdf_export_seeds_fields_from_settings() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.ui.pdf_export.standard = "x4".into();
+        app.ui.pdf_export.tagged = false;
+        app.ui.pdf_export.marks_crop = true;
+        app.ui.pdf_export.flatten = String::new();
+        app.ui.flattener = "medium".into();
+        open_pdf_export(&mut app);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!(d.id, "pdfExport");
+        assert_eq!(d.s("standard"), "x4");
+        assert!(!d.b("tagged"));
+        assert!(d.b("marksCrop"));
+        assert_eq!(d.s("pages"), "all");
+        assert_eq!(d.s("flatten"), "medium", "empty flatten falls back to the global flattener");
+        assert_eq!(d.s("title"), "", "no document → empty title");
+
+        // A non-empty persisted flatten is used verbatim, not the global fallback.
+        app.ui.pdf_export.flatten = "low".into();
+        app.ui.flattener = "medium".into();
+        open_pdf_export(&mut app);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!(d.s("flatten"), "low");
+    }
+
+    #[test]
+    fn pdf_export_preset_custom_changes_nothing() {
+        let mut d = Dialog::new("pdfExport", json!({}));
+        d.fields.insert("standard".into(), json!("x4"));
+        d.fields.insert("compressImages".into(), json!(true));
+        d.fields.insert("marksCrop".into(), json!(true));
+        d.fields.insert("marksBleed".into(), json!(true));
+        d.fields.insert("marksPageInfo".into(), json!(true));
+        d.fields.insert("flatten".into(), json!("high"));
+        let before = d.fields.clone();
+        apply_pdf_preset(&mut d, "Custom");
+        assert_eq!(d.fields, before);
+    }
+
+    #[test]
+    fn confirm_pdf_export_writes_file_and_persists_settings() {
+        use std::sync::{Arc, Mutex};
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let writes: Arc<Mutex<Vec<(String, Vec<u8>)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = writes.clone();
+        app.services.write = Some(Box::new(move |path: &str, bytes: &[u8]| {
+            sink.lock().unwrap().push((path.to_string(), bytes.to_vec()));
+            Ok(())
+        }));
+        app.services.pick_save = Some(Box::new(|_name: &str| Some("/tmp/designcraft-test.pdf".to_string())));
+
+        app.ui.dialog = Some(Dialog::new("pdfExport", json!({})));
+        {
+            let d = app.ui.dialog.as_mut().unwrap();
+            d.fields.insert("standard".into(), json!("x4"));
+            d.fields.insert("bleed".into(), json!(false));
+            d.fields.insert("marksCrop".into(), json!(true));
+            d.fields.insert("tagged".into(), json!(false));
+            d.fields.insert("title".into(), json!("Report"));
+        }
+        confirm(&mut app).unwrap();
+
+        let got = writes.lock().unwrap();
+        assert_eq!(got.len(), 1, "confirming the dialog writes exactly one file");
+        assert_eq!(got[0].0, "/tmp/designcraft-test.pdf");
+        assert!(got[0].1.starts_with(b"%PDF"), "the written bytes are a PDF");
+        drop(got);
+
+        assert_eq!(app.ui.pdf_export.standard, "x4");
+        assert!(!app.ui.pdf_export.bleed);
+        assert!(app.ui.pdf_export.marks_crop);
+        assert!(!app.ui.pdf_export.tagged);
+    }
+
+    #[test]
+    fn confirm_pdf_export_cancelled_save_writes_nothing() {
+        use std::sync::{Arc, Mutex};
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let writes: Arc<Mutex<Vec<(String, Vec<u8>)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = writes.clone();
+        app.services.write = Some(Box::new(move |path: &str, bytes: &[u8]| {
+            sink.lock().unwrap().push((path.to_string(), bytes.to_vec()));
+            Ok(())
+        }));
+        app.services.pick_save = Some(Box::new(|_name: &str| None));
+
+        app.ui.dialog = Some(Dialog::new("pdfExport", json!({})));
+        let r = confirm(&mut app).unwrap();
+        assert_eq!(r, Value::Null);
+        assert!(writes.lock().unwrap().is_empty(), "cancelling the save picker must not write");
+    }
+
     use designcraft_doc::{CharAttrs, CharacterStyle};
 
     /// A document with character styles Base (bold) and Emphasis (italic) on the first two letters.
@@ -3912,5 +5971,70 @@ mod tests {
         }
         assert_eq!(crate::menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+K"));
         assert_eq!(d.s("recording"), "", "recording ends with the recorded shortcut");
+    }
+
+    #[test]
+    fn dragging_the_title_moves_the_dialog_and_dragging_the_body_does_not() {
+        use egui::{Event, Modifiers, PointerButton, Pos2, vec2};
+        use egui_kittest::{Harness, kittest::Queryable};
+        fn drag(h: &mut Harness<'static, DesignApp>, from: Pos2, to: Pos2) {
+            h.event(Event::PointerMoved(from));
+            h.run_steps(1);
+            h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+            h.run_steps(1);
+            for step in 1..=8 {
+                h.event(Event::PointerMoved(from + (to - from) * (step as f32 / 8.0)));
+                h.run_steps(1);
+            }
+            h.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+            h.run_steps(3);
+        }
+        let rect = |h: &Harness<'static, DesignApp>| h.ctx.memory(|m| m.area_rect(egui::Id::new("dialog"))).unwrap();
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.ui.dialog = Some(Dialog::new("insertTable", Value::Null));
+        let mut ready = false;
+        let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            move |ui, app: &mut DesignApp| {
+                if !ready {
+                    crate::theme::install_fonts(ui.ctx(), &app.ui.language);
+                    crate::theme::apply(ui.ctx(), &crate::theme::Tokens::for_brightness(crate::theme::Brightness::default()));
+                    ready = true;
+                    return;
+                }
+                show(app, ui.ctx());
+            },
+            app,
+        );
+        h.run_steps(4);
+        let centred = rect(&h);
+        assert!((centred.center() - egui::pos2(600.0, 400.0)).length() < 1.0, "{centred:?}");
+        assert!(centred.width() < 1000.0 && centred.height() < 700.0, "the area is the dialog, not the backdrop: {centred:?}");
+
+        let title = h.get_by_label("Create Table").rect().center();
+        drag(&mut h, title, title + vec2(100.0, 60.0));
+        let moved = rect(&h);
+        assert!((moved.min - centred.min - vec2(100.0, 60.0)).length() < 2.0, "{centred:?} -> {moved:?}");
+
+        let body = egui::pos2(moved.right() - 40.0, moved.center().y);
+        drag(&mut h, body, body + vec2(-150.0, 80.0));
+        assert_eq!(rect(&h), moved, "a drag in the body leaves the dialog in place");
+
+        // The title row stays inside the top edge.
+        let title = h.get_by_label("Create Table").rect().center();
+        drag(&mut h, title, title - vec2(0.0, 1000.0));
+        assert!(rect(&h).top().abs() < 1.0, "{:?}", rect(&h));
+
+        // Opened again, the dialog starts centred.
+        h.state_mut().ui.dialog = None;
+        h.run_steps(2);
+        h.state_mut().ui.dialog = Some(Dialog::new("insertTable", Value::Null));
+        h.run_steps(4);
+        assert!((rect(&h).center() - centred.center()).length() < 1.0, "{:?}", rect(&h));
+
+        // Past the left edge, about 100 px of the title row stays inside.
+        let title = h.get_by_label("Create Table").rect().center();
+        drag(&mut h, title, title - vec2(900.0, 0.0));
+        assert!((rect(&h).right() - 100.0).abs() < 2.0, "{:?}", rect(&h));
     }
 }

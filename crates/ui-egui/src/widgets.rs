@@ -364,6 +364,7 @@ pub fn link_label(ui: &mut Ui, text: &str, width: f32) -> Response {
     ui.painter().galley(pos, g, t.text);
     let y = r.center().y + 6.5;
     ui.painter().line_segment([pos2(r.min.x, y), pos2(r.min.x + w, y)], Stroke::new(1.0, if resp.hovered() { t.text_strong } else { t.text_dim }));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, true, text));
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -408,8 +409,10 @@ pub fn selection_band(ui: &mut Ui, title: &str) {
 pub fn section(ui: &mut Ui, title: &str, _default_open: bool) -> bool {
     let t = Tokens::get(ui.ctx());
     ui.add_space(7.0);
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
     crate::rtl::paint(ui.painter(), r.left_center(), egui::Align2::LEFT_CENTER, title, egui::FontId::proportional(11.5), t.text_strong);
+    // Screen readers hear the section's title.
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, title));
     ui.add_space(3.0);
     true
 }
@@ -525,6 +528,8 @@ pub fn icon_toggle_sized(ui: &mut Ui, icon: &str, on: bool, tip: &str, size: egu
     }
     let s = (size.y - 4.0).min(17.0);
     crate::icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(s, s)), icon, if on { t.text_strong } else { t.icon });
+    // Named by its tooltip, for screen readers.
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, tip));
     if tip.is_empty() {
         resp
     } else {

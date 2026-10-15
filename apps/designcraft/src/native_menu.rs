@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::mpsc::{Receiver, channel};
 
 use designcraft_ui_egui::DesignApp;
 use designcraft_ui_egui::menus::{self, Item};
@@ -19,6 +20,7 @@ enum Handle {
 pub struct NativeMenu {
     _menu: Menu,
     items: HashMap<String, (String, Value, Handle)>,
+    events: Receiver<MenuEvent>,
     last_refresh: f64,
 }
 
@@ -31,7 +33,15 @@ fn accel(sc: &str) -> Option<Accelerator> {
 }
 
 impl NativeMenu {
-    pub fn install(app: &mut DesignApp) -> Self {
+    pub fn install(app: &mut DesignApp, ctx: &egui::Context) -> Self {
+        // A click in the menu bar reaches the app with no input over the window, so nothing would
+        // draw the frame that runs the command until the pointer or a key comes back: wake egui.
+        let (tx, events) = channel();
+        let repaint = ctx.clone();
+        MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
+            let _ = tx.send(e);
+            repaint.request_repaint();
+        }));
         let menu = Menu::new();
         let mut items = HashMap::new();
         let mut counter = 0usize;
@@ -40,6 +50,8 @@ impl NativeMenu {
         // Our own About splash (with the community links) instead of the stock panel.
         let about = MenuItem::with_id("dc-about", "About DesignCraft", true, None);
         let discord = MenuItem::with_id("dc-discord", "Join the ArtCraft Discord…", true, None);
+        // Not the predefined Quit: it terminates the app at once, past the unsaved-changes prompt.
+        let quit = MenuItem::with_id("dc-quit", designcraft_ui_egui::i18n::tr(&app.ui.language, "Quit DesignCraft"), true, accel("Cmd+Q"));
         let _ = app_menu.append_items(&[
             &about,
             &discord,
@@ -50,10 +62,11 @@ impl NativeMenu {
             &PredefinedMenuItem::hide_others(None),
             &PredefinedMenuItem::show_all(None),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(None),
+            &quit,
         ]);
         items.insert("dc-about".into(), ("help.about".into(), serde_json::Value::Null, Handle::Plain(about)));
         items.insert("dc-discord".into(), ("help.discord".into(), serde_json::Value::Null, Handle::Plain(discord)));
+        items.insert("dc-quit".into(), ("app.quit".into(), serde_json::Value::Null, Handle::Plain(quit)));
         let _ = menu.append(&app_menu);
         for (title, entries) in menus::menu_tree() {
             let sub = Submenu::new(designcraft_ui_egui::i18n::tr(&app.ui.language, title), true);
@@ -69,11 +82,11 @@ impl NativeMenu {
                 (p.is_null() && accel(sc).is_some()).then(|| id.clone())
             })
             .collect();
-        Self { _menu: menu, items, last_refresh: 0.0 }
+        Self { _menu: menu, items, events, last_refresh: 0.0 }
     }
 
     pub fn poll(&mut self, app: &mut DesignApp, ctx: &egui::Context) {
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+        while let Ok(ev) = self.events.try_recv() {
             if let Some((cmd, params, _)) = self.items.get(ev.id.as_ref()) {
                 menus::activate_native(app, ctx, &cmd.clone(), &params.clone());
             }
