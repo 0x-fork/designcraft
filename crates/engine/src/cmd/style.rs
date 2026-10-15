@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Paragraph Style…",
             [],
             None,
-            "{name, basedOn?, nextStyle?, para?: {…}, chars?: {…}, fromSelection?: bool}",
+            "{name, basedOn?, nextStyle?, para?: {paragraph attributes, as type.para names them: align, leftIndent, firstLineIndent, spaceBefore, spaceAfter, …}, chars?: {character attributes, as type.char names them: fontFamily, fontStyle, size, leading, tracking, fill, …}, fromSelection?: bool}",
             has_doc,
             create_para
         ),
@@ -95,7 +95,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph Style Options…",
             [],
             None,
-            "{name, rename?, basedOn?, nextStyle?, para?: {… ruleAbove?/ruleBelow?: only the named rule fields change}, chars?: {…}}",
+            "{name, rename?, basedOn?, nextStyle?, para?: {paragraph attributes, as type.para names them: align, leftIndent, spaceBefore, …; ruleAbove?/ruleBelow?: only the named rule fields change}, chars?: {character attributes, as type.char names them: fontFamily, fontStyle, size, leading, tracking, fill, …}}",
             has_doc,
             edit_para
         ),
@@ -105,7 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Character Style…",
             [],
             None,
-            "{name, basedOn?: style | \"[None]\", chars?: {…}, fromSelection?: bool (default false)} — if true, capture the first selected character's style/local overrides (caret: typing format), then overlay chars (null unsets); only explicit fill names are validated; paragraph formatting stays inherited; no text target: chars only → {name} (made unique)",
+            "{name, basedOn?: style | \"[None]\", chars?: {character attributes, as type.char names them: fontFamily, fontStyle, size, leading, tracking, fill, …}, fromSelection?: bool (default false)} — if true, capture the first selected character's style/local overrides (caret: typing format), then overlay chars (null unsets); only explicit fill names are validated; paragraph formatting stays inherited; no text target: chars only → {name} (made unique)",
             has_doc,
             create_char
         ),
@@ -114,7 +114,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Character Style Options…",
             [],
             None,
-            "{name, rename?, basedOn?: style | \"[None]\" | null, chars?: {attr: value | null (no longer set)}} — renaming updates every use",
+            "{name, rename?, basedOn?: style | \"[None]\" | null, chars?: {character attribute (as type.char names them: fontFamily, fontStyle, size, …): value | null (no longer set)}} — renaming updates every use",
             has_doc,
             edit_char
         ),
@@ -144,7 +144,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Gradient",
             [],
             None,
-            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b]|{model, …}(0..1), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
+            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b]|{model, …}(0..1), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), target?: fill|stroke, ids?} → {swatch, kind, stops} — edits the fill's (or the stroke's) gradient (an unnamed gradient unless it equals a gradient swatch)",
             super::has_selection,
             apply_gradient
         ),
@@ -380,12 +380,18 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn attrs<T: Default>(v: Option<&Value>, set: impl Fn(&mut T, &str, &Value) -> std::result::Result<(), String>) -> Result<T> {
+/// The `group` (`chars`, `para`) object of command `cmd`'s params as attributes; a bad attribute
+/// is that command's parameter error, naming the group.
+fn attrs<T: Default>(cmd: &str, group: &str, p: &Value, set: impl Fn(&mut T, &str, &Value) -> std::result::Result<(), String>) -> Result<T> {
     let mut a = T::default();
-    if let Some(o) = v.and_then(Value::as_object) {
-        for (k, v) in o {
-            set(&mut a, k, v).map_err(|e| bad("style", e))?;
+    match p.get(group) {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(o)) => {
+            for (k, v) in o {
+                set(&mut a, k, v).map_err(|e| bad(cmd, format!("{group}: {e}")))?;
+            }
         }
+        Some(_) => return Err(bad(cmd, format!("{group} must be an object of attributes"))),
     }
     Ok(a)
 }
@@ -436,8 +442,8 @@ fn apply_char(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn create_para(s: &mut Session, p: &Value) -> Result<Value> {
     let base = str_param(p, "name").unwrap_or("Paragraph Style 1").to_string();
-    let mut para: ParaAttrs = attrs(p.get("para"), |a: &mut ParaAttrs, k, v| a.set_json(k, v))?;
-    let mut chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let mut para: ParaAttrs = attrs("style.paragraph.create", "para", p, |a: &mut ParaAttrs, k, v| a.set_json(k, v))?;
+    let mut chars: CharAttrs = attrs("style.paragraph.create", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     // Validate caller-supplied fills, not selection fills retained after a swatch is deleted.
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.paragraph.create")?;
     if p.get("fromSelection").and_then(Value::as_bool).unwrap_or(false)
@@ -480,7 +486,7 @@ fn CharProps_to_attrs(p: &designcraft_doc::CharProps) -> CharAttrs {
 
 fn edit_para(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("style.paragraph.edit", "missing name"))?.to_string();
-    let chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let chars: CharAttrs = attrs("style.paragraph.edit", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.paragraph.edit")?;
     let rename = str_param(p, "rename").map(str::to_string);
     let based = p.get("basedOn").cloned();
@@ -492,7 +498,7 @@ fn edit_para(s: &mut Session, p: &Value) -> Result<Value> {
         }
         // A rule object changes only the rule fields it names, over the style's resolved rule.
         let (current, _) = d.styles.resolve_para_style(&name);
-        let para: ParaAttrs = attrs(p.get("para"), |a: &mut ParaAttrs, k, v| a.set_json_over(k, v, &current))?;
+        let para: ParaAttrs = attrs("style.paragraph.edit", "para", p, |a: &mut ParaAttrs, k, v| a.set_json_over(k, v, &current))?;
         let st = d.styles_mut().para_mut(&name).ok_or_else(|| bad("style.paragraph.edit", format!("no style `{name}`")))?;
         st.para.merge(&para);
         st.chars.merge(&chars);
@@ -632,7 +638,7 @@ fn delete_para(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
     let base = str_param(p, "name").unwrap_or("Character Style 1").to_string();
-    let mut chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let mut chars: CharAttrs = attrs("style.character.create", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     // Validate caller-supplied fills; captured formatting may retain a deleted swatch name.
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.character.create")?;
     if p.get("fromSelection").and_then(Value::as_bool).unwrap_or(false)
@@ -647,7 +653,7 @@ fn create_char(s: &mut Session, p: &Value) -> Result<Value> {
         // Replay the explicit fields so null clears a captured value rather than looking absent.
         if let Some(overrides) = p.get("chars").and_then(Value::as_object) {
             for (key, value) in overrides {
-                captured.set_json(key, value).map_err(|e| bad("style", e))?;
+                captured.set_json(key, value).map_err(|e| bad("style.character.create", format!("chars: {e}")))?;
             }
         }
         chars = captured;
@@ -671,7 +677,7 @@ fn edit_char(s: &mut Session, p: &Value) -> Result<Value> {
     if name == designcraft_doc::NO_CHAR_STYLE {
         return Err(bad("style.character.edit", "[None] can't be edited"));
     }
-    let chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    let chars: CharAttrs = attrs("style.character.edit", "chars", p, |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
     super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.character.edit")?;
     // `null` unsets an attribute (the style no longer sets it).
     let unset: Vec<String> = p
@@ -926,13 +932,18 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
     let angle = p.get("angle").and_then(Value::as_f64);
+    let stroke = match str_param(p, "target") {
+        None | Some("fill") => false,
+        Some("stroke") => true,
+        Some(t) => return Err(bad("object.gradient", format!("unknown target {t}"))),
+    };
     let (from, to) = (super::point_param(p, "from"), super::point_param(p, "to"));
     let ids = super::targets(s, p)?;
     s.edit(|d, _| {
         let mut out = Value::Null;
         for id in &ids {
             let Some(it) = d.item(*id) else { continue };
-            let cur_name = it.fill.swatch.clone();
+            let cur_name = if stroke { it.stroke.swatch.clone() } else { it.fill.swatch.clone() };
             let cur = designcraft_color::swatch::resolve_gradient(&d.swatches, &cur_name).cloned();
             let mut g = cur.clone().unwrap_or_default();
             if let Some(k) = kind {
@@ -964,16 +975,22 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let inv = d.find(*id).map(|l| d.parent_xf(&l)).zip(d.item(*id).map(|i| i.xf)).map(|(pxf, xf)| (pxf * xf).inverse());
             let Some(it) = d.item_mut(*id) else { continue };
-            it.fill.swatch = name.clone();
-            it.fill.tint = 1.0;
+            // The fill's or the stroke's paint: swatch, tint, angle, vector.
+            let (swatch, tint, g_angle, g_vector) = if stroke {
+                (&mut it.stroke.swatch, &mut it.stroke.tint, &mut it.stroke.gradient_angle, &mut it.stroke.gradient_vector)
+            } else {
+                (&mut it.fill.swatch, &mut it.fill.tint, &mut it.fill.gradient_angle, &mut it.fill.gradient_vector)
+            };
+            *swatch = name.clone();
+            *tint = 1.0;
             if let Some(a) = angle {
-                it.fill.gradient_angle = Some(a);
-                it.fill.gradient_vector = None;
+                *g_angle = Some(a);
+                *g_vector = None;
             }
             if let (Some(a), Some(b), Some(inv)) = (from, to, inv) {
                 let (a, b) = (inv * a, inv * b);
                 if (b - a).hypot() > 1e-6 {
-                    it.fill.gradient_vector = Some([a.x, a.y, b.x, b.y]);
+                    *g_vector = Some([a.x, a.y, b.x, b.y]);
                 }
             }
             if out.is_null() {
@@ -1259,6 +1276,48 @@ fn rename_in(it: &mut designcraft_doc::Item, from: &str, to: &str) {
         for k in kids {
             rename_in(std::sync::Arc::make_mut(k), from, to);
         }
+    }
+}
+
+/// #777: the params descriptions name the attributes, and a wrong one is the command's error.
+#[cfg(test)]
+mod attribute_error_tests {
+    use super::*;
+    use crate::cmd::find_command;
+
+    #[test]
+    fn a_wrong_attribute_names_the_command_and_the_right_attribute() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let err = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_err().to_string();
+        assert_eq!(
+            err(&mut s, "style.paragraph.create", json!({"name": "H", "chars": {"font": "Source Sans 3"}})),
+            "invalid parameters for `style.paragraph.create`: chars: unknown attribute `font`; did you mean `fontFamily`?"
+        );
+        assert_eq!(
+            err(&mut s, "style.paragraph.create", json!({"name": "H", "para": {"spaceBefor": 6}})),
+            "invalid parameters for `style.paragraph.create`: para: unknown attribute `spaceBefor`; did you mean `spaceBefore`?"
+        );
+        assert!(
+            err(&mut s, "style.character.create", json!({"name": "C", "chars": {"font": "X"}}))
+                .starts_with("invalid parameters for `style.character.create`: chars:")
+        );
+        assert!(err(&mut s, "style.paragraph.create", json!({"name": "H", "chars": "bold"})).contains("chars must be an object of attributes"));
+        s.execute("style.paragraph.create", &json!({"name": "H", "chars": {"fontFamily": "Source Sans 3", "size": 14}})).unwrap();
+        assert!(
+            err(&mut s, "style.paragraph.edit", json!({"name": "H", "chars": {"font": "X"}}))
+                .starts_with("invalid parameters for `style.paragraph.edit`: chars:")
+        );
+        s.execute("style.character.create", &json!({"name": "C", "chars": {"fontStyle": "Bold"}})).unwrap();
+        assert!(
+            err(&mut s, "style.character.edit", json!({"name": "C", "chars": {"font": "X"}}))
+                .starts_with("invalid parameters for `style.character.edit`: chars:")
+        );
+        for id in ["style.paragraph.create", "style.paragraph.edit", "style.character.create", "style.character.edit"] {
+            let doc = find_command(id).unwrap().params;
+            assert!(doc.contains("as type.char names them: fontFamily"), "{id}: {doc}");
+        }
+        assert!(find_command("style.paragraph.create").unwrap().params.contains("as type.para names them: align"));
     }
 }
 
@@ -1994,6 +2053,97 @@ mod radial_gradient_tests {
         // A box keeps its ellipse.
         let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(0.0, 0.0, 100.0, 200.0));
         assert_eq!((rx, ry), (50.0, 100.0));
+    }
+}
+
+#[cfg(test)]
+mod gradient_stroke_tests {
+    use serde_json::json;
+
+    /// Grey along a 20 pt line from (20, 60) to (180, 60): near its start, middle and end.
+    fn along(img: &designcraft_render::Rendered) -> (u8, u8, u8) {
+        (img.pixel(26, 60)[0], img.pixel(100, 60)[0], img.pixel(174, 60)[0])
+    }
+
+    #[test]
+    fn a_gradient_on_a_stroke_runs_across_the_path_on_screen_and_in_pdf() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [20, 60], "b": [180, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "weight": 20})).unwrap();
+        let r = s
+            .execute(
+                "object.gradient",
+                &json!({"ids": [id], "target": "stroke", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+            )
+            .unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let it = d.item(designcraft_doc::ItemId(id)).unwrap();
+        assert_eq!(it.stroke.swatch, r["swatch"].as_str().unwrap());
+        assert_eq!(it.fill.swatch, designcraft_color::swatch::NONE, "the fill is left alone");
+        let mut rr = designcraft_render::Renderer::new();
+        let (a, m, b) = along(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a < 40 && (90..170).contains(&m) && b > 215, "screen: {a} {m} {b}");
+        // The PDF, placed back and drawn: the same.
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "stroke.pdf", "x": 0, "y": 0, "width": 200}))
+            .unwrap();
+        let pd = p.doc().unwrap().doc.clone();
+        let (a, m, b) = along(&rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a < 40 && (90..170).contains(&m) && b > 215, "pdf: {a} {m} {b}");
+        // The Gradient Swatch tool's drag on the stroke: reversed by dragging right to left.
+        s.execute("object.gradient", &json!({"ids": [id], "target": "stroke", "from": [180, 60], "to": [20, 60]})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let (a, _, b) = along(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a > 215 && b < 40, "dragged: {a} {b}");
+        assert!(s.execute("object.gradient", &json!({"ids": [id], "target": "gap"})).is_err());
+    }
+
+    /// A 20 pt horizontal line with a gradient on its stroke, drawn on screen and from its PDF.
+    fn line_with_stroke_gradient(g: serde_json::Value) -> (designcraft_render::Rendered, designcraft_render::Rendered) {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [20, 60], "b": [180, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "weight": 20})).unwrap();
+        let mut g = g;
+        g["ids"] = json!([id]);
+        g["target"] = json!("stroke");
+        s.execute("object.gradient", &g).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut rr = designcraft_render::Renderer::new();
+        let screen = rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap();
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "line.pdf", "x": 0, "y": 0, "width": 200})).unwrap();
+        let pd = p.doc().unwrap().doc.clone();
+        let placed = rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap();
+        (screen, placed)
+    }
+
+    #[test]
+    fn a_radial_gradient_on_a_straight_lines_stroke_shows_all_its_stops() {
+        // The line's box has no height: the gradient is a circle across the line's length.
+        let (screen, pdf) = line_with_stroke_gradient(
+            json!({"kind": "radial", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+        );
+        for (what, img) in [("screen", &screen), ("pdf", &pdf)] {
+            let (a, m, b) = along(img);
+            assert!(m < 40 && a > 180 && b > 180, "{what}: {a} {m} {b}");
+        }
+    }
+
+    #[test]
+    fn a_linear_gradient_across_a_straight_line_paints_its_stroke_alike_on_screen_and_in_pdf() {
+        let (screen, pdf) =
+            line_with_stroke_gradient(json!({"angle": 90, "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}));
+        let (s, p) = (screen.pixel(100, 60), pdf.pixel(100, 60));
+        // The line's box has no height: the gradient runs across the line's length, so the stroke
+        // shows its middle.
+        assert!(s[1] < 60 && s[0] > 80 && s[2] > 80, "screen: the stroke is painted, {s:?}");
+        assert!((0..3).all(|i| s[i].abs_diff(p[i]) < 40), "screen {s:?}, pdf {p:?}");
     }
 }
 

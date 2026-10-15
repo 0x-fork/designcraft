@@ -160,6 +160,16 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Open Path", ["Pfad öffnen", "Ouvrir le tracé", "Abrir trazado", "パスをオープン", "开放路径"]),
     ("Plain", ["Einfach", "Simple", "Normal", "プレーン", "普通"]),
     ("Symmetrical", ["Symmetrisch", "Symétrique", "Simétrico", "対称", "对称"]),
+    (
+        "The stroke isn't a gradient.",
+        [
+            "Die Kontur ist kein Verlauf.",
+            "Le contour n’est pas un dégradé.",
+            "El trazo no es un degradado.",
+            "線はグラデーションではありません。",
+            "描边不是渐变。",
+        ],
+    ),
     ("Reverse Path", ["Pfadrichtung umkehren", "Inverser le tracé", "Invertir trazado", "パスの方向反転", "反转路径"]),
     ("Set Anchor", ["Ankerpunkt festlegen", "Définir le point d’ancrage", "Definir punto de ancla", "アンカーポイントを設定", "设置锚点"]),
     ("Clear", ["Löschen", "Effacer", "Borrar", "消去", "清除"]),

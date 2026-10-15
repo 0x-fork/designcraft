@@ -76,6 +76,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Open Path", "فتح المسار"),
     ("Plain", "عادي"),
     ("Symmetrical", "متماثل"),
+    ("The stroke isn't a gradient.", "الحد ليس تدرجًا."),
     ("Reverse Path", "عكس المسار"),
     ("Set Anchor", "تعيين نقطة الارتساء"),
     ("Clear", "مسح"),

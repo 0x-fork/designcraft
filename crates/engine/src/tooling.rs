@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use designcraft_doc::{CellAddr, StoryId};
 use designcraft_geom::Unit;
 pub use designcraft_tools::SnapView;
 use designcraft_tools::{Action, CanvasLayout, Cursor, Mods, Overlay, PointerEvent, ToolContext, ToolKey};
@@ -60,6 +61,7 @@ impl Session {
         if self.tool.id() == id {
             return;
         }
+        self.end_composition();
         self.tool = designcraft_tools::create(id);
         // Any other tool unloads the place cursor.
         if id != "placeGun" {
@@ -150,7 +152,29 @@ impl Session {
         Ok(())
     }
 
+    /// The text an input method is composing at the caret, as story bytes: it is in the
+    /// document as a preview until `text.compose` commits or drops it.
+    pub fn composition(&self) -> Option<(StoryId, Option<CellAddr>, std::ops::Range<usize>)> {
+        let (uid, len) = self.composition?;
+        let st = self.active().filter(|st| st.uid == uid)?;
+        let t = st.selection.text?;
+        Some((t.story, t.cell, t.focus.checked_sub(len)?..t.focus))
+    }
+
+    /// Drop the text being composed: the document goes back to how it was before it.
+    pub fn end_composition(&mut self) {
+        let Some((uid, _)) = self.composition.take() else { return };
+        if let Some(st) = self.docs.iter_mut().find(|st| st.uid == uid)
+            && let Some(it) = st.interaction.take()
+        {
+            st.doc = it.doc;
+            st.selection = it.selection;
+            st.revision += 1;
+        }
+    }
+
     pub fn begin_interaction(&mut self, label: &str) -> Result<()> {
+        self.end_composition();
         let st = self.doc_mut()?;
         st.interaction = Some(Interaction { label: label.into(), doc: st.doc.clone(), selection: st.selection.clone(), preview: None });
         Ok(())

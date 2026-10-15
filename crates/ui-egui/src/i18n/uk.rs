@@ -77,6 +77,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Open Path", "Розімкнути контур"),
     ("Plain", "Простий"),
     ("Symmetrical", "Симетричний"),
+    ("The stroke isn't a gradient.", "Обведення не є градієнтом."),
     ("Reverse Path", "Розвернути контур"),
     ("Set Anchor", "Задати прив’язку"),
     ("Clear", "Очистити"),

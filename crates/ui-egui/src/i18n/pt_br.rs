@@ -82,6 +82,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Plain", "Simples"),
     ("Smooth", "Suave"),
     ("Symmetrical", "Simétrico"),
+    ("The stroke isn't a gradient.", "O traçado não é um gradiente."),
     ("Reverse Path", "Inverter demarcador"),
     ("Set Anchor", "Definir ponto de ancoragem"),
     ("Clear", "Limpar"),

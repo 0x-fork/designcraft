@@ -70,6 +70,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Join Path", "パスを連結"),
     ("Plain", "プレーン"),
     ("Symmetrical", "対称"),
+    ("The stroke isn't a gradient.", "線はグラデーションではありません。"),
     ("Reverse Path", "パスの方向反転"),
     ("Set Anchor", "アンカーポイントを設定"),
     ("Clear", "消去"),
