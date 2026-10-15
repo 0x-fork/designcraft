@@ -703,7 +703,7 @@ pub fn status_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                 ui.add_space(8.0);
                 // Preflight: overset text is an error.
                 let errors = panels::preflight_errors(app);
-                let (r, _) = ui.allocate_exact_size(vec2(9.0, 9.0), Sense::hover());
+                let (r, dot) = ui.allocate_exact_size(vec2(9.0, 9.0), Sense::click());
                 ui.painter().circle_filled(
                     r.center(),
                     4.0,
@@ -718,12 +718,17 @@ pub fn status_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                     )
                 };
                 // As in InDesign, the count opens a menu that leads to the Preflight panel.
-                crate::menus::menu_button(ui, egui::RichText::new(count).font(small.clone()), |ui| {
+                let menu = crate::menus::menu_button(ui, egui::RichText::new(count).font(small.clone()), |ui| {
                     if ui.button(crate::i18n::tr(&app.ui.language, "Preflight Panel…")).clicked() {
                         let _ = app.run("window.panel", json!({"panel": "preflight"}));
                         ui.close();
                     }
                 });
+                // Double-clicking the light or the count shows the panel straight away (the
+                // second click has closed the menu the first one opened).
+                if dot.double_clicked() || menu.response.double_clicked() {
+                    let _ = app.run("window.panel", json!({"panel": "preflight"}));
+                }
                 ui.add_space(12.0);
                 ui.label(egui::RichText::new(&app.ui.status).font(small).color(t.text_dim));
             });
@@ -912,6 +917,22 @@ mod tests {
         // Preflight is not a dock tab: `window.panel` shows it as its own panel.
         assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
         h.get_by_label("Preflight");
+    }
+
+    /// As in InDesign, double-clicking the preflight count (or its light) shows the panel.
+    #[test]
+    fn double_clicking_the_status_bar_error_count_opens_the_preflight_panel() {
+        let mut app = app();
+        app.run("file.new", serde_json::json!({})).unwrap();
+        app.ui.dock_tab = "properties".into();
+        let mut h = test_window::open_stepped(app, vec2(1200.0, 700.0), 1.0, 1.0 / 60.0);
+        let count = h.get_by_label("No errors ▾");
+        count.click();
+        count.click();
+        h.run_steps(3);
+        assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
+        h.get_by_label("Preflight");
+        assert!(h.query_by_label("Preflight Panel…").is_none(), "the menu isn't left open");
     }
 
     /// A very long document name made its tab grow past the window, hiding the close button
