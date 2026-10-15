@@ -1432,7 +1432,9 @@ impl DesignApp {
 /// and IDML.
 pub fn opens_as_document(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    [".designcraft", ".idml"].iter().any(|ext| n.ends_with(ext))
+    // InDesign files go to the open path too, which says how to bring them over (as IDML)
+    // instead of failing to place them as a graphic.
+    [".designcraft", ".idml", ".indd", ".indt"].iter().any(|ext| n.ends_with(ext))
 }
 
 pub fn now_ms() -> f64 {
@@ -2069,7 +2071,7 @@ mod tests {
 
     #[test]
     fn dropped_documents_open_and_the_rest_is_placed() {
-        for name in ["a.designcraft", "B.IDML"] {
+        for name in ["a.designcraft", "B.IDML", "c.indd", "D.INDT"] {
             assert!(opens_as_document(name), "{name}");
         }
         for name in ["a.png", "b.pdf", "idml.txt", "c.idml.zip"] {

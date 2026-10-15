@@ -158,8 +158,24 @@ fn file_sample(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({"index": i}))
 }
 
+/// An InDesign file that DesignCraft can't open yet, with how to bring it over. Decoding one as a
+/// DesignCraft document only reported "not a DesignCraft document: expected value at line 1
+/// column 1" (#21).
+fn foreign_document(name: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+    match ext.as_str() {
+        "indd" | "indt" => Some(
+            "InDesign documents (.indd) and templates (.indt) can't be opened yet. In InDesign, choose File ▸ Export… ▸ InDesign Markup (IDML) and open the .idml in DesignCraft.",
+        ),
+        _ => None,
+    }
+}
+
 fn file_open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
+    if let Some(hint) = foreign_document(path) {
+        return Err(EngineError::Other(format!("{path}: {hint}")));
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         if path.to_ascii_lowercase().ends_with(".idml") {
@@ -223,6 +239,11 @@ fn document_fonts_folder(dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn file_open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(name) = str_param(p, "name")
+        && let Some(hint) = foreign_document(name)
+    {
+        return Err(EngineError::Other(format!("{name}: {hint}")));
+    }
     let b = base64_decode(str_param(p, "base64").unwrap_or(""));
     // IDML packages are recognised by their stored `mimetype` first entry.
     if designcraft_idml::is_idml(&b) {
@@ -909,6 +930,21 @@ mod document_fonts_tests {
         let r = s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
         assert_eq!(r["documentFonts"], 1, "{r}");
         assert_eq!(font_entry(&mut s, FAMILY)["missing"], false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_indesign_file_says_how_to_bring_it_over() {
+        // The extension decides (any case), not the bytes: no InDesign-made file is needed.
+        let dir = temp_dir("indd");
+        let path = dir.join("Brochure.INDD");
+        std::fs::write(&path, b"not a DesignCraft document").unwrap();
+        let mut s = Session::new();
+        let e = s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap_err().to_string();
+        assert!(e.contains("InDesign Markup (IDML)") && !e.contains("expected value"), "{e}");
+        let e = s.execute("file.openBytes", &json!({"name": "Brochure.indt", "base64": ""})).unwrap_err().to_string();
+        assert!(e.contains("InDesign Markup (IDML)"), "{e}");
+        assert!(s.doc().is_err(), "nothing was opened");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
