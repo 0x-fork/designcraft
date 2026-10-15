@@ -487,4 +487,56 @@ mod pdf_page_tests {
         s.execute("file.place", &json!({"base64": b64, "name": "a.docx", "styleConflicts": "redefine", "rect": [72, 400, 300, 500]})).unwrap();
         assert_eq!(s.doc().unwrap().doc.styles.para("Body").unwrap().chars.size, Some(10.0));
     }
+
+    #[test]
+    fn word_normal_comes_in_as_its_own_style() {
+        // Regression (#722): Normal's formatting (over Word's document defaults) was dropped.
+        use std::io::Write;
+        const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let styles = format!(
+            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
+            <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:rFonts w:ascii="Georgia"/><w:sz w:val="26"/></w:rPr></w:style></w:styles>"#
+        );
+        let doc = format!(r#"<w:document {W}><w:body><w:p><w:r><w:t>Plain</w:t></w:r></w:p></w:body></w:document>"#);
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (n, c) in [("word/document.xml", doc), ("word/styles.xml", styles)] {
+            w.start_file(n, zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(c.as_bytes()).unwrap();
+        }
+        let b64 = crate::cmd::base64_encode(&w.finish().unwrap().into_inner());
+        let basic = designcraft_doc::story::BASIC_PARAGRAPH;
+        let placed = |s: &Session, story: &serde_json::Value| {
+            let d = &s.doc().unwrap().doc;
+            let st = d.story(designcraft_doc::StoryId(story["story"].as_u64().unwrap())).unwrap();
+            let (_, para_chars) = d.styles.resolve_para(&st.paras[0]);
+            let c = d.styles.resolve_char(&para_chars, st.format_after(0));
+            (st.paras[0].style.clone(), c.size, c.font_family)
+        };
+        let georgia = |style: &str| (style.to_string(), 13.0, "Georgia".to_string());
+        // Default options: the document gains Normal and the text looks as it did in Word.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let info = s.execute("place.styles", &json!({"base64": b64, "name": "a.docx"})).unwrap();
+        assert_eq!(info["paragraph"], json!(["Normal"]));
+        assert_eq!(info["conflicts"], json!([]));
+        let r = s.execute("file.place", &json!({"base64": b64, "name": "a.docx"})).unwrap();
+        assert_eq!(placed(&s, &r), georgia("Normal"));
+        assert!(s.doc().unwrap().doc.styles.para(basic).unwrap().chars.is_empty(), "[Basic Paragraph] untouched");
+        // Normal mapped to [Basic Paragraph]: no new style, and the document's definition is used
+        // (mapped styles aren't imported, whatever the conflict option).
+        s.execute("file.new", &json!({})).unwrap();
+        let r =
+            s.execute("file.place", &json!({"base64": b64, "name": "a.docx", "styleMap": {"Normal": basic}, "styleConflicts": "redefine"})).unwrap();
+        assert!(s.doc().unwrap().doc.styles.para("Normal").is_none());
+        assert!(s.doc().unwrap().doc.styles.para(basic).unwrap().chars.is_empty());
+        let (style, size, _) = placed(&s, &r);
+        assert_eq!((style.as_str(), size), (basic, 12.0));
+        // A document with its own Normal: the usual conflict rules.
+        s.execute("style.paragraph.create", &json!({"name": "Normal", "chars": {"size": 9}})).unwrap();
+        let r = s.execute("file.place", &json!({"base64": b64, "name": "a.docx", "rect": [72, 400, 300, 500]})).unwrap();
+        assert_eq!(placed(&s, &r).1, 9.0, "use existing");
+        let r =
+            s.execute("file.place", &json!({"base64": b64, "name": "a.docx", "styleConflicts": "autoRename", "rect": [72, 520, 300, 600]})).unwrap();
+        assert_eq!(placed(&s, &r), georgia("Normal_wrd_1"));
+    }
 }
