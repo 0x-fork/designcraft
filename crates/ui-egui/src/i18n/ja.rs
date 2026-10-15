@@ -36,6 +36,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("View Options", "表示オプション"),
     ("Frame Edges", "フレーム枠"),
     ("Hidden Characters", "制御文字"),
+    ("The stroke isn't a gradient.", "線はグラデーションではありません。"),
     ("Reverse Path", "パスの方向反転"),
     ("Set Anchor", "アンカーポイントを設定"),
     ("Clear", "消去"),

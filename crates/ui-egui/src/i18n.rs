@@ -74,6 +74,16 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Frame Edges", ["Rahmenkanten", "Bords du bloc", "Bordes del marco", "フレーム枠", "框架边缘"]),
     ("Rulers", ["Lineale", "Règles", "Reglas", "定規", "标尺"]),
     ("Hidden Characters", ["Verborgene Zeichen", "Caractères masqués", "Caracteres ocultos", "制御文字", "隐藏字符"]),
+    (
+        "The stroke isn't a gradient.",
+        [
+            "Die Kontur ist kein Verlauf.",
+            "Le contour n’est pas un dégradé.",
+            "El trazo no es un degradado.",
+            "線はグラデーションではありません。",
+            "描边不是渐变。",
+        ],
+    ),
     ("Reverse Path", ["Pfadrichtung umkehren", "Inverser le tracé", "Invertir trazado", "パスの方向反転", "反转路径"]),
     ("Set Anchor", ["Ankerpunkt festlegen", "Définir le point d’ancrage", "Definir punto de ancla", "アンカーポイントを設定", "设置锚点"]),
     ("Clear", ["Löschen", "Effacer", "Borrar", "消去", "清除"]),

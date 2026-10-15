@@ -1776,6 +1776,14 @@ impl<'a> Ex<'a> {
         } else if let Some(a) = it.fill.gradient_angle {
             el.set("GradientFillAngle", num(a));
         }
+        // The same on the stroke.
+        if let Some([x0, y0, x1, y1]) = it.stroke.gradient_vector {
+            el.set("GradientStrokeStart", format!("{} {}", num(x0), num(y0)));
+            el.set("GradientStrokeLength", num((x1 - x0).hypot(y1 - y0)));
+            el.set("GradientStrokeAngle", num((-(y1 - y0)).atan2(x1 - x0).to_degrees()));
+        } else if let Some(a) = it.stroke.gradient_angle {
+            el.set("GradientStrokeAngle", num(a));
+        }
         self.stroke_attrs(&mut el, &it.stroke);
         // Corner options: map path-order corners to the named corners by geometry.
         if !it.corners.is_none() {

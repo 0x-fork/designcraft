@@ -38,6 +38,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("View Options", "Параметри перегляду"),
     ("Frame Edges", "Краї фреймів"),
     ("Hidden Characters", "Приховані символи"),
+    ("The stroke isn't a gradient.", "Обведення не є градієнтом."),
     ("Reverse Path", "Розвернути контур"),
     ("Set Anchor", "Задати прив’язку"),
     ("Clear", "Очистити"),

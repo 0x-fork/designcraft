@@ -144,7 +144,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Gradient",
             [],
             None,
-            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b]|{model, …}(0..1), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
+            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b]|{model, …}(0..1), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), target?: fill|stroke, ids?} → {swatch, kind, stops} — edits the fill's (or the stroke's) gradient (an unnamed gradient unless it equals a gradient swatch)",
             super::has_selection,
             apply_gradient
         ),
@@ -926,13 +926,18 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
     let angle = p.get("angle").and_then(Value::as_f64);
+    let stroke = match str_param(p, "target") {
+        None | Some("fill") => false,
+        Some("stroke") => true,
+        Some(t) => return Err(bad("object.gradient", format!("unknown target {t}"))),
+    };
     let (from, to) = (super::point_param(p, "from"), super::point_param(p, "to"));
     let ids = super::targets(s, p)?;
     s.edit(|d, _| {
         let mut out = Value::Null;
         for id in &ids {
             let Some(it) = d.item(*id) else { continue };
-            let cur_name = it.fill.swatch.clone();
+            let cur_name = if stroke { it.stroke.swatch.clone() } else { it.fill.swatch.clone() };
             let cur = designcraft_color::swatch::resolve_gradient(&d.swatches, &cur_name).cloned();
             let mut g = cur.clone().unwrap_or_default();
             if let Some(k) = kind {
@@ -964,16 +969,22 @@ fn apply_gradient(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let inv = d.find(*id).map(|l| d.parent_xf(&l)).zip(d.item(*id).map(|i| i.xf)).map(|(pxf, xf)| (pxf * xf).inverse());
             let Some(it) = d.item_mut(*id) else { continue };
-            it.fill.swatch = name.clone();
-            it.fill.tint = 1.0;
+            // The fill's or the stroke's paint: swatch, tint, angle, vector.
+            let (swatch, tint, g_angle, g_vector) = if stroke {
+                (&mut it.stroke.swatch, &mut it.stroke.tint, &mut it.stroke.gradient_angle, &mut it.stroke.gradient_vector)
+            } else {
+                (&mut it.fill.swatch, &mut it.fill.tint, &mut it.fill.gradient_angle, &mut it.fill.gradient_vector)
+            };
+            *swatch = name.clone();
+            *tint = 1.0;
             if let Some(a) = angle {
-                it.fill.gradient_angle = Some(a);
-                it.fill.gradient_vector = None;
+                *g_angle = Some(a);
+                *g_vector = None;
             }
             if let (Some(a), Some(b), Some(inv)) = (from, to, inv) {
                 let (a, b) = (inv * a, inv * b);
                 if (b - a).hypot() > 1e-6 {
-                    it.fill.gradient_vector = Some([a.x, a.y, b.x, b.y]);
+                    *g_vector = Some([a.x, a.y, b.x, b.y]);
                 }
             }
             if out.is_null() {
@@ -1994,6 +2005,97 @@ mod radial_gradient_tests {
         // A box keeps its ellipse.
         let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(0.0, 0.0, 100.0, 200.0));
         assert_eq!((rx, ry), (50.0, 100.0));
+    }
+}
+
+#[cfg(test)]
+mod gradient_stroke_tests {
+    use serde_json::json;
+
+    /// Grey along a 20 pt line from (20, 60) to (180, 60): near its start, middle and end.
+    fn along(img: &designcraft_render::Rendered) -> (u8, u8, u8) {
+        (img.pixel(26, 60)[0], img.pixel(100, 60)[0], img.pixel(174, 60)[0])
+    }
+
+    #[test]
+    fn a_gradient_on_a_stroke_runs_across_the_path_on_screen_and_in_pdf() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [20, 60], "b": [180, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "weight": 20})).unwrap();
+        let r = s
+            .execute(
+                "object.gradient",
+                &json!({"ids": [id], "target": "stroke", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+            )
+            .unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let it = d.item(designcraft_doc::ItemId(id)).unwrap();
+        assert_eq!(it.stroke.swatch, r["swatch"].as_str().unwrap());
+        assert_eq!(it.fill.swatch, designcraft_color::swatch::NONE, "the fill is left alone");
+        let mut rr = designcraft_render::Renderer::new();
+        let (a, m, b) = along(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a < 40 && (90..170).contains(&m) && b > 215, "screen: {a} {m} {b}");
+        // The PDF, placed back and drawn: the same.
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "stroke.pdf", "x": 0, "y": 0, "width": 200}))
+            .unwrap();
+        let pd = p.doc().unwrap().doc.clone();
+        let (a, m, b) = along(&rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a < 40 && (90..170).contains(&m) && b > 215, "pdf: {a} {m} {b}");
+        // The Gradient Swatch tool's drag on the stroke: reversed by dragging right to left.
+        s.execute("object.gradient", &json!({"ids": [id], "target": "stroke", "from": [180, 60], "to": [20, 60]})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let (a, _, b) = along(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap());
+        assert!(a > 215 && b < 40, "dragged: {a} {b}");
+        assert!(s.execute("object.gradient", &json!({"ids": [id], "target": "gap"})).is_err());
+    }
+
+    /// A 20 pt horizontal line with a gradient on its stroke, drawn on screen and from its PDF.
+    fn line_with_stroke_gradient(g: serde_json::Value) -> (designcraft_render::Rendered, designcraft_render::Rendered) {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [20, 60], "b": [180, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.stroke", &json!({"ids": [id], "weight": 20})).unwrap();
+        let mut g = g;
+        g["ids"] = json!([id]);
+        g["target"] = json!("stroke");
+        s.execute("object.gradient", &g).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut rr = designcraft_render::Renderer::new();
+        let screen = rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap();
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 200, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": crate::cmd::file::base64_encode(&pdf), "name": "line.pdf", "x": 0, "y": 0, "width": 200})).unwrap();
+        let pd = p.doc().unwrap().doc.clone();
+        let placed = rr.render_page(&pd, &p.cache, 0, 1.0, false, &Default::default()).unwrap();
+        (screen, placed)
+    }
+
+    #[test]
+    fn a_radial_gradient_on_a_straight_lines_stroke_shows_all_its_stops() {
+        // The line's box has no height: the gradient is a circle across the line's length.
+        let (screen, pdf) = line_with_stroke_gradient(
+            json!({"kind": "radial", "stops": [{"location": 0, "color": "#000000"}, {"location": 100, "color": "#ffffff"}]}),
+        );
+        for (what, img) in [("screen", &screen), ("pdf", &pdf)] {
+            let (a, m, b) = along(img);
+            assert!(m < 40 && a > 180 && b > 180, "{what}: {a} {m} {b}");
+        }
+    }
+
+    #[test]
+    fn a_linear_gradient_across_a_straight_line_paints_its_stroke_alike_on_screen_and_in_pdf() {
+        let (screen, pdf) =
+            line_with_stroke_gradient(json!({"angle": 90, "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}));
+        let (s, p) = (screen.pixel(100, 60), pdf.pixel(100, 60));
+        // The line's box has no height: the gradient runs across the line's length, so the stroke
+        // shows its middle.
+        assert!(s[1] < 60 && s[0] > 80 && s[2] > 80, "screen: the stroke is painted, {s:?}");
+        assert!((0..3).all(|i| s[i].abs_diff(p[i]) < 40), "screen {s:?}, pdf {p:?}");
     }
 }
 

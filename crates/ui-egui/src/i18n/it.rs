@@ -35,6 +35,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("View Options", "Opzioni di visualizzazione"),
     ("Frame Edges", "Bordi cornice"),
     ("Hidden Characters", "Caratteri nascosti"),
+    ("The stroke isn't a gradient.", "La traccia non è una sfumatura."),
     ("Reverse Path", "Inverti tracciato"),
     ("Set Anchor", "Imposta ancoraggio"),
     ("Clear", "Cancella"),

@@ -41,6 +41,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("View Options", "Opções de visualização"),
     ("Frame Edges", "Bordas do quadro"),
     ("Hidden Characters", "Caracteres ocultos"),
+    ("The stroke isn't a gradient.", "O traçado não é um gradiente."),
     ("Reverse Path", "Inverter demarcador"),
     ("Set Anchor", "Definir ponto de ancoragem"),
     ("Clear", "Limpar"),

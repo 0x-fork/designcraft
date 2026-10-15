@@ -989,7 +989,7 @@ impl Exporter<'_> {
 
     /// A swatch fill (solid or gradient) in the item's inner space. `None` for [None]/unknown.
     fn fill_paint(&mut self, fill: &designcraft_doc::Fill, bounds: Rect) -> Option<krilla::paint::Paint> {
-        let (swatch, tint, angle) = (fill.swatch.as_str(), fill.tint, fill.gradient_angle);
+        let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
         if let Some(g) = designcraft_color::swatch::resolve_gradient(&self.doc.swatches, swatch) {
             let kind = g.kind;
             let mut expanded = g.expanded_stops();
@@ -1030,8 +1030,6 @@ impl Exporter<'_> {
             if stops.is_empty() {
                 return None;
             }
-            let c = bounds.center();
-            let v = fill.gradient_vector;
             return Some(match kind {
                 GradientKind::Radial => {
                     // A circle stretched into the object's ellipse, as on screen.
@@ -1054,13 +1052,7 @@ impl Exporter<'_> {
                     .into()
                 }
                 _ => {
-                    let a = angle.unwrap_or(0.0).to_radians();
-                    let half = ((bounds.width() * a.cos().abs() + bounds.height() * a.sin().abs()) / 2.0).max(1e-3);
-                    let d = Vec2::new(a.cos(), -a.sin()) * half;
-                    let (p0, p1) = match v {
-                        Some([x0, y0, x1, y1]) => (designcraft_geom::Point::new(x0, y0), designcraft_geom::Point::new(x1, y1)),
-                        None => (c - d, c + d),
-                    };
+                    let (p0, p1) = fill.linear_axis(bounds);
                     LinearGradient {
                         x1: p0.x as f32,
                         y1: p0.y as f32,
@@ -1080,7 +1072,14 @@ impl Exporter<'_> {
 
     fn stroke(&mut self, s: &mut Surface, it: &Item, bp: &BezPath, path: &Path) {
         let st = &it.stroke;
-        let Some(c) = self.swatch_color(&st.swatch, st.tint) else { return };
+        // A gradient swatch runs across the path's box, as on a fill.
+        let paint: krilla::paint::Paint = if designcraft_color::swatch::resolve_gradient(&self.doc.swatches, &st.swatch).is_some() {
+            let Some(p) = self.fill_paint(&st.as_fill(), bp.bounding_box()) else { return };
+            p
+        } else {
+            let Some(c) = self.swatch_color(&st.swatch, st.tint) else { return };
+            c.into()
+        };
         let closed = it.path.is_closed();
         let mut cap = match st.cap {
             designcraft_doc::Cap::Butt => krilla::paint::LineCap::Butt,
@@ -1101,7 +1100,7 @@ impl Exporter<'_> {
                 s.draw_path(path);
                 s.set_stroke(None);
             }
-            s.set_fill(Some(Fill { paint: c.into(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
+            s.set_fill(Some(Fill { paint: paint.clone(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
             s.draw_path(&op);
             s.set_fill(None);
             return;
@@ -1153,7 +1152,7 @@ impl Exporter<'_> {
             s.draw_path(path);
         }
         s.set_stroke(Some(Stroke {
-            paint: c.clone().into(),
+            paint: paint.clone(),
             width: width as f32,
             miter_limit: st.miter_limit.max(1.0) as f32,
             line_cap: cap,
@@ -1174,12 +1173,12 @@ impl Exporter<'_> {
             let Some(p) = to_path(&h.path) else { continue };
             match h.outline {
                 Some(w) => {
-                    s.set_stroke(Some(Stroke { paint: c.clone().into(), width: w as f32, opacity: NormalizedF32::ONE, ..Default::default() }));
+                    s.set_stroke(Some(Stroke { paint: paint.clone(), width: w as f32, opacity: NormalizedF32::ONE, ..Default::default() }));
                     s.draw_path(&p);
                     s.set_stroke(None);
                 }
                 None => {
-                    s.set_fill(Some(krilla::paint::Fill { paint: c.clone().into(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
+                    s.set_fill(Some(krilla::paint::Fill { paint: paint.clone(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
                     s.draw_path(&p);
                     s.set_fill(None);
                 }
