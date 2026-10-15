@@ -213,6 +213,9 @@ pub struct Prefs {
     pub show_note_anchors: bool,
     /// Preferences › File Handling: minutes between document recovery saves.
     pub recovery_minutes: f64,
+    /// Preferences › File Handling › Create Links When Placing Text Files: placed text files are
+    /// linked (Links panel) unless `file.place` says otherwise.
+    pub link_text_files: bool,
 }
 
 /// A starter autocorrect list (common English typing slips).
@@ -261,6 +264,7 @@ impl Default for Prefs {
             show_added_text: true,
             show_note_anchors: true,
             recovery_minutes: 0.5,
+            link_text_files: false,
         }
     }
 }
@@ -297,6 +301,9 @@ pub struct Session {
     pub book: Option<cmd::book::Book>,
     /// Content Collector conveyor: collected objects as snippets (name, bytes).
     pub conveyor: Vec<(String, Vec<u8>)>,
+    /// Linked text files checked by the Links panel: path → the size and modification time the
+    /// file had and the hash of its contents then, so a file touched but not changed is read once.
+    pub(crate) text_link_checks: std::collections::HashMap<String, (designcraft_doc::Fingerprint, String)>,
 }
 
 impl Default for Session {
@@ -319,6 +326,7 @@ impl Session {
             clipboard: None,
             recovery_dir: None,
             text_clipboard: None,
+            text_link_checks: Default::default(),
             ui_requests: vec![],
             loaded: None,
             transforms: Default::default(),

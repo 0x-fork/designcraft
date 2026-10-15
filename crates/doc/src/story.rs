@@ -155,6 +155,40 @@ pub struct Story {
     /// Place and Link: the parent story this one copies, and the parent's revision when copied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<(StoryId, u64)>,
+    /// File › Place with Create Links: the text file the story was placed from (Links panel).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_link: Option<TextFileLink>,
+}
+
+/// A linked text file: where a placed story came from, what the file held, and the Word Import
+/// Options that brought it in, so Update Link can import it again the same way.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextFileLink {
+    pub path: String,
+    /// The file's size and FNV-1a hash (hex) when it was placed or last updated.
+    pub size: u64,
+    pub hash: String,
+    /// Its modification time then (seconds since 1970; 0: unknown), as Data Merge keeps for its
+    /// source: while size and time are unchanged, the Links panel doesn't read the file.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub mtime: i64,
+    /// Imported style name → document style (`styleMap`), including the names Auto Rename chose.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub style_map: BTreeMap<String, String>,
+    /// `styleConflicts`: useExisting, redefine or autoRename.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub style_conflicts: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_styles: bool,
+    /// Hash of the story's text and formatting right after the import: a different one means it
+    /// was edited in the layout (an update replaces those edits).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub story_hash: String,
+}
+
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
 }
 
 impl Story {
@@ -177,6 +211,7 @@ impl Story {
             objects: Vec::new(),
             editorial: Vec::new(),
             link: None,
+            file_link: None,
         }
     }
 

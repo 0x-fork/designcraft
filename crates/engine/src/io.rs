@@ -8,7 +8,7 @@
 //! it is ([`is_file`], [`is_dir`], [`exists`], [`metadata`]), and as the roots' own message where
 //! it asks for the bytes.
 
-use std::fs::Metadata;
+pub use std::fs::Metadata;
 use std::path::Path;
 
 /// The bytes of the file at `path`, inside the automation read root when there is one.
@@ -24,6 +24,17 @@ pub fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     let path = path.as_ref();
     crate::file_access::check_read(path).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
     std::fs::read(path)
+}
+
+/// [`read`] that stops past `cap` bytes: at most `cap + 1` bytes are read, so a device or a file
+/// that grows while it is read can't exhaust memory. The caller compares the length with `cap`.
+pub fn read_capped(path: impl AsRef<Path>, cap: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let path = path.as_ref();
+    crate::file_access::check_read(path).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
+    let mut b = Vec::new();
+    std::fs::File::open(path)?.take(cap.saturating_add(1)).read_to_end(&mut b)?;
+    Ok(b)
 }
 
 /// The text of the file at `path`, inside the automation read root when there is one.

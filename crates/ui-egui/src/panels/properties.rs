@@ -2040,7 +2040,7 @@ pub fn align_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
 }
 
 /// Links: status (missing / modified / embedded), page and effective resolution of every placed
-/// graphic; Relink, Go To Link, Update Link, Embed Link for the chosen row.
+/// graphic and linked text file; Relink, Go To Link, Update Link, Embed Link for the chosen row.
 pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     // Linked stories (Place and Link).
     let stories = app.session.execute("story.links", &json!({})).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
@@ -2095,7 +2095,8 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Page · PPI")).color(t.text_dim).size(11.0));
         ui.end_row();
         for r in &rows {
-            let aid = r["asset"].as_u64().unwrap_or(0);
+            // Asset and story ids come from one counter: a row is chosen by either.
+            let aid = r["asset"].as_u64().or_else(|| r["story"].as_u64()).unwrap_or(0);
             let name = r["name"].as_str().unwrap_or("");
             let response = ui
                 .vertical(|ui| {
@@ -2122,6 +2123,7 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 "missing" => ("\u{26A0} Missing", egui::Color32::from_rgb(0xe5, 0x4b, 0x4b)),
                 "modified" => ("\u{25B2} Modified", egui::Color32::from_rgb(0xe8, 0xb3, 0x2c)),
                 "embedded" => ("Embedded", t.text_dim),
+                "tooLarge" => ("Too large to check", egui::Color32::from_rgb(0xe8, 0xb3, 0x2c)),
                 _ => ("OK", t.text_dim),
             };
             crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, txt)).color(col).size(11.0));
@@ -2158,19 +2160,39 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Choose a link.")).color(t.text_dim).size(11.0));
             return;
         };
+        // A linked text file is addressed by its story.
+        let is_text = rows.iter().any(|r| r["story"].as_u64() == Some(aid));
+        let target = if is_text { json!({"story": aid}) } else { json!({"asset": aid}) };
+        let with = |k: &str, v: Value| {
+            let mut p = target.clone();
+            p[k] = v;
+            p
+        };
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Relink…"))).clicked()
             && let Some(path) = app.services.pick_open.as_mut().and_then(|pick| pick("relink"))
         {
-            let _ = app.run("links.relink", json!({"asset": aid, "path": path}));
+            let _ = app.run("links.relink", with("path", json!(path)));
         }
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Go To"))).clicked() {
-            let _ = app.run("links.goTo", json!({"asset": aid}));
+            let _ = app.run("links.goTo", target.clone());
         }
-        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Update"))).clicked() {
-            let _ = app.run("links.update", json!({"asset": aid}));
+        let edited = rows.iter().any(|r| r["story"].as_u64() == Some(aid) && r["edited"].as_bool() == Some(true));
+        let update = ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Update")));
+        let update = if edited {
+            update.on_hover_ui(|ui| {
+                crate::rtl::label(
+                    ui,
+                    crate::i18n::tr(&app.ui.language, "This story was edited in the layout: you'll be asked before those edits are replaced"),
+                );
+            })
+        } else {
+            update
+        };
+        if update.clicked() {
+            update_links(app, target.clone());
         }
-        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Embed"))).clicked() {
-            let _ = app.run("links.embed", json!({"asset": aid}));
+        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, if is_text { "Unlink" } else { "Embed" }))).clicked() {
+            let _ = app.run("links.embed", target.clone());
         }
     });
     ui.horizontal(|ui| {
@@ -2190,6 +2212,35 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+/// Update Link from the Links panel or the menu (`{asset}`, `{story}`, or `{}` for all): asks
+/// first when a linked text story edited in the layout would lose those edits, as InDesign's
+/// Links panel does. The `links.update` command itself doesn't ask (as in InDesign scripting).
+pub fn update_links(app: &mut DesignApp, target: Value) {
+    let rows = app.session.execute("links.list", &json!({})).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let one = target.get("story").and_then(Value::as_u64);
+    let all = one.is_none() && target.get("asset").is_none();
+    let edited: Vec<&str> = rows
+        .iter()
+        .filter(|r| (all || (one.is_some() && r["story"].as_u64() == one)) && r["edited"] == true && r["status"] == "modified")
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    if edited.is_empty() {
+        let _ = run_update_links(app, target);
+    } else {
+        let files = edited.join(", ");
+        app.ui.dialog = Some(crate::dialogs::Dialog::new("updateLink", json!({"target": target, "files": files})));
+    }
+}
+
+/// Run `links.update`; its first warning goes to the status bar.
+pub(crate) fn run_update_links(app: &mut DesignApp, target: Value) -> Result<Value, String> {
+    let r = app.run("links.update", target)?;
+    if let Some(w) = r["warnings"].as_array().and_then(|w| w.first()).and_then(Value::as_str) {
+        app.status(w.to_string());
+    }
+    Ok(r)
 }
 
 pub fn info_panel(app: &mut DesignApp, ui: &mut egui::Ui) {

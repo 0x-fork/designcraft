@@ -24,6 +24,13 @@ use parse::{
     tile,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use parse::fingerprint_from;
+
+pub(crate) fn fingerprint_from_path(path: &str) -> Option<designcraft_doc::Fingerprint> {
+    fingerprint_of(Path::new(path))
+}
+
 const PARENT_WARNING: &str = "A parent-page placeholder was left unfilled.";
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -767,19 +774,26 @@ fn read_path(path: &str) -> std::result::Result<Vec<u8>, String> {
     read_path_capped(path, MAX_DATA_FILE_BYTES)
 }
 
-fn read_path_capped(path: &str, cap: u64) -> std::result::Result<Vec<u8>, String> {
+/// The file at `path`, refused when it is larger than `cap` bytes. The read itself stops past
+/// `cap`, so a device or a file that grows while it is read can't exhaust memory.
+pub(crate) fn read_path_capped(path: &str, cap: u64) -> std::result::Result<Vec<u8>, String> {
+    let too_big = || format!("{path}: the file is larger than {} MiB", cap / (1024 * 1024));
     match crate::io::metadata(path) {
-        Ok(m) if m.len() > cap => return Err(format!("{path}: the data file is larger than {} MiB", cap / (1024 * 1024))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(format!("{path}: the data file is missing")),
+        Ok(m) if m.len() > cap => return Err(too_big()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(format!("{path}: the file is missing")),
         _ => {}
     }
     // The roots' own message when they refuse the path.
     crate::file_access::check_read(path)?;
-    match crate::io::read(path) {
-        Ok(b) => Ok(b),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(format!("{path}: the data file is missing")),
-        Err(e) => Err(format!("{path}: {e}")),
+    let b = match crate::io::read_capped(path, cap) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(format!("{path}: the file is missing")),
+        Err(e) => return Err(format!("{path}: {e}")),
+    };
+    if b.len() as u64 > cap {
+        return Err(too_big());
     }
+    Ok(b)
 }
 
 fn parent_dir(path: &str) -> Option<PathBuf> {
