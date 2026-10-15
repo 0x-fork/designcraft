@@ -50,6 +50,30 @@ pub struct Imported {
     pub warnings: Vec<String>,
 }
 
+/// The most one package part may decompress to. The size an archive claims only bounds the
+/// reservation, never the read: a small entry can inflate to gigabytes.
+pub(crate) const MAX_PART_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Entry `index` of `zip` as (name, decompressed bytes); `None` for a directory. An entry that
+/// decompresses to more than `limit` bytes is an error rather than an unbounded read.
+fn read_part(zip: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, index: usize, limit: u64) -> Result<Option<(String, Vec<u8>)>> {
+    let f = zip.by_index(index).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
+    // A folder entry of the archive (the zip crate's own `is_dir`; spelled out so no file-system
+    // probe appears in this crate).
+    if f.name().ends_with('/') {
+        return Ok(None);
+    }
+    let name = f.name().to_string();
+    // The size is what the archive claims: don't reserve more than a sane part up front.
+    let mut buf = Vec::with_capacity((f.size() as usize).min(1 << 24));
+    // Read one byte past the limit to tell "exactly at the limit" from "over it".
+    f.take(limit.saturating_add(1)).read_to_end(&mut buf).map_err(|e| IdmlError::Part { part: name.clone(), msg: e.to_string() })?;
+    if buf.len() as u64 > limit {
+        return Err(IdmlError::Part { part: name, msg: format!("larger than {} MiB uncompressed", limit / (1024 * 1024)) });
+    }
+    Ok(Some((name, buf)))
+}
+
 /// Import with a custom reader for linked files, reporting the problems that did not stop it.
 pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Imported> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
@@ -57,16 +81,7 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
     // Normalised part name → entry name, first entry wins (zip order, so the choice is stable).
     let mut lenient: HashMap<String, String> = HashMap::new();
     for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
-        // A folder entry of the archive (the zip crate's own `is_dir`; spelled out so no file-system
-        // probe appears in this crate).
-        if f.name().ends_with('/') {
-            continue;
-        }
-        let name = f.name().to_string();
-        // The size is what the archive claims: don't reserve more than a sane part up front.
-        let mut buf = Vec::with_capacity((f.size() as usize).min(1 << 24));
-        f.read_to_end(&mut buf).map_err(|e| IdmlError::Part { part: name.clone(), msg: e.to_string() })?;
+        let Some((name, buf)) = read_part(&mut zip, i, MAX_PART_BYTES)? else { continue };
         lenient.entry(normalize_part_name(&name)).or_insert_with(|| name.clone());
         files.insert(name, buf);
     }
@@ -3127,5 +3142,27 @@ mod frame_preference_scalar_tests {
         // Object identities use the raw property lookup, not scalar whitespace normalization.
         let exact = El::new("TextFramePreference").child(El::new("Properties").child(El::new("ColumnRuleStrokeColor").text(" Color/Named ")));
         assert_eq!(Prefs(&[&exact]).prop("ColumnRuleStrokeColor").as_deref(), Some(" Color/Named "));
+    }
+}
+
+#[cfg(test)]
+mod part_size_tests {
+    use std::io::Write;
+
+    use super::*;
+
+    /// A small package part can inflate to gigabytes; the read is capped, so an oversized entry
+    /// is an error instead of an unbounded read.
+    #[test]
+    fn an_oversized_part_is_an_error_not_a_huge_read() {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let deflated = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        w.start_file("Stories/Story_big.xml", deflated).unwrap();
+        w.write_all(&vec![b' '; 64 * 1024]).unwrap();
+        let bytes = w.finish().unwrap().into_inner();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).unwrap();
+        assert!(matches!(read_part(&mut zip, 0, 4096), Err(IdmlError::Part { .. })));
+        // At or under the cap reads fine: the same entry with a 64 KiB limit.
+        assert_eq!(read_part(&mut zip, 0, 64 * 1024).unwrap().map(|(_, b)| b.len()), Some(64 * 1024));
     }
 }
