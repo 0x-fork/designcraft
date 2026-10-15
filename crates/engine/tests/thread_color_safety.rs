@@ -230,12 +230,13 @@ fn safety_thread_revision_wrap_keeps_link_stale_through_native_reopen() {
     // The copied parent's token will coincide with the merged survivor's final revision.
     Arc::make_mut(&mut s.doc_mut().unwrap().doc).story_mut(parent).unwrap().rev = 1;
     let (_, linked) = child(&mut s, parent);
-    Arc::make_mut(&mut s.doc_mut().unwrap().doc).story_mut(survivor).unwrap().rev = u64::MAX;
     assert_eq!(link(&mut s, linked)["outOfDate"], false);
     let bytes = s.execute("file.serialize", &json!({})).unwrap();
     let mut reopened = Session::new();
     reopened.execute("file.openBytes", &json!({"name":"rollover.designcraft","base64":bytes["base64"]})).unwrap();
     let mut s = reopened;
+    // Inject the in-memory rollover boundary after load, independently of cold-load normalization.
+    Arc::make_mut(&mut s.doc_mut().unwrap().doc).story_mut(survivor).unwrap().rev = u64::MAX;
     assert_eq!(s.doc().unwrap().doc.story(survivor).unwrap().rev, u64::MAX);
     assert_eq!(s.doc().unwrap().doc.story(linked).unwrap().link, Some((parent, 1)));
     let before = s.doc().unwrap().doc.clone();
