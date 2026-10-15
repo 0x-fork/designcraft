@@ -1100,24 +1100,7 @@ fn character_section(app: &mut DesignApp, ui: &mut Ui) {
     }
     // Kerning / tracking.
     icons::paint(ui.painter(), sub(b, 0.0, 27.0, 19.0, 19.0), "kerning", t.icon);
-    let kern = c["kerning"]["kind"].as_str().unwrap_or("metrics").to_string();
-    let kern_label = match kern.as_str() {
-        "optical" => "Optical".to_string(),
-        "none" => "0".to_string(),
-        "manual" => format!("{}", c["kerning"]["value"].as_f64().unwrap_or(0.0)),
-        _ => "Metrics".to_string(),
-    };
-    place(ui, sub(b, 24.0, 26.0, half - 24.0, FIELD_H), |ui| {
-        let resp = widgets::dropdown(ui, crate::i18n::tr(&app.ui.language, &kern_label), half - 24.0);
-        egui::Popup::menu(&resp).show(|ui| {
-            for (label, v) in [("Metrics", json!({"kind": "metrics"})), ("Optical", json!({"kind": "optical"})), ("0", json!({"kind": "none"}))] {
-                if ui.selectable_label(kern_label == label, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
-                    let _ = app.run("type.char", json!({"attrs": {"kerning": v}}));
-                    ui.close();
-                }
-            }
-        });
-    });
+    place(ui, sub(b, 24.0, 26.0, half - 24.0, FIELD_H), |ui| kerning_control(app, ui, "ckern", &c["kerning"], half - 24.0));
     icons::paint(ui.painter(), sub(b, half + 10.0, 27.0, 19.0, 19.0), "tracking", t.icon);
     const TRACK: &[f64] = &[-100.0, -75.0, -50.0, -25.0, -10.0, -5.0, 0.0, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 200.0];
     if let Some(v) = place(ui, sub(b, half + 34.0, 26.0, lw, FIELD_H), |ui| {
@@ -1291,6 +1274,37 @@ fn language_menu(app: &mut DesignApp, ui: &mut Ui, cur: &str) {
     }
 }
 
+/// Kerning for the text selection: the label shows Metrics, Optical, 0 or the manual value; its
+/// menu sets one of the first three or a manual value in 1/1000 em (typed or stepped).
+fn kerning_control(app: &mut DesignApp, ui: &mut egui::Ui, id: &str, k: &Value, width: f32) {
+    let kind = k["kind"].as_str().unwrap_or("metrics");
+    let manual = k["value"].as_f64().filter(|v| kind == "manual" && v.is_finite());
+    let label = match (kind, manual) {
+        ("optical", _) => "Optical".to_string(),
+        ("none", _) => "0".to_string(),
+        ("manual", Some(v)) => format!("{v}"),
+        _ => "Metrics".to_string(),
+    };
+    let resp = widgets::dropdown(ui, crate::i18n::tr(&app.ui.language, &label), width);
+    let name = crate::i18n::tr(&app.ui.language, "Kerning");
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, name));
+    egui::Popup::menu(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        for (text, v) in [("Metrics", json!({"kind": "metrics"})), ("Optical", json!({"kind": "optical"})), ("0", json!({"kind": "none"}))] {
+            if ui.selectable_label(label == text, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, text))).clicked() {
+                let _ = app.run("type.char", json!({"attrs": {"kerning": v}}));
+                ui.close();
+            }
+        }
+        ui.separator();
+        // A manual value: between the selected character and the next, in 1/1000 em.
+        let field = format!("{id}_manual");
+        if let Some(v) = NumField::number(&field, Some(manual.unwrap_or(0.0)), "", 0).width(90.0).spinner().step(5.0).range(-1000.0, 10000.0).show(ui)
+        {
+            let _ = app.run("type.char", json!({"attrs": {"kerning": {"kind": "manual", "value": v}}}));
+        }
+    });
+}
+
 pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     let Some(a) = text_attrs(app) else {
         crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Select text or a text frame."));
@@ -1343,10 +1357,13 @@ pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             let _ = app.run("type.char", json!({"attrs": {"leading": {"kind": "points", "value": v}}}));
         }
         ui.end_row();
+        caption(ui, crate::i18n::tr(&app.ui.language, "Kerning"));
+        kerning_control(app, ui, "pck", &c["kerning"], 60.0);
         caption(ui, crate::i18n::tr(&app.ui.language, "Tracking"));
-        if let Some(v) = number(ui, "pct", c["tracking"].as_f64(), "", 60.0, 0) {
+        if let Some(v) = number(ui, "pct", c["tracking"].as_f64(), "", 70.0, 0) {
             let _ = app.run("type.char", json!({"attrs": {"tracking": v}}));
         }
+        ui.end_row();
         caption(ui, crate::i18n::tr(&app.ui.language, "Baseline"));
         if let Some(v) = number(ui, "pcb", c["baselineShift"].as_f64(), " pt", 70.0, 2) {
             let _ = app.run("type.char", json!({"attrs": {"baselineShift": v}}));
@@ -2479,6 +2496,63 @@ mod tests {
         h.get_by_label("French").click();
         h.run_steps(2);
         assert_eq!(language(h.state_mut()), "French");
+    }
+
+    fn kerning(app: &mut DesignApp) -> Value {
+        text_attrs(app).unwrap()["chars"]["kerning"].clone()
+    }
+
+    /// A harness drawing `panel` for `app` (fonts installed before the first frame).
+    fn panel_harness(app: DesignApp, panel: fn(&mut DesignApp, &mut egui::Ui)) -> Harness<'static, DesignApp> {
+        Harness::builder().with_size(vec2(320.0, 1400.0)).build_ui_state(
+            move |ui, app: &mut DesignApp| {
+                let id = egui::Id::new("test_fonts");
+                if ui.data(|d| d.get_temp::<bool>(id)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(id, true));
+                    return;
+                }
+                panel(app, ui);
+            },
+            app,
+        )
+    }
+
+    fn text_app() -> DesignApp {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "AVATAR", "caret": true})).unwrap();
+        app.run("edit.selectAll", json!({})).unwrap();
+        app
+    }
+
+    #[test]
+    fn properties_kerning_menu_sets_zero_kerning() {
+        let mut h = panel_harness(text_app(), show);
+        h.run_steps(3);
+        assert_eq!(kerning(h.state_mut())["kind"], "metrics");
+        h.get_by_label("Kerning").click();
+        h.run_steps(2);
+        h.get_by_label("0").click();
+        h.run_steps(2);
+        assert_eq!(kerning(h.state_mut())["kind"], "none");
+    }
+
+    #[test]
+    fn character_panel_has_kerning_and_takes_a_typed_manual_value() {
+        let mut h = panel_harness(text_app(), character_panel);
+        h.run_steps(3);
+        // The caption and the control share the name: click the control.
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Kerning").click();
+        h.run_steps(2);
+        // The menu's field is drawn after the panel's own fields.
+        let field = h.get_all_by_role(egui::accesskit::Role::TextInput).last().unwrap();
+        field.focus();
+        field.type_text("-40");
+        h.run_steps(1);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(kerning(h.state_mut()), json!({"kind": "manual", "value": -40.0}));
     }
 
     #[test]
