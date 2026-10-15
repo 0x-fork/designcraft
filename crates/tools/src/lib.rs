@@ -373,8 +373,16 @@ pub enum Cursor {
     ResizeNeSw,
     Rotate,
     Pen,
+    /// The pen over a segment of a selected path: a click adds an anchor there.
+    PenAdd,
+    /// The pen over an anchor of a selected path: a click deletes it.
+    PenDelete,
+    /// The pen over the first anchor of the path it is drawing: a click closes it.
+    PenClose,
     /// The Pen over an open path's end point: a click continues the path.
     PenContinue,
+    /// Convert Direction Point.
+    PenConvert,
     /// Over a type-on-a-path bracket: dragging it moves where the text starts or ends.
     PathBracket,
     Text,
