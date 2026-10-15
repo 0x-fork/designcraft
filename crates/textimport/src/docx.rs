@@ -68,7 +68,9 @@ pub(crate) fn parse(xml: &str) -> Result<El, ImportError> {
                     attrs: e
                         .attributes()
                         .flatten()
-                        .map(|a| (local(a.key.as_ref()), a.unescape_value().map(|v| v.to_string()).unwrap_or_default()))
+                        .map(|a| {
+                            (local(a.key.as_ref()), a.normalized_value(quick_xml::XmlVersion::Implicit1_0).map(|v| v.to_string()).unwrap_or_default())
+                        })
                         .collect(),
                     kids: vec![],
                 };
@@ -80,7 +82,9 @@ pub(crate) fn parse(xml: &str) -> Result<El, ImportError> {
                     attrs: e
                         .attributes()
                         .flatten()
-                        .map(|a| (local(a.key.as_ref()), a.unescape_value().map(|v| v.to_string()).unwrap_or_default()))
+                        .map(|a| {
+                            (local(a.key.as_ref()), a.normalized_value(quick_xml::XmlVersion::Implicit1_0).map(|v| v.to_string()).unwrap_or_default())
+                        })
                         .collect(),
                     kids: vec![],
                 };
@@ -791,5 +795,19 @@ mod tests {
         let i = import(&docx_parts(&[("word/document.xml", &document), ("word/numbering.xml", "<w:numbering></w:num>")])).unwrap();
         assert_eq!(i.story.paras[0].para.list_type, None);
         assert_eq!(i.warnings.len(), 1);
+    }
+
+    #[test]
+    fn an_element_with_many_attributes_parses_in_linear_time() {
+        // RUSTSEC-2026-0194: before quick-xml 0.41 the duplicate-attribute check compared each name with every
+        // earlier one on the element, so a crafted .docx/.xlsx with one huge tag hung the import (O(N²)).
+        let attrs: String = (0..100_000).map(|i| format!(" w:a{i}=\"{i}\"")).collect();
+        let xml = format!("<w:document><w:body><w:p{attrs}/></w:body></w:document>");
+        let started = std::time::Instant::now();
+        let doc = parse(&xml).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "parse took {:?}", started.elapsed());
+        let p = doc.child("body").and_then(|b| b.child("p")).unwrap();
+        assert_eq!(p.attr("a0"), Some("0"));
+        assert_eq!(p.attr("a99999"), Some("99999"));
     }
 }
