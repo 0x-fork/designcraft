@@ -24,6 +24,7 @@ use parse::{
     tile,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use parse::fingerprint_from;
 
 pub(crate) fn fingerprint_from_path(path: &str) -> Option<designcraft_doc::Fingerprint> {

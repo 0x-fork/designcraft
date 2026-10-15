@@ -182,9 +182,11 @@ pub(crate) type TextChecks = std::collections::HashMap<String, (Fingerprint, Str
 pub(crate) fn text_status(l: &TextFileLink, checks: &mut TextChecks) -> &'static str {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        if !crate::io::is_file(&l.path) {
+            return "missing";
+        }
         let now = match crate::io::metadata(&l.path) {
             Err(_) => return "missing",
-            Ok(m) if !m.is_file() => return "missing",
             Ok(m) => super::datamerge::fingerprint_from(&m),
         };
         if now.size != l.size {
@@ -266,7 +268,7 @@ fn read_text(path: &str) -> Result<(Vec<u8>, Fingerprint)> {
     // The roots' own message when they refuse the path.
     crate::file_access::check_read(path).map_err(EngineError::Other)?;
     let m = crate::io::metadata(path).map_err(err)?;
-    if !m.is_file() {
+    if !crate::io::is_file(path) {
         return Err(EngineError::Other(format!("{path}: not a file")));
     }
     let too_large = || EngineError::Other(format!("{path}: larger than {} MiB", MAX_TEXT_LINK_BYTES / (1024 * 1024)));
@@ -889,8 +891,8 @@ mod text_link_tests {
     }
 }
 
-#[cfg(test)]
 #[cfg(unix)]
+#[cfg(test)]
 mod text_link_read_tests {
     use std::time::Duration;
 

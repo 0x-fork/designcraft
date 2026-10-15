@@ -8,7 +8,7 @@
 //! it is ([`is_file`], [`is_dir`], [`exists`], [`metadata`]), and as the roots' own message where
 //! it asks for the bytes.
 
-use std::fs::Metadata;
+pub use std::fs::Metadata;
 use std::path::Path;
 
 /// The bytes of the file at `path`, inside the automation read root when there is one.

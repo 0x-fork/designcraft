@@ -264,7 +264,11 @@ fn svg_viewbox_size(data: &[u8]) -> Option<(f64, f64)> {
         return None;
     }
     let attr = |name: &[u8]| {
-        root.attributes().with_checks(false).flatten().find(|a| a.key.as_ref() == name).and_then(|a| a.unescape_value().ok().map(|v| v.to_string()))
+        root.attributes()
+            .with_checks(false)
+            .flatten()
+            .find(|a| a.key.as_ref() == name)
+            .and_then(|a| a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok().map(|v| v.to_string()))
     };
     let absolute = |name: &[u8]| attr(name).is_some_and(|v| !v.trim().ends_with('%'));
     if absolute(b"width") || absolute(b"height") {
@@ -1718,6 +1722,7 @@ impl<'r> Importer<'r> {
             objects: objects.into_iter().map(Arc::new).collect(),
             editorial: Vec::new(),
             link: None,
+            file_link: None,
         };
         st.fix_notes();
         st.fix_marks();
