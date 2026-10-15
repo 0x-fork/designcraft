@@ -61,6 +61,13 @@ context menus, typing at a caret) are things a layout artist does every minute, 
 
 ## Remaining effort
 
+The selected style's context menu now offers Redefine Style for paragraph and character styles.
+It incorporates the source text's local changes, updates every use, and removes matching source
+overrides in one undo step. Named character styles remain separate when redefining a paragraph
+style. Commands: `style.paragraph.redefine` and `style.character.redefine` (optional `name`,
+which must match the source). This implements the global color, size and spacing updates at
+about 5:10–6:00 in [Jessica Garrity's styles tutorial](https://www.youtube.com/watch?v=pG9JkAPLgs8).
+
 | Work | Opus 5.5 h |
 |---|---|
 | Copy/paste, context menus, threading clicks, caret formatting on every platform, with control-channel regression tests | 30–50 |
