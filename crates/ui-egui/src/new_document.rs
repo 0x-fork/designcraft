@@ -15,6 +15,9 @@ use crate::dialogs::Dialog;
 use crate::theme::{Tokens, semibold};
 
 /// Tab key and English label.
+/// The Units list, as InDesign's New Document window has it.
+const NEW_DOCUMENT_UNITS: [Unit; 8] =
+    [Unit::Points, Unit::Picas, Unit::Inches, Unit::Millimeters, Unit::Centimeters, Unit::Ciceros, Unit::Agates, Unit::Pixels];
 const TABS: [(&str, &str); 5] = [("recent", "Recent"), ("saved", "Saved"), ("print", "Print"), ("web", "Web"), ("mobile", "Mobile")];
 /// The card of the factory settings, first on the Recent tab.
 const DEFAULT_CARD: &str = "[Default]";
@@ -624,7 +627,8 @@ fn details(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
         cell(ui, rtl, tr("Width"), |ui| spin(ui, d, "width", COLUMN_W - 8.0, Step::Measure(1.0)));
         cell(ui, rtl, tr("Units"), |ui| {
             egui::ComboBox::from_id_salt("nd_units").selected_text(crate::rtl::widget(ui, tr(u.label()))).width(COLUMN_W - 8.0).show_ui(ui, |ui| {
-                for v in Unit::ALL {
+                // InDesign's eight; a preset in another unit keeps it on the list.
+                for v in NEW_DOCUMENT_UNITS.into_iter().chain((!NEW_DOCUMENT_UNITS.contains(&u)).then_some(u)) {
                     if ui.selectable_label(v == u, crate::rtl::widget(ui, tr(v.label()))).clicked() && v != u {
                         set_units(d, v);
                     }
@@ -829,8 +833,13 @@ mod tests {
         let d = app.ui.dialog.as_ref().unwrap();
         assert_eq!((d.s("tab"), d.s("preset")), ("web".into(), "Web 1920 \u{d7} 1080".into()));
         assert_eq!((d.s("width"), d.s("height"), units(d)), ("1920 px".into(), "1080 px".into(), Unit::Pixels), "Web is in pixels");
-        assert!(!d.b("facingPages"));
+        assert!(!d.b("facingPages") && !d.b("primaryTextFrame"));
         assert_eq!(d.s("name"), "Poster", "the typed name stays");
+        // Mobile starts with a primary text frame, as in InDesign.
+        let texts = settle(&mut app, &ctx);
+        click(&mut app, &ctx, tab(&texts, "Mobile"), 1);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!((d.s("tab"), units(d), d.b("primaryTextFrame")), ("mobile".into(), Unit::Pixels, true));
         let texts = settle(&mut app, &ctx);
         click(&mut app, &ctx, tab(&texts, "Print"), 1);
         let d = app.ui.dialog.as_ref().unwrap();
@@ -864,6 +873,8 @@ mod tests {
 
     #[test]
     fn units_reformat_the_measures_and_linked_edges_follow() {
+        // InDesign's Units list.
+        assert_eq!(NEW_DOCUMENT_UNITS.map(|u| u.label()), ["Points", "Picas", "Inches", "Millimeters", "Centimeters", "Ciceros", "Agates", "Pixels"]);
         let mut d = Dialog::new("newDocument", json!({}));
         set_units(&mut d, Unit::Millimeters);
         assert_eq!((d.s("width"), d.s("marginTop")), ("215.9 mm".into(), "12.7 mm".into()));
