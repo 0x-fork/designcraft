@@ -912,3 +912,23 @@ fn the_type_tool_draws_a_text_frame_over_a_locked_frame() {
     s.execute("text.placeCaret", &json!({"frame": big, "point": [300, 400]})).unwrap();
     assert!(s.doc().unwrap().doc.item(designcraft_doc::ItemId(big)).unwrap().is_text_frame());
 }
+
+/// A line is set when its baseline fits in the frame; its descenders may hang below the frame, as
+/// in InDesign. A 103 pt heading in a 78.5 pt frame (Cap Height first baseline) was overset.
+#[test]
+fn a_line_fits_when_its_baseline_does() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({})).unwrap();
+    let overset = |s: &mut Session, height: f64| {
+        let r = s.execute("frame.create", &json!({"rect": [36, 36, 400, 36.0 + height], "content": "text", "text": "Gyp"})).unwrap();
+        s.execute("object.textFrameOptions", &json!({"ids": [r["id"]], "firstBaseline": "capHeight", "inset": 0})).unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 3})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"size": 103}})).unwrap();
+        let st = s.execute("story.get", &json!({"story": r["story"]})).unwrap();
+        !st["overset"].is_null()
+    };
+    // Cap height of the default font at 103 pt is about 70 pt: the baseline fits in 78.5 pt, the
+    // descent (about 25 pt more) doesn't.
+    assert!(!overset(&mut s, 78.5), "the line is set; its descenders hang below the frame");
+    assert!(overset(&mut s, 50.0), "a baseline below the frame still oversets the line");
+}
