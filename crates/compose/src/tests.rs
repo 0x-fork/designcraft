@@ -381,6 +381,63 @@ fn hostile_wrap_geometry_terminates() {
     }
 }
 
+/// A small frame holding one character (a tombstone at the end of an article: a 7.6 pt symbol in
+/// a 10.5 pt box), in a paragraph whose style is 14 pt, with a text-wrap object on the spread at
+/// `wrap`.
+fn tombstone(frame: Rect, wrap: Rect) -> (Document, StoryId) {
+    let (mut d, sid, _) = doc_with("X", frame, ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    st.paras[0].chars = designcraft_doc::CharAttrs { size: Some(14.0), ..Default::default() };
+    st.format_chars(0..1, |f| f.over.size = Some(7.6));
+    let lid = d.default_layer();
+    let mut it = designcraft_doc::Item::new(ItemId(d.alloc()), lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(wrap));
+    it.wrap.mode = WrapMode::BoundingBox;
+    d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+    (d, sid)
+}
+
+/// A text-wrap object elsewhere on the spread doesn't affect a frame it doesn't overlap: the small
+/// frame's one character is set (it was overset: every frame took every wrap object on the
+/// spread, and then no gap narrower than 1.5 em of the paragraph's size was used).
+#[test]
+fn small_single_character_frame_sets_beside_unrelated_text_wrap() {
+    let (d, sid) = tombstone(Rect::new(300.0, 300.0, 310.5, 310.5), Rect::new(0.0, 0.0, 120.0, 60.0));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    assert!(!cs.is_overset(), "the tombstone is set");
+    assert_eq!(cs.line_count(), 1);
+}
+
+/// A narrow frame that a text-wrap object overlaps further down sets the lines the object doesn't
+/// reach: the minimum gap width only applies to gaps a wrap object cuts.
+#[test]
+fn narrow_frame_sets_lines_no_wrap_object_reaches() {
+    let (d, sid) = tombstone(Rect::new(300.0, 300.0, 310.5, 340.0), Rect::new(290.0, 330.0, 330.0, 360.0));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    assert!(!cs.is_overset(), "the first line is above the wrap object");
+    assert_eq!(cs.line_count(), 1);
+    let (top, baseline) = (cs.frames[0].columns[0].y0, cs.frames[0].lines[0].baseline);
+    assert!(baseline - top < 20.0, "on the first line: {baseline} (text area from {top})");
+}
+
+/// In a frame of narrow columns, a wrap object beside column 2 leaves column 1 alone: only a gap
+/// the object cuts in its own column is held to the minimum width (it was dropped, as the object
+/// overlapped the line's band, and the text went past column 1).
+#[test]
+fn wrap_object_beside_one_narrow_column_leaves_the_other_alone() {
+    // Two 18 pt columns (12 pt gutter): narrower than 1.5 em of the 14 pt paragraph.
+    let (mut d, sid) = tombstone(Rect::new(300.0, 300.0, 348.0, 340.0), Rect::new(336.0, 300.0, 380.0, 340.0));
+    let fid = d.spreads[0].items.iter().find(|i| i.text_frame().is_some_and(|t| t.story == sid)).unwrap().id;
+    d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.columns = 2;
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let f = &cs.frames[0];
+    assert_eq!(f.columns.len(), 2);
+    assert!(f.columns[0].width() < 21.0, "column 1 is narrower than 1.5 em: {}", f.columns[0].width());
+    assert!(!cs.is_overset());
+    let l = &f.lines[0];
+    assert_eq!(l.column, 0, "set in column 1");
+    assert!(l.baseline - f.columns[0].y0 < 20.0, "on its first line: {}", l.baseline);
+}
+
 #[test]
 fn paragraph_composer_is_no_worse_than_greedy() {
     // Sum of squared slack over lines (excluding last) should not exceed the greedy result.
