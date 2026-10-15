@@ -9,7 +9,8 @@
 //!                                      # run a command script (crates/engine/src/script.rs): `$N.path` references
 //! designcraft-cli app [--port PORT] COMMAND [JSON]   # run a command in the running app (designcraft --control PORT)
 //! designcraft-cli app [--port PORT] --method METHOD [JSON]   # any control-channel method (ui.screenshot, ui.render, …)
-//! designcraft-cli mcp [--connect PORT] [--sample]  # MCP server over stdio (docs/mcp.md)
+//! designcraft-cli mcp [--connect PORT] [--sample] [--automation-read-root DIR] [--automation-write-root DIR]
+//!                                      # MCP server over stdio (docs/mcp.md); the roots confine the files it reads and writes
 //! designcraft-cli perf [--pages N] [--frames N] [--chars N] [--images N] [--runs N] [--strict]  # budgets on a synthetic stress document
 //! designcraft-cli bench FILE [--runs N]  # the same measurements on one document
 //! designcraft-cli validate-pdf FILE.pdf    # run the built-in PDF/X-4 conformance checks
@@ -30,13 +31,14 @@ macro_rules! outln {
     }};
 }
 
+mod automation_args;
 mod perf;
 
 use designcraft_engine::Session;
 use serde_json::{Value, json};
 
 /// The usage block. Shared by `--help` (stdout, success) and an unknown command (stderr, failure).
-const USAGE: &str = "usage: designcraft-cli run [--in FILE | --sample] [--cmd ID[=JSON]]... [--page N] [--scale S] [--pdf-options JSON] [--export OUT] [--all-pages DIR]\n         (--page, --scale and --pdf-options apply to the exports that follow them)\n       designcraft-cli commands [FILTER]\n       designcraft-cli describe COMMAND\n       designcraft-cli script [FILE|-] [--in FILE | --sample] [--connect PORT] [--save OUT] [--export OUT] [--keep-going]\n       designcraft-cli app [--port PORT] COMMAND [JSON] | --method METHOD [JSON]\n       designcraft-cli mcp [--connect PORT] [--sample]\n       designcraft-cli perf [--pages N] [--runs N] [--strict]\n       designcraft-cli bench FILE [--runs N]\n       designcraft-cli links\n       designcraft-cli --version";
+const USAGE: &str = "usage: designcraft-cli run [--in FILE | --sample] [--cmd ID[=JSON]]... [--page N] [--scale S] [--pdf-options JSON] [--export OUT] [--all-pages DIR]\n         (--page, --scale and --pdf-options apply to the exports that follow them)\n       designcraft-cli commands [FILTER]\n       designcraft-cli describe COMMAND\n       designcraft-cli script [FILE|-] [--in FILE | --sample] [--connect PORT] [--save OUT] [--export OUT] [--keep-going]\n       designcraft-cli app [--port PORT] COMMAND [JSON] | --method METHOD [JSON]\n       designcraft-cli mcp [--connect PORT] [--sample] [--automation-read-root DIR] [--automation-write-root DIR]\n         the two roots confine every file the agent's commands read (open, placed images, data sources, libraries) and\n         write (save, export, package) to those folders, links followed. A root left out grants none of its access.\n         They run the in-process server, so they conflict with --connect (a running app is not confined by them).\n       designcraft-cli perf [--pages N] [--runs N] [--strict]\n       designcraft-cli bench FILE [--runs N]\n       designcraft-cli links\n       designcraft-cli --version";
 
 /// `script --help`: the script syntax, otherwise only in `describe script.run` and docs/agents.md.
 const SCRIPT_HELP: &str = r#"usage: designcraft-cli script [FILE|-] [--in FILE | --sample] [--connect PORT] [--save OUT] [--export OUT] [--keep-going]
@@ -160,16 +162,31 @@ fn validate_pdf(path: Option<&str>) -> Result<(), String> {
 /// `mcp` (headless, in-process engine) or `mcp --connect PORT|HOST:PORT` (drive a running app
 /// started with `designcraft --control PORT`). JSON-RPC on stdin/stdout; logs on stderr.
 fn mcp(args: &[String]) -> Result<(), String> {
+    use designcraft_engine::file_access::{self, AutomationRoots};
     use designcraft_mcp::{Backend, Headless, Remote, Server, control_addr};
     let mut connect: Option<String> = None;
     let mut sample = false;
-    let mut it = args.iter();
+    let mut roots_args = automation_args::AutomationArgs::new(None, None);
+    let mut it = args.iter().cloned();
     while let Some(a) = it.next() {
-        match a.as_str() {
-            "--connect" => connect = Some(it.next().cloned().ok_or("--connect needs a port or host:port")?),
-            "--sample" => sample = true,
-            other => return Err(format!("unknown mcp option `{other}` (usage: designcraft-cli mcp [--connect PORT] [--sample])")),
+        if roots_args.consume(&a, &mut it)? {
+            continue;
         }
+        match a.as_str() {
+            "--connect" => connect = Some(it.next().ok_or("--connect needs a port or host:port")?),
+            "--sample" => sample = true,
+            other => {
+                return Err(format!(
+                    "unknown mcp option `{other}` (usage: designcraft-cli mcp [--connect PORT] [--sample] [--automation-read-root DIR] [--automation-write-root DIR])"
+                ));
+            }
+        }
+    }
+    let roots = AutomationRoots::new(roots_args.read_root.as_deref(), roots_args.write_root.as_deref())?;
+    if roots.is_some() && connect.is_some() {
+        return Err("--automation-read-root and --automation-write-root confine the in-process server; a running app is not confined by them, \
+so drop --connect (or use --connect without the roots)"
+            .into());
     }
     let backend: Box<dyn Backend> = match connect {
         Some(c) => {
@@ -181,8 +198,16 @@ fn mcp(args: &[String]) -> Result<(), String> {
         }
         None => {
             let mut h = Headless::with_document();
+            // `--sample` is the operator's own choice, made before the roots come into force.
             if sample {
                 h.session.execute("file.newSample", &json!({})).map_err(|e| e.to_string())?;
+            }
+            if let Some(roots) = roots {
+                // Every thread of this process, not only the server's: nothing reaches past the roots.
+                file_access::confine_process(roots.clone());
+                let show = |root: Option<&std::path::Path>| root.map_or_else(|| "none".to_string(), |r| r.display().to_string());
+                eprintln!("designcraft-cli: files confined: read root {}, write root {}", show(roots.read_root()), show(roots.write_root()));
+                h = h.with_automation_roots(Some(roots));
             }
             Box::new(h)
         }

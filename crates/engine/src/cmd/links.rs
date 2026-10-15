@@ -93,11 +93,11 @@ pub fn status(a: &designcraft_doc::Asset) -> &'static str {
     let Some(path) = &a.link else { return "embedded" };
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match std::fs::metadata(path) {
+        match crate::io::metadata(path) {
             Err(_) => "missing",
             Ok(m) if m.len() as usize != a.data.len() => "modified",
             // Same size: compare the bytes (cheap for the sizes involved, and exact).
-            Ok(_) => match std::fs::read(path) {
+            Ok(_) => match crate::io::read_file(path) {
                 Ok(b) if b == *a.data => "ok",
                 Ok(_) => "modified",
                 Err(_) => "missing",
@@ -145,7 +145,7 @@ fn list(d: &Document) -> Vec<Value> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn reload(path: &str) -> Result<(Vec<u8>, (u32, u32))> {
-    let b = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let b = crate::io::read_file(path).map_err(EngineError::Other)?;
     let px = designcraft_render::image_size(&b).ok_or_else(|| bad("links", format!("{path}: unsupported or corrupt image")))?;
     Ok((b, px))
 }
@@ -174,6 +174,10 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn relink_folder(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = str_param(p, "dir").map(std::path::PathBuf::from);
+    if let Some(dir) = &dir {
+        // Refused outright: candidates outside the automation read root would only look missing.
+        crate::file_access::check_read(dir).map_err(EngineError::Other)?;
+    }
     let ext = str_param(p, "extension").map(|e| e.trim_start_matches('.').to_string());
     if dir.is_none() && ext.is_none() {
         return Err(bad("links.relinkFolder", "give `dir` and/or `extension`"));
@@ -194,7 +198,7 @@ fn relink_folder(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let folder = dir.clone().or_else(|| old.parent().map(|p| p.to_path_buf())).unwrap_or_default();
         let cand = folder.join(&name);
-        if cand.exists() {
+        if crate::io::exists(&cand) {
             todo.push((a.id, cand));
         } else {
             not_found.push(name.to_string_lossy().to_string());
