@@ -84,10 +84,11 @@ fn join_paths(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|d, sel| {
         let paths: Vec<ItemId> = ids.iter().copied().filter(|id| d.item(*id).is_some_and(|it| !it.is_group() && it.text_frame().is_none())).collect();
         let ids: Vec<ItemId> = paths.iter().copied().filter(|id| path_editable(d, *id, "path.join").is_ok()).collect();
-        if ids.is_empty()
-            && let Some(id) = paths.first()
-        {
-            path_editable(d, *id, "path.join")?;
+        // A request for two paths never falls back to closing the one that is editable.
+        if ids.len() < paths.len().min(2) {
+            for id in &paths {
+                path_editable(d, *id, "path.join")?;
+            }
         }
         let open = |d: &Document, id: ItemId| d.item(id).and_then(|it| it.path.subpaths.iter().position(|sp| !sp.closed && sp.anchors.len() > 1));
         match ids.as_slice() {
