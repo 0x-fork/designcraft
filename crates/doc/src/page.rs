@@ -118,6 +118,9 @@ pub struct Page {
     /// Liquid page rule: how objects follow when the page changes size.
     #[serde(default, skip_serializing_if = "LiquidRule::is_off")]
     pub liquid: LiquidRule,
+    /// Page tool › Show Parent Page Overlay: the parent page's size drawn over this page.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub show_parent_overlay: bool,
     /// Window › Interactive › Page Transitions (the spread's first page holds the spread's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<PageTransition>,
@@ -212,6 +215,8 @@ pub enum LiquidRule {
     GuideBased,
     /// Each object's pins and resize settings decide (`Item::liquid`).
     ObjectBased,
+    /// The rule of the page's parent page (InDesign's "Controlled by Parent"; Off without one).
+    ControlledByParent,
 }
 
 impl LiquidRule {
@@ -254,7 +259,8 @@ impl Page {
 
 /// Split `area` into `n` equal columns separated by `gutter`.
 pub fn column_rects(area: Rect, n: u32, gutter: f64) -> Vec<Rect> {
-    let n = n.max(1) as usize;
+    // The public allocator also receives native/imported options, outside command validation.
+    let n = n.clamp(1, 216) as usize;
     let w = ((area.width() - gutter * (n as f64 - 1.0)) / n as f64).max(0.0);
     (0..n).map(|i| Rect::new(area.x0 + i as f64 * (w + gutter), area.y0, area.x0 + i as f64 * (w + gutter) + w, area.y1)).collect()
 }
@@ -304,10 +310,12 @@ impl Spread {
             None => self.bounds().center().x,
         }
     }
-    /// Index of this parent spread's page shown behind a document page on `side`: the left page
-    /// for left pages, else the last page. `None` for a parent spread without pages.
+    /// Index of this parent spread's page shown behind a document page on `side`: the first page
+    /// for left and single-sided pages, else the last page. `None` for a parent spread without
+    /// pages.
     pub fn parent_page_index(&self, side: PageSide) -> Option<usize> {
-        if self.pages.len() >= 2 && side == PageSide::Left { Some(0) } else { self.pages.len().checked_sub(1) }
+        let first = self.pages.len() >= 2 && matches!(side, PageSide::Left | PageSide::Single);
+        if first { Some(0) } else { self.pages.len().checked_sub(1) }
     }
     /// Index of the page under spread x (nearest page for the pasteboard).
     pub fn page_at_x(&self, x: f64) -> Option<usize> {
@@ -381,6 +389,7 @@ mod tests {
             liquid: Default::default(),
             transition: None,
             view_rotation: 0,
+            show_parent_overlay: false,
         }
     }
 
@@ -415,5 +424,20 @@ mod tests {
         assert_eq!(s.page_at_x(700.0), Some(1));
         assert_eq!(s.page_at_x(-50.0), Some(0));
         assert_eq!(s.page_at_x(5000.0), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod column_allocation_safety_tests {
+    use super::*;
+
+    #[test]
+    fn column_allocation_caps_page_count_and_preserves_geometry() {
+        let area = Rect::new(0., 0., 300., 100.);
+        // Fail safely at a small boundary before exercising hostile counts.
+        assert_eq!(column_rects(area, 217, 0.).len(), 216);
+        assert_eq!(column_rects(area, u32::MAX, 0.).len(), 216);
+        assert_eq!(column_rects(area, 0, 12.), vec![area]);
+        assert_eq!(column_rects(area, 2, 12.), vec![Rect::new(0., 0., 144., 100.), Rect::new(156., 0., 300., 100.)]);
     }
 }

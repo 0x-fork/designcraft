@@ -227,6 +227,7 @@ impl Document {
             liquid: Default::default(),
             transition: None,
             view_rotation: 0,
+            show_parent_overlay: false,
         }
     }
 
@@ -268,14 +269,25 @@ impl Document {
 
     /// Redistribute document pages into spreads (facing: page 1 alone on the right, then pairs).
     /// Items move with the page their centre is on. Spreads with `allow_shuffle == false` are kept.
+    /// Facing pages take their side from their page number, as InDesign shuffles them: an odd
+    /// number is a right page (a left page bound right to left), so a section that starts at 1 on
+    /// a left page moves it to the right and the pages after it follow.
     pub fn repaginate(&mut self) {
-        // Collect pages with their items (items in page-relative coordinates).
+        let odd: Vec<bool> = (0..self.page_count()).map(|i| self.page_number(i) % 2 == 1).collect();
+        // Collect pages with their items (items in page-relative coordinates) and their numbers' parity.
         let mut pages: Vec<(Page, Vec<Arc<Item>>)> = Vec::new();
+        let mut parity: Vec<bool> = Vec::new();
         let mut kept: Vec<(usize, Arc<Spread>)> = Vec::new();
+        let mut abs = 0;
         for sp in self.spreads.drain(..) {
             if !sp.allow_shuffle && sp.pages.len() > 1 {
+                abs += sp.pages.len();
                 kept.push((pages.len(), sp));
                 continue;
+            }
+            for _ in &sp.pages {
+                parity.push(odd.get(abs).copied().unwrap_or(abs % 2 == 0));
+                abs += 1;
             }
             let mut sp = Arc::unwrap_or_clone(sp);
             let mut per: Vec<Vec<Arc<Item>>> = vec![Vec::new(); sp.pages.len()];
@@ -327,13 +339,12 @@ impl Document {
             }
             spreads.push(sp);
         };
-        // An even start page number (Document Setup › Start Page #) begins with a left page.
-        let shift = usize::from(self.sections.iter().find(|x| x.start == 0).and_then(|x| x.start_number).is_some_and(|n| n % 2 == 0));
         for (i, (mut p, items)) in pages.into_iter().enumerate() {
             if facing {
-                // Page i (0-based) is a right page when its number is odd (1, 3, 5 …).
+                // A page is a right page when its number is odd (1, 3, 5 …), counting each
+                // section from its start number (Document Setup › Start Page # included).
                 // Bound right to left, odd pages are left pages and spreads start on the right.
-                let odd = (i + shift) % 2 == 0;
+                let odd = parity.get(i).copied().unwrap_or(i % 2 == 0);
                 p.side = if odd != rtl { PageSide::Right } else { PageSide::Left };
                 let starts = if rtl { PageSide::Right } else { PageSide::Left };
                 if p.side == starts && !cur.is_empty() {
@@ -376,7 +387,7 @@ impl Document {
             return Ok(vec![]);
         }
         let n = self.page_count();
-        let at = after.map_or(0, |a| (a + 1).min(n));
+        let at = after.map_or(0, |a| a.saturating_add(1).min(n));
         let template = self.page(at.saturating_sub(1).min(n.saturating_sub(1))).cloned();
         let (cols, gutter, margins) =
             template.as_ref().map(|t| (t.columns.count, t.columns.gutter, t.margins)).unwrap_or((1, 12.0, Margins::uniform(36.0)));
@@ -599,6 +610,12 @@ impl Document {
         }
     }
 
+    /// Ruler guides document page `abs` inherits from its applied parent page (see
+    /// [`Document::parent_guides`]).
+    pub fn inherited_guides(&self, abs: usize) -> Vec<Guide> {
+        self.page(abs).map(|p| self.parent_guides(p).collect()).unwrap_or_default()
+    }
+
     /// Mark document pages whose margins or columns differ from their parent page's as local, so
     /// that a later sync keeps them (documents saved before pages tracked local margins).
     pub fn mark_differing_margins_local(&mut self) {
@@ -657,6 +674,19 @@ mod tests {
         d.sync_parent_margins();
         assert_eq!(d.page(0).map(|p| (p.margins.top, p.local_margins)), Some((12.0, false)));
         assert_eq!(d.page(1).map(|p| (p.margins.top, p.local_margins)), Some((90.0, true)));
+    }
+
+    /// A single-sided page applying a two-page parent shows the parent's first page.
+    #[test]
+    fn single_sided_page_shows_first_parent_page() {
+        let mut d = Document::new(&NewDocument { pages: 2, facing_pages: false, ..Default::default() });
+        let extra = d.parents[0].pages[0].clone();
+        Arc::make_mut(&mut d.parents[0]).pages.push(extra);
+        assert_eq!(d.parents[0].pages.len(), 2);
+        assert_eq!(d.parent_page_for(0), Some((0, 0)));
+        assert_eq!(d.parent_page_for(1), Some((0, 0)));
+        Arc::make_mut(&mut d.parents[0]).pages.clear();
+        assert_eq!(d.parent_page_for(0), None);
     }
 
     #[test]

@@ -12,6 +12,10 @@ pub mod properties;
 pub mod styles;
 pub mod swatches;
 pub mod table;
+pub mod typography;
+
+#[cfg(test)]
+mod color_panel_tests;
 
 use designcraft_doc::{Content, StrokeAlign, WrapMode};
 use designcraft_geom::Rect;
@@ -43,7 +47,61 @@ pub struct SelInfo {
     /// Uniform corner (shape, size) — the first corner.
     pub corner: (designcraft_geom::corners::CornerShape, f64),
     pub wrap_invert: bool,
+    /// Text wrap offsets: top, left, bottom, right.
+    pub wrap_offsets: [f64; 4],
     pub locked: bool,
+}
+
+/// Colour edits go to text: text is selected, or text frames are selected with Formatting
+/// Affects Text on.
+pub fn colors_affect_text(app: &DesignApp) -> bool {
+    let Some(st) = app.session.active() else { return false };
+    st.selection.text.is_some()
+        || (app.ui.formatting_affects_text && st.selection.items.iter().any(|id| st.doc.item(*id).is_some_and(|i| i.is_text_frame())))
+}
+
+/// Fill and stroke swatches and tints of what colour edits apply to: the text (see
+/// [`colors_affect_text`]) or the first selected object.
+pub fn color_target(app: &mut DesignApp) -> Option<(String, f32, String, f32)> {
+    if colors_affect_text(app) {
+        let a = text_attrs(app)?;
+        let c = &a["chars"];
+        let tint = |k: &str| c[k].as_f64().unwrap_or(1.0) as f32;
+        return Some((c["fill"].as_str()?.to_string(), tint("fillTint"), c["stroke"].as_str()?.to_string(), tint("strokeTint")));
+    }
+    let i = sel_info(app)?;
+    Some((i.fill, sel_tint(app, false), i.stroke, sel_tint(app, true)))
+}
+
+/// Apply a swatch (and tint) to the fill or stroke of what colour edits apply to.
+pub fn apply_swatch(app: &mut DesignApp, stroke: bool, swatch: &str, tint: Option<f32>) -> Result<Value, String> {
+    remember_swatch(app, swatch);
+    if colors_affect_text(app) {
+        let (k, kt) = if stroke { ("stroke", "strokeTint") } else { ("fill", "fillTint") };
+        let mut attrs = json!({k: swatch});
+        if let Some(t) = tint {
+            attrs[kt] = json!(t);
+        }
+        return app.run("type.char", json!({ "attrs": attrs }));
+    }
+    let mut p = json!({"swatch": swatch});
+    if let Some(t) = tint {
+        p["tint"] = json!(t);
+    }
+    app.run(if stroke { "object.stroke" } else { "object.fill" }, p)
+}
+
+/// Keep `swatch` as the colour or gradient Apply Color / Apply Gradient use next.
+pub fn remember_swatch(app: &mut DesignApp, swatch: &str) {
+    let Some(st) = app.session.active() else { return };
+    if swatch == designcraft_color::swatch::NONE {
+        return;
+    }
+    if designcraft_color::swatch::resolve_gradient(&st.doc.swatches, swatch).is_some() {
+        app.ui.last_gradient = Some(swatch.to_string());
+    } else if st.doc.resolve_color(swatch, 1.0).is_some() {
+        app.ui.last_color = Some(swatch.to_string());
+    }
 }
 
 /// Fill (or stroke) tint of the first selected item (1 = 100%).
@@ -98,6 +156,7 @@ pub fn sel_info(app: &DesignApp) -> Option<SelInfo> {
             .unwrap_or_else(|| "solid".into()),
         corner: (first.corners.corners[0].shape, first.corners.corners[0].size),
         wrap_invert: first.wrap.invert,
+        wrap_offsets: first.wrap.offsets,
         locked: first.locked,
     })
 }
@@ -158,27 +217,65 @@ const SWATCH_MENU_ROW_H: f32 = 22.0;
 
 /// One swatch-menu row: a chip and the swatch name; the whole row is clickable (the chip included).
 /// `name == current` highlights it. Returns true when the row was clicked.
-pub fn swatch_menu_row(ui: &mut egui::Ui, doc: &designcraft_doc::Document, name: &str, current: &str) -> bool {
+/// Where a swatch row's name starts, after its chip.
+const SWATCH_MENU_TEXT_X: f32 = 28.0;
+
+fn swatch_menu_font() -> egui::FontId {
+    egui::FontId::proportional(12.5)
+}
+
+/// One swatch in a swatch list, `width` wide: the swatch under the pointer is highlighted (white
+/// on blue, like a menu), the current one shaded.
+pub fn swatch_menu_row(ui: &mut egui::Ui, doc: &designcraft_doc::Document, name: &str, current: &str, width: f32) -> bool {
     let t = Tokens::get(ui.ctx());
-    let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), SWATCH_MENU_ROW_H), egui::Sense::click());
+    let (row, resp) = ui.allocate_exact_size(vec2(width, SWATCH_MENU_ROW_H), egui::Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, name == current, name));
-    if name == current {
-        ui.painter().rect_filled(row, 0.0, t.row_selected);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(row, 0.0, t.hover);
+    let hovered = resp.hovered();
+    if hovered {
+        ui.painter().rect_filled(row, 2.0, t.accent_strong);
+    } else if name == current {
+        ui.painter().rect_filled(row, 2.0, t.row_selected);
     }
     let (c, g) = crate::widgets::swatch_colors(doc, name, 1.0);
     let chip = egui::Rect::from_min_size(row.min + vec2(4.0, 3.0), vec2(16.0, 16.0));
     crate::widgets::paint_chip(ui.painter(), chip, c, g);
+    // A name too long for the list is cut at the row's end.
+    let text = ui.painter().with_clip_rect(ui.clip_rect().intersect(row.shrink2(vec2(2.0, 0.0))));
     crate::rtl::paint(
-        ui.painter(),
-        row.min + vec2(28.0, SWATCH_MENU_ROW_H / 2.0),
+        &text,
+        row.min + vec2(SWATCH_MENU_TEXT_X, SWATCH_MENU_ROW_H / 2.0),
         egui::Align2::LEFT_CENTER,
         name,
-        egui::FontId::proportional(12.5),
-        t.text,
+        swatch_menu_font(),
+        if hovered { egui::Color32::WHITE } else { t.text },
     );
     resp.clicked()
+}
+
+/// The list in a swatch popup → the swatch picked. It is as wide as its longest name (within
+/// limits), and its rows stop short of the scroll bar that floats over the list's edge.
+pub fn swatch_list(ui: &mut egui::Ui, doc: &designcraft_doc::Document, current: &str) -> Option<String> {
+    let font = swatch_menu_font();
+    let widest = doc
+        .swatches
+        .iter()
+        .map(|sw| ui.painter().layout_no_wrap(sw.name.clone(), font.clone(), egui::Color32::PLACEHOLDER).size().x)
+        .fold(0.0, f32::max);
+    let scroll = &ui.spacing().scroll;
+    let bar = scroll.bar_inner_margin + scroll.bar_width + scroll.bar_outer_margin;
+    let width = (SWATCH_MENU_TEXT_X + widest + 10.0 + bar).clamp(200.0, 360.0);
+    ui.set_min_width(width);
+    ui.set_max_width(width);
+    let mut picked = None;
+    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+        for sw in &doc.swatches {
+            if swatch_menu_row(ui, doc, &sw.name, current, width - bar) {
+                picked = Some(sw.name.clone());
+                ui.close();
+            }
+        }
+    });
+    picked
 }
 
 /// A swatch dropdown showing a chip and name; `on_pick` gets the chosen swatch name.
@@ -202,16 +299,7 @@ pub fn swatch_picker(app: &mut DesignApp, ui: &mut egui::Ui, id: &str, current: 
             Tokens::get(ui.ctx()).icon,
         );
         egui::Popup::menu(&resp).show(|ui| {
-            ui.set_min_width(200.0);
-            ui.set_max_width(280.0);
-            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                for sw in &doc.swatches {
-                    if swatch_menu_row(ui, &doc, &sw.name, &cur) {
-                        picked = Some(sw.name.clone());
-                        ui.close();
-                    }
-                }
-            });
+            picked = swatch_list(ui, &doc, &cur);
         });
     });
     if let Some(p) = picked {
@@ -251,8 +339,9 @@ struct FontMenuState {
 /// The Font menu, inside any font field's popup or combo box: a search field (it has the keyboard
 /// while the menu is open, and starts empty each time it opens), favourites (★, Show Favorites
 /// Only), and each family's name with a sample in that family, the script groups apart. ↑/↓ move
-/// through the matches and Return picks one. Returns the family picked and closes the menu; the
-/// search, Favorites and the stars keep it open (the popup closes on a click outside only).
+/// through the matches, Return picks one and Escape closes the menu; none of them reach a dialog
+/// under the menu. Returns the family picked and closes the menu; the search, Favorites and the
+/// stars keep it open (the popup closes on a click outside only).
 pub fn font_menu_body(app: &mut DesignApp, ui: &mut egui::Ui, menu: &[designcraft_fonts::FamilyInfo], current: &str, width: f32) -> Option<String> {
     let (fonts, scope) = (fonts(app), font_scope(app));
     let english = app.session.prefs.show_font_names_in_english;
@@ -293,7 +382,12 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut egui::Ui, menu: &[designcraf
     if search.changed() {
         st.highlight = if q.is_empty() { None } else { Some(0) };
     }
-    let (down, up, enter) = ui.input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
+    // The menu owns these keys while it is open: a dialog under it must not take Return as OK or
+    // Escape as Cancel.
+    let (down, up, enter, escape) = ui.input_mut(|i| {
+        let mut key = |k| i.consume_key(egui::Modifiers::NONE, k);
+        (key(egui::Key::ArrowDown), key(egui::Key::ArrowUp), key(egui::Key::Enter), key(egui::Key::Escape))
+    });
     let last = shown.len().checked_sub(1);
     st.highlight = match (st.highlight, last) {
         (_, None) => None,
@@ -353,7 +447,7 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut egui::Ui, menu: &[designcraf
             let tex = tex.unwrap_or_else(|| {
                 let img = designcraft_render::glyphs::text_line(&fonts, f, "Regular", "Sample", (18.0 * ppp) as u32, t.text.to_array());
                 let ci = egui::ColorImage::from_rgba_premultiplied([img.width as usize, img.height as usize], &img.pixels);
-                let h = ui.ctx().load_texture(format!("font_preview_{f}"), ci, egui::TextureOptions::LINEAR);
+                let h = crate::widgets::load_texture(ui.ctx(), format!("font_preview_{f}"), ci, egui::TextureOptions::LINEAR);
                 ui.data_mut(|d| d.insert_temp(key, h.clone()));
                 h
             });
@@ -374,7 +468,7 @@ pub fn font_menu_body(app: &mut DesignApp, ui: &mut egui::Ui, menu: &[designcraf
     if favs_changed {
         let _ = app.run("prefs.set", json!({ "favoriteFonts": favs }));
     }
-    if pick.is_some() {
+    if pick.is_some() || escape {
         ui.close();
     }
     pick
@@ -404,6 +498,12 @@ pub fn font_combo(
 /// [`font_menu_body`] in a popup under `field` (a font field the caller draws). Returns the family
 /// picked.
 pub fn font_popup(app: &mut DesignApp, field: &egui::Response, menu: &[designcraft_fonts::FamilyInfo], current: &str) -> Option<String> {
+    // Screen readers (and tests) see the field as the combo box it looks like.
+    field.widget_info(|| {
+        let mut info = egui::WidgetInfo::new(egui::WidgetType::ComboBox);
+        info.current_text_value = Some(if current.is_empty() { "—".to_string() } else { font_label(app, menu, current) });
+        info
+    });
     egui::Popup::menu(field)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| font_menu_body(app, ui, menu, current, field.rect.width()))
@@ -506,9 +606,22 @@ mod font_menu_ui_tests {
     /// The Type tool's selection over a new text frame's text, with the Control bar on. Returns the
     /// story.
     fn typing() -> (Harness<'static, Window>, u64) {
+        typing_in("Advanced")
+    }
+
+    /// [`typing`] in the workspace `name`.
+    fn typing_in(name: &str) -> (Harness<'static, Window>, u64) {
+        typing_on(name, vec2(1440.0, 900.0), false)
+    }
+
+    /// [`typing_in`] a window of `size`, with the macOS window chrome (the native menu bar and the
+    /// title bar inside the window) when `mac`.
+    fn typing_on(name: &str, size: egui::Vec2, mac: bool) -> (Harness<'static, Window>, u64) {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
-        app.ui.control_bar = true;
-        let mut h = test_window::open(app, vec2(1440.0, 900.0));
+        app.run("window.workspace", json!({ "name": name })).unwrap();
+        app.native_menu = mac;
+        app.integrated_titlebar = mac;
+        let mut h = test_window::open(app, size);
         let app = &mut h.state_mut().app;
         let r = app.run("frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "Hello", "caret": true})).unwrap();
         app.run("tool.select", json!({"tool": "type"})).unwrap();
@@ -523,7 +636,7 @@ mod font_menu_ui_tests {
 
     /// The Control bar's font field, showing `family`.
     fn field(h: &Harness<'static, Window>, family: &str) -> egui::Rect {
-        h.get_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some(family)).rect()
+        fields(h, family)[0]
     }
 
     /// The text in the focused search field.
@@ -581,5 +694,181 @@ mod font_menu_ui_tests {
         assert!(!h.ctx.text_edit_focused(), "the menu closed");
         assert_eq!(story_text(&mut h, story), before);
         assert!(h.state().app.session.active().unwrap().selection.text.is_some(), "the text is still selected");
+    }
+
+    /// The font fields showing `family`, left to right and top to bottom.
+    fn fields(h: &Harness<'static, Window>, family: &str) -> Vec<egui::Rect> {
+        let mut r: Vec<egui::Rect> =
+            h.query_all_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some(family)).map(|n| n.rect()).collect();
+        r.sort_by(|a, b| a.min.x.total_cmp(&b.min.x).then(a.min.y.total_cmp(&b.min.y)));
+        r
+    }
+
+    /// Opens the font menu of the field at `at`, clicks its search field, types, checks the menu
+    /// stays open and lists only the matches, then picks the first with ↓ and Return.
+    fn search_in_menu(h: &mut Harness<'static, Window>, at: egui::Rect, what: &str) {
+        click_at(h, at.center());
+        let field = h.query_by(|n| n.role() == egui::accesskit::Role::TextInput && n.is_focused()).map(|n| n.rect());
+        let field = field.unwrap_or_else(|| panic!("{what}: the menu opens with the search field focused"));
+        click_at(h, field.center());
+        assert!(h.ctx.text_edit_focused(), "{what}: a click on the search field keeps the menu open");
+        h.event(egui::Event::Text("SOURCE SA".into()));
+        h.run_steps(4);
+        assert_eq!(search(h), "SOURCE SA", "{what}: the typing went to the search");
+        assert!(h.query_by_label("Source Sans 3").is_some(), "{what}: a match is listed");
+        assert!(h.query_by_label(designcraft_fonts::DEFAULT_FAMILY).is_none(), "{what}: families that don't match aren't");
+        h.key_press(egui::Key::ArrowDown);
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(4);
+        assert!(!h.ctx.text_edit_focused(), "{what}: the menu closed");
+    }
+
+    /// Every font field over selected text (Control bar, Contextual Task Bar, Properties ›
+    /// Character, Character panel) searches, in the workspaces that show them and in a small
+    /// window with the macOS window chrome.
+    #[test]
+    fn every_font_field_searches_in_every_workspace() {
+        for (name, size, mac, panel) in [
+            ("Advanced", vec2(1440.0, 900.0), false, None),
+            ("Printing and Proofing", vec2(1440.0, 900.0), false, None),
+            ("Essentials", vec2(1440.0, 900.0), false, Some("character")),
+            ("Printing and Proofing", vec2(900.0, 560.0), true, None),
+        ] {
+            let (mut h, story) = typing_on(name, size, mac);
+            if panel.is_some() {
+                h.state_mut().app.ui.open_panel = panel.map(str::to_string);
+                h.run_steps(4);
+            }
+            let name = &format!("{name} {size:?} {panel:?}");
+            let before = story_text(&mut h, story);
+            let count = fields(&h, designcraft_fonts::DEFAULT_FAMILY).len();
+            assert_eq!(count, 3, "{name}: the font fields are shown");
+            for k in 0..count {
+                h.state_mut().app.run("type.char", json!({"attrs": {"fontFamily": designcraft_fonts::DEFAULT_FAMILY}})).unwrap();
+                h.run_steps(4);
+                let at = fields(&h, designcraft_fonts::DEFAULT_FAMILY)[k];
+                search_in_menu(&mut h, at, &format!("{name}, field {k}"));
+                assert_eq!(family(&mut h), "Source Sans 3", "{name}, field {k}");
+                assert_eq!(story_text(&mut h, story), before, "{name}, field {k}");
+            }
+        }
+    }
+
+    /// The font fields away from the text: the Glyphs panel, Paragraph Style Options › Basic
+    /// Character Formats and Find/Replace Font's Replace With.
+    #[test]
+    fn font_fields_in_panels_and_dialogs_search() {
+        let paragraph = json!({"name": designcraft_doc::BASIC_PARAGRAPH, "section": "chars"});
+        for (what, panel, dialog, shown) in [
+            ("Glyphs", Some("glyphs"), None, designcraft_fonts::DEFAULT_FAMILY),
+            ("Paragraph Style Options", None, Some(("paragraphStyleOptions", paragraph)), designcraft_fonts::DEFAULT_FAMILY),
+            ("Find/Replace Font", None, Some(("findFont", json!({}))), "—"),
+        ] {
+            let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            let mut h = test_window::open(app, vec2(1440.0, 900.0));
+            let dialog_id = dialog.as_ref().map(|(id, _)| id.to_string());
+            h.state_mut().app.ui.open_panel = panel.map(str::to_string);
+            h.state_mut().app.ui.dialog = dialog.map(|(id, fields)| crate::dialogs::Dialog::new(id, fields));
+            h.run_steps(4);
+            let at = *fields(&h, shown).first().unwrap_or_else(|| panic!("{what}: the font field is shown"));
+            search_in_menu(&mut h, at, what);
+            assert_eq!(h.state().app.ui.dialog.as_ref().map(|d| d.id.clone()), dialog_id, "{what}: Return in the menu leaves the dialog open");
+            assert!(!fields(&h, "Source Sans 3").is_empty(), "{what}: the field shows the family picked");
+            // Escape closes the menu only.
+            let at = fields(&h, "Source Sans 3")[0];
+            click_at(&mut h, at.center());
+            assert!(h.ctx.text_edit_focused(), "{what}: the menu opened");
+            h.key_press(egui::Key::Escape);
+            h.run_steps(4);
+            assert!(!h.ctx.text_edit_focused(), "{what}: Escape closed the menu");
+            assert_eq!(h.state().app.ui.dialog.as_ref().map(|d| d.id.clone()), dialog_id, "{what}: Escape in the menu leaves the dialog open");
+        }
+    }
+}
+
+#[cfg(test)]
+mod swatch_list_tests {
+    use super::*;
+
+    fn rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<(egui::Rect, egui::Color32)> {
+        fn walk(s: &egui::Shape, out: &mut Vec<(egui::Rect, egui::Color32)>) {
+            match s {
+                egui::Shape::Rect(r) => out.push((r.rect, r.fill)),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = vec![];
+        shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+        out
+    }
+
+    fn texts(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, egui::Rect)> {
+        fn walk(s: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match s {
+                egui::Shape::Text(t) => out.push((t.galley.job.text.clone(), t.visual_bounding_rect())),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = vec![];
+        shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+        out
+    }
+
+    #[test]
+    fn the_swatch_under_the_pointer_is_highlighted_and_names_clear_the_scroll_bar() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", serde_json::json!({})).unwrap();
+        // A long name, as process swatches have.
+        app.run("swatch.create", serde_json::json!({"name": "C=15 M=100 Y=100 K=0 Long Name", "color": {"c": 15, "m": 100, "y": 100, "k": 0}}))
+            .unwrap();
+        let long = "C=15 M=100 Y=100 K=0 Long Name";
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "");
+        let tokens = Tokens::for_brightness(crate::theme::Brightness::MediumDark);
+        crate::theme::apply(&ctx, &tokens);
+        let mut time = 0.0;
+        let mut frame = |app: &mut DesignApp, events: Vec<egui::Event>| {
+            time += 0.1;
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 700.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| swatch_picker(app, ui, "list", Some("[Black]".into()), |_, _| {}));
+            out.textures_delta.clear();
+            out.shapes
+        };
+        frame(&mut app, vec![]);
+        let chip = egui::pos2(17.0, 17.0);
+        for pressed in [true, false] {
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(chip),
+                    egui::Event::PointerButton { pos: chip, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() },
+                ],
+            );
+        }
+        let shapes = frame(&mut app, vec![]);
+        let (_, name) = texts(&shapes).into_iter().find(|(t, _)| t == "[Registration]").expect("the list is open");
+        let pointer = name.center();
+        frame(&mut app, vec![egui::Event::PointerMoved(pointer)]);
+        let shapes = frame(&mut app, vec![]);
+        let all = rects(&shapes);
+        let (row, _) = *all.iter().find(|(r, c)| *c == tokens.accent_strong && r.contains(pointer)).expect("the hovered row is highlighted");
+        let (list, _) = *all
+            .iter()
+            .filter(|(r, c)| *c == tokens.panel && r.contains_rect(row))
+            .min_by(|a, b| a.0.area().total_cmp(&b.0.area()))
+            .expect("the popup");
+        let scroll = ctx.global_style().spacing.scroll;
+        assert!(row.right() + scroll.bar_width <= list.right(), "rows {row:?} stop short of the scroll bar in {list:?}");
+        let (_, long_rect) = texts(&shapes).into_iter().find(|(t, _)| t == long).unwrap();
+        assert!(long_rect.right() <= row.right(), "the longest name {long_rect:?} fits its row {row:?}");
+        assert!(texts(&shapes).iter().any(|(t, r)| t == "[Black]" && r.right() <= row.right()));
     }
 }
