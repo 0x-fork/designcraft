@@ -301,6 +301,7 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
         }
         "panel-effects" => pen.text(10.0, 10.0, "fx", 11.0),
         "panel-character" => pen.text(10.0, 10.5, "A", 15.0),
+        "panel-typography" => pen.text(10.0, 10.5, "OT", 11.5),
         "panel-paragraph" => pen.text(10.0, 10.5, "¶", 15.0),
         "panel-pstyles" => {
             pen.text(8.0, 10.0, "¶", 13.0);
@@ -878,6 +879,7 @@ mod tests {
     /// What icon `name` paints into a 20×20 rect, as the painter's shape list.
     fn drawing(name: &str) -> String {
         let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "en");
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             paint(ui.painter(), Rect::from_min_size(pos2(0.0, 0.0), vec2(20.0, 20.0)), name, Color32::WHITE);
         });
@@ -896,5 +898,13 @@ mod tests {
         assert_ne!(drawn[0], drawn[1], "Scale draws like Free Transform");
         assert_ne!(drawn[0], drawn[2], "Shear draws like Free Transform");
         assert_ne!(drawn[1], drawn[2], "Scale and Shear draw alike");
+    }
+
+    #[test]
+    fn typography_panel_has_its_own_icon() {
+        let unknown = drawing("no-such-icon");
+        let typography = drawing("panel-typography");
+        assert_ne!(typography, unknown, "panel-typography falls back to the placeholder");
+        assert_ne!(typography, drawing("panel-character"), "Typography draws the Character icon");
     }
 }

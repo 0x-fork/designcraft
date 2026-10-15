@@ -1428,9 +1428,15 @@ pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         {
             let _ = app.run("type.char", json!({"attrs": {"position": if sup { "normal" } else { "superscript" }}}));
         }
-        let features: Vec<String> =
-            c["otfFeatures"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
-        crate::menus::menu_button(ui, "OpenType", |ui| open_type_menu(app, ui, &features));
+        if ui
+            .button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "OpenType")))
+            .on_hover_ui(|ui| {
+                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Show the Typography panel"));
+            })
+            .clicked()
+        {
+            show_typography_panel(app);
+        }
     });
     // Underline / Strikethrough Options.
     for (key, title) in [("underline", "Underline Options"), ("strikethrough", "Strikethrough Options")] {
@@ -1465,37 +1471,13 @@ pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The Character panel's OpenType menu: feature toggles, figure styles and stylistic sets.
-pub fn open_type_menu(app: &mut DesignApp, ui: &mut egui::Ui, features: &[String]) {
-    use designcraft_doc::otf;
-    ui.set_min_width(220.0);
-    for (tag, label, _) in otf::TOGGLES {
-        let mut on = otf::is_on(features, tag);
-        if ui.checkbox(&mut on, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
-            let _ = app.run("type.openType", json!({"feature": tag, "on": on}));
-            ui.close();
-        }
+/// Opens the Typography panel, or focuses it when it is already showing. `window.panel` toggles a
+/// flyout, so it is skipped while the Typography flyout is open.
+pub fn show_typography_panel(app: &mut DesignApp) {
+    if app.ui.open_panel.as_deref() == Some("typography") {
+        return;
     }
-    ui.separator();
-    let fig = otf::figures(features);
-    for (id, label, ..) in otf::FIGURES {
-        if ui.radio(fig == *id, *label).clicked() {
-            let _ = app.run("type.openType", json!({"figures": id}));
-            ui.close();
-        }
-    }
-    ui.separator();
-    crate::menus::menu_button(ui, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Stylistic Sets")), |ui| {
-        let mask = otf::stylistic_sets(features);
-        for n in 1..=20u32 {
-            let mut on = mask & (1 << (n - 1)) != 0;
-            if ui.checkbox(&mut on, crate::rtl::widget(ui, format!("{} {n}", crate::i18n::tr(&app.ui.language, "Set")))).clicked() {
-                let sets: Vec<u32> = (1..=20).filter(|k| if *k == n { on } else { mask & (1 << (k - 1)) != 0 }).collect();
-                let _ = app.run("type.openType", json!({"stylisticSets": sets}));
-                ui.close();
-            }
-        }
-    });
+    let _ = app.run("window.panel", json!({"panel": "typography"}));
 }
 
 pub fn paragraph_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
