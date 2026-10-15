@@ -205,12 +205,16 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         // group that got past it, with its page.
         crate::pdfx::cmyk_group_spaces(&mut bytes);
     }
-    // Form fields (Buttons and Forms) and, for interactive PDF, video and sound; not in PDF/X.
+    // Form fields (Buttons and Forms) and, for interactive PDF, video and sound; not in PDF/X
+    // or PDF/A: this update comes after krilla's validator ran, and its NeedAppearances fields and
+    // Screen annotations aren't allowed in PDF/A.
     let fields = crate::forms::collect(doc, &sheets);
     let media = if opts.media { crate::forms::collect_media(doc, &sheets) } else { Vec::new() };
     if !fields.is_empty() || !media.is_empty() {
         if opts.standard == Standard::PdfX4 {
             warnings.push("PDF/X-4: form fields and media were left out".into());
+        } else if opts.standard == Standard::PdfA2b {
+            warnings.push("PDF/A-2b: form fields and media were left out".into());
         } else {
             match crate::forms::add_fields(&bytes, &fields, &media) {
                 Some(b) => bytes = b,
