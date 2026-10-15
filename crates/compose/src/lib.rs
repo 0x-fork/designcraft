@@ -317,6 +317,8 @@ pub struct FrameSpec {
     pub vertical: bool,
     pub exclusions: Vec<Exclusion>,
     pub page_name: Option<String>,
+    /// Marker text of the section the frame's page is in (None on parent pages).
+    pub section_marker: Option<String>,
     /// Absolute document page the frame is on (None on parent pages).
     pub page: Option<usize>,
     /// Baseline grid in inner space: (first grid line y, increment).
@@ -344,11 +346,18 @@ impl FrameSpec {
     }
 }
 
+/// The marker text of the section absolute page `abs` is in (empty when it has none).
+pub fn section_marker(doc: &Document, abs: usize) -> String {
+    doc.section_of(abs).map(|s| s.marker.clone()).unwrap_or_default()
+}
+
 /// Composition inputs that are not in the story itself.
 #[derive(Clone, Debug, Default)]
 pub struct ComposeOptions {
     /// Page name for page-number markers when the story is composed for a specific page (parent items).
     pub page_name: Option<String>,
+    /// Section marker text when the story is composed for a specific page (parent items).
+    pub section_marker: Option<String>,
     /// Absolute page for text variables when composed for a specific page (parent items).
     pub page: Option<usize>,
     /// Running-header index (needed when the story contains running-header variables).
@@ -402,6 +411,7 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
             }
             _ => (None, None, false),
         };
+        let section_marker = page.map(|abs| section_marker(doc, abs));
         // The page under the frame and its margins, in inner space (bounding boxes).
         let page_rect = match (loc.spread, spread) {
             (_, Some(sp)) => sp
@@ -454,6 +464,7 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
             vertical,
             exclusions: if tf.options.path.is_some() { vec![] } else { exclusions },
             page_name,
+            section_marker,
             page,
             grid,
             left_page,
@@ -637,7 +648,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         };
         let mut sub = SubstCtx {
             page_name: opts.page_name.clone().or_else(|| cur_frame.and_then(|f| f.page_name.clone())),
-            section_marker: None,
+            section_marker: opts.section_marker.clone().or_else(|| cur_frame.and_then(|f| f.section_marker.clone())),
             vars: var_values,
             hidden_conditions: doc.conditions.iter().filter(|c| !c.visible).map(|c| c.name.clone()).collect(),
             vertical: cur_frame.is_some_and(|f| f.vertical),

@@ -102,6 +102,7 @@ impl Notes {
             vertical: false,
             exclusions: vec![],
             page_name: f.page_name.clone(),
+            section_marker: f.section_marker.clone(),
             page: f.page,
             grid: None,
             left_page: f.left_page,
@@ -109,6 +110,7 @@ impl Notes {
         };
         let nopts = ComposeOptions {
             page_name: opts.page_name.clone(),
+            section_marker: opts.section_marker.clone(),
             page: opts.page,
             running: opts.running.clone(),
             label: Some(label),
