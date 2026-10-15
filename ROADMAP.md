@@ -169,6 +169,7 @@ Newest first.
 - **2026-10-14** · Colour parameters: a bare `{c,m,y,k}` is always read as 0..100, so C 1 is a 1 % tint and no longer
   solid cyan; fractions take the colour's own `{model: "cmyk", …}` form (#910). No readiness percentage change.
 - **2026-10-14** · The Tools panel follows InDesign's: Gradient Swatch and Gradient Feather are tools of their own; in two columns Content Collector and Placer, Apply Color / Gradient / None and Normal / Preview each get a button; View Options holds Frame Edges, Rulers, Guides, Smart Guides, Baseline Grid and Hidden Characters; Apply Color (,) and Apply Gradient (.) reuse the last colour and gradient. No readiness percentage change.
+- **2026-10-13** · Create Outlines makes one compound path per line (and per text colour within a line), grouped, as InDesign does: Ungroup then leaves each line on its own to be spaced and made into one compound path again. A single line in one colour stays a single compound path. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
   drag one (it snaps like frame drawing); Shift-click autoflows, Alt-click stays loaded on the
