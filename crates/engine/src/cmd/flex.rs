@@ -378,7 +378,7 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
         let Content::Group { items } = &mut c.content else { return Err(bad("flex.reorder", "the object isn't in a Flex Layout")) };
         let n = items.len() as i64;
         let from = *last as i64;
-        let target = to.unwrap_or(from + by.unwrap_or(0)).clamp(0, n - 1);
+        let target = to.unwrap_or(from.saturating_add(by.unwrap_or(0))).clamp(0, n - 1);
         let moved = items.remove(from as usize);
         items.insert(target as usize, moved);
         *sel = Selection::items(vec![id]);
@@ -426,6 +426,16 @@ mod tests {
 
     fn rect_of(s: &Session, id: u64) -> Rect {
         s.doc().unwrap().doc.item(ItemId(id)).unwrap().bounds()
+    }
+
+    #[test]
+    fn reorder_by_a_huge_step_clamps_instead_of_overflowing() {
+        let (mut s, ids) = session_with_boxes(&[[84.0, 84.0, 184.0, 184.0], [284.0, 84.0, 384.0, 184.0]]);
+        s.execute("selection.set", &json!({"ids": ids})).unwrap();
+        s.execute("flex.add", &json!({})).unwrap();
+        // `from + by` used to overflow (a panic with overflow checks on).
+        s.execute("flex.reorder", &json!({"id": ids[0], "by": i64::MAX})).unwrap();
+        s.execute("flex.reorder", &json!({"id": ids[0], "by": i64::MIN})).unwrap();
     }
 
     /// The video: four objects in a row become a container that keeps them where they are (Row,
