@@ -3577,7 +3577,7 @@ fn drop_cap_in_a_document_font_aligns_its_left_edge() {
     let folder = std::env::temp_dir().join(format!("dc-compose-dropcap-docfont-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("dropcap.ttf"), designcraft_fonts::testing::font_with_glyph(FAMILY, &chars, 'O').unwrap()).unwrap();
-    let scope = designcraft_fonts::FontDb::global().load_document_fonts(&folder).scope;
+    let scope = designcraft_fonts::FontDb::global().load_document_fonts(&folder, &|_| Ok(())).scope;
     let para = ParaAttrs { left_indent: Some(10.0), ..drop_cap(2, 1) };
     let (mut d, sid, _) = doc_with(&text, Rect::new(0.0, 0.0, 300.0, 1000.0), para);
     d.font_scope = scope;

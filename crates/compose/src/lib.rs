@@ -3749,6 +3749,7 @@ mod column_allocation_safety_tests {
             vertical: false,
             exclusions: vec![],
             page_name: None,
+            section_marker: None,
             page: None,
             grid: None,
             left_page: false,
