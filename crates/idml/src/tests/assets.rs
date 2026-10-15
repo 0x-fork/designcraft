@@ -31,6 +31,22 @@ fn image(n: usize, uri: &str, contents: Option<&[u8]>) -> String {
     )
 }
 
+/// A graphic frame showing `pdf` (a `<PDF>` element) with the page `PageNumber` (1-based).
+fn pdf_frame(n: usize, x: f64, page: u32) -> String {
+    format!(
+        r#"<Rectangle Self="r{n}" ItemLayer="L1" ItemTransform="1 0 0 1 {x} 0" ContentType="GraphicType">
+      <Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>
+        <PathPointType Anchor="0 0"/><PathPointType Anchor="0 30"/><PathPointType Anchor="40 30"/><PathPointType Anchor="40 0"/>
+      </PathPointArray></GeometryPathType></PathGeometry></Properties>
+      <PDF Self="im{n}" ItemTransform="1 0 0 1 {n} 0">
+        <Properties><GraphicBounds Left="0" Top="0" Right="40" Bottom="30"/></Properties>
+        <Link Self="lk{n}" LinkResourceURI="file:/art/insert.pdf" LinkResourceFormat="$ID/PDF" StoredState="Normal"/>
+        <PDFAttribute PageNumber="{page}" PDFCrop="CropMedia" TransparentBackground="true"/>
+      </PDF>
+    </Rectangle>"#
+    )
+}
+
 fn package(frames: &[String]) -> Vec<u8> {
     let spread = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -150,4 +166,28 @@ fn placed_svg_with_only_a_viewbox_keeps_its_viewbox_size() {
     gs.sort_by(|a, b| a.0.total_cmp(&b.0));
     let got: Vec<_> = gs.into_iter().map(|(_, size, x)| (size, x)).collect();
     assert_eq!(got, vec![((200.0, 100.0), -11.0), ((200.0, 100.0), -11.0), ((210.0, 100.0), -10.0)]);
+}
+
+/// `PDFAttribute/@PageNumber` (1-based) is read into `Asset.page` (0-based), and the same file at
+/// different pages stays apart (#905).
+#[test]
+fn a_pdf_placement_reads_its_page_number() {
+    let bytes = b"%PDF-1.7\n% fixture".to_vec();
+    let reader = |p: &str| p.ends_with("insert.pdf").then(|| bytes.clone());
+    let frames = vec![pdf_frame(1, 0.0, 2), pdf_frame(2, 100.0, 1), pdf_frame(3, 200.0, 2)];
+    let d = import_idml_with(&package(&frames), &reader).unwrap();
+    let p = placements(&d);
+    let page = |id| d.assets.get(&id).map(|a| a.page);
+    assert_eq!(page(p[0].0), Some(1), "PageNumber=\"2\" is the second page, stored 0-based");
+    assert_eq!(page(p[1].0), Some(0), "PageNumber=\"1\" is the first page");
+    assert_eq!(p[0].0, p[2].0, "the same file at the same page shares one asset");
+    assert_ne!(p[0].0, p[1].0, "the same file at another page is another asset");
+
+    // Exported (linked or embedded), the page survives the round trip.
+    for embed_images in [false, true] {
+        let out = export_idml_with(&d, &ExportOptions { embed_images });
+        let back = import_idml_with(&out, &reader).unwrap();
+        let pages: Vec<_> = placements(&back).iter().map(|(id, _, _)| back.assets.get(id).map(|a| a.page)).collect();
+        assert_eq!(pages, vec![Some(1), Some(0), Some(1)], "embed_images: {embed_images}");
+    }
 }

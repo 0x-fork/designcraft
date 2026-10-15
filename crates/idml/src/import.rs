@@ -263,8 +263,9 @@ struct Importer<'r> {
     page_index: HashMap<String, usize>,
     item_ids: HashMap<String, ItemId>,
     assets: BTreeMap<AssetId, Arc<Asset>>,
-    /// Assets read from a link path, so later placements of that path reuse them unread.
-    linked_assets: HashMap<String, AssetId>,
+    /// Assets read from a link path at a page, so later placements of that path and page reuse
+    /// them unread.
+    linked_assets: HashMap<(String, u32), AssetId>,
     ctx: ItemCtx,
     sections: Vec<Section>,
     footnote_options: designcraft_doc::FootnoteOptions,
@@ -2530,18 +2531,29 @@ impl<'r> Importer<'r> {
             })
         };
         let mut data = g.prop_el("Contents").map(|c| base64_decode(&c.text_content())).unwrap_or_default();
+        // PDF Import Options: `PDFAttribute/@PageNumber` is 1-based; `Asset.page` is 0-based. A
+        // missing or malformed value means page 1, and an out-of-range page later fails to render
+        // rather than panicking.
+        let page = g
+            .find("PDFAttribute")
+            .or_else(|| g.prop_el("PDFAttribute"))
+            .and_then(|a| a.get("PageNumber"))
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .and_then(|n| u32::try_from(n.saturating_sub(1)).ok())
+            .unwrap_or(0);
         let mut read_from = None;
         if data.is_empty()
             && let Some(p) = &uri
         {
-            // Every placement of a linked file shares one asset; read the file once.
-            if let Some(id) = self.linked_assets.get(p) {
+            // Every placement of a linked file at one page shares one asset; read the file once.
+            let key = (p.clone(), page);
+            if let Some(id) = self.linked_assets.get(&key) {
                 let size = self.assets.get(id).and_then(|a| svg_viewbox_size(&a.data)).unwrap_or(size);
                 return graphic(*id, size);
             }
             if let Some(d) = (self.read_link)(p) {
                 data = d;
-                read_from = Some(p.clone());
+                read_from = Some(key);
             }
         }
         // InDesign draws a viewBox-only SVG at one unit to the point: its GraphicBounds are the
@@ -2564,9 +2576,9 @@ impl<'r> Importer<'r> {
         let fresh = AssetId(self.alloc());
         let link_path = uri.filter(|p| p.contains('/') || p.contains('\\'));
         let id =
-            designcraft_doc::insert_asset(&mut self.assets, Asset { page: 0, id: fresh, name, mime, link: link_path, data: Arc::new(data), pixels });
-        if let Some(p) = read_from {
-            self.linked_assets.insert(p, id);
+            designcraft_doc::insert_asset(&mut self.assets, Asset { page, id: fresh, name, mime, link: link_path, data: Arc::new(data), pixels });
+        if let Some(key) = read_from {
+            self.linked_assets.insert(key, id);
         }
         graphic(id, size)
     }
