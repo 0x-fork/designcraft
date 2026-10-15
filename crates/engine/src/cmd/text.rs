@@ -1587,20 +1587,30 @@ fn fill_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
             story_of(s, p).ok_or_else(|| bad("type.fillWithPlaceholder", "select a text frame"))?
         }
     };
-    // Fill until overset: repeat the filler sentences.
+    // Fill until overset with paragraphs of two to five sentences, as InDesign's placeholder text
+    // comes (so a paragraph can be styled on its own).
+    const SENTENCES_PER_PARAGRAPH: [usize; 7] = [2, 2, 3, 3, 5, 2, 4];
     let mut text = String::new();
-    let sentences: Vec<&str> = PLACEHOLDER.split_inclusive(". ").collect();
+    let sentences: Vec<&str> = PLACEHOLDER.split_inclusive(". ").map(str::trim_end).collect();
     let doc = s.doc()?.doc.clone();
     let mut d2 = (*doc).clone();
+    let (mut paragraph, mut in_paragraph) = (0, 0);
     for i in 0..400 {
         text.push_str(sentences[i % sentences.len()]);
+        in_paragraph += 1;
+        if in_paragraph >= SENTENCES_PER_PARAGRAPH[paragraph % SENTENCES_PER_PARAGRAPH.len()] {
+            text.push('\n');
+            (paragraph, in_paragraph) = (paragraph + 1, 0);
+        } else {
+            text.push(' ');
+        }
         if i % 3 == 2 {
             d2.set_story_text(sid, &text)?;
             let cs = compose::compose_story(&d2, sid, &compose::ComposeOptions::default());
             if cs.is_overset() {
                 // Trim to the last sentence that fits.
-                let cut = cs.overset_at.unwrap_or(text.len());
-                let keep = text[..cut.min(text.len())].rfind(". ").map(|k| k + 1).unwrap_or(cut);
+                let cut = cs.overset_at.unwrap_or(text.len()).min(text.len());
+                let keep = text.get(..cut).and_then(|t| t.rfind('.')).map(|k| k + 1).unwrap_or(cut);
                 text.truncate(keep);
                 break;
             }
@@ -3006,5 +3016,32 @@ mod compose_tests {
             assert_eq!(text(&s, sid), "Ta", "case {act}");
             assert!(s.composition().is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod placeholder_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// Fill with Placeholder Text gives paragraphs of a few sentences, as InDesign's does (it was one
+    /// paragraph, and the filler ran sentences together: "interit.Ovid").
+    #[test]
+    fn placeholder_text_comes_in_paragraphs() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [36, 36, 336, 736], "content": "text", "text": ""})).unwrap();
+        s.execute("type.fillWithPlaceholder", &json!({"frame": r["id"]})).unwrap();
+        let st = s.execute("story.get", &json!({"story": r["story"]})).unwrap();
+        let text = st["text"].as_str().unwrap();
+        let paragraphs: Vec<&str> = text.split('\n').collect();
+        assert!(paragraphs.len() >= 4, "{} paragraphs", paragraphs.len());
+        for p in &paragraphs {
+            assert!(p.ends_with('.') && !p.starts_with(' '), "a paragraph of whole sentences: {p:?}");
+        }
+        assert!(!text.contains(".O") && !text.contains(".L"), "sentences are spaced: {text}");
+        assert!(st["overset"].is_null(), "nothing overset: {}", st["overset"]);
+        assert!(text.len() > 1500, "the frame is filled: {}", text.len());
     }
 }
