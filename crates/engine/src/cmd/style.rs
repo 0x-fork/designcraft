@@ -842,9 +842,14 @@ fn load_swatches(s: &mut Session, p: &Value) -> Result<Value> {
     let incoming = designcraft_color::ase::read(&bytes).map_err(|e| bad("swatch.load", e.to_string()))?;
     let replace = p.get("replace").and_then(Value::as_bool).unwrap_or(false);
     s.edit(|d, _| {
+        // The position of the first swatch with each name, kept up to date as the file's colors are added.
+        let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (i, x) in d.swatches.iter().enumerate() {
+            at.entry(x.name.clone()).or_insert(i);
+        }
         let (mut added, mut replaced) = (0, 0);
         for w in incoming {
-            match d.swatches.iter_mut().find(|x| x.name == w.name) {
+            match at.get(&w.name).and_then(|&i| d.swatches.get_mut(i)) {
                 Some(x) if x.locked => {}
                 Some(x) => {
                     if replace {
@@ -854,6 +859,7 @@ fn load_swatches(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                 }
                 None => {
+                    at.insert(w.name.clone(), d.swatches.len());
                     d.swatches.push(w);
                     added += 1;
                 }
@@ -1524,6 +1530,39 @@ mod color_tests {
         let r = s.execute("swatch.load", &json!({"base64": b64})).unwrap();
         assert_eq!((r["added"].as_u64(), r["replaced"].as_u64()), (Some(0), Some(0)));
         assert!(s.execute("swatch.load", &json!({"base64": "AAAA"})).is_err());
+    }
+
+    #[test]
+    fn loading_swatches_matches_the_first_swatch_of_each_name() {
+        use designcraft_color::{Color, ColorType};
+        let ink = |k: f32| SwatchValue::Color { color: Color::cmyk(0.0, 0.0, 0.0, k), color_type: ColorType::Process };
+        let sw = |name: &str, k: f32| Swatch { name: name.into(), value: ink(k), locked: false, named: true, hidden: false };
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        // Two swatches share a name, and an unnamed color is hidden.
+        s.edit(|d, _| {
+            d.swatches.extend([sw("Twin", 0.1), sw("Twin", 0.2), Swatch { named: false, hidden: true, ..sw("Unnamed", 0.3) }]);
+            Ok(())
+        })
+        .unwrap();
+        let file = designcraft_color::ase::write(&[sw("New", 0.4), sw("New", 0.5), sw("Twin", 0.6), sw("Unnamed", 0.7), sw("[Black]", 0.8)]);
+        let b64 = crate::cmd::base64_encode(&file);
+        let named = |s: &Session, name: &str| -> Vec<(SwatchValue, bool)> {
+            s.doc().unwrap().doc.swatches.iter().filter(|w| w.name == name).map(|w| (w.value.clone(), w.hidden)).collect()
+        };
+        // With `replace`, the file's second "New" replaces its first, only the first "Twin" changes, the hidden
+        // swatch becomes visible, and the locked [Black] stays.
+        let r = s.execute("swatch.load", &json!({"base64": b64, "replace": true})).unwrap();
+        assert_eq!((r["added"].as_u64(), r["replaced"].as_u64()), (Some(1), Some(3)));
+        assert_eq!(named(&s, "New"), [(ink(0.5), false)]);
+        assert_eq!(named(&s, "Twin"), [(ink(0.6), false), (ink(0.2), false)]);
+        assert_eq!(named(&s, "Unnamed"), [(ink(0.7), false)]);
+        assert_eq!(named(&s, "[Black]"), [(ink(1.0), false)]);
+        // Without it, every name is already there and nothing changes.
+        let before = s.doc().unwrap().doc.swatches.clone();
+        let r = s.execute("swatch.load", &json!({"base64": b64})).unwrap();
+        assert_eq!((r["added"].as_u64(), r["replaced"].as_u64()), (Some(0), Some(0)));
+        assert_eq!(s.doc().unwrap().doc.swatches, before);
     }
 
     #[test]
