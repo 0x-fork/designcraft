@@ -431,4 +431,46 @@ mod shared_asset_tests {
         assert_eq!((g.asset, g.crop), (same, [1.0; 4]));
         assert_eq!(dst.assets.len(), 2);
     }
+
+    #[test]
+    fn pasted_missing_graphic_does_not_show_an_unrelated_target_asset() {
+        use designcraft_doc::build::NewDocument;
+        use designcraft_doc::{Asset, Graphic, Item, ItemId, Shape, SpreadRef};
+        let mut src = Document::new(&NewDocument::default());
+        let mut dst = Document::new(&NewDocument::default());
+        // The source graphic points at an asset the source does not have; the target uses that id for another image.
+        let missing = AssetId(src.alloc());
+        dst.assets.insert(
+            missing,
+            Arc::new(Asset {
+                id: missing,
+                name: "p.png".into(),
+                mime: "image/png".into(),
+                link: None,
+                data: Arc::new(png(8, 4)),
+                pixels: None,
+                page: 0,
+            }),
+        );
+        let iid = ItemId(src.alloc());
+        let mut it = Item::new(
+            iid,
+            src.default_layer(),
+            Shape::Rectangle,
+            designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(0.0, 0.0, 9.0, 9.0)),
+        );
+        it.content = Content::Graphic(Graphic {
+            asset: missing,
+            size: (4.0, 4.0),
+            xf: designcraft_geom::Affine::IDENTITY,
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [1.0; 4],
+        });
+        src.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+        let ids = super::super::object::duplicate_from(&mut dst, &src, &[iid], SpreadRef::Doc(0), designcraft_geom::Vec2::ZERO).unwrap();
+        let g = dst.item(ids[0]).and_then(|i| i.graphic()).unwrap();
+        assert_ne!(g.asset, missing);
+        assert!(!dst.assets.contains_key(&g.asset));
+    }
 }
