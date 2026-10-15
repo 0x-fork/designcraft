@@ -27,6 +27,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("app.exportFixedEpub", "Export EPUB (Fixed Layout)…", None, "{path?} — pre-paginated EPUB 3"),
     ("app.exportHtml", "Export HTML…", None, "{path?} — one self-contained web page"),
+    ("app.exportPptx", "Export PowerPoint…", None, "{path?} — every page as a slide of editable shapes, pictures and text"),
     ("app.exportXml", "Export XML…", None, "{path?} — the tagged content"),
     ("app.printBooklet", "Print Booklet…", None, "{path?} — saddle-stitched printer spreads as PDF"),
     ("app.qrCode", "Generate QR Code…", None, "{} — the QR Code dialog (object.qrCode does the work)"),
@@ -249,6 +250,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.exportFixedEpub",
             "ui:app.exportInteractivePdf",
             "ui:app.exportHtml",
+            "ui:app.exportPptx",
             "ui:app.exportXml",
             "ui:app.exportText",
             ">Export",
@@ -930,6 +932,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "app.exportFixedEpub" => export_bytes(app, p, "epub", "file.exportFixedEpub"),
         "app.exportHtml" => export_bytes(app, p, "html", "file.exportHtml"),
+        "app.exportPptx" => export_bytes(app, p, "pptx", "file.exportPptx"),
         "app.exportXml" => export_bytes(app, p, "xml", "file.exportXml"),
         "app.printBooklet" => export_bytes(app, p, "pdf", "file.printBooklet"),
         "app.menus" => {
