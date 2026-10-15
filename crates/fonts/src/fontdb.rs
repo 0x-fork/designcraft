@@ -719,12 +719,20 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
             dirs.push(std::path::PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
         }
     } else {
-        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
-        if let Some(h) = &home {
-            dirs.push(h.join(".fonts"));
-            dirs.push(h.join(".local/share/fonts"));
-        }
+        let xdg_data_home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from);
+        dirs.extend(unix_font_dirs(home.as_deref(), xdg_data_home.as_deref()));
     }
+    dirs
+}
+
+fn unix_font_dirs(home: Option<&std::path::Path>, xdg_data_home: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = ["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into).into();
+    if let Some(home) = home {
+        dirs.push(home.join(".fonts"));
+    }
+    let data_home =
+        xdg_data_home.filter(|path| path.is_absolute()).map(std::path::Path::to_path_buf).or_else(|| home.map(|path| path.join(".local/share")));
+    dirs.extend(data_home.map(|path| path.join("fonts")));
     dirs
 }
 
