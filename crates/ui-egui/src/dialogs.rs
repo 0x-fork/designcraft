@@ -2834,7 +2834,9 @@ fn style_options_preview(app: &mut DesignApp, d: &mut Dialog) {
                 if params["para"][attr].is_null() {
                     params["para"][attr] = json!({});
                 }
-                params["para"][attr][field] = value.clone();
+                if let Some(fields) = params["para"][attr].as_object_mut() {
+                    fields.insert(field.into(), value.clone());
+                }
             } else {
                 params["para"][attr] = value.clone();
             }
@@ -4951,6 +4953,26 @@ mod tests {
         app.ui.dialog = Some(d);
         cancel(&mut app);
         assert_eq!(app.session.doc().unwrap().doc, before);
+        assert!(app.session.doc().unwrap().interaction.is_none());
+    }
+
+    #[test]
+    fn style_preview_rejects_conflicting_scalar_and_nested_rule_fields_without_panicking() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let before = app.session.doc().unwrap().doc.clone();
+        let mut dialog = Dialog::new(
+            "paragraphStyleOptions",
+            json!({
+                "name": designcraft_doc::BASIC_PARAGRAPH, "preview": true,
+                "p.ruleAbove": false, "p.ruleAbove.weight": 2
+            }),
+        );
+        style_options_preview(&mut app, &mut dialog);
+        assert!(dialog.fields.contains_key("status"));
+        assert_eq!(app.session.doc().unwrap().doc, before);
+        app.ui.dialog = Some(dialog);
+        cancel(&mut app);
         assert!(app.session.doc().unwrap().interaction.is_none());
     }
 
