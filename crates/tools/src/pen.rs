@@ -1,8 +1,8 @@
 //! Pen tool (P): click for corner points, drag for smooth points, click the first point to close,
-//! Enter/Esc (or switching tools) to finish an open path. Each anchor is its own undo step, as in
-//! InDesign. Between paths, a click on a selected path's anchor deletes it and a click on its
-//! outline adds an anchor; clicking an end point of an open path continues that path from there
-//! (dragging from it first reshapes its direction lines). The cursor shows which.
+//! Enter/Esc (or switching tools) to finish an open path. Each anchor is its own undo step.
+//! Between paths, a click on a selected path's anchor deletes it and a click on its outline adds an
+//! anchor; clicking an end point of an open path continues that path from there (dragging from it
+//! first reshapes its direction lines). The cursor shows which.
 
 use designcraft_doc::{ItemId, SpreadRef};
 use designcraft_geom::{BezPath, Point};
