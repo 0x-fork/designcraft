@@ -615,7 +615,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fitting",
             ["Object", "Fitting"],
             None,
-            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, ids?}",
+            "{mode: fillProportionally (preserves aspect ratio, covers frame, clips overflow)|fitProportionally (preserves aspect ratio, shows whole image, may leave empty space)|fitContentToFrame (stretches content to frame)|centerContent (keeps current size, positions at fitting alignment)|fitFrameToContent (resizes frame to content), ids?}",
             has_selection,
             fit
         ),

@@ -509,6 +509,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Export HTML…", "Exportovat HTML…"),
     ("Export IDML…", "Exportovat IDML…"),
     ("Export PDF (Interactive)…", "Exportovat PDF (interaktivní)…"),
+    ("Export PowerPoint…", "Exportovat PowerPoint…"),
     ("Export Page as PNG…", "Exportovat stránku jako PNG…"),
     ("Export Selection as Snippet", "Exportovat výběr jako úryvek"),
     ("Export Tagging", "Tagování pro export"),

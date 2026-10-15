@@ -139,6 +139,27 @@ and `text.move` return, a story's `length` in `get_story` and `inspect_document`
 `get_story`. A character outside ASCII takes 2 to 4 bytes (é 2, — and は 3), so the story `はただ商店` has length 15
 and its second character starts at 3. An offset inside a character snaps back to the start of that character.
 
+## Text and image fitting
+
+Hyphenation is on by default for new text (`hyphenate: true`). To turn it off, select the text or a text frame,
+then call `execute`:
+
+```text
+execute          {"command": "type.para", "params": {"attrs": {"hyphenate": false}}}
+```
+
+With a text selection, this formats the selected paragraphs; with selected text frames, it formats their whole stories.
+
+Use `execute` with `object.fit` to fit a selected graphic frame (or pass `ids`):
+
+| `mode` | What it does |
+|---|---|
+| `fillProportionally` | Preserves aspect ratio, covers the frame and clips overflow. |
+| `fitProportionally` | Preserves aspect ratio, shows the whole image and may leave empty space. |
+| `fitContentToFrame` | Stretches the content to the frame's width and height. |
+| `centerContent` | Keeps the current size and positions content at the fitting alignment (center by default). |
+| `fitFrameToContent` | Resizes the frame to the content's bounds. |
+
 ## Tools
 
 | Tool | What it does |

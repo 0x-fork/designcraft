@@ -571,6 +571,184 @@ fn commands_take_non_object_params_without_panicking() {
 }
 
 #[test]
+fn paragraph_style_edit_persists_attrs_and_rename() {
+    let mut s = session();
+    let name =
+        s.execute("style.paragraph.create", &json!({"name": "Body Copy", "para": {"align": "left"}})).unwrap()["name"].as_str().unwrap().to_string();
+    s.execute("style.paragraph.edit", &json!({"name": name, "para": {"align": "center"}})).unwrap();
+    {
+        let st = s.doc().unwrap();
+        let style = st.doc.styles.para(&name).expect("style still exists");
+        assert_eq!(style.para.align, Some(designcraft_doc::Align::Center), "edited attribute persisted");
+    }
+    // Renaming updates the style definition itself, and every place it's referenced.
+    s.execute("style.paragraph.edit", &json!({"name": name, "rename": "Body Text"})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.doc.styles.para("Body Text").is_some(), "renamed style exists under the new name");
+    assert!(st.doc.styles.para(&name).is_none(), "old name is gone");
+}
+
+#[test]
+fn paragraph_style_edit_rejects_based_on_cycle() {
+    let mut s = session();
+    let a = s.execute("style.paragraph.create", &json!({"name": "A"})).unwrap()["name"].as_str().unwrap().to_string();
+    let b = s.execute("style.paragraph.create", &json!({"name": "B", "basedOn": a})).unwrap()["name"].as_str().unwrap().to_string();
+    let r = s.execute("style.paragraph.edit", &json!({"name": a, "basedOn": b}));
+    assert!(r.is_err(), "A based on B based on A must be rejected");
+}
+
+#[test]
+fn paragraph_style_delete_reassigns_affected_text() {
+    let mut s = session();
+    let name = s.execute("style.paragraph.create", &json!({"name": "Caption"})).unwrap()["name"].as_str().unwrap().to_string();
+    let sid = s.execute("frame.create", &json!({"rect": [36, 36, 300, 200], "content": "text"})).unwrap()["story"].as_u64().unwrap();
+    s.execute("text.insert", &json!({"text": "Hello, world"})).unwrap();
+    s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 0})).unwrap();
+    s.execute("style.paragraph.apply", &json!({"name": name})).unwrap();
+    {
+        let st = s.doc().unwrap();
+        let story = st.doc.stories.get(&designcraft_doc::StoryId(sid)).expect("story exists");
+        assert_eq!(story.paras[0].style, name, "style applied before delete");
+    }
+    s.execute("style.paragraph.delete", &json!({"name": name, "replaceWith": designcraft_doc::BASIC_PARAGRAPH})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.doc.styles.para(&name).is_none(), "deleted style is gone");
+    let story = st.doc.stories.get(&designcraft_doc::StoryId(sid)).expect("story exists");
+    assert_eq!(story.paras[0].style, designcraft_doc::BASIC_PARAGRAPH, "affected paragraph reassigned to the replacement style");
+}
+
+#[test]
+fn paragraph_style_delete_rejects_builtin_styles() {
+    let mut s = session();
+    let r = s.execute("style.paragraph.delete", &json!({"name": designcraft_doc::BASIC_PARAGRAPH}));
+    assert!(r.is_err(), "built-in styles can't be deleted");
+}
+
+#[test]
+fn character_style_edit_persists_attrs_and_rename() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term", "chars": {"fontStyle": "Bold"}})).unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    s.execute("style.character.edit", &json!({"name": name, "chars": {"tracking": 20.0}})).unwrap();
+    {
+        let st = s.doc().unwrap();
+        let style = st.doc.styles.char_style(&name).expect("style still exists");
+        assert_eq!(style.chars.tracking, Some(20.0), "edited attribute persisted");
+    }
+    // Renaming updates the style definition itself, and every place it's referenced.
+    s.execute("style.character.edit", &json!({"name": name, "rename": "Emphasis"})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.doc.styles.char_style("Emphasis").is_some(), "renamed style exists under the new name");
+    assert!(st.doc.styles.char_style(&name).is_none(), "old name is gone");
+}
+
+#[test]
+fn character_style_edit_rejects_based_on_cycle() {
+    let mut s = session();
+    let a = s.execute("style.character.create", &json!({"name": "A"})).unwrap()["name"].as_str().unwrap().to_string();
+    let b = s.execute("style.character.create", &json!({"name": "B", "basedOn": a})).unwrap()["name"].as_str().unwrap().to_string();
+    let r = s.execute("style.character.edit", &json!({"name": a, "basedOn": b}));
+    assert!(r.is_err(), "A based on B based on A must be rejected");
+}
+
+#[test]
+fn character_style_delete_reassigns_affected_text() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+    let r = s.execute("frame.create", &json!({"rect": [36, 36, 300, 200], "content": "text"})).unwrap();
+    let sid = r["story"].as_u64().unwrap();
+    s.execute("text.insert", &json!({"text": "Hello, world"})).unwrap();
+    s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 5})).unwrap();
+    s.execute("style.character.apply", &json!({"name": name})).unwrap();
+    {
+        let st = s.doc().unwrap();
+        let story = st.doc.stories.get(&designcraft_doc::StoryId(sid)).expect("story exists");
+        assert_eq!(story.chars[0].format.style, name, "style applied before delete");
+    }
+    s.execute("style.character.delete", &json!({"name": name, "replaceWith": designcraft_doc::NO_CHAR_STYLE})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.doc.styles.char_style(&name).is_none(), "deleted style is gone");
+    let story = st.doc.stories.get(&designcraft_doc::StoryId(sid)).expect("story exists");
+    assert_eq!(story.chars[0].format.style, designcraft_doc::NO_CHAR_STYLE, "affected run reassigned to the replacement style");
+}
+
+#[test]
+fn character_style_delete_rejects_builtin_styles() {
+    let mut s = session();
+    let r = s.execute("style.character.delete", &json!({"name": designcraft_doc::NO_CHAR_STYLE}));
+    assert!(r.is_err(), "built-in styles can't be deleted");
+}
+
+#[test]
+fn character_style_delete_rejects_missing_unknown_and_self_replacement() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+    assert!(s.execute("style.character.delete", &json!({"name": ""})).is_err(), "empty name is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": "No Such Style"})).is_err(), "unknown name is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": name, "replaceWith": "No Such Style"})).is_err(), "unknown replaceWith is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": name, "replaceWith": name})).is_err(), "replaceWith can't be the deleted style");
+}
+
+#[test]
+fn paragraph_style_delete_rejects_missing_unknown_and_self_replacement() {
+    let mut s = session();
+    let name = s.execute("style.paragraph.create", &json!({"name": "Caption"})).unwrap()["name"].as_str().unwrap().to_string();
+    assert!(s.execute("style.paragraph.delete", &json!({"name": ""})).is_err(), "empty name is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": "No Such Style"})).is_err(), "unknown name is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": name, "replaceWith": "No Such Style"})).is_err(), "unknown replaceWith is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": name, "replaceWith": name})).is_err(), "replaceWith can't be the deleted style");
+}
+
+#[test]
+fn deleting_a_style_never_leaves_its_replacement_based_on_itself() {
+    let mut s = session();
+    let para = |s: &Session, n: &str| s.doc().unwrap().doc.styles.para(n).unwrap().based_on.clone();
+    s.execute("style.paragraph.create", &json!({"name": "Head"})).unwrap();
+    s.execute("style.paragraph.create", &json!({"name": "Sub", "basedOn": "Head"})).unwrap();
+    s.execute("style.paragraph.create", &json!({"name": "Minor", "basedOn": "Sub"})).unwrap();
+    // Minor is based on Sub; deleting Sub in favour of Minor gives Minor Sub's parent.
+    s.execute("style.paragraph.delete", &json!({"name": "Sub", "replaceWith": "Minor"})).unwrap();
+    assert_eq!(para(&s, "Minor").as_deref(), Some("Head"));
+    s.execute("style.character.create", &json!({"name": "Strong"})).unwrap();
+    s.execute("style.character.create", &json!({"name": "Stronger", "basedOn": "Strong"})).unwrap();
+    s.execute("style.character.delete", &json!({"name": "Strong", "replaceWith": "Stronger"})).unwrap();
+    let based = s.doc().unwrap().doc.styles.character.iter().find(|c| c.name == "Stronger").unwrap().based_on.clone();
+    assert_ne!(based.as_deref(), Some("Stronger"));
+}
+
+#[test]
+fn character_style_delete_reassigns_every_kind_of_reference() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+    let repl = s.execute("style.character.create", &json!({"name": "Emphasis"})).unwrap()["name"].as_str().unwrap().to_string();
+    // Another character style's basedOn.
+    let based = s.execute("style.character.create", &json!({"name": "Strong", "basedOn": name})).unwrap()["name"].as_str().unwrap().to_string();
+    // A paragraph style's nested, nested line, GREP and drop cap styles, and the footnote reference style.
+    s.execute(
+        "style.paragraph.create",
+        &json!({"name": "Body", "para": {
+            "nestedStyles": [{"style": name, "through": true, "count": 1, "until": {"kind": "words"}}],
+            "grepStyles": [{"style": name, "pattern": "x"}],
+            "nestedLineStyles": [{"style": name, "lines": 1}],
+            "dropCapStyle": name}}),
+    )
+    .unwrap();
+    s.execute("footnote.options", &json!({"refCharStyle": name})).unwrap();
+    s.execute("style.character.delete", &json!({"name": name, "replaceWith": repl})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.doc.styles.char_style(&name).is_none(), "deleted style is gone");
+    assert_eq!(st.doc.styles.char_style(&based).unwrap().based_on.as_deref(), Some(repl.as_str()), "basedOn redirected");
+    let body = st.doc.styles.para("Body").unwrap();
+    assert_eq!(body.para.nested_styles.as_ref().unwrap()[0].style, repl, "nested style redirected");
+    assert_eq!(body.para.nested_line_styles.as_ref().unwrap()[0].style, repl, "nested line style redirected");
+    assert_eq!(body.para.grep_styles.as_ref().unwrap()[0].style, repl, "grep style redirected");
+    assert_eq!(body.para.drop_cap_style.as_deref(), Some(repl.as_str()), "drop cap style redirected");
+    assert_eq!(st.doc.footnote_options.ref_char_style, repl, "footnote reference style redirected");
+}
+
+#[test]
 fn page_tool_selects_a_page_and_its_handles_preview_or_resize_it() {
     use designcraft_tools::{CanvasLayout, Mods, PointerEvent, PointerKind};
     let mut s = Session::new();

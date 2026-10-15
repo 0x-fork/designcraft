@@ -12,6 +12,10 @@ use serde_json::{Value, json};
 use crate::{DesignApp, ScreenMode, View, theme::Tokens};
 
 pub const RULER: f32 = 15.0;
+/// Width of the view's scrollbars.
+pub const SCROLLBAR: f32 = 10.0;
+/// Shortest scrollbar thumb.
+const MIN_THUMB: f32 = 18.0;
 
 /// Canvas ↔ screen transform.
 #[derive(Clone, Copy, Debug)]
@@ -307,10 +311,14 @@ fn mods(i: &egui::InputState, space: bool) -> Mods {
 
 pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    let full = ui.available_rect_before_wrap();
+    let outer = ui.available_rect_before_wrap();
     let rot = app.view().map_or(0, |v| v.rotation % 4);
+    let presenting = app.ui.screen_mode == ScreenMode::Presentation;
+    // Scrollbars sit outside the view (right and bottom); rulers and the view share the rest.
+    let bars = !presenting && app.session.active().is_some();
+    let full = if bars { Rect::from_min_max(outer.min, outer.max - vec2(SCROLLBAR, SCROLLBAR)) } else { outer };
     // Rulers measure the unrotated layout, so they hide while the view is rotated.
-    let rulers = app.ui.rulers && app.ui.screen_mode != ScreenMode::Presentation && rot == 0;
+    let rulers = app.ui.rulers && !presenting && rot == 0;
     let screen = if rulers { Rect::from_min_max(full.min + vec2(RULER, RULER), full.max) } else { full };
     let rect = view_rect(screen, rot);
     app.canvas_rect = Some(rect);
@@ -319,6 +327,9 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         fit(app, rect, "spread");
     }
     handle_input(app, ui, &resp, rect);
+    if bars {
+        scrollbars(app, ui, outer, screen, rect, &t);
+    }
     let Some(st) = app.session.active() else { return };
     let Some(&v) = app.view() else { return };
     let xf = Xf::new(rect, &v);
@@ -408,11 +419,15 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
     // Cursor.
     if let Some(p) = resp.hover_pos().filter(|p| screen.contains(*p)) {
-        let space = ui.input(|i| i.key_down(egui::Key::Space)) && !app.session.wants_text();
+        let wants_text = app.session.wants_text();
+        let space = ui.input(|i| i.key_down(egui::Key::Space)) && !wants_text;
         let middle = ui.input(|i| i.pointer.middle_down());
-        let c = if middle {
+        let alt_hand: bool = ui.data(|d| d.get_temp(egui::Id::new(("canvas_alt_hand", app.pane)))).unwrap_or(false);
+        let tool_drag: bool = ui.data(|d| d.get_temp(egui::Id::new(("canvas_pointer_down", app.pane)))).unwrap_or(false);
+        let alt_text = wants_text && !tool_drag && ui.input(|i| i.modifiers.alt);
+        let c = if middle || alt_hand {
             Cursor::HandGrab
-        } else if space {
+        } else if space || alt_text {
             Cursor::Hand
         } else {
             app.session.cursor(xf.to_canvas(p), ui.input(|i| mods(i, false)), app.view_info())
@@ -587,6 +602,11 @@ fn patch_texture(app: &mut DesignApp, layout: &CanvasLayout, ppp: f64, doc_key: 
     let Some(regions) = designcraft_render::damage::damage_with(&old, &new, Some(&app.session.cache)) else { return false };
     let t0 = crate::now_ms();
     let (tw, th) = ((sh.size.0 as f64 * ppp).round() as i64, (sh.size.1 as f64 * ppp).round() as i64);
+    // A texture `upload` sampled down to the GPU limit has other pixels than the view: a region
+    // computed in view pixels would be written outside it. Render it whole instead.
+    if app.canvas.texture.as_ref().is_none_or(|t| t.size() != [tw.max(0) as usize, th.max(0) as usize]) {
+        return false;
+    }
     let k = sh.zoom * ppp;
     let mut px: Option<(i64, i64, i64, i64)> = None;
     for (r, rect) in &regions {
@@ -667,6 +687,7 @@ fn upload(app: &mut DesignApp, ctx: &egui::Context, mut img: designcraft_render:
         designcraft_render::separation_view(&mut img, None, app.ui.ink_limit);
     }
     let ci = egui::ColorImage::from_rgba_premultiplied([img.width as usize, img.height as usize], &img.pixels);
+    let ci = crate::widgets::fit_texture(ci, ctx.input(|i| i.max_texture_side));
     match &mut app.canvas.texture {
         Some(tex) => tex.set(ci, egui::TextureOptions::LINEAR),
         None => app.canvas.texture = Some(ctx.load_texture("canvas", ci, egui::TextureOptions::LINEAR)),
@@ -1336,7 +1357,7 @@ fn draw_inverse_highlight(
             let mut res = vello_cpu::Resources::new();
             rc.render(&mut pm, &mut res);
             let ci = egui::ColorImage::from_rgba_premultiplied([w as usize, h as usize], pm.data_as_u8_slice());
-            let t = ctx.load_texture("inverse_selection", ci, egui::TextureOptions::NEAREST);
+            let t = crate::widgets::load_texture(ctx, "inverse_selection", ci, egui::TextureOptions::NEAREST);
             ctx.data_mut(|d| d.insert_temp(cache_id, (key, t.clone())));
             t
         }
@@ -1596,6 +1617,108 @@ fn fmt_tick(v: f64) -> String {
     if (v - r).abs() < 1e-6 { format!("{}", r as i64) } else { format!("{v:.1}") }
 }
 
+/// Move the view's content by a screen-space distance `d` (rotated views move in screen axes).
+fn pan(app: &mut DesignApp, xf: &Xf, d: egui::Vec2) {
+    let d = xf.unrotate_delta(d);
+    if let Some(v) = app.view_mut() {
+        v.origin = Point::new(v.origin.x - d.x as f64 / v.zoom, v.origin.y - d.y as f64 / v.zoom);
+    }
+}
+
+/// A scrollbar thumb on a track `track` pixels long, for `visible` (the view) within `content`
+/// (the pasteboard), both spans along the bar's axis in screen pixels: the thumb's start and
+/// length on the track, and the content pixels one thumb pixel moves (0 when nothing scrolls).
+fn thumb_span(track: f32, content: (f32, f32), visible: (f32, f32)) -> (f32, f32, f32) {
+    let track = track.max(0.0);
+    let (lo, hi) = (content.0.min(visible.0), content.1.max(visible.1));
+    let (total, shown) = (hi - lo, visible.1 - visible.0);
+    let scrollable = total - shown;
+    if !total.is_finite() || !shown.is_finite() || total <= 0.0 || scrollable <= 0.0 {
+        return (0.0, track, 0.0);
+    }
+    let len = (track * shown / total).max(MIN_THUMB.min(track));
+    let free = track - len;
+    if free <= 0.0 {
+        return (0.0, track, 0.0);
+    }
+    ((visible.0 - lo) / scrollable * free, len, scrollable / free)
+}
+
+/// The track and thumb of the vertical (or horizontal) scrollbar of the view `screen` inside
+/// `outer`, and the content pixels per thumb pixel.
+fn scrollbar_rects(outer: Rect, screen: Rect, content: Rect, vertical: bool) -> (Rect, Rect, f32) {
+    if vertical {
+        let track = Rect::from_min_max(pos2(outer.max.x - SCROLLBAR, screen.min.y), pos2(outer.max.x, screen.max.y));
+        let (start, len, k) = thumb_span(track.height(), (content.min.y, content.max.y), (screen.min.y, screen.max.y));
+        (track, Rect::from_min_size(pos2(track.min.x, track.min.y + start), vec2(SCROLLBAR, len)), k)
+    } else {
+        let track = Rect::from_min_max(pos2(screen.min.x, outer.max.y - SCROLLBAR), pos2(screen.max.x, outer.max.y));
+        let (start, len, k) = thumb_span(track.width(), (content.min.x, content.max.x), (screen.min.x, screen.max.x));
+        (track, Rect::from_min_size(pos2(track.min.x + start, track.min.y), vec2(len, SCROLLBAR)), k)
+    }
+}
+
+/// The view's scrollbars, on the right and bottom edges of `outer`: they span the pasteboard;
+/// dragging a thumb pans, clicking the track pages by one view.
+fn scrollbars(app: &mut DesignApp, ui: &mut egui::Ui, outer: Rect, screen: Rect, rect: Rect, t: &Tokens) {
+    let content = |app: &DesignApp| {
+        let st = app.session.active()?;
+        let v = app.view()?;
+        let xf = Xf::new(rect, v);
+        Some((xf, xf.rect(CanvasLayout::new(&st.doc, st.editing_parents).pasteboard)))
+    };
+    let Some((xf, cb)) = content(app) else { return };
+    let press = ui.input(|i| i.pointer.press_origin());
+    let mut hot = [false; 2];
+    for (n, vertical) in [true, false].into_iter().enumerate() {
+        let (track, thumb, k) = scrollbar_rects(outer, screen, cb, vertical);
+        let id = egui::Id::new(("canvas_scrollbar", app.pane, vertical));
+        let resp = ui.interact(track, id, Sense::click_and_drag());
+        let grab_id = id.with("grab");
+        if resp.drag_started() {
+            let on_thumb = press.is_some_and(|p| thumb.contains(p));
+            ui.data_mut(|d| d.insert_temp(grab_id, on_thumb));
+        }
+        let grabbed = resp.dragged() && ui.data(|d| d.get_temp::<bool>(grab_id)).unwrap_or(false);
+        if !resp.dragged() {
+            ui.data_mut(|d| d.remove::<bool>(grab_id));
+        }
+        let along = |p: egui::Vec2| if vertical { p.y } else { p.x };
+        let page = along(screen.size());
+        let mut moved = 0.0;
+        if grabbed {
+            moved = -along(resp.drag_delta()) * k;
+        } else if resp.clicked()
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            let (p, a, b) = if vertical { (p.y, thumb.min.y, thumb.max.y) } else { (p.x, thumb.min.x, thumb.max.x) };
+            if p < a {
+                moved = page;
+            } else if p > b {
+                moved = -page;
+            }
+        }
+        if moved != 0.0 && moved.is_finite() {
+            pan(app, &xf, if vertical { vec2(0.0, moved) } else { vec2(moved, 0.0) });
+        }
+        if let Some(slot) = hot.get_mut(n) {
+            *slot = grabbed || resp.hovered();
+        }
+    }
+    // Painted from the view as it is after this frame's input.
+    let Some((_, cb)) = content(app) else { return };
+    let painter = ui.painter_at(outer);
+    let right = Rect::from_min_max(pos2(outer.max.x - SCROLLBAR, outer.min.y), outer.max);
+    let bottom = Rect::from_min_max(pos2(outer.min.x, outer.max.y - SCROLLBAR), outer.max);
+    painter.rect_filled(right, 0.0, t.panel_darker);
+    painter.rect_filled(bottom, 0.0, t.panel_darker);
+    for (n, vertical) in [true, false].into_iter().enumerate() {
+        let (_, thumb, _) = scrollbar_rects(outer, screen, cb, vertical);
+        let alpha = if hot.get(n).copied().unwrap_or(false) { 0.6 } else { 0.35 };
+        painter.rect_filled(thumb.shrink(2.0), SCROLLBAR / 2.0 - 2.0, t.text.gamma_multiply(alpha));
+    }
+}
+
 fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rect: Rect) {
     let Some(v) = app.view().copied() else { return };
     let xf = Xf::new(rect, &v);
@@ -1631,6 +1754,21 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
         if let Some(v) = app.view_mut() {
             v.origin = Point::new(v.origin.x - d.x as f64 / v.zoom, v.origin.y - d.y as f64 / v.zoom);
         }
+        return;
+    }
+    // Editing text (Space types a space): Alt held at the press gives the Hand tool until the
+    // button is released, and the caret stays. Alt pressed later in a text drag copies the text.
+    let alt_hand_id = egui::Id::new(("canvas_alt_hand", app.pane));
+    let mut alt_hand: bool = ui.data(|d| d.get_temp(alt_hand_id)).unwrap_or(false);
+    let (press, alt, primary_down) = ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.alt, i.pointer.primary_down()));
+    if press && alt && wants_text && !tool_drag && resp.hovered() {
+        alt_hand = true;
+    }
+    if alt_hand {
+        if resp.dragged() {
+            pan(app, &xf, resp.drag_delta());
+        }
+        ui.data_mut(|d| d.insert_temp(alt_hand_id, primary_down));
         return;
     }
     // Ruler guides need the rulers (hidden while the view is rotated).
@@ -2238,6 +2376,38 @@ mod tests {
         (s.horizontal_units, s.vertical_units)
     }
 
+    /// A viewport wider than the GPU's largest texture: the canvas texture is sampled down, and an
+    /// edit repaints it whole. A region repainted in view pixels would land in the wrong place,
+    /// or outside the texture (a wgpu validation error). A view that fits is still patched.
+    #[test]
+    fn an_edit_repaints_a_canvas_texture_sampled_down_to_the_gpu_limit_whole() {
+        for (width, sampled_down) in [(1440.0, false), (2600.0, true)] {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({})).unwrap();
+            let frame = app.run("frame.create", json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Text"})).unwrap();
+            let mut h = Harness::builder().with_size(vec2(width, 900.0)).build_ui_state(
+                |ui, app: &mut DesignApp| {
+                    let ctx = ui.ctx().clone();
+                    app.logic(&ctx);
+                    app.ui(ui);
+                },
+                app,
+            );
+            h.run_steps(6);
+            let limit = h.ctx.input(|i| i.max_texture_side);
+            let size = h.state().canvas.texture.as_ref().map(|t| t.size()).unwrap();
+            assert!(size[0] <= limit && size[1] <= limit, "{size:?}");
+            let shown = h.state().canvas.shown.unwrap().size;
+            assert_eq!(shown.0 > limit as f32, sampled_down, "view {shown:?}, limit {limit}");
+            let patches = h.state().canvas.patches;
+            // A small edit: one more character in the frame.
+            h.state_mut().run("text.insert", json!({"story": frame["story"], "at": 4, "text": "s"})).unwrap();
+            h.run_steps(6);
+            assert_eq!(h.state().canvas.patches == patches, sampled_down, "width {width}");
+            assert_eq!(h.state().canvas.texture.as_ref().map(|t| t.size()), Some(size));
+        }
+    }
+
     #[test]
     fn selected_merged_owners_paint_the_same_row_and_column_targets() {
         for column in [true, false] {
@@ -2495,5 +2665,144 @@ mod tests {
         assert_eq!(lines(-30.0, 12.0, 30.0), [6.0, 18.0], "a start above the page keeps its rhythm");
         assert_eq!(lines(f64::NAN, 12.0, 792.0), [0.0; 0]);
         assert_eq!(baseline_grid_lines(0.0, 12.0, f64::INFINITY).count(), MAX_BASELINES);
+    }
+}
+
+#[cfg(test)]
+mod scrollbar_tests {
+    use egui::{Event, Modifiers, PointerButton};
+    use egui_kittest::Harness;
+
+    use super::*;
+    use crate::test_window::{Window, open, wheel};
+
+    fn window() -> Harness<'static, Window> {
+        let mut h = open(DesignApp::new(designcraft_engine::Session::new(), crate::Services::default()), vec2(1440.0, 900.0));
+        // Zoomed in so both axes scroll.
+        set_zoom(&mut h.state_mut().app, 2.0);
+        h.run_steps(3);
+        h
+    }
+
+    fn origin(h: &Harness<'static, Window>) -> Point {
+        h.state().app.view().map(|v| v.origin).unwrap_or_default()
+    }
+
+    /// The scrollbar's track and thumb as the canvas lays them out for the current view, and
+    /// the content pixels per thumb pixel.
+    fn bar(h: &Harness<'static, Window>, vertical: bool) -> (Rect, Rect, f32) {
+        let app = &h.state().app;
+        let rect = app.canvas_rect.unwrap();
+        let st = app.session.active().unwrap();
+        let xf = Xf::new(rect, app.view().unwrap());
+        let cb = xf.rect(CanvasLayout::new(&st.doc, st.editing_parents).pasteboard);
+        let outer = Rect::from_min_max(rect.min, rect.max + vec2(SCROLLBAR, SCROLLBAR));
+        scrollbar_rects(outer, rect, cb, vertical)
+    }
+
+    /// A primary-button drag from `a` to `b` in a few moves, with `mods` held throughout.
+    fn drag(h: &mut Harness<'static, Window>, a: Pos2, b: Pos2, mods: Modifiers) {
+        h.event(Event::ModifiersChanged(mods));
+        h.hover_at(a);
+        h.step();
+        h.event(Event::PointerButton { pos: a, button: PointerButton::Primary, pressed: true, modifiers: mods });
+        h.step();
+        for n in 1..=4 {
+            h.hover_at(a + (b - a) * n as f32 / 4.0);
+            h.step();
+        }
+        h.event(Event::PointerButton { pos: b, button: PointerButton::Primary, pressed: false, modifiers: mods });
+        h.event(Event::ModifiersChanged(Modifiers::NONE));
+        h.run_steps(3);
+    }
+
+    #[test]
+    fn document_views_have_scrollbars_beside_the_view() {
+        let h = window();
+        let rect = h.state().app.canvas_rect.unwrap();
+        for vertical in [true, false] {
+            let r = h.ctx.read_response(egui::Id::new(("canvas_scrollbar", 0u8, vertical))).expect("scrollbar").rect;
+            let (track, thumb, k) = bar(&h, vertical);
+            assert_eq!(r, track);
+            assert!(k > 0.0, "the zoomed-in view scrolls");
+            if vertical {
+                assert_eq!((r.min.x, r.width(), r.min.y, r.max.y), (rect.max.x, SCROLLBAR, rect.min.y, rect.max.y));
+                assert!(thumb.height() < track.height());
+            } else {
+                assert_eq!((r.min.y, r.height(), r.min.x, r.max.x), (rect.max.y, SCROLLBAR, rect.min.x, rect.max.x));
+                assert!(thumb.width() < track.width());
+            }
+        }
+    }
+
+    #[test]
+    fn dragging_a_thumb_pans_and_clicking_the_track_pages() {
+        let mut h = window();
+        let zoom = h.state().app.view().unwrap().zoom;
+        // Vertical thumb: down 40 px moves the view down by 40 thumb pixels' worth of content.
+        let (_, thumb, k) = bar(&h, true);
+        let before = origin(&h);
+        drag(&mut h, thumb.center(), thumb.center() + vec2(0.0, 40.0), Modifiers::NONE);
+        let after = origin(&h);
+        let want = 40.0 * k as f64 / zoom;
+        assert!((after.y - before.y - want).abs() < want * 0.2, "{before:?} → {after:?}, want +{want}");
+        assert_eq!(after.x, before.x);
+        // Horizontal thumb: left 30 px.
+        let (_, thumb, k) = bar(&h, false);
+        drag(&mut h, thumb.center(), thumb.center() - vec2(30.0, 0.0), Modifiers::NONE);
+        let next = origin(&h);
+        let want = 30.0 * k as f64 / zoom;
+        assert!((after.x - next.x - want).abs() < want * 0.2, "{after:?} → {next:?}, want -{want}");
+        assert_eq!(next.y, after.y);
+        // A click on the vertical track above the thumb pages up by one view.
+        let (track, thumb, _) = bar(&h, true);
+        assert!(thumb.min.y - track.min.y > 4.0);
+        crate::test_window::click_at(&mut h, pos2(track.center().x, track.min.y + 2.0));
+        let paged = origin(&h);
+        let view = h.state().app.canvas_rect.unwrap().height() as f64 / zoom;
+        assert!((next.y - paged.y - view).abs() < 0.01, "{next:?} → {paged:?}, want -{view}");
+    }
+
+    #[test]
+    fn scrolling_the_view_moves_the_thumbs() {
+        let mut h = window();
+        let (_, v0, _) = bar(&h, true);
+        let (_, h0, _) = bar(&h, false);
+        let c = h.state().app.canvas_rect.unwrap().center();
+        wheel(&mut h, c, vec2(-50.0, -80.0));
+        let (_, v1, _) = bar(&h, true);
+        let (_, h1, _) = bar(&h, false);
+        assert!(v1.min.y > v0.min.y && h1.min.x > h0.min.x, "{v0:?} → {v1:?}, {h0:?} → {h1:?}");
+        let r = h.ctx.read_response(egui::Id::new(("canvas_scrollbar", 0u8, true))).expect("scrollbar");
+        assert_eq!(r.rect, bar(&h, true).0);
+    }
+
+    #[test]
+    fn alt_drag_while_editing_text_pans_and_keeps_the_caret() {
+        let mut h = window();
+        let app = &mut h.state_mut().app;
+        let rect = app.canvas_rect.unwrap();
+        let xf = Xf::new(rect, app.view().unwrap());
+        // A text frame filling the visible part of the page, with the caret in it.
+        let (a, b) = (xf.to_canvas(rect.min + vec2(20.0, 20.0)), xf.to_canvas(rect.max - vec2(20.0, 20.0)));
+        let r = app.run("frame.create", json!({"rect": [a.x, a.y, b.x, b.y], "content": "text", "text": "Hello brave world"})).unwrap();
+        let sid = r["story"].as_u64().unwrap();
+        app.run("tool.select", json!({"tool": "type"})).unwrap();
+        app.run("text.select", json!({"story": sid, "anchor": 3, "focus": 3})).unwrap();
+        assert!(app.session.wants_text());
+        h.run_steps(2);
+        let caret = h.state().app.session.doc().unwrap().selection.text;
+        let before = origin(&h);
+        let zoom = h.state().app.view().unwrap().zoom;
+        let from = rect.center();
+        drag(&mut h, from, from + vec2(60.0, 40.0), Modifiers::ALT);
+        let after = origin(&h);
+        assert!(after.x < before.x && after.y < before.y, "{before:?} → {after:?}");
+        assert!((before.x - after.x - 60.0 / zoom).abs() < 15.0 / zoom, "{before:?} → {after:?}");
+        assert_eq!(h.state().app.session.doc().unwrap().selection.text, caret);
+        assert!(h.state_mut().app.session.wants_text(), "still editing text");
+        // Without Alt the same drag selects text and leaves the view alone.
+        drag(&mut h, from, from + vec2(60.0, 40.0), Modifiers::NONE);
+        assert_eq!(origin(&h), after);
     }
 }
