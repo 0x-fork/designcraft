@@ -148,6 +148,7 @@ Newest first.
 - **2026-10-12 (PDFW)** · PDF, booklet and book composition share guarded writing, metadata and font preparation through craft-pdf. Layout, shaping, placed graphics, colour policy, tagging and PDF/X postprocessing remain in DesignCraft. Failed native drawing returns an export error; failed writer cleanup cannot serialize an incomplete document. No readiness percentage change.
 
 - **2026-10-13** · Copy with a placed graphic selected (Direct Selection) copies just the graphic, uncropped, where it sits on the page and without the frame's stroke, so Paste Into puts the whole image in place; Cut and Delete then remove only the graphic and leave its frame empty. Nested selections copy in their spread coordinates. No readiness percentage change.
+- **2026-10-13** · Object effects (Basic Feather, Inner Glow, shadows, glows, bevel, satin, directional and gradient feathers) apply to frames with pasted-in content, on screen and in image exports: the frame, its clipped content and its stroke are one object to the effect. PDF export still has no soft effects for any object. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
   drag one (it snaps like frame drawing); Shift-click autoflows, Alt-click stays loaded on the

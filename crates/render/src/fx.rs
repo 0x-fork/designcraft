@@ -96,7 +96,7 @@ impl Renderer {
         let reach = xf.transform_rect_bbox(bp.bounding_box()).inflate(sw + 1.0, sw + 1.0);
         // The silhouette is the shape when the object paints its area (fill / image); text frames
         // without a fill cast the shadow of their text only, which can't be grown.
-        let solid = !it.fill.is_none() || matches!(it.content, designcraft_doc::Content::Graphic(_));
+        let solid = !it.fill.is_none() || matches!(it.content, designcraft_doc::Content::Graphic(_)) || it.has_nested_items();
         let mut below = vec![];
         if e.outer_glow.on {
             let g = &e.outer_glow;
