@@ -170,6 +170,7 @@ Newest first.
   solid cyan; fractions take the colour's own `{model: "cmyk", …}` form (#910). No readiness percentage change.
 - **2026-10-14** · The Tools panel follows InDesign's: Gradient Swatch and Gradient Feather are tools of their own; in two columns Content Collector and Placer, Apply Color / Gradient / None and Normal / Preview each get a button; View Options holds Frame Edges, Rulers, Guides, Smart Guides, Baseline Grid and Hidden Characters; Apply Color (,) and Apply Gradient (.) reuse the last colour and gradient. No readiness percentage change.
 - **2026-10-13** · Gradient swatches work on strokes: drawn across the path's box on screen and in PDF (they drew nothing), set with `object.gradient {target: stroke}` and in the Gradient panel when the Stroke box is in front; the stroke's gradient vector moves with the shape and round-trips through IDML. No readiness percentage change.
+- **2026-10-13** · Text takes gradient swatches: a gradient fill or stroke on characters spans the text frame's box (on a path: the path's), on screen and in PDF. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
   drag one (it snaps like frame drawing); Shift-click autoflows, Alt-click stays loaded on the

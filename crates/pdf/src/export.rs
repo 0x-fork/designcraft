@@ -149,6 +149,7 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         tags: Vec::new(),
         story_tags: HashMap::new(),
         tag_story: None,
+        text_area: None,
         para_tags: HashMap::new(),
     };
     if ex.rgb_only {
@@ -336,6 +337,7 @@ fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) ->
         tags: Vec::new(),
         story_tags: HashMap::new(),
         tag_story: None,
+        text_area: None,
         para_tags: HashMap::new(),
     };
     let pairs = booklet_pairs(n, opts.kind);
@@ -480,6 +482,9 @@ pub(crate) struct Exporter<'a> {
     /// While drawing a story's frame for the structure tree: the story (text runs are tagged
     /// per paragraph, everything else in the frame is an artifact).
     pub(crate) tag_story: Option<designcraft_doc::StoryId>,
+    /// While drawing a frame's text: the frame's box in text space, which a gradient on the text
+    /// spans (as InDesign lays it across the frame).
+    pub(crate) text_area: Option<Rect>,
     /// Marked content of each (story, paragraph index).
     pub(crate) para_tags: HashMap<(designcraft_doc::StoryId, usize), Vec<Identifier>>,
 }
@@ -936,8 +941,10 @@ impl Exporter<'_> {
                     // Type on a path: the glyphs as outlines along the path.
                     for (si, gp) in designcraft_compose::path_glyphs(&cs, ft, &bp, pt) {
                         let st = &cs.styles[si as usize];
-                        if let (Some(c), Some(p)) = (self.swatch_color(&st.fill, st.fill_tint), to_path(&gp)) {
-                            s.set_fill(Some(Fill { paint: c.into(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
+                        // A gradient spans the path's box.
+                        let fill = designcraft_doc::Fill { swatch: st.fill.clone(), tint: st.fill_tint, ..designcraft_doc::Fill::none() };
+                        if let (Some(paint), Some(p)) = (self.fill_paint(&fill, bp.bounding_box()), to_path(&gp)) {
+                            s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
                             s.draw_path(&p);
                             s.set_fill(None);
                         }
@@ -948,7 +955,9 @@ impl Exporter<'_> {
                     if local != Affine::IDENTITY {
                         s.push_transform(&tf(local));
                     }
+                    self.text_area = (local.determinant().abs() > 1e-12).then(|| local.inverse().transform_rect_bbox(it.inner_bounds()));
                     self.frame_text(s, &cs, ft, text);
+                    self.text_area = None;
                     if local != Affine::IDENTITY {
                         s.pop();
                     }
@@ -988,7 +997,13 @@ impl Exporter<'_> {
     }
 
     /// A swatch fill (solid or gradient) in the item's inner space. `None` for [None]/unknown.
-    fn fill_paint(&mut self, fill: &designcraft_doc::Fill, bounds: Rect) -> Option<krilla::paint::Paint> {
+    pub(crate) fn fill_paint(&mut self, fill: &designcraft_doc::Fill, bounds: Rect) -> Option<krilla::paint::Paint> {
+        self.fill_paint_in(fill, bounds, Affine::IDENTITY)
+    }
+
+    /// [`Self::fill_paint`] for a gradient laid out in a space that `xf` maps to the current one
+    /// (text runs: the frame's text space under the run's origin).
+    pub(crate) fn fill_paint_in(&mut self, fill: &designcraft_doc::Fill, bounds: Rect, xf: Affine) -> Option<krilla::paint::Paint> {
         let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
         if let Some(g) = designcraft_color::swatch::resolve_gradient(&self.doc.swatches, swatch) {
             let kind = g.kind;
@@ -1044,7 +1059,7 @@ impl Exporter<'_> {
                         cx,
                         cy,
                         cr: rx as f32,
-                        transform: tf(stretch),
+                        transform: tf(xf * stretch),
                         spread_method: SpreadMethod::Pad,
                         stops,
                         anti_alias: false,
@@ -1058,7 +1073,7 @@ impl Exporter<'_> {
                         y1: p0.y as f32,
                         x2: p1.x as f32,
                         y2: p1.y as f32,
-                        transform: Transform::identity(),
+                        transform: tf(xf),
                         spread_method: SpreadMethod::Pad,
                         stops,
                         anti_alias: false,
@@ -1619,6 +1634,7 @@ mod image_content_cache_tests {
             tags: Vec::new(),
             story_tags: HashMap::new(),
             tag_story: None,
+            text_area: None,
             para_tags: HashMap::new(),
         }
     }
