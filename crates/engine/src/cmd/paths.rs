@@ -314,6 +314,7 @@ fn split_path(s: &mut Session, p: &Value) -> Result<Value> {
     let id = super::id_param(p, "id").ok_or_else(|| bad("path.split", "missing id"))?;
     let at = point_param(p, "at").ok_or_else(|| bad("path.split", "missing at"))?;
     s.edit(|d, sel| {
+        super::object::path_editable(d, id, "path.split")?;
         let (sr, xf) = spread_xf(d, id).ok_or(designcraft_doc::DocError::NoItem(id))?;
         let it = d.item(id).cloned().ok_or(designcraft_doc::DocError::NoItem(id))?;
         if !matches!(it.content, Content::Unassigned) {
