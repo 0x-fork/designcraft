@@ -13,7 +13,8 @@ use designcraft_doc::{Document, Item, Story, StoryId, Styles, WrapMode};
 use crate::vars::RunningIndex;
 use crate::{ComposeOptions, ComposedStory};
 
-type Key = (StoryId, Option<String>);
+/// A story, composed for one absolute page (parent-page items) or for its own frames (`None`).
+type Key = (StoryId, Option<usize>);
 
 struct Entry {
     sig: Vec<usize>,
@@ -46,7 +47,18 @@ fn doc_signature(doc: &Document) -> u64 {
     }
     (Arc::as_ptr(&doc.styles) as usize).hash(&mut h);
     format!("{:?}", doc.text_variables).hash(&mut h);
+    sections_hash(doc).hash(&mut h);
+    h.finish()
+}
+
+/// Everything page names and section markers are made from.
+fn sections_hash(doc: &Document) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
     doc.sections.len().hash(&mut h);
+    for s in &doc.sections {
+        (s.start, s.start_number, s.style as u8, &s.prefix, &s.marker, s.include_prefix).hash(&mut h);
+    }
     h.finish()
 }
 
@@ -55,11 +67,31 @@ impl Cache {
         Self::default()
     }
 
-    /// The composed story, from cache or freshly composed.
-    pub fn get(&self, doc: &Document, sid: StoryId, page_name: Option<&str>) -> Arc<ComposedStory> {
+    /// The composed story, from cache or freshly composed. `page` is the absolute page a
+    /// parent-page item is shown on (its page number markers and variables are that page's), or
+    /// `None` for a story's own frames. Pages are identified by index, not name: names repeat when
+    /// sections restart their numbering.
+    pub fn get(&self, doc: &Document, sid: StoryId, page: Option<usize>) -> Arc<ComposedStory> {
         let Some(story) = doc.stories.get(&sid) else { return Arc::new(ComposedStory { story: sid, ..Default::default() }) };
         let (mut sig, keep_items) = signature(doc, story);
-        let key = (sid, page_name.map(str::to_string));
+        let key = (sid, page);
+        // The key holds the page's index, which a renumbering doesn't change: its name (section
+        // start number, style, prefix) is part of the signature.
+        let page_name = page.map(|p| doc.page_name(p));
+        let section_marker = page.map(|p| crate::section_marker(doc, p));
+        if let Some(name) = &page_name {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (name, &section_marker).hash(&mut h);
+            sig.push(h.finish() as usize);
+        }
+        if story.text.contains(designcraft_doc::story::SECTION_MARKER) {
+            // Frames on document pages show their section's marker text.
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            doc.sections.iter().for_each(|s| (s.start, &s.marker).hash(&mut h));
+            sig.push(h.finish() as usize);
+        }
         let with_vars = crate::vars::has_vars(story);
         let running = with_vars && crate::vars::has_running(doc, story);
         if with_vars {
@@ -125,23 +157,20 @@ impl Cache {
                 return e.out.clone();
             }
         }
-        // Parent-page items are composed per page; variables need that page's index.
-        let page = match page_name {
-            Some(n) if with_vars => (0..doc.page_count()).find(|&i| doc.page_name(i) == n),
-            _ => None,
-        };
+        // Parent-page items are composed per page: markers show its name, variables need its index.
+        let page = page.filter(|_| with_vars);
         let running = running.then(|| self.running_index(doc));
         let out = Arc::new(crate::compose_story(
             doc,
             sid,
-            &ComposeOptions { page_name: page_name.map(str::to_string), page, running, label: None, xrefs: with_xrefs.then(|| self.xref_index(doc)) },
+            &ComposeOptions { page_name, section_marker, page, running, label: None, xrefs: with_xrefs.then(|| self.xref_index(doc)) },
         ));
         let mut g = self.map.lock().unwrap_or_else(|e| e.into_inner());
         let stamp = g.1;
         if g.0.len() > 4096 {
             g.0.retain(|_, e| stamp - e.stamp < 64);
         }
-        let replaced = g.0.insert(key.clone(), Entry { sig, _keep: (story.clone(), doc.styles.clone(), keep_items), out: out.clone(), stamp });
+        let replaced = g.0.insert(key, Entry { sig, _keep: (story.clone(), doc.styles.clone(), keep_items), out: out.clone(), stamp });
         drop(g);
         if key.1.is_none()
             && let Some(old) = replaced
@@ -243,8 +272,17 @@ impl Cache {
 
 fn signature(doc: &Document, story: &Arc<Story>) -> (Vec<usize>, Vec<Arc<Item>>) {
     // The document's font scope: another document's fonts of the same name set it differently.
-    let mut sig =
-        vec![Arc::as_ptr(story) as usize, story.rev as usize, Arc::as_ptr(&doc.styles) as usize, doc.sections.len(), doc.font_scope as usize];
+    // Sections name the pages under the frames (page-number and section markers).
+    let g = &doc.settings.baseline_grid;
+    let mut sig = vec![
+        Arc::as_ptr(story) as usize,
+        story.rev as usize,
+        Arc::as_ptr(&doc.styles) as usize,
+        sections_hash(doc) as usize,
+        doc.font_scope as usize,
+        g.start.to_bits() as usize,
+        g.increment.to_bits() as usize,
+    ];
     let mut keep = Vec::new();
     let mut spreads = Vec::new();
     for f in &story.frames {
@@ -263,6 +301,8 @@ fn signature(doc: &Document, story: &Arc<Story>) -> (Vec<usize>, Vec<Arc<Item>>)
                 for it in &sp.items {
                     if it.wrap.mode != WrapMode::None {
                         sig.push(Arc::as_ptr(it) as usize);
+                        // Wrap objects on hidden layers don't wrap text.
+                        sig.push(usize::from(doc.layer(it.layer).is_some_and(|l| l.visible)));
                         keep.push(it.clone());
                     }
                 }

@@ -87,8 +87,9 @@ by its own renderer. Try it yourself with `File → New → Sample Document`, or
   Line breaks are identical on screen and in PDF.
 - **Fast.** Multithreaded SIMD rendering (vello_cpu), copy-on-write documents with O(1) undo
   snapshots, and cached composition.
-- **Open.** A documented native format, IDML import and export, and PNG, PDF (PDF/X-4, PDF/A-2b)
+- **Open.** A documented native format, IDML import and export, editable PowerPoint export, and PNG, PDF (PDF/X-4, PDF/A-2b)
   and EPUB export.
+
   No subscription, no licence server, no telemetry.
 - **Agent-native.** Every menu item, tool gesture, panel control and dialog can be driven over a
   JSON control channel and an **MCP server**, so Claude and other agents can lay out and edit
@@ -98,12 +99,15 @@ by its own renderer. Try it yourself with `File → New → Sample Document`, or
 
 ## Quick start
 
+The egui frontend requires Rust 1.95 or newer (including its shared `craft-ui` components).
+
 ```sh
 cargo run --release -p designcraft                         # desktop app (start screen)
 cargo run --release -p designcraft -- --sample             # open the sample magazine
 cargo run --release -p designcraft -- --sample --control 7979   # + JSON control channel
 cargo run --release -p designcraft-cli -- run --sample --all-pages out/       # headless: render every page to PNG
 cargo run --release -p designcraft-cli -- commands         # list every command
+cargo run --release -p designcraft-cli -- script --help    # command script syntax (docs/agents.md)
 cargo xtask ci                                             # fmt, clippy, tests, assets, layering, wasm
 ```
 
@@ -138,6 +142,7 @@ The file stops growing at 16 MiB. `--version` writes no file.
 |---|---|
 | `RUST_LOG` | Log levels for standard error and the log file. Default: `info` for DesignCraft's own crates, `warn` for everything else. env_logger-style directives replace that, e.g. `RUST_LOG=debug`, `RUST_LOG=warn,designcraft_render=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*` covers every target starting with it (`designcraft*=debug`). |
 | `WGPU_BACKEND` | The graphics backend that composites the window: `dx12`, `vulkan`, `gl` or `metal` (a comma-separated list lets wgpu choose among them). Default: DirectX 12 on Windows, Vulkan on Linux, Metal on macOS, with OpenGL as the fallback. Setting it also turns off the start-up fallback described below. |
+| `WGPU_VALIDATION_INDIRECT_CALL` | `1` turns wgpu's check of indirect draw arguments back on. DesignCraft draws nothing indirectly and turns it off, since the compute shader the check needs fails to compile on some drivers (Metal on an Intel Iris Pro), which lost the device before the window opened. |
 
 The logger is `apps/designcraft/src/logging.rs`; the web build logs to the browser console instead.
 
@@ -183,7 +188,7 @@ egui frontend is a separate crate, so the UI can be swapped without touching the
 | L6 | `ui-egui` (InDesign-style UI, control channel) |
 | L7 | `apps/designcraft`, `apps/designcraft-cli`, `apps/designcraft-web` |
 
-- **Status and milestones:** [ROADMAP.md](ROADMAP.md)
+- **Status and milestones:** [ROADMAP.md](ROADMAP.md) (stage: pre-alpha); how close to InDesign: [`docs/target-app-parity.md`](docs/target-app-parity.md); known gaps: [`docs/gaps.md`](docs/gaps.md)
 - **Contributor and agent rules** (clean-room, asset policy, quality gates): [`AGENTS.md`](AGENTS.md)
 - **Bundled assets:** every one is listed with its licence in [`ASSETS.md`](ASSETS.md)
 - **App icon and colour:** a calico cat in a polka-dot scarf on DesignCraft green `#7bb51c`; see [`assets/app-icon/`](assets/app-icon/README.md)
@@ -219,7 +224,10 @@ Installers and executables are code-signed.
 | Flatpak | `designcraft-<ver>-linux-x86_64.flatpak` | `designcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `designcraft-<ver>-linux-x86_64.deb` | `designcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `designcraft-<ver>-linux-x86_64.rpm` | `designcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux/Manjaro | `designcraft-<ver>-linux-x86_64.pkg.tar.zst` | `designcraft-<ver>-linux-aarch64.pkg.tar.zst` | `sudo pacman -U <file>`; installs as `ai.storyteller.designcraft`, replacing an AUR package |
 | Tarball | `designcraft-<ver>-linux-x86_64.tar.gz` | `designcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
+
+RISC-V (riscv64): `designcraft-<ver>-linux-riscv64.tar.gz` only, cross-compiled; needs glibc 2.39+ (Ubuntu 24.04 or newer).
 
 ### FreeBSD
 
