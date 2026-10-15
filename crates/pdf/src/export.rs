@@ -1030,11 +1030,10 @@ impl Exporter<'_> {
             let v = fill.gradient_vector;
             return Some(match kind {
                 GradientKind::Radial => {
-                    let (c, r) = match v {
-                        Some([x0, y0, x1, y1]) => (designcraft_geom::Point::new(x0, y0), Vec2::new(x1 - x0, y1 - y0).hypot()),
-                        None => (c, bounds.width().max(bounds.height()) / 2.0),
-                    };
-                    let r = r.max(1e-3) as f32;
+                    // A circle stretched into the object's ellipse, as on screen.
+                    let (c, rx, ry) = fill.radial_ellipse(bounds);
+                    let rx = rx.max(1e-3);
+                    let stretch = Affine::translate(c.to_vec2()) * Affine::scale_non_uniform(1.0, ry / rx) * Affine::translate(-c.to_vec2());
                     let (cx, cy) = (c.x as f32, c.y as f32);
                     RadialGradient {
                         fx: cx,
@@ -1042,8 +1041,8 @@ impl Exporter<'_> {
                         fr: 0.0,
                         cx,
                         cy,
-                        cr: r,
-                        transform: Transform::identity(),
+                        cr: rx as f32,
+                        transform: tf(stretch),
                         spread_method: SpreadMethod::Pad,
                         stops,
                         anti_alias: false,
