@@ -12,12 +12,14 @@
 pub mod anchored;
 pub mod arabic;
 pub mod arrow;
+pub mod assets;
 pub mod attrs;
 pub mod build;
 pub mod cjk;
 pub mod datamerge;
 mod edit;
 pub mod endnotes;
+pub mod flex;
 pub mod ids;
 pub mod index;
 pub mod item;
@@ -36,6 +38,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use anchored::{AnchorPosition, AnchoredObject, OBJECT_MARK};
+pub use assets::{find_same_asset, insert_asset, remap_story_assets, story_asset_refs};
 pub use attrs::*;
 pub use datamerge::{
     DataField, DataFieldKind, DataMerge, DataSource, Delimiter, Fingerprint, MergeOptions, Placeholder, PlaceholderAnchor, PlaceholderRole,
@@ -45,6 +48,7 @@ pub use designcraft_color as color;
 pub use designcraft_geom as geom;
 pub use edit::{ItemLoc, ItemPath, SpreadRef, item_hit as edit_hit};
 pub use endnotes::{ENDNOTE_REF, EditorialNote, EndnoteOptions, NOTE_MARK};
+pub use flex::{FlexAlign, FlexDirection, FlexJustify, FlexLayout, FlexSize};
 pub use ids::*;
 pub use index::{INDEX_MARK, IndexRef};
 pub use item::*;
@@ -141,18 +145,12 @@ impl Default for DocumentGrid {
 }
 
 /// A named numbered list.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NumberedList {
     pub name: String,
     /// Numbering continues from story to story (in page order).
     pub continue_across_stories: bool,
-}
-
-impl Default for NumberedList {
-    fn default() -> Self {
-        NumberedList { name: String::new(), continue_across_stories: true }
-    }
 }
 
 /// A conditional-text condition: its indicator colour (screen only) and whether text with it shows.
@@ -523,6 +521,16 @@ impl PdfCrop {
     }
 }
 
+impl Asset {
+    /// A raster image (PNG, JPEG, GIF, WebP, TIFF, BMP, PSD), as opposed to a PDF, EPS or SVG.
+    pub fn is_raster(&self) -> bool {
+        matches!(
+            self.mime.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/tiff" | "image/bmp" | "image/vnd.adobe.photoshop"
+        )
+    }
+}
+
 fn is_zero(v: &u32) -> bool {
     *v == 0
 }
@@ -645,6 +653,30 @@ pub struct TocEntry {
     /// 1-based nesting level.
     #[serde(default = "one")]
     pub level: u8,
+    /// Paragraph style of this style's entries; `None` is the generated "TOC Level n" style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_style: Option<String>,
+    #[serde(default)]
+    pub page_number: TocPageNumber,
+    /// Text between the entry and its page number; `None` is a tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separator: Option<String>,
+}
+
+impl TocEntry {
+    pub fn new(style: impl Into<String>, level: u8) -> Self {
+        Self { style: style.into(), level, entry_style: None, page_number: TocPageNumber::After, separator: None }
+    }
+}
+
+/// Where an entry's page number goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TocPageNumber {
+    #[default]
+    After,
+    Before,
+    None,
 }
 
 fn one() -> u8 {
@@ -659,6 +691,9 @@ pub struct Toc {
     pub entries: Vec<TocEntry>,
     #[serde(default)]
     pub page_numbers: bool,
+    /// Paragraph style of the title; `None` is the generated "TOC Title" style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_style: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
