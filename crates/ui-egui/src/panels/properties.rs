@@ -1924,26 +1924,79 @@ fn pathfinder_row(app: &mut DesignApp, ui: &mut Ui) {
     });
 }
 
-/// Pathfinder panel: combine the selected shapes; make or release compound paths.
+/// Pathfinder panel › Paths: (icon, command, params, tooltip).
+const PATHS: [(&str, &str, &str, &str); 4] = [
+    ("path-join", "path.join", "{}", "Join Path"),
+    ("path-open", "object.convertShape", r#"{"to": "openPath"}"#, "Open Path"),
+    ("path-close", "object.convertShape", r#"{"to": "closedPath"}"#, "Close Path"),
+    ("path-reverse", "path.reverse", "{}", "Reverse Path"),
+];
+
+/// Pathfinder panel › Convert Shape: (icon, shape, tooltip).
+const CONVERT_SHAPE: [(&str, &str, &str); 9] = [
+    ("shape-rect", "rectangle", "Rectangle"),
+    ("shape-rounded", "roundedRectangle", "Rounded Rectangle"),
+    ("shape-beveled", "beveledRectangle", "Beveled Rectangle"),
+    ("shape-inverse", "inverseRoundedRectangle", "Inverse Rounded Rectangle"),
+    ("shape-ellipse", "ellipse", "Ellipse"),
+    ("shape-triangle", "triangle", "Triangle"),
+    ("shape-polygon", "polygon", "Polygon"),
+    ("shape-line", "line", "Line"),
+    ("shape-orthogonal", "orthogonalLine", "Orthogonal Line"),
+];
+
+/// Pathfinder panel › Convert Point: (icon, kind, tooltip).
+const CONVERT_POINT: [(&str, &str, &str); 4] = [
+    ("point-plain", "plain", "Plain"),
+    ("point-corner", "corner", "Corner"),
+    ("point-smooth", "smooth", "Smooth"),
+    ("point-symmetrical", "symmetrical", "Symmetrical"),
+];
+
+/// Pathfinder panel, as InDesign's: Paths, Pathfinder, Convert Shape and Convert Point, each a row of
+/// icon buttons acting on the selection.
 pub fn pathfinder_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
-    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Pathfinder")).strong());
-    ui.horizontal_wrapped(|ui| {
-        for (label, op) in
-            [("Add", "add"), ("Subtract", "subtract"), ("Intersect", "intersect"), ("Exclude Overlap", "exclude"), ("Minus Back", "minusBack")]
-        {
-            if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
+    let section = |ui: &mut egui::Ui, app: &DesignApp, title: &str| {
+        ui.add_space(4.0);
+        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, title));
+        ui.add_space(2.0);
+    };
+    let row = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+            add(ui);
+        });
+    };
+    section(ui, app, "Paths:");
+    row(ui, &mut |ui| {
+        for (icon, cmd, params, tip) in PATHS {
+            if icon_toggle(ui, icon, false, crate::i18n::tr(&app.ui.language, tip)).clicked() {
+                let _ = app.run(cmd, serde_json::from_str(params).unwrap_or_default());
+            }
+        }
+    });
+    section(ui, app, "Pathfinder:");
+    row(ui, &mut |ui| {
+        for (icon, op, tip) in PATHFINDER {
+            if icon_toggle(ui, icon, false, crate::i18n::tr(&app.ui.language, tip)).clicked() {
                 let _ = app.run("object.pathfinder", json!({"op": op}));
             }
         }
     });
-    ui.add_space(4.0);
-    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Paths")).strong());
-    ui.horizontal(|ui| {
-        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Make Compound"))).clicked() {
-            let _ = app.run("object.makeCompoundPath", json!({}));
+    section(ui, app, "Convert Shape:");
+    row(ui, &mut |ui| {
+        for (icon, to, tip) in CONVERT_SHAPE {
+            if icon_toggle(ui, icon, false, crate::i18n::tr(&app.ui.language, tip)).clicked() {
+                let _ = app.run("object.convertShape", json!({"to": to}));
+            }
         }
-        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Release"))).clicked() {
-            let _ = app.run("object.releaseCompoundPath", json!({}));
+    });
+    section(ui, app, "Convert Point:");
+    row(ui, &mut |ui| {
+        for (icon, kind, tip) in CONVERT_POINT {
+            if icon_toggle(ui, icon, false, crate::i18n::tr(&app.ui.language, tip)).clicked() {
+                let _ = app.run("path.convertPoints", json!({"kind": kind}));
+            }
         }
     });
 }
