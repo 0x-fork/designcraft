@@ -118,6 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             edit_char
         ),
+        cmd!("style.character.delete", "Delete Character Style", [], None, "{name, replaceWith?}", has_doc, delete_char),
         cmd!(query "style.list", "List Styles", [], None, "{} → paragraph and character style names", has_doc, |s, _| {
             let st = s.doc()?;
             Ok(json!({
@@ -517,12 +518,29 @@ fn edit_para(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Rename a paragraph or character style everywhere it's used.
 fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &str) {
-    let st = d.styles_mut();
     if para {
-        for s in &mut st.paragraph {
+        for s in &mut d.styles_mut().paragraph {
             if s.name == from {
                 s.name = to.to_string();
             }
+        }
+    } else {
+        for s in &mut d.styles_mut().character {
+            if s.name == from {
+                s.name = to.to_string();
+            }
+        }
+    }
+    redirect_style_refs(d, para, from, to);
+}
+
+/// Point every reference to style `from` at `to`, except the style's own registry entry (its
+/// `name` field) — shared by renaming (which also updates the entry's name) and deletion (which
+/// instead removes the entry, after its former uses point at the replacement).
+fn redirect_style_refs(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &str) {
+    let st = d.styles_mut();
+    if para {
+        for s in &mut st.paragraph {
             for r in [&mut s.based_on, &mut s.next_style] {
                 if r.as_deref() == Some(from) {
                     *r = Some(to.to_string());
@@ -536,9 +554,6 @@ fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &
         }
     } else {
         for s in &mut st.character {
-            if s.name == from {
-                s.name = to.to_string();
-            }
             if s.based_on.as_deref() == Some(from) {
                 s.based_on = Some(to.to_string());
             }
@@ -570,7 +585,8 @@ fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &
     }
 }
 
-/// Point the nested, nested line and GREP styles of paragraph attributes at a renamed character style.
+/// Point the nested, nested line and GREP styles, and the drop cap style, of paragraph
+/// attributes at a renamed (or deleted, pointed at its replacement) character style.
 fn rename_char_refs(p: &mut ParaAttrs, from: &str, to: &str) {
     let names = p.nested_styles.iter_mut().flatten().map(|n| &mut n.style);
     let names = names.chain(p.nested_line_styles.iter_mut().flatten().map(|n| &mut n.style));
@@ -578,6 +594,9 @@ fn rename_char_refs(p: &mut ParaAttrs, from: &str, to: &str) {
         if n == from {
             *n = to.to_string();
         }
+    }
+    if p.drop_cap_style.as_deref() == Some(from) {
+        p.drop_cap_style = Some(to.to_string());
     }
 }
 
@@ -616,22 +635,23 @@ fn group_styles(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn delete_para(s: &mut Session, p: &Value) -> Result<Value> {
-    let name = str_param(p, "name").unwrap_or("").to_string();
+    let name = str_param(p, "name").filter(|n| !n.is_empty()).ok_or_else(|| bad("style.paragraph.delete", "missing name"))?.to_string();
     let repl = str_param(p, "replaceWith").unwrap_or(designcraft_doc::BASIC_PARAGRAPH).to_string();
     if name.starts_with('[') {
         return Err(bad("style.paragraph.delete", "built-in styles can't be deleted"));
     }
+    if repl == name {
+        return Err(bad("style.paragraph.delete", "`replaceWith` can't be the deleted style"));
+    }
     s.edit(|d, _| {
-        d.styles_mut().paragraph.retain(|x| x.name != name);
-        for sid in d.stories.keys().copied().collect::<Vec<_>>() {
-            if let Some(story) = d.story_mut(sid) {
-                for f in &mut story.paras {
-                    if f.style == name {
-                        f.style = repl.clone();
-                    }
-                }
-            }
+        if d.styles.para(&name).is_none() {
+            return Err(bad("style.paragraph.delete", format!("no paragraph style `{name}`")));
         }
+        if d.styles.para(&repl).is_none() {
+            return Err(bad("style.paragraph.delete", format!("no paragraph style `{repl}`")));
+        }
+        redirect_style_refs(d, true, &name, &repl);
+        d.styles_mut().paragraph.retain(|x| x.name != name);
         ok()
     })
 }
@@ -719,6 +739,28 @@ fn edit_char(s: &mut Session, p: &Value) -> Result<Value> {
             // Every use: other styles, stories, table cells, nested and GREP styles, footnotes.
             rename_style(d, false, &name, n);
         }
+        ok()
+    })
+}
+
+fn delete_char(s: &mut Session, p: &Value) -> Result<Value> {
+    let name = str_param(p, "name").filter(|n| !n.is_empty()).ok_or_else(|| bad("style.character.delete", "missing name"))?.to_string();
+    let repl = str_param(p, "replaceWith").unwrap_or(designcraft_doc::NO_CHAR_STYLE).to_string();
+    if name.starts_with('[') {
+        return Err(bad("style.character.delete", "built-in styles can't be deleted"));
+    }
+    if repl == name {
+        return Err(bad("style.character.delete", "`replaceWith` can't be the deleted style"));
+    }
+    s.edit(|d, _| {
+        if d.styles.char_style(&name).is_none() {
+            return Err(bad("style.character.delete", format!("no character style `{name}`")));
+        }
+        if d.styles.char_style(&repl).is_none() {
+            return Err(bad("style.character.delete", format!("no character style `{repl}`")));
+        }
+        redirect_style_refs(d, false, &name, &repl);
+        d.styles_mut().character.retain(|x| x.name != name);
         ok()
     })
 }
