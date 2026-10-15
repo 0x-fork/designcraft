@@ -290,6 +290,14 @@ fn main() -> eframe::Result {
     {
         create.instance_descriptor.backends = s.backends();
     }
+    // Nothing draws or dispatches indirectly, so wgpu's check of indirect arguments only costs a
+    // compute shader when the device is created, one that Metal can't compile on an Intel Iris
+    // Pro: the device is lost and the window never opens. `WGPU_VALIDATION_INDIRECT_CALL=1` turns
+    // the check back on.
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup {
+        create.instance_descriptor.flags =
+            create.instance_descriptor.flags.difference(eframe::wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL).with_env();
+    }
     // winit has no file drag-and-drop on Wayland (only on X11), so dropping images from the file
     // manager showed a "no" cursor. Run through XWayland when it's there; DESIGNCRAFT_WAYLAND=1
     // keeps the native Wayland backend.
