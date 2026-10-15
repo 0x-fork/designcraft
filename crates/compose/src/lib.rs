@@ -708,9 +708,19 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             &[],
             (drop_end, &pp.drop_cap_style),
         );
+        // An empty paragraph has no glyphs of its own, so its only addressable character is its
+        // hidden paragraph mark (the `\n` just past `prange.end`). A leading/size override applied
+        // there (e.g. selecting the pilcrow to adjust line height) still needs to set the line's
+        // height, so resolve the mark's own run instead of the paragraph's plain default when present.
+        let mark_chars = prange
+            .is_empty()
+            .then(|| story.runs().find(|(r, _)| r.contains(&prange.end)))
+            .flatten()
+            .map(|(_, fmt)| doc.styles.resolve_char(&base_chars, fmt));
+        let leading_chars = mark_chars.as_ref().unwrap_or(&base_chars);
         // Drop cap: the size and indent come from the text beside it (`base_*` when there's none).
-        let base_leading = match base_chars.leading {
-            designcraft_doc::Leading::Auto => base_chars.size * pp.auto_leading,
+        let base_leading = match leading_chars.leading {
+            designcraft_doc::Leading::Auto => leading_chars.size * pp.auto_leading,
             designcraft_doc::Leading::Points(v) => v,
         };
         let base_cap = {
