@@ -771,6 +771,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:window.panel|Links|{\"panel\": \"links\"}",
             ">Object & Layout",
             "ui:window.panel|Align|{\"panel\": \"align\"}",
+            "ui:window.panel|Flex Layout|{\"panel\": \"flexLayout\"}",
             "ui:window.panel|Pathfinder|{\"panel\": \"pathfinder\"}",
             "<",
             ">Output",
