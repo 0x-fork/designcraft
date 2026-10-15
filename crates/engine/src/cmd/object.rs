@@ -3404,6 +3404,8 @@ mod path_edit_tests {
             ("path.erase", json!({"id": id, "points": [[120, 100], [180, 100]]})),
             ("path.smooth", json!({"id": id, "points": [[120, 100], [180, 100]]})),
             ("path.split", json!({"id": id, "at": [150, 100]})),
+            ("path.join", json!({"ids": [id]})),
+            ("path.convertPoints", json!({"ids": [id], "kind": "corner"})),
         ]
     }
 
