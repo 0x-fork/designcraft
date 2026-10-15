@@ -4241,3 +4241,19 @@ fn spaces_at_the_end_of_a_paragraph_take_no_room() {
         assert_eq!(&text[first.range.clone()].trim_end(), &"2 VOOR", "{text:?}");
     }
 }
+
+/// A story that ends with a return isn't overset when only its empty last paragraph doesn't fit,
+/// as in InDesign (Montilla Design's file: a caption fitted to its three lines, "No errors"). Text
+/// that doesn't fit still is.
+#[test]
+fn an_empty_last_paragraph_isnt_overset() {
+    // 12 pt, 14.4 leading: two lines fit in 35 pt, a third (baseline ~40) doesn't.
+    let (d, sid, _) = doc_with("One\nTwo\n", Rect::new(0.0, 0.0, 200.0, 35.0), ParaAttrs::default());
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    assert_eq!(all_lines(&cs).len(), 2);
+    assert!(!cs.is_overset(), "only the empty paragraph after the last return is left");
+    let (d, sid, _) = doc_with("One\nTwo\nThree", Rect::new(0.0, 0.0, 200.0, 35.0), ParaAttrs::default());
+    assert!(compose_story(&d, sid, &ComposeOptions::default()).is_overset());
+    let (d, sid, _) = doc_with("One\nTwo\n\n", Rect::new(0.0, 0.0, 200.0, 35.0), ParaAttrs::default());
+    assert!(compose_story(&d, sid, &ComposeOptions::default()).is_overset(), "an empty paragraph before the last one is text");
+}
