@@ -430,8 +430,13 @@ fn line_at(cs: &compose::ComposedStory, pos: usize) -> Option<(usize, usize)> {
 fn place(s: &mut Session, p: &Value, extend: bool) -> Result<Value> {
     let frame = id_param(p, "frame").ok_or_else(|| bad("text.placeCaret", "missing frame"))?;
     let pt = point_param(p, "point").unwrap_or(Point::ZERO);
-    // Empty frames become text frames.
-    let needs_convert = s.doc()?.doc.item(frame).is_some_and(|i| matches!(i.content, Content::Unassigned));
+    // Empty frames become text frames; a locked one stays as it is.
+    let st = s.doc()?;
+    let locked = st.doc.item(frame).is_some_and(|i| i.locked || st.doc.layer(i.layer).is_some_and(|l| l.locked));
+    let needs_convert = st.doc.item(frame).is_some_and(|i| matches!(i.content, Content::Unassigned));
+    if needs_convert && locked {
+        return Err(bad("text.placeCaret", "the frame is locked"));
+    }
     if needs_convert {
         s.execute("object.content", &json!({"ids": [frame.0], "type": "text"}))?;
     }
