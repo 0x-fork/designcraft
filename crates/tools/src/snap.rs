@@ -1308,9 +1308,10 @@ fn offer_parent_chain(
     offer_parent_chain(best, cx, req, flags, axis, tol, doc_x, doc_side, overridden, next_index, seen);
 }
 
-/// Left page of a facing parent, otherwise the last page. Same choice as `Document::parent_page_for`.
+/// First page of a multi-page parent for a left-hand or single-sided page, otherwise the last page.
+/// Same choice as `Document::parent_page_for`.
 fn shown_parent_page_index(page_count: usize, side: PageSide) -> Option<usize> {
-    if page_count >= 2 && side == PageSide::Left { Some(0) } else { page_count.checked_sub(1) }
+    if page_count >= 2 && matches!(side, PageSide::Left | PageSide::Single) { Some(0) } else { page_count.checked_sub(1) }
 }
 
 fn shift_x(r: Rect, dx: f64) -> Rect {
@@ -1460,6 +1461,16 @@ mod tests {
     use crate::layout::CanvasLayout;
 
     use super::*;
+
+    /// Snapping offers the parent page the canvas shows: a single-sided page uses a two-page parent's first page.
+    #[test]
+    fn shown_parent_page_matches_page_side() {
+        assert_eq!(shown_parent_page_index(2, PageSide::Single), Some(0));
+        assert_eq!(shown_parent_page_index(2, PageSide::Left), Some(0));
+        assert_eq!(shown_parent_page_index(2, PageSide::Right), Some(1));
+        assert_eq!(shown_parent_page_index(1, PageSide::Single), Some(0));
+        assert_eq!(shown_parent_page_index(0, PageSide::Single), None);
+    }
 
     // The factory flags are const. Pin them anyway.
     #[test]
