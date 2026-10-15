@@ -1805,27 +1805,76 @@ fn arrow_preview(ui: &mut egui::Ui, a: Arrowhead, start: bool, color: egui::Colo
 
 pub fn wrap_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     let info = sel_info(app);
+    let mode = info.as_ref().map_or("none", |i| i.wrap);
+    // As InDesign's Text Wrap panel: the five wrap buttons and Invert, then the four offsets
+    // (top and bottom, left and right) with the link button that makes them all the same.
     ui.horizontal(|ui| {
-        for (icon, mode, tip) in [
+        for (icon, m, tip) in [
             ("wrap-none", "none", "No Text Wrap"),
             ("wrap-bbox", "boundingBox", "Wrap Around Bounding Box"),
             ("wrap-contour", "contour", "Wrap Around Object Shape"),
             ("wrap-jump", "jumpObject", "Jump Object"),
             ("wrap-next", "jumpToNextColumn", "Jump to Next Column"),
         ] {
-            let on = info.as_ref().is_some_and(|i| i.wrap == mode);
-            if icons::button(ui, icon, 26.0, on, crate::i18n::tr(&app.ui.language, tip)).clicked() {
-                let _ = app.run("object.textWrap", json!({"mode": mode}));
+            if icons::button(ui, icon, 26.0, mode == m, crate::i18n::tr(&app.ui.language, tip)).clicked() {
+                let _ = app.run("object.textWrap", json!({"mode": m}));
             }
+        }
+        ui.add_space(6.0);
+        let mut inv = info.as_ref().is_some_and(|i| i.wrap_invert);
+        let r = ui.add_enabled_ui(mode != "none", |ui| widgets::checkbox(ui, &mut inv, crate::i18n::tr(&app.ui.language, "Invert"))).inner;
+        if r.changed() {
+            let _ = app.run("object.textWrap", json!({"mode": mode, "invert": inv}));
         }
     });
     let u = units(app);
-    ui.horizontal(|ui| {
-        caption(ui, crate::i18n::tr(&app.ui.language, "Offset"));
-        if let Some(v) = measure(ui, "wo", Some(0.0), u, 60.0) {
-            let _ = app.run("object.textWrap", json!({"mode": info.as_ref().map(|i| i.wrap).unwrap_or("boundingBox"), "offset": v}));
+    let offsets = info.as_ref().map(|i| i.wrap_offsets);
+    // Linked while the offsets are all the same, until the link is clicked.
+    let linked_id = egui::Id::new("wrap_offsets_linked");
+    let linked = ui.data(|d| d.get_temp::<bool>(linked_id)).unwrap_or_else(|| offsets.is_none_or(|o| o.iter().all(|v| (v - o[0]).abs() < 1e-9)));
+    let mut set: Option<[f64; 4]> = None;
+    ui.add_enabled_ui(mode != "none" && info.is_some(), |ui| {
+        // Two rows of fixed-width cells: Top | Left, then Bottom | Right; the link between them.
+        let cell = |ui: &mut Ui, w: f32, label: &str| {
+            let x0 = ui.cursor().min.x;
+            caption(ui, crate::i18n::tr(&app.ui.language, label));
+            ui.add_space((w - (ui.cursor().min.x - x0)).max(0.0));
+        };
+        // The second column starts where the first row's does (after the link button).
+        let mut col2_x: Option<f32> = None;
+        for (r, row) in [[(0, "Top"), (1, "Left")], [(2, "Bottom"), (3, "Right")]].into_iter().enumerate() {
+            ui.horizontal(|ui| {
+                for (k, (side, label)) in row.into_iter().enumerate() {
+                    if k == 1 {
+                        match col2_x {
+                            Some(x) => ui.add_space((x - ui.cursor().min.x).max(0.0)),
+                            None => col2_x = Some(ui.cursor().min.x),
+                        }
+                    }
+                    cell(ui, if k == 0 { 56.0 } else { 40.0 }, label);
+                    if let Some(v) = measure(ui, &format!("wo{side}"), offsets.map(|o| o[side]), u, 60.0) {
+                        let mut o = offsets.unwrap_or([0.0; 4]);
+                        if linked {
+                            o = [v; 4];
+                        } else {
+                            o[side] = v;
+                        }
+                        set = Some(o);
+                    }
+                    if k == 0 && r == 0 {
+                        let tip = crate::i18n::tr(&app.ui.language, "Make all settings the same");
+                        let link = widgets::icon_toggle_sized(ui, if linked { "link" } else { "link-broken" }, linked, tip, vec2(22.0, 21.0));
+                        if link.clicked() {
+                            ui.data_mut(|d| d.insert_temp(linked_id, !linked));
+                        }
+                    }
+                }
+            });
         }
     });
+    if let Some(o) = set {
+        let _ = app.run("object.textWrap", json!({"mode": mode, "offset": o}));
+    }
 }
 
 /// The Pathfinder operations, in the order of InDesign's Pathfinder buttons.
@@ -2652,5 +2701,49 @@ mod effects_panel_tests {
         assert!(it.has_nested_items());
         assert!(!it.isolate && !it.knockout, "group-only options stay disabled for a frame holding content");
         assert_eq!(st.history.undo.len(), undo, "disabled controls do not create undo steps");
+    }
+}
+
+#[cfg(test)]
+mod wrap_panel_tests {
+    use super::*;
+
+    /// One frame of the Text Wrap panel: the text painted and where.
+    fn frame(app: &mut DesignApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<(String, egui::Rect)> {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 300.0));
+        let time = ctx.input(|i| i.time) + 1.0 / 60.0;
+        let mut out =
+            ctx.run_ui(egui::RawInput { screen_rect: Some(screen), time: Some(time), events, ..Default::default() }, |ui| wrap_panel(app, ui));
+        out.textures_delta.clear();
+        out.shapes
+            .into_iter()
+            .filter_map(|s| if let egui::Shape::Text(t) = s.shape { Some((t.galley.job.text.clone(), t.visual_bounding_rect())) } else { None })
+            .collect()
+    }
+
+    #[test]
+    fn the_text_wrap_panel_shows_each_offset_and_invert() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Default::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [72, 72, 144, 144]})).unwrap()["id"].as_u64().unwrap();
+        app.run("object.textWrap", json!({"mode": "boundingBox", "offset": [1, 2, 3, 4]})).unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "en");
+        // Top and Left, then Bottom and Right, each with its own value (picas here: 0p1 = 1 pt).
+        let t: Vec<String> = frame(&mut app, &ctx, vec![]).into_iter().map(|(t, _)| t).filter(|t| !t.is_empty()).collect();
+        assert_eq!(t, ["Invert", "Top", "0p1", "Left", "0p2", "Bottom", "0p3", "Right", "0p4"]);
+        // Invert, next to the wrap buttons.
+        let pos = frame(&mut app, &ctx, vec![]).into_iter().find(|(t, _)| t == "Invert").unwrap().1.center();
+        for pressed in [true, false] {
+            frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+                ],
+            );
+        }
+        assert!(app.session.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().wrap.invert);
     }
 }
