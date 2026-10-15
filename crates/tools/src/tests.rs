@@ -61,6 +61,31 @@ fn resize_rect_modifiers() {
 }
 
 #[test]
+fn resize_side_shift_keeps_the_other_axis_centred() {
+    let r = Rect::new(0.0, 0.0, 100.0, 50.0);
+    let shift = Mods { shift: true, ..Default::default() };
+    assert_eq!(select::resize_rect(r, 3, Point::new(150.0, 25.0), shift), Rect::new(0.0, -12.5, 150.0, 62.5));
+    assert_eq!(select::resize_rect(r, 5, Point::new(50.0, 100.0), shift), Rect::new(-50.0, 0.0, 150.0, 100.0));
+}
+
+#[test]
+fn resize_corner_alt_shift_scales_around_the_centre() {
+    let r = Rect::new(0.0, 0.0, 100.0, 50.0);
+    let mods = Mods { shift: true, alt: true, ..Default::default() };
+    // From the centre the pointer is at 0.2 by 0.6; the larger factor drives and the corner stays on y = 40.
+    assert_eq!(select::resize_rect(r, 4, Point::new(60.0, 40.0), mods), Rect::new(20.0, 10.0, 80.0, 40.0));
+    assert_eq!(select::resize_rect(r, 0, Point::new(-50.0, 10.0), mods), Rect::new(-50.0, -25.0, 150.0, 75.0));
+}
+
+#[test]
+fn resize_corner_alt_mirrors_the_opposite_side() {
+    let r = Rect::new(0.0, 0.0, 100.0, 50.0);
+    let alt = Mods { alt: true, ..Default::default() };
+    assert_eq!(select::resize_rect(r, 0, Point::new(10.0, 5.0), alt), Rect::new(10.0, 5.0, 90.0, 45.0));
+    assert_eq!(select::resize_rect(r, 4, Point::new(120.0, 60.0), alt), Rect::new(-20.0, -10.0, 120.0, 60.0));
+}
+
+#[test]
 fn cmd_shift_click_overrides_parent_item() {
     let mut d = Document::new(&NewDocument::default());
     let lid = d.default_layer();
