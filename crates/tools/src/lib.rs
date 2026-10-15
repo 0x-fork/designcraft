@@ -214,6 +214,8 @@ pub struct ToolContext<'a> {
     pub layer: designcraft_doc::LayerId,
     pub snap: SnapView,
     pub unit: Unit,
+    /// The toolbox's Stroke box is in front: sampled colours go to strokes (the Eyedropper).
+    pub stroke_in_front: bool,
 }
 
 impl ToolContext<'_> {
