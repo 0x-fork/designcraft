@@ -2168,7 +2168,7 @@ impl<'r> Importer<'r> {
                 overridden: vec![],
                 guides: self.guides_of(p, Rect::new(r.x0 - min_x, r.y0 - min_y, r.x1 - min_x, r.y1 - min_y), spine),
                 show_parent_items: show,
-                liquid: Default::default(),
+                liquid: names::liquid_rule_in(p.get("LayoutRule").unwrap_or("Off")),
                 transition: None,
                 view_rotation: 0,
                 show_parent_overlay: false,
