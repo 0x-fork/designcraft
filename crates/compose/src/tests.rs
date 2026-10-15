@@ -4,6 +4,34 @@ use designcraft_geom::Rect;
 
 use super::*;
 
+#[test]
+fn long_wrapped_paragraph_rechecks_width_after_estimated_slots_end() {
+    let text="Distinctive shapes and warm colours set the rhythm of the page. The story flows around the illustration while the frame keeps its original dimensions. ".repeat(14);
+    let (mut d, sid, _) = doc_with(&text, Rect::new(36.0, 36.0, 576.0, 756.0), ParaAttrs::default());
+    d.story_mut(sid).unwrap().format_chars(0..text.len(), |f| {
+        f.over.font_family = Some("Source Serif 4".into());
+        f.over.size = Some(13.0);
+        f.over.leading = Some(designcraft_doc::Leading::Points(17.0));
+    });
+    add_wrap_objects(&mut d, &[(Rect::new(180.0, 135.0, 440.0, 568.3333333333334), [13.5; 4], WrapMode::Contour)]);
+    let composed = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = &composed.frames[0].lines;
+    assert!(lines.iter().any(|l| l.baseline > 450.0 && l.baseline < 560.0));
+    for line in lines {
+        for glyph in line.glyphs.iter().filter(|g| g.visible && text.as_bytes().get(g.byte).is_some_and(|b| !b.is_ascii_whitespace())) {
+            assert!(
+                glyph.x + glyph.adv <= line.x1 + 0.5,
+                "glyph {} ends at {} outside the segment {}..{} on baseline {}",
+                glyph.byte,
+                glyph.x + glyph.adv,
+                line.x0,
+                line.x1,
+                line.baseline
+            );
+        }
+    }
+}
+
 const LOREM: &str = "Typography is the art and technique of arranging type to make written language legible, readable and appealing when displayed. \
 The arrangement of type involves selecting typefaces, point sizes, line lengths, line spacing, and letter spacing, and adjusting the space between pairs of letters.";
 
