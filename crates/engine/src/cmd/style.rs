@@ -438,6 +438,8 @@ fn create_para(s: &mut Session, p: &Value) -> Result<Value> {
     let base = str_param(p, "name").unwrap_or("Paragraph Style 1").to_string();
     let mut para: ParaAttrs = attrs(p.get("para"), |a: &mut ParaAttrs, k, v| a.set_json(k, v))?;
     let mut chars: CharAttrs = attrs(p.get("chars"), |a: &mut CharAttrs, k, v| a.set_json(k, v))?;
+    // Validate caller-supplied fills, not selection fills retained after a swatch is deleted.
+    super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.paragraph.create")?;
     if p.get("fromSelection").and_then(Value::as_bool).unwrap_or(false)
         && let Ok(cur) = s.execute("type.selectionAttrs", &json!({}))
         && !cur.is_null()
@@ -453,7 +455,6 @@ fn create_para(s: &mut Session, p: &Value) -> Result<Value> {
             chars = full;
         }
     }
-    super::text::validate_char_fill(&s.doc()?.doc, &chars, "style.paragraph.create")?;
     let based_on = str_param(p, "basedOn").map(str::to_string);
     let next = str_param(p, "nextStyle").map(str::to_string);
     s.edit(|d, _| {
@@ -1326,17 +1327,38 @@ mod color_tests {
     }
 
     #[test]
-    fn char_fill_rejects_inherited_unknown_name_when_creating_from_selection() {
-        let mut session = fill_session();
-        session
-            .edit(|document, selection| {
-                let selected = selection.text.unwrap();
-                document.story_mut(selected.story).unwrap().format_chars(selected.range(), |format| format.over.fill = Some("Missing Ink".into()));
-                Ok(())
-            })
-            .unwrap();
+    fn char_fill_preserves_deleted_swatch_when_creating_from_selection() {
+        for params in
+            [json!({"name": "Inherited", "fromSelection": true}), json!({"name": "Inherited", "fromSelection": true, "chars": {"size": 24}})]
+        {
+            let mut session = fill_session();
+            let swatch = session.execute("swatch.create", &json!({"name": "Deleted Ink", "color": "#108080"})).unwrap();
+            let fill = swatch["name"].as_str().unwrap();
+            session.execute("type.char", &json!({"fill": fill})).unwrap();
+            session.execute("swatch.delete", &json!({"name": fill})).unwrap();
+            assert_eq!(session.execute("type.selectionAttrs", &json!({})).unwrap()["chars"]["fill"], fill);
 
-        assert_fill_rejected(&mut session, "style.paragraph.create", json!({"name": "Inherited", "fromSelection": true}));
+            session.execute("style.paragraph.create", &params).unwrap();
+
+            let chars = &session.doc().unwrap().doc.styles.para("Inherited").unwrap().chars;
+            assert_eq!(chars.fill.as_deref(), Some(fill));
+            if params.get("chars").is_some() {
+                assert_eq!(chars.size, Some(24.0));
+            }
+        }
+    }
+
+    #[test]
+    fn char_fill_rejects_explicit_unknown_name_when_creating_from_selection() {
+        for fill in ["Missing Ink", "#ff0000"] {
+            let mut session = fill_session();
+
+            assert_fill_rejected(
+                &mut session,
+                "style.paragraph.create",
+                json!({"name": "Explicit", "fromSelection": true, "chars": {"fill": fill, "size": 24}}),
+            );
+        }
     }
 
     #[test]
