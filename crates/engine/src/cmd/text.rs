@@ -1589,19 +1589,21 @@ pub(crate) fn case_map(src: &str, case: &str) -> Vec<String> {
         let word_start = !(prev.is_alphanumeric() || matches!(prev, '\'' | '\u{2019}'));
         let up = |c: char| c.to_uppercase().collect::<String>();
         let low = |c: char| c.to_lowercase().collect::<String>();
+        // Title and sentence case capitalize only scripts with initial capitals (not Georgian).
+        let cap = |c: char| if designcraft_doc::capitalizes(c) { up(c) } else { low(c) };
         let m = match case {
             "upper" => up(c),
             "lower" => low(c),
             "title" => {
                 if word_start {
-                    up(c)
+                    cap(c)
                 } else {
                     low(c)
                 }
             }
             _ => {
                 if sentence_start && c.is_alphanumeric() {
-                    up(c)
+                    cap(c)
                 } else {
                     low(c)
                 }

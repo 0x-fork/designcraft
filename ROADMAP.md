@@ -103,7 +103,7 @@ Interface strings translated, of 1,724 measured. Detail: [docs/localization-pari
 | Korean | ko | none | 0% |
 | Vietnamese | vi | none | 0% |
 
-Also shipped: Italian (85%), Ukrainian (83%).
+Also shipped: Italian (85%), Ukrainian (83%), Georgian (100%).
 
 ## Upcoming
 
@@ -172,6 +172,8 @@ Newest first.
   `text.thread`, `text.unthread`, `text.removeFromThread` with undo; locked frames and layers
   refuse threads. The alpha gate now waits only on the Primary Text Frame page fixes (#165). No
   readiness percentage change.
+- **2026-10-14** · Georgian interface (`ka`, Edit ▸ Interface Language ▸ ქართული): every catalog key
+  translated, count captions as `noun: n`.
 - **2026-10-13** · Layout ▸ Table of Contents opens a real dialog: title and title style, Include Paragraph Styles and Other Styles lists with Add and Remove, and per style its entry style, page number position (after, before, none), separator and level. Replace Existing regenerates the current table of contents in place; otherwise OK makes a new frame on the page in view. IDML export writes the definition as a TOC style that import reads back, so Update works after a round trip. No readiness percentage change.
 - **2026-10-13** · Control-channel clicks and drags validate positive counts and the complete pending-event budget before queuing input (#732). Oversized requests leave pending gestures intact, preventing unbounded click-count allocation. No readiness percentage change.
 - **2026-10-13** · Backspace between two consecutive tables, pasting a table next to a table anchor, and pasting several paragraphs right before one keep every table on its own anchor paragraph. Previously a table was dropped or left without its anchor, and the saved file failed to reopen. No readiness percentage change.
