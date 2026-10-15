@@ -135,7 +135,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Color Swatch…",
             [],
             None,
-            "{name?, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b], spot?: bool}",
+            "{name?, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b]|{model: cmyk|rgb|gray, …}(0..1), spot?: bool}",
             has_doc,
             create_swatch
         ),
@@ -144,7 +144,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Gradient",
             [],
             None,
-            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}|[r,g,b], opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
+            "{kind?: linear|radial, stops?: [{location: 0–100, color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b]|{model, …}(0..1), opacity?: 0–100, midpoint?: 13–87}], reverse?: bool, angle?: degrees, from?: [x,y], to?: [x,y] (spread coords: the Gradient Swatch tool's drag), ids?} → {swatch, kind, stops} — edits the fill's gradient (an unnamed gradient unless it equals a gradient swatch)",
             super::has_selection,
             apply_gradient
         ),
@@ -180,7 +180,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply Color",
             [],
             None,
-            "{color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255), target?: fill|stroke, text?: bool, ids?} — an unnamed colour (not in the Swatches panel until Add to Swatches) on the selection; `text`: on the selected text, or the text of the selected frames (Formatting Affects Text)",
+            "{color: \"#rrggbb\"|{c,m,y,k}(0..100)|[r,g,b](0..255)|{model: cmyk|rgb|gray, …}(0..1), target?: fill|stroke, text?: bool, ids?} — an unnamed colour (not in the Swatches panel until Add to Swatches) on the selection; `text`: on the selected text, or the text of the selected frames (Formatting Affects Text)",
             has_text_or_selection,
             apply_color
         ),
@@ -748,18 +748,20 @@ pub fn parse_color(v: &Value) -> Option<designcraft_color::Color> {
     use designcraft_color::Color;
     match v {
         Value::String(s) => Color::from_hex(s),
-        // One scale per colour, not per component: {c: 0.7, y: 12.2} is C 0.7 %, Y 12.2 %. Only a colour whose
+        // One scale per colour, not per component: [1, 128, 255] is 0..255. Only an RGB array whose
         // components are all within 0..1 is read as fractions (the older form).
         Value::Array(a) if a.len() >= 3 => {
             let v = [a[0].as_f64()?, a[1].as_f64()?, a[2].as_f64()?];
             let scale = if v.iter().any(|&x| x > 1.0) { 255.0 } else { 1.0 };
             Some(Color::rgb((v[0] / scale) as f32, (v[1] / scale) as f32, (v[2] / scale) as f32))
         }
+        // `{model, …}` is the colour's own form (as `color.convert` takes and returns it): fractions.
+        Value::Object(o) if o.contains_key("model") => serde_json::from_value(v.clone()).ok(),
+        // Bare CMYK is always 0..100, as documented: C 1 % is a real tint, so values of 1 or less can't
+        // mean fractions (#910).
         Value::Object(o) => {
-            let g = |k: &str| o.get(k).and_then(Value::as_f64);
-            let v = [g("c")?, g("m")?, g("y")?, g("k")?];
-            let scale = if v.iter().any(|&x| x > 1.0) { 100.0 } else { 1.0 };
-            Some(Color::cmyk((v[0] / scale) as f32, (v[1] / scale) as f32, (v[2] / scale) as f32, (v[3] / scale) as f32))
+            let g = |k: &str| o.get(k).and_then(Value::as_f64).map(|x| (x / 100.0) as f32);
+            Some(Color::cmyk(g("c")?, g("m")?, g("y")?, g("k")?))
         }
         _ => None,
     }
@@ -1439,12 +1441,41 @@ mod color_tests {
         // {"c": 0.7, ..., "y": 12.2} is a pale cream (C 0.7 %, Y 12.2 %), not C 70 %.
         let Some(Color::Cmyk { c, m, y, k }) = parse_color(&json!({"c": 0.7, "m": 0, "y": 12.2, "k": 0})) else { panic!("not CMYK") };
         assert!((c - 0.007).abs() < 1e-6 && m == 0.0 && (y - 0.122).abs() < 1e-6 && k == 0.0, "got {c} {m} {y} {k}");
-        // Fractions (every component within 0..1) keep working.
-        let Some(Color::Cmyk { c, k, .. }) = parse_color(&json!({"c": 0.5, "m": 0, "y": 0, "k": 1})) else { panic!("not CMYK") };
+        // Fractions take the colour's own form, with its model.
+        let Some(Color::Cmyk { c, k, .. }) = parse_color(&json!({"model": "cmyk", "c": 0.5, "m": 0, "y": 0, "k": 1})) else { panic!("not CMYK") };
         assert!((c - 0.5).abs() < 1e-6 && (k - 1.0).abs() < 1e-6);
         // RGB arrays follow the same rule: [1, 128, 255] is 0..255.
         let Some(Color::Rgb { r, g, b }) = parse_color(&json!([1, 128, 255])) else { panic!("not RGB") };
         assert!((r - 1.0 / 255.0).abs() < 1e-6 && (g - 128.0 / 255.0).abs() < 1e-6 && (b - 1.0).abs() < 1e-6);
+    }
+
+    /// #910: `{c: 1, m: 0, y: 0, k: 0}` is a 1 % cyan tint, not solid cyan, though every component is within 0..1.
+    #[test]
+    fn cmyk_percentages_of_one_or_less_stay_percent() {
+        use designcraft_color::Color;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [0, 0, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("swatch.create", &json!({"name": "Tint1", "color": {"c": 1, "m": 0, "y": 0, "k": 0}})).unwrap();
+        s.execute("object.fill", &json!({"ids": [id], "swatch": "Tint1"})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let Some(Color::Cmyk { c, m, y, k }) = d.resolve_color("Tint1", 1.0) else { panic!("not CMYK") };
+        assert!((c - 0.01).abs() < 1e-6 && m == 0.0 && y == 0.0 && k == 0.0, "got {c} {m} {y} {k}");
+        let pdf = designcraft_pdf::export_pdf(d, &s.cache, &designcraft_pdf::PdfOptions { compress: false, ..Default::default() }).unwrap();
+        let text = String::from_utf8_lossy(&pdf);
+        // Operands of every `k` (DeviceCMYK fill), last first: [k, y, m, c]. Inks are written in 1/255 steps (C 1 % is 3/255).
+        let fills: Vec<Vec<f32>> =
+            text.split(" k ").filter_map(|before| before.rsplit(' ').take(4).map(|x| x.parse().ok()).collect::<Option<Vec<f32>>>()).collect();
+        let cyan = |want: f32| fills.iter().any(|f| (f[3] - want).abs() < 0.5 / 255.0 + 1e-6 && f[..3] == [0.0; 3]);
+        assert!(cyan(0.01), "C 1 % in the PDF: {fills:?}");
+        assert!(!cyan(1.0), "no solid cyan: {fills:?}");
+        // A light tint whose components are all 1 or less, through object.color.
+        s.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        s.execute("object.color", &json!({"color": {"c": 0.5, "m": 0.5, "y": 0, "k": 0}})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let fill = &d.item(designcraft_doc::ItemId(id)).unwrap().fill.swatch;
+        let Some(Color::Cmyk { c, m, .. }) = d.resolve_color(fill, 1.0) else { panic!("not CMYK") };
+        assert!((c - 0.005).abs() < 1e-6 && (m - 0.005).abs() < 1e-6, "got {c} {m}");
     }
 
     #[test]
