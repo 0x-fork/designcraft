@@ -3131,16 +3131,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
             "空白文档预设",
         ],
     ),
-    (
-        "No saved presets yet. Set the details, then click Save Document Preset.",
-        [
-            "Noch keine gespeicherten Vorgaben. Legen Sie die Details fest und klicken Sie auf Dokumentvorgabe speichern.",
-            "Aucun paramètre prédéfini enregistré. Définissez les détails, puis cliquez sur Enregistrer le paramètre prédéfini de document.",
-            "Aún no hay ajustes preestablecidos guardados. Defina los detalles y haga clic en Guardar ajuste preestablecido de documento.",
-            "保存済みのプリセットはありません。詳細を設定してから「ドキュメントプリセットを保存」をクリックしてください。",
-            "尚无已保存的预设。请设置详细信息，然后单击“存储文档预设”。",
-        ],
-    ),
     ("Delete Preset", ["Vorgabe löschen", "Supprimer le paramètre prédéfini", "Eliminar ajuste preestablecido", "プリセットを削除", "删除预设"]),
     (
         "Preset Details",

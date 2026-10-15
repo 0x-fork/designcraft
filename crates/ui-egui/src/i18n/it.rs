@@ -1609,10 +1609,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Your Recent Items", "Elementi recenti"),
     ("Saved Presets", "Predefiniti salvati"),
     ("Blank Document Presets", "Predefiniti documento vuoto"),
-    (
-        "No saved presets yet. Set the details, then click Save Document Preset.",
-        "Nessun predefinito salvato. Imposta i dettagli, poi fai clic su Salva predefinito documento.",
-    ),
     ("Delete Preset", "Elimina predefinito"),
     ("Preset Details", "Dettagli predefinito"),
     ("Document Name", "Nome documento"),
