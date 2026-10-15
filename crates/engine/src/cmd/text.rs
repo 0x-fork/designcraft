@@ -1162,10 +1162,12 @@ fn kern_pair(s: &mut Session, p: &Value) -> Result<Value> {
     format_chars(s, &json!({ "kerning": kerning }))
 }
 
-/// Byte offset of the character before `pos` when it starts a kerning pair with the text at `pos`
-/// (not a paragraph break).
+/// Byte offset of the character before `pos` when it starts a kerning pair with the character at
+/// `pos`: both exist and neither is a paragraph or line break.
 fn pair_start(text: &str, pos: usize) -> Option<usize> {
-    let c = text.get(..pos)?.chars().next_back().filter(|c| *c != '\n')?;
+    let is_text = |c: &char| !matches!(*c, '\n' | designcraft_doc::story::FORCED_LINE_BREAK);
+    text.get(pos..)?.chars().next().filter(is_text)?;
+    let c = text.get(..pos)?.chars().next_back().filter(is_text)?;
     pos.checked_sub(c.len_utf8())
 }
 
@@ -3142,5 +3144,20 @@ mod kern_pair_tests {
         assert_eq!(kern_at(&s, sid, 0), None);
         s.execute("text.insert", &json!({"text": "X"})).unwrap();
         assert_eq!(kern_at(&s, sid, 0), Some(Kerning::None));
+    }
+
+    #[test]
+    fn kerning_at_the_end_of_a_paragraph_or_story_leaves_the_text_alone() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 300, 200], "content": "text", "text": "AV\nTA"})).unwrap();
+        let sid = StoryId(r["story"].as_u64().unwrap());
+        for caret in [2, 5] {
+            s.execute("text.select", &json!({"story": sid.0, "anchor": caret, "focus": caret})).unwrap();
+            let steps = s.doc().unwrap().history.undo.len();
+            s.execute("type.kernPair", &json!({"kerning": {"kind": "manual", "value": -80}})).unwrap();
+            assert_eq!(s.doc().unwrap().history.undo.len(), steps, "no pair at {caret}: nothing is edited");
+            assert_eq!((kern_at(&s, sid, 1), kern_at(&s, sid, 4)), (None, None), "caret {caret}");
+        }
     }
 }
