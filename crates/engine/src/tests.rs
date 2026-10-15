@@ -702,6 +702,23 @@ fn paragraph_style_delete_rejects_missing_unknown_and_self_replacement() {
 }
 
 #[test]
+fn deleting_a_style_never_leaves_its_replacement_based_on_itself() {
+    let mut s = session();
+    let para = |s: &Session, n: &str| s.doc().unwrap().doc.styles.para(n).unwrap().based_on.clone();
+    s.execute("style.paragraph.create", &json!({"name": "Head"})).unwrap();
+    s.execute("style.paragraph.create", &json!({"name": "Sub", "basedOn": "Head"})).unwrap();
+    s.execute("style.paragraph.create", &json!({"name": "Minor", "basedOn": "Sub"})).unwrap();
+    // Minor is based on Sub; deleting Sub in favour of Minor gives Minor Sub's parent.
+    s.execute("style.paragraph.delete", &json!({"name": "Sub", "replaceWith": "Minor"})).unwrap();
+    assert_eq!(para(&s, "Minor").as_deref(), Some("Head"));
+    s.execute("style.character.create", &json!({"name": "Strong"})).unwrap();
+    s.execute("style.character.create", &json!({"name": "Stronger", "basedOn": "Strong"})).unwrap();
+    s.execute("style.character.delete", &json!({"name": "Strong", "replaceWith": "Stronger"})).unwrap();
+    let based = s.doc().unwrap().doc.styles.character.iter().find(|c| c.name == "Stronger").unwrap().based_on.clone();
+    assert_ne!(based.as_deref(), Some("Stronger"));
+}
+
+#[test]
 fn character_style_delete_reassigns_every_kind_of_reference() {
     let mut s = session();
     let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();

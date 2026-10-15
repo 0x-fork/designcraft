@@ -539,12 +539,16 @@ fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &
 /// instead removes the entry, after its former uses point at the replacement).
 fn redirect_style_refs(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &str) {
     let st = d.styles_mut();
+    // A style is never based on itself: when `to` was based on `from`, it takes `from`'s parent.
+    let parent_of = |based_on: Option<&String>| based_on.filter(|b| b.as_str() != to).cloned();
     if para {
+        let from_parent = parent_of(st.paragraph.iter().find(|x| x.name == from).and_then(|x| x.based_on.as_ref()));
         for s in &mut st.paragraph {
-            for r in [&mut s.based_on, &mut s.next_style] {
-                if r.as_deref() == Some(from) {
-                    *r = Some(to.to_string());
-                }
+            if s.based_on.as_deref() == Some(from) {
+                s.based_on = if s.name == to { from_parent.clone() } else { Some(to.to_string()) };
+            }
+            if s.next_style.as_deref() == Some(from) {
+                s.next_style = Some(to.to_string());
             }
         }
         for o in &mut st.object {
@@ -553,9 +557,10 @@ fn redirect_style_refs(d: &mut designcraft_doc::Document, para: bool, from: &str
             }
         }
     } else {
+        let from_parent = parent_of(st.character.iter().find(|x| x.name == from).and_then(|x| x.based_on.as_ref()));
         for s in &mut st.character {
             if s.based_on.as_deref() == Some(from) {
-                s.based_on = Some(to.to_string());
+                s.based_on = if s.name == to { from_parent.clone() } else { Some(to.to_string()) };
             }
         }
         for s in &mut st.paragraph {

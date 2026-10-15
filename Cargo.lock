@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-pptx"
-version = "0.5.0"
+version = "0.8.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1121,7 +1121,7 @@ dependencies = [
  "designcraft-geom",
  "designcraft-images",
  "image",
- "quick-xml 0.38.4",
+ "quick-xml",
  "skrifa 0.47.0",
  "thiserror 2.0.21",
  "zip",

@@ -92,7 +92,7 @@ pub(crate) struct Segment {
 
 pub fn frame(ex: &mut Exporter, it: &Item, tfr: &TextFrame, xf: Affine, opacity: f32) {
     let doc = ex.doc;
-    let cs = ex.cache.get(doc, tfr.story, ex.page_name.as_deref());
+    let cs = ex.cache.get(doc, tfr.story, ex.page);
     let Some(ft) = cs.frame(it.id) else {
         ex.shape(it, xf, opacity, None);
         return;
