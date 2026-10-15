@@ -1959,6 +1959,8 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
     let sel_key = egui::Id::new("links_panel_sel");
     let mut chosen: Option<u64> = ui.data(|d| d.get_temp(sel_key));
+    // Leave room for Status and Page/PPI instead of widening the grid for long source paths.
+    let name_width = (ui.available_width() - 160.0).max(50.0);
     egui::Grid::new("links_grid").num_columns(3).striped(true).spacing([10.0, 4.0]).show(ui, |ui| {
         crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Name")).color(t.text_dim).size(11.0));
         crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Status")).color(t.text_dim).size(11.0));
@@ -1967,7 +1969,25 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         for r in &rows {
             let aid = r["asset"].as_u64().unwrap_or(0);
             let name = r["name"].as_str().unwrap_or("");
-            if ui.selectable_label(chosen == Some(aid), name).clicked() {
+            let response = ui
+                .vertical(|ui| {
+                    ui.set_width(name_width);
+                    let name = ui.add(egui::Button::selectable(chosen == Some(aid), name).truncate());
+                    match r["path"].as_str().filter(|path| !path.is_empty()) {
+                        Some(path) => name.union(
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(path).color(t.text_dim).size(11.0))
+                                    .truncate()
+                                    .sense(Sense::click())
+                                    .show_tooltip_when_elided(false),
+                            )
+                            .on_hover_text(path),
+                        ),
+                        None => name,
+                    }
+                })
+                .inner;
+            if response.clicked() {
                 chosen = Some(aid);
             }
             let (txt, col) = match r["status"].as_str().unwrap_or("") {
@@ -2000,7 +2020,12 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         ui.data_mut(|d| d.insert_temp(sel_key, c));
     }
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    if let Some(path) = rows.iter().find(|r| r["asset"].as_u64() == chosen).and_then(|r| r["path"].as_str()).filter(|path| !path.is_empty()) {
+        // A selected link stays distinguishable even if two rows truncate to the same prefix.
+        ui.add(egui::Label::new(egui::RichText::new(path).color(t.text_dim).size(11.0)).wrap());
+        ui.add_space(6.0);
+    }
+    ui.horizontal_wrapped(|ui| {
         let Some(aid) = chosen else {
             crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Choose a link.")).color(t.text_dim).size(11.0));
             return;
@@ -2285,6 +2310,107 @@ mod tests {
 
     fn language(app: &mut DesignApp) -> Value {
         text_attrs(app).unwrap()["chars"]["language"].clone()
+    }
+
+    fn linked_graphics(paths: &[Option<&str>]) -> (DesignApp, Vec<designcraft_doc::ItemId>, Vec<designcraft_doc::AssetId>) {
+        use designcraft_doc::{Asset, AssetId, Content, Graphic, ItemId};
+        use std::sync::Arc;
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"title": "Linked graphics"})).unwrap();
+        let mut items = Vec::new();
+        let mut assets = Vec::new();
+        for (index, path) in paths.iter().enumerate() {
+            let x = 72 + index * 100;
+            let id = ItemId(app.run("frame.create", json!({"rect": [x, 72, x + 72, 144]})).unwrap()["id"].as_u64().unwrap());
+            let doc = Arc::make_mut(&mut app.session.doc_mut().unwrap().doc);
+            let aid = AssetId(doc.alloc());
+            doc.assets.insert(
+                aid,
+                Arc::new(Asset {
+                    id: aid,
+                    name: "photo.svg".into(),
+                    mime: "image/svg+xml".into(),
+                    link: path.map(str::to_owned),
+                    data: Arc::new(
+                        br##"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#4488cc"/></svg>"##
+                            .to_vec(),
+                    ),
+                    pixels: Some((32, 32)),
+                    page: 0,
+                }),
+            );
+            doc.item_mut(id).unwrap().content = Content::Graphic(Graphic {
+                asset: aid,
+                size: (72.0, 72.0),
+                xf: designcraft_geom::Affine::IDENTITY,
+                auto_fit: Default::default(),
+                fit_align: 4,
+                crop: [0.0; 4],
+            });
+            items.push(id);
+            assets.push(aid);
+        }
+        (app, items, assets)
+    }
+
+    fn links_harness(app: DesignApp, width: f32) -> Harness<'static, DesignApp> {
+        let mut ready = false;
+        let mut h = Harness::builder().with_size(vec2(width, 600.0)).build_ui_state(
+            move |ui, app: &mut DesignApp| {
+                if !ready {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    crate::theme::apply(ui.ctx(), &Tokens::for_brightness(Default::default()));
+                    ready = true;
+                    return;
+                }
+                links_panel(app, ui);
+            },
+            app,
+        );
+        h.input_mut().max_texture_side = Some(8192);
+        h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn links_panel_distinguishes_same_named_sources_and_keeps_link_actions() {
+        let first = "/project/assets/studio-a/photo.svg";
+        let second = "/project/assets/studio-b/photo.svg";
+        let (app, items, assets) = linked_graphics(&[Some(first), Some(second), None]);
+        let mut h = links_harness(app, 320.0);
+        assert_eq!(h.get_all_by_label("photo.svg").count(), 3);
+        assert!(h.query_by_label(first).is_some(), "the first source path is visible in the row");
+        h.get_by_label(second).click();
+        h.run_steps(3);
+        h.get_by_label("Go To").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.active().unwrap().selection.items, vec![items[1]]);
+        h.get_by_label("Embed").click();
+        h.run_steps(3);
+        assert!(h.state().session.active().unwrap().doc.assets[&assets[1]].link.is_none());
+        assert_eq!(h.state().session.active().unwrap().doc.assets[&assets[0]].link.as_deref(), Some(first));
+        assert!(h.query_by_label(second).is_none(), "an embedded graphic no longer shows a source path");
+        assert_eq!(h.get_all_by_label("Embedded").count(), 2);
+        assert_eq!(h.get_all_by_label("photo.svg").count(), 3);
+        h.get_by_label(first).click();
+        h.run_steps(3);
+        h.get_by_label("Go To").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.active().unwrap().selection.items, vec![items[0]]);
+    }
+
+    #[test]
+    fn links_panel_keeps_long_source_paths_inside_a_narrow_panel() {
+        let path = "/project/assets/studio-a/very-long-folder-name/another-long-folder-name/photo.svg";
+        let (app, _, _) = linked_graphics(&[Some(path)]);
+        let mut h = links_harness(app, 240.0);
+        let source = h.get_by_label(path).rect();
+        assert!(source.width() < 150.0, "the source is truncated to its column: {source:?}");
+        assert!(source.right() <= 240.0, "the source stays inside the narrow panel: {source:?}");
+        assert!(h.get_by_label("Page · PPI").rect().right() <= 240.0);
+        h.get_by_label(path).click();
+        h.run_steps(3);
+        assert!(h.output().shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(text) if text.galley.job.text == path && !text.galley.elided && text.visual_bounding_rect().right() <= 240.0)), "the selected path is painted in full and wraps inside the panel");
     }
 
     #[test]
