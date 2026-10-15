@@ -288,7 +288,11 @@ fn run(args: &[String]) -> Result<(), String> {
             "--page" => page = val()?.parse().map_err(|_| "bad --page")?,
             "--scale" => scale = val()?.parse().map_err(|_| "bad --scale")?,
             "--pdf-options" => {
-                pdf_opts = serde_json::from_str(&val()?).map_err(|e| format!("--pdf-options: {e}"))?;
+                pdf_opts = match serde_json::from_str(&val()?).map_err(|e| format!("--pdf-options: {e}"))? {
+                    Value::Null => json!({}),
+                    o @ Value::Object(_) => o,
+                    _ => return Err("--pdf-options: expected a JSON object".to_string()),
+                };
             }
             "--export" => {
                 let out = val()?;
