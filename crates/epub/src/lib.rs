@@ -436,13 +436,41 @@ fn story_html_with(doc: &Document, sid: StoryId, object: &mut dyn FnMut(&designc
     let Some(st) = doc.story(sid) else { return String::new() };
     let (pc, cc) = (para_classes(&doc.styles), char_classes(&doc.styles));
     let mut out = String::new();
+    // Consecutive `li` paragraphs share one list (`ol` for a numbered style, `ul` for a bulleted
+    // one, an unmarked `ul` when the style has no list type of its own, e.g. typed bullets), and
+    // consecutive `pre` paragraphs of one style one block, their lines separated by newlines.
+    let mut list: Option<&str> = None;
+    let mut pre: Option<(String, bool)> = None;
     for (pi, r) in st.para_ranges().iter().enumerate() {
         let pf = &st.paras[pi];
         // Export Tagging: the style's element and class.
         let (tag, class) = export_mapping(&doc.styles, &pf.style, false, &pc);
         let text_empty = st.text[r.clone()].trim().is_empty();
-        let rtl = doc.styles.resolve_para(pf).0.direction == designcraft_doc::TextDirection::RightToLeft;
-        let _ = write!(out, "<{tag} class=\"{}\"{}>", xml_attr(&class), if rtl { " dir=\"rtl\"" } else { "" });
+        let props = doc.styles.resolve_para(pf).0;
+        let rtl = props.direction == designcraft_doc::TextDirection::RightToLeft;
+        let continues_pre = tag == "pre" && pre.as_ref() == Some(&(class.clone(), rtl));
+        if !continues_pre && pre.take().is_some() {
+            out.push_str("</pre>\n");
+        }
+        let list_tag = (tag == "li").then_some(match props.list_type {
+            designcraft_doc::ListType::Numbers => "ol",
+            designcraft_doc::ListType::Bullets => "ul",
+            designcraft_doc::ListType::None => "ul style=\"list-style:none\"",
+        });
+        if list != list_tag {
+            if let Some(l) = list {
+                let _ = writeln!(out, "</{}>", l.split(' ').next().unwrap_or(l));
+            }
+            if let Some(l) = list_tag {
+                let _ = writeln!(out, "<{l}>");
+            }
+            list = list_tag;
+        }
+        if continues_pre {
+            out.push('\n');
+        } else {
+            let _ = write!(out, "<{tag} class=\"{}\"{}>", xml_attr(&class), if rtl { " dir=\"rtl\"" } else { "" });
+        }
         if text_empty {
             out.push_str("&#160;");
         }
@@ -497,7 +525,18 @@ fn story_html_with(doc: &Document, sid: StoryId, object: &mut dyn FnMut(&designc
                 let _ = write!(out, "<{ctag}{cls}{style_attr}>{t}</{ctag}>");
             }
         }
-        let _ = writeln!(out, "</{tag}>");
+        if tag == "pre" {
+            // Closed when the next paragraph isn't a line of the same block.
+            pre = Some((class, rtl));
+        } else {
+            let _ = writeln!(out, "</{tag}>");
+        }
+    }
+    if pre.is_some() {
+        out.push_str("</pre>\n");
+    }
+    if let Some(l) = list {
+        let _ = writeln!(out, "</{}>", l.split(' ').next().unwrap_or(l));
     }
     out
 }
@@ -893,6 +932,61 @@ mod tests {
         assert!(page.contains("alt=\"inline\"") && page.contains("alt=\"above\""), "{page}");
         // story_html on its own still leaves objects out.
         assert!(!story_html(&d, sid).contains("<img"));
+    }
+
+    fn st_typed(d: &mut Document, sid: StoryId) {
+        if let Some(st) = d.story_mut(sid) {
+            st.paras[8].style = "Typed".into();
+        }
+    }
+
+    /// #767: consecutive `li` paragraphs share one list (`ol` for a numbered style), and
+    /// consecutive `pre` paragraphs of one style one block with their lines on separate lines.
+    #[test]
+    fn lists_and_preformatted_blocks_are_grouped() {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        for (name, tag, list) in [
+            ("Bullet", "li", Some(designcraft_doc::ListType::Bullets)),
+            ("Number", "li", Some(designcraft_doc::ListType::Numbers)),
+            ("Typed", "li", None),
+            ("Code", "pre", None),
+        ] {
+            let para = designcraft_doc::ParaAttrs { list_type: list, ..Default::default() };
+            d.styles_mut().paragraph.push(designcraft_doc::ParagraphStyle {
+                name: name.into(),
+                based_on: None,
+                next_style: None,
+                para,
+                chars: CharAttrs::default(),
+                shortcut: String::new(),
+            });
+            d.styles_mut().export_tags.insert(format!("p:{name}"), designcraft_doc::ExportTag { tag: tag.into(), class: String::new() });
+        }
+        let text = "Intro\nfirst\nsecond\none\ntwo\nx = 1\ny = 2\nEnd\n• typed";
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 300.0), lid, text, ParaFormat::default()).unwrap();
+        let st = d.story_mut(sid).unwrap();
+        for (i, style) in ["Bullet", "Bullet", "Number", "Number", "Code", "Code"].into_iter().enumerate() {
+            st.paras[i + 1].style = style.into();
+        }
+        let html = story_html(&d, sid);
+        let li = |c: &str, t: &str| format!("<li class=\"{c}\">{t}</li>");
+        assert!(
+            html.contains(&format!(
+                "<ul>\n{}\n{}\n</ul>\n<ol>\n{}\n{}\n</ol>\n",
+                li("bullet", "first"),
+                li("bullet", "second"),
+                li("number", "one"),
+                li("number", "two")
+            )),
+            "{html}"
+        );
+        assert!(html.contains("<pre class=\"code\">x = 1\ny = 2</pre>\n<p class=\"basic-paragraph\">End</p>"), "{html}");
+        assert_eq!(html.matches("<pre").count(), 1, "{html}");
+        // A style without a list type of its own (typed bullets) gets no second marker.
+        st_typed(&mut d, sid);
+        let html = story_html(&d, sid);
+        assert!(html.contains("<ul style=\"list-style:none\">\n<li class=\"typed\">• typed</li>\n</ul>\n"), "{html}");
     }
 
     #[test]
