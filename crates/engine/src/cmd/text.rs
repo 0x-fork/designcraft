@@ -1501,8 +1501,9 @@ fn open_type_features(s: &mut Session, _p: &Value) -> Result<Value> {
     let measure = |tag: &str| {
         let (mut applied, mut available) = (0, 0);
         for seg in &segments {
-            // Standard ligatures are the `ligatures` attribute, which shaping reads.
-            let on = if tag == "liga" { seg.ligatures } else { designcraft_doc::otf::is_on(&seg.applied, tag) };
+            // Standard ligatures are the `ligatures` attribute, which shaping reads, unless the
+            // feature list turns `liga` off.
+            let on = designcraft_doc::otf::is_on(&seg.applied, tag) && (tag != "liga" || seg.ligatures);
             if on {
                 applied += seg.len;
             }
@@ -2844,6 +2845,9 @@ mod open_type_features_tests {
         s.execute("type.char", &json!({"attrs": {"ligatures": true}})).unwrap();
         let v = s.execute("type.openTypeFeatures", &json!({})).unwrap();
         assert_eq!(feature(&v, "liga")["applied"], "all", "{v}");
+        s.execute("type.feature", &json!({"features": {"liga": false}})).unwrap();
+        let v = s.execute("type.openTypeFeatures", &json!({})).unwrap();
+        assert_eq!(feature(&v, "liga")["applied"], "none", "-liga in the feature list: {v}");
     }
 }
 

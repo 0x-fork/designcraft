@@ -92,10 +92,12 @@ struct Changes {
 
 impl Changes {
     /// Standard Ligatures is the `ligatures` attribute: shaping turns `liga` off through it, and
-    /// IDML carries it as `Ligatures`, so `liga` stays out of the feature list.
+    /// IDML carries it as `Ligatures`, so `liga` stays out of the feature list. The tag is also
+    /// cleared from the selection's features, since an earlier `-liga` would keep shaping it off.
     fn set(&mut self, tag: &str, on: bool) {
         if tag == "liga" {
             self.ligatures = Some(on);
+            self.features.insert("liga".to_string(), true);
         } else {
             self.features.insert(tag.to_string(), on);
         }
@@ -395,5 +397,17 @@ mod tests {
         assert!(!c["otfFeatures"].as_array().is_some_and(|l| l.iter().any(|t| t.as_str().is_some_and(|t| t.ends_with("liga")))), "{c}");
         click(&mut h, "Standard Ligatures");
         assert_eq!(chars(&mut h)["ligatures"], true, "the switch turns ligatures back on");
+    }
+
+    #[test]
+    fn standard_ligatures_switch_on_clears_a_feature_list_liga_off() {
+        let mut h = harness();
+        h.state_mut().run("type.feature", json!({"features": {"liga": false}})).unwrap();
+        assert_eq!(chars(&mut h)["otfFeatures"], json!(["-liga"]));
+        h.run_steps(2);
+        click(&mut h, "Standard Ligatures");
+        let c = chars(&mut h);
+        assert_eq!(c["ligatures"], true, "{c}");
+        assert!(!c["otfFeatures"].as_array().is_some_and(|l| l.iter().any(|t| t.as_str().is_some_and(|t| t.ends_with("liga")))), "{c}");
     }
 }
