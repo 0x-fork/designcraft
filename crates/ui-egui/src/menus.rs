@@ -112,6 +112,13 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("color.toggleFillStroke", "Toggle Fill and Stroke", Some("X"), "{} → {strokeFront} — which of fill and stroke the proxy has in front"),
     ("color.applyNone", "Apply None", Some("/"), "{} — [None] for the fill or stroke in front of the proxy"),
+    ("color.applyColor", "Apply Color", Some(","), "{} — the colour applied last ([Black] at first) to the fill or stroke in front of the proxy"),
+    (
+        "color.applyGradient",
+        "Apply Gradient",
+        Some("."),
+        "{} — the gradient applied last (else the document's first, else white to black) to the fill or stroke in front of the proxy",
+    ),
     ("view.frameEdges", "Show/Hide Frame Edges", Some("Cmd+H"), "{}"),
     ("view.rulers", "Show/Hide Rulers", Some("Cmd+R"), "{}"),
     ("view.guides", "Show/Hide Guides", Some("Cmd+;"), "{}"),
@@ -1236,6 +1243,8 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         "color.defaultFillStroke" => crate::toolbar::default_fill_stroke(app),
         "color.swapFillStroke" => crate::toolbar::swap_fill_stroke(app),
         "color.toggleFillStroke" => crate::toolbar::toggle_fill_stroke(app),
+        "color.applyColor" => crate::toolbar::apply_color(app),
+        "color.applyGradient" => crate::toolbar::apply_gradient(app),
         "color.applyNone" => crate::toolbar::apply_none(app),
         "view.frameEdges" => flag(&mut app.ui.frame_edges),
         "view.overprintPreview" => {

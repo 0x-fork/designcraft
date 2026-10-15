@@ -303,6 +303,12 @@ pub struct UiState {
     pub palette: Option<String>,
     #[serde(skip)]
     pub flyout: Option<usize>,
+    /// The colour and gradient swatches applied last: what Apply Color (,) and Apply Gradient (.)
+    /// apply again.
+    #[serde(skip)]
+    pub last_color: Option<String>,
+    #[serde(skip)]
+    pub last_gradient: Option<String>,
     /// Fill/Stroke proxy (Tools and Color panels): the stroke is in front, so Apply None and the
     /// Color panel act on it (X toggles).
     #[serde(skip)]
@@ -384,6 +390,8 @@ impl Default for UiState {
             dialog: None,
             palette: None,
             flyout: None,
+            last_color: None,
+            last_gradient: None,
             stroke_front: false,
         }
     }

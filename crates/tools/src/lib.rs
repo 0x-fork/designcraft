@@ -30,7 +30,7 @@ use designcraft_geom::{Affine, BezPath, Point, Rect, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use catalog::{TOOL_GROUPS, ToolInfo, tool_for_shortcut, tool_info};
+pub use catalog::{SPLIT_IN_TWO_COLUMNS, TOOL_GROUPS, ToolInfo, tool_for_shortcut, tool_info};
 pub use layout::CanvasLayout;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
