@@ -384,7 +384,7 @@ impl Document {
             return Ok(vec![]);
         }
         let n = self.page_count();
-        let at = after.map_or(0, |a| (a + 1).min(n));
+        let at = after.map_or(0, |a| a.saturating_add(1).min(n));
         let template = self.page(at.saturating_sub(1).min(n.saturating_sub(1))).cloned();
         let (cols, gutter, margins) =
             template.as_ref().map(|t| (t.columns.count, t.columns.gutter, t.margins)).unwrap_or((1, 12.0, Margins::uniform(36.0)));
