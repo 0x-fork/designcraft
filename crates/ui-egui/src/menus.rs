@@ -2016,7 +2016,7 @@ pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
         return enabled(app, "object.fit");
     }
     if ui_label(id).is_some() {
-        return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.");
+        return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.") || id.starts_with("help.");
     }
     enabled(app, id)
 }
