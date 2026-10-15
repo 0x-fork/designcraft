@@ -26,11 +26,16 @@ real_name = "Brandon Thomas"
 display_name = "Brandon Thomas"
 sync_github_name = false
 
+[people.PhilippKrueger]
+real_name = "Philipp Krüger"
 [people.emanuelebonaventura]
 display_name = "insanityxoff"
 
 [people.moppeeer]
 sync_github_name = true
+
+[people.PiMinusMax]
+display_name = "PiMinusMax"
 
 [people.thaynej]
 real_name = "Jeffrey Thayne"

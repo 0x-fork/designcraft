@@ -622,6 +622,110 @@ fn hyphenation_skips_a_no_break_word_at_the_start() {
     assert!(!first.hyphenated && first.range.end >= 15, "{:?}", &text[first.range.clone()]);
 }
 
+/// Natural advance of each glyph of `text` by byte, and a frame width that puts the first three
+/// words on a justified line with one word space of extra to share.
+fn three_word_measure(text: &str) -> (std::collections::HashMap<usize, f64>, f64) {
+    let (d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, 1000.0, 100.0), ParaAttrs::default());
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let line = all_lines(&cs)[0];
+    let adv = line.glyphs.iter().map(|g| (g.byte, g.adv)).collect::<std::collections::HashMap<_, _>>();
+    let third_end = text.find(" dddd").unwrap();
+    let gap = line.glyphs.iter().find(|g| g.byte == third_end).unwrap();
+    (adv, gap.x - line.x0 + gap.adv + 2.0 * line.x0)
+}
+
+fn justified_first_line(text: &str, width: f64, no_break: Option<std::ops::Range<usize>>) -> Line {
+    let para = ParaAttrs { align: Some(Align::LeftJustified), word_space_max: Some(4.0), ..Default::default() };
+    let (mut d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, width, 1000.0), para);
+    if let Some(run) = no_break {
+        d.story_mut(sid).unwrap().format_chars(run, |f| f.over.no_break = Some(true));
+    }
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let line = all_lines(&cs)[0].clone();
+    assert!((line.end_x - line.x1).abs() < 0.1, "line ends at {} not {}", line.end_x, line.x1);
+    line
+}
+
+#[test]
+fn no_break_spaces_stretch_on_justified_lines() {
+    let text = "aaaa bbbb cccc dddd eeee ffff gggg hhhh";
+    let (natural, width) = three_word_measure(text);
+    // The run holds one of the line's two spaces, then both.
+    for run in [0..9, 0..14] {
+        let line = justified_first_line(text, width, Some(run.clone()));
+        assert_eq!(text[line.range.clone()].trim_end(), "aaaa bbbb cccc");
+        let words = line.glyphs.iter().filter(|g| g.byte < 14);
+        let (spaces, letters): (Vec<_>, Vec<_>) = words.partition(|g| text.as_bytes()[g.byte] == b' ');
+        assert_eq!(spaces.len(), 2);
+        for s in &spaces {
+            assert!(s.adv > natural[&s.byte] + 1.0 && (s.adv - spaces[0].adv).abs() < 1e-6, "run {run:?}: space at {} is {}", s.byte, s.adv);
+        }
+        for g in letters {
+            assert!((g.adv - natural[&g.byte]).abs() < 1e-6, "run {run:?}: letter at {} is {}", g.byte, g.adv);
+        }
+    }
+}
+
+#[test]
+fn nonbreaking_space_stretches_and_fixed_width_one_does_not() {
+    for (nb, stretches) in [('\u{A0}', true), ('\u{202F}', false)] {
+        let text = format!("aaaa{nb}bbbb cccc dddd eeee ffff gggg hhhh");
+        let (natural, width) = three_word_measure(&text);
+        let line = justified_first_line(&text, width, None);
+        let nb_glyph = line.glyphs.iter().find(|g| g.byte == 4).unwrap();
+        let space = line.glyphs.iter().find(|g| text.as_bytes()[g.byte] == b' ').unwrap();
+        assert!(space.adv > natural[&space.byte] + 1.0);
+        if stretches {
+            assert!((nb_glyph.adv - space.adv).abs() < 1e-6, "{nb:?}: {} vs {}", nb_glyph.adv, space.adv);
+        } else {
+            assert!((nb_glyph.adv - natural[&4]).abs() < 1e-6, "{nb:?}: {} vs {}", nb_glyph.adv, natural[&4]);
+        }
+    }
+}
+
+#[test]
+fn jidori_run_keeps_its_width_on_a_justified_line() {
+    fn first_line(text: &str, width: f64, para: ParaAttrs, run: std::ops::Range<usize>) -> Line {
+        let (mut d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, width, 1000.0), para);
+        d.story_mut(sid).unwrap().format_chars(run, |f| f.over.jidori = Some(6));
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        all_lines(&cs)[0].clone()
+    }
+    for sp in ['\u{A0}', ' '] {
+        let text = format!("aa{sp}aa bbbb cccc dddd eeee ffff gggg hhhh");
+        let run = 0..4 + sp.len_utf8();
+        let run_width = |l: &Line| l.glyphs.iter().filter(|g| run.contains(&g.byte)).map(|g| g.adv).sum::<f64>();
+        let ragged = first_line(&text, 1000.0, ParaAttrs::default(), run.clone());
+        let gap = ragged.glyphs.iter().find(|g| g.byte == text.find(" dddd").unwrap()).unwrap();
+        let width = gap.x - ragged.x0 + gap.adv + 2.0 * ragged.x0;
+        let para = ParaAttrs { align: Some(Align::LeftJustified), word_space_max: Some(4.0), ..Default::default() };
+        let line = first_line(&text, width, para, run.clone());
+        assert_eq!(text[line.range.clone()].trim_end(), format!("aa{sp}aa bbbb cccc"));
+        assert!((line.end_x - line.x1).abs() < 0.1, "{sp:?}: line ends at {} not {}", line.end_x, line.x1);
+        assert!((run_width(&line) - run_width(&ragged)).abs() < 1e-6, "{sp:?}: run is {} not {}", run_width(&line), run_width(&ragged));
+    }
+}
+
+#[test]
+fn nonbreaking_space_alone_fills_a_justified_line() {
+    let text = "10\u{A0}km 1234";
+    let (d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, 1000.0, 100.0), ParaAttrs::default());
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let ragged = all_lines(&cs)[0];
+    let natural = ragged.glyphs.iter().map(|g| (g.byte, g.adv)).collect::<std::collections::HashMap<_, _>>();
+    let m = ragged.glyphs.iter().find(|g| g.byte == 5).unwrap();
+    let width = m.x - ragged.x0 + m.adv + 15.0 + 2.0 * ragged.x0;
+    let line = justified_first_line(text, width, None);
+    assert_eq!(text[line.range.clone()].trim_end(), "10\u{A0}km");
+    for g in line.glyphs.iter().filter(|g| g.byte < 6) {
+        if g.byte == 2 {
+            assert!((g.adv - natural[&2] - 15.0).abs() < 0.1, "U+00A0 is {}", g.adv);
+        } else {
+            assert!((g.adv - natural[&g.byte]).abs() < 1e-6, "glyph at {} is {}", g.byte, g.adv);
+        }
+    }
+}
+
 /// Story of `n` one-line filler paragraphs followed by `extra` paragraphs, in a 2-column frame.
 fn keep_doc(fillers: usize, extra: &[&str], height: f64) -> (Document, StoryId, Vec<usize>) {
     let mut parts: Vec<String> = (0..fillers).map(|k| format!("Filler {k}")).collect();
@@ -1373,6 +1477,44 @@ fn footnote_line_at_column_top_still_sets() {
 }
 
 #[test]
+fn footnotes_span_columns_across_the_frame_bottom() {
+    // Span Footnotes Across Columns: the note area runs under every column of the frame and each
+    // column's text ends above it, also the columns before the one holding the reference.
+    let text = [LOREM; 8].join(" ");
+    let note = "A long footnote, long enough to wrap if it is set one column wide rather than across the frame.";
+    let compose = |at: usize, span: bool| {
+        let (mut d, sid, fid) = doc_with(&text, Rect::new(36.0, 36.0, 436.0, 236.0), ParaAttrs::default());
+        d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.columns = 2;
+        d.footnote_options.span_columns = span;
+        d.story_mut(sid).unwrap().insert_note(at, note, ParaFormat::default());
+        let space_before = d.footnote_options.space_before;
+        (compose_story(&d, sid, &ComposeOptions::default()), space_before)
+    };
+    let plain = compose(10, false).0;
+    // A reference halfway down the second column.
+    let in_col1 = plain.frames[0].lines.iter().filter(|l| l.column == 1).nth(5).unwrap().range.start + 5;
+    for (at, ref_col) in [(10, 0), (in_col1, 1)] {
+        let (cs, space_before) = compose(at, true);
+        let ft = &cs.frames[0];
+        let (c0, c1) = (ft.columns[0], ft.columns[1]);
+        assert_eq!(ft.notes.len(), 1);
+        let n = &ft.notes[0];
+        assert_eq!(n.column, ref_col, "ref at {at}");
+        assert!((n.rect.x0 - c0.x0).abs() < 1e-6 && (n.rect.x1 - c1.x1).abs() < 1e-6, "ref at {at}: note {:?} spans the frame", n.rect);
+        assert!((n.rect.y1 - c0.y1).abs() < 1e-6, "ref at {at}: note ends at the frame bottom");
+        for col in 0..2 {
+            let last = ft.lines.iter().rfind(|l| l.column == col).unwrap();
+            assert!(last.baseline + last.descent <= n.rect.y0 - space_before + 0.01, "ref at {at}: column {col} text clears the note");
+        }
+        assert!(n.text.frames[0].lines.iter().all(|l| l.x1 - l.x0 > c0.width() + 1.0), "ref at {at}: note set at the frame width");
+    }
+    // Off: the note stays in the column holding its reference.
+    let n = &compose(in_col1, false).0.frames[0].notes[0];
+    assert_eq!(n.column, 1);
+    assert!((n.rect.x0 - plain.frames[0].columns[1].x0).abs() < 1e-6 && (n.rect.x1 - plain.frames[0].columns[1].x1).abs() < 1e-6);
+}
+
+#[test]
 fn hj_severity_shades() {
     use crate::hj_severity;
     assert_eq!(hj_severity(1.0, 0.8, 1.33), 0);
@@ -1582,6 +1724,27 @@ fn warichu_stacks_the_run_inside_the_line_and_closes_up() {
     assert!((z.x - right).abs() < 1e-3, "the next character follows the note: {} {right}", z.x);
     assert!(z.x < z0 - 1.0, "the note is narrower than the full-size run: {} {z0}", z.x);
     assert!((l.end_x - (z.x + z.adv)).abs() < 1e-3, "the line-end caret follows the close-up");
+}
+
+#[test]
+fn warichu_line_spacing_from_a_document_stays_finite() {
+    for spacing in [1e308, -1e308, f64::INFINITY, f64::NAN] {
+        let mut d = Document::new(&designcraft_doc::build::NewDocument::default());
+        let lid = d.default_layer();
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 500.0, 200.0), lid, "ABCDEFGHZ", ParaFormat::default()).unwrap();
+        d.story_mut(sid).unwrap().format_chars(0..8, |f| {
+            f.over.warichu = Some(true);
+            f.over.warichu_lines = Some(16);
+            f.over.warichu_line_spacing = Some(spacing);
+        });
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        let l = &cs.frames[0].lines[0];
+        assert!(
+            l.glyphs.iter().all(|g| g.x.is_finite() && g.y.is_finite() && g.y.abs() < 1e4),
+            "{spacing}: {:?}",
+            l.glyphs.iter().map(|g| g.y).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]
@@ -3223,6 +3386,40 @@ fn missing_glyphs_are_the_fonts_box_unless_fallback_is_on() {
     let (face, gid, _) = glyph_at(&d, 1);
     assert_ne!(face.family, designcraft_fonts::DEFAULT_FAMILY);
     assert_ne!(gid, 0, "a fallback font draws it");
+}
+
+#[test]
+fn a_mark_starting_a_run_is_shaped_with_its_base() {
+    use designcraft_fonts::testing::font_with;
+    const HEBREW: &str = "DC Test Hebrew Points";
+    designcraft_fonts::FontDb::global().add_font(font_with(HEBREW, &['ש', '\u{5C2}', 'ל']).unwrap());
+    // Shin, then sin dot and lamed in a run that only turns ligatures off.
+    let text = "ש\u{5C2}ל";
+    let mark = "ש".len();
+    let glyphs = |family: &str, mark_family: Option<&str>| {
+        let (mut d, sid, _) = doc_with(text, Rect::new(36.0, 36.0, 300.0, 100.0), ParaAttrs::default());
+        let story = d.story_mut(sid).unwrap();
+        story.format_chars(0..text.len(), |f| f.over.font_family = Some(family.into()));
+        story.format_chars(mark..text.len(), |f| {
+            f.over.ligatures = Some(false);
+            if let Some(m) = mark_family {
+                f.over.font_family = Some(m.into());
+            }
+        });
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        all_lines(&cs).iter().flat_map(|l| l.glyphs.iter()).map(|g| (g.face, g.gid, g.byte)).collect::<Vec<_>>()
+    };
+    // A missing font: its substitute lacks both, so the letter comes from a fallback font, and the
+    // mark from the same font, in its letter's cluster.
+    let g = glyphs("DC Test No Such Family", None);
+    let (base, dot) = (g[0], g[1]);
+    assert_ne!(base.1, 0, "{g:?}");
+    assert_eq!((dot.0.family.as_str(), dot.2), (base.0.family.as_str(), 0), "the sin dot goes with its shin: {g:?}");
+    assert_ne!(dot.1, 0, "{g:?}");
+    // The run's own font lacks the mark: its box, whatever font the letter before it has.
+    let g = glyphs(HEBREW, Some(designcraft_fonts::DEFAULT_FAMILY));
+    let dot = g.iter().find(|x| x.2 == mark).unwrap();
+    assert_eq!((dot.0.family.as_str(), dot.1), (designcraft_fonts::DEFAULT_FAMILY, 0), "{g:?}");
 }
 
 #[test]

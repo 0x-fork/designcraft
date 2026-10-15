@@ -68,7 +68,9 @@ pub(crate) fn parse(xml: &str) -> Result<El, ImportError> {
                     attrs: e
                         .attributes()
                         .flatten()
-                        .map(|a| (local(a.key.as_ref()), a.unescape_value().map(|v| v.to_string()).unwrap_or_default()))
+                        .map(|a| {
+                            (local(a.key.as_ref()), a.normalized_value(quick_xml::XmlVersion::Implicit1_0).map(|v| v.to_string()).unwrap_or_default())
+                        })
                         .collect(),
                     kids: vec![],
                 };
@@ -80,7 +82,9 @@ pub(crate) fn parse(xml: &str) -> Result<El, ImportError> {
                     attrs: e
                         .attributes()
                         .flatten()
-                        .map(|a| (local(a.key.as_ref()), a.unescape_value().map(|v| v.to_string()).unwrap_or_default()))
+                        .map(|a| {
+                            (local(a.key.as_ref()), a.normalized_value(quick_xml::XmlVersion::Implicit1_0).map(|v| v.to_string()).unwrap_or_default())
+                        })
                         .collect(),
                     kids: vec![],
                 };
@@ -223,11 +227,13 @@ struct Ctx {
     /// The number the model's own list counter is at (it restarts after a paragraph that isn't
     /// in a list), to tell where a numbered paragraph needs an explicit Start At.
     model_counter: u32,
+    /// The style of paragraphs without `w:pStyle` (Word's default paragraph style, usually Normal).
+    default_para: String,
 }
 
 impl Ctx {
     fn para_style(&self, ppr: Option<&El>) -> String {
-        ppr.and_then(|p| p.val("pStyle")).and_then(|id| self.para_names.get(&id).cloned()).unwrap_or_else(|| BASIC_PARAGRAPH.into())
+        ppr.and_then(|p| p.val("pStyle")).and_then(|id| self.para_names.get(&id).cloned()).unwrap_or_else(|| self.default_para.clone())
     }
 
     /// Append the paragraphs and tables of `body` to `st`.
@@ -259,16 +265,16 @@ impl Ctx {
                     }
                 }
                 "tbl" => {
-                    let rows: Vec<Vec<String>> = e
-                        .els()
-                        .filter(|r| r.name == "tr")
-                        .map(|r| {
-                            r.els()
-                                .filter(|c| c.name == "tc")
-                                .map(|c| c.els().filter(|p| p.name == "p").map(|p| p.text()).collect::<Vec<_>>().join("\n"))
-                                .collect()
-                        })
-                        .collect();
+                    let mut rows: Vec<Vec<String>> = Vec::new();
+                    for r in e.els().filter(|r| r.name == "tr") {
+                        let mut row = Vec::new();
+                        for c in r.els().filter(|c| c.name == "tc") {
+                            let mut paras = Vec::new();
+                            self.cell_paras(c, &mut paras);
+                            row.push(paras.join("\n"));
+                        }
+                        rows.push(row);
+                    }
                     if rows.is_empty() {
                         continue;
                     }
@@ -315,6 +321,27 @@ impl Ctx {
         let next = self.model_counter.saturating_add(1);
         self.model_counter = want;
         (want != next).then_some(want)
+    }
+
+    /// The text of each paragraph in a table cell, read by the same run rules as body text.
+    /// Cells are plain text, so a page or column break in a cell ends its paragraph.
+    fn cell_paras(&mut self, el: &El, out: &mut Vec<String>) {
+        for e in el.els() {
+            match e.name.as_str() {
+                "p" => {
+                    let mut st = Story::new(StoryId(0));
+                    self.inline(e, &mut st, false);
+                    let is_break = |c: char| matches!(c, designcraft_doc::PAGE_BREAK | designcraft_doc::COLUMN_BREAK);
+                    out.push(st.text.chars().map(|c| if is_break(c) { '\n' } else { c }).collect());
+                }
+                "sdt" => {
+                    if let Some(c) = e.child("sdtContent") {
+                        self.cell_paras(c, out);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Runs (and hyperlinks, fields' results) of a paragraph.
@@ -420,6 +447,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
         numbering: Numbering::default(),
         style_lists: HashMap::new(),
         model_counter: 0,
+        default_para: BASIC_PARAGRAPH.into(),
     };
     // Lists that can't be read leave plain paragraphs, not a failed import.
     match part_capped(&mut zip, "word/numbering.xml", NUMBERING_LIMIT).and_then(|s| s.map(|s| parse(&s)).transpose()) {
@@ -433,23 +461,40 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
         let ids: HashMap<String, String> =
             styles.els().filter(|s| s.name == "style").filter_map(|s| Some((s.attr("styleId")?.to_string(), s.val("name")?))).collect();
         ctx.style_lists = style_lists(&styles);
+        // Word's document defaults sit beneath every paragraph style that isn't based on another.
+        let defaults = styles.child("docDefaults");
+        let default_para = para_attrs(defaults.and_then(|d| d.child("pPrDefault")).and_then(|d| d.child("pPr")));
+        let default_chars = run_attrs(defaults.and_then(|d| d.child("rPrDefault")).and_then(|d| d.child("rPr")));
+        let is_para = |s: &&El| s.name == "style" && s.attr("type").unwrap_or("paragraph") == "paragraph";
+        let default_id = styles
+            .els()
+            .filter(is_para)
+            .find(|s| matches!(s.attr("default"), Some("1" | "true" | "on")))
+            .or_else(|| styles.els().filter(is_para).find(|s| s.attr("styleId") == Some("Normal")))
+            .and_then(|s| s.attr("styleId"));
+        if let Some(name) = default_id.and_then(|id| ids.get(id)) {
+            ctx.default_para = name.clone();
+        }
         for s in styles.els().filter(|s| s.name == "style") {
             let (Some(id), Some(name)) = (s.attr("styleId"), s.val("name")) else { continue };
             let kind = s.attr("type").unwrap_or("paragraph");
-            // Word's Normal / default paragraph font are our [Basic Paragraph] / [None].
+            // Word's default paragraph font is "no character style": our [None].
             let name = match (kind, name.as_str()) {
-                ("paragraph", "Normal") => BASIC_PARAGRAPH.to_string(),
                 ("character", "Default Paragraph Font") => NO_CHAR_STYLE.to_string(),
                 _ => name.clone(),
             };
-            let based_on = s.val("basedOn").and_then(|b| ids.get(&b).cloned()).map(|b| if b == "Normal" { BASIC_PARAGRAPH.to_string() } else { b });
-            let imp = ImportedStyle { name: name.clone(), based_on, para: para_attrs(s.child("pPr")), chars: run_attrs(s.child("rPr")) };
+            let based_on = s.val("basedOn").and_then(|b| ids.get(&b).cloned());
+            let mut imp = ImportedStyle { name: name.clone(), based_on, para: para_attrs(s.child("pPr")), chars: run_attrs(s.child("rPr")) };
             match kind {
                 "paragraph" => {
                     ctx.para_names.insert(id.to_string(), name.clone());
-                    if name != BASIC_PARAGRAPH {
-                        para_styles.push(imp);
+                    if imp.based_on.is_none() {
+                        let (mut para, mut chars) = (default_para.clone(), default_chars.clone());
+                        para.merge(&imp.para);
+                        chars.merge(&imp.chars);
+                        (imp.para, imp.chars) = (para, chars);
                     }
+                    para_styles.push(imp);
                 }
                 "character" => {
                     ctx.char_names.insert(id.to_string(), name.clone());
@@ -475,8 +520,9 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
     // A page or column break ends its paragraph.
     st.end_paragraphs_at_breaks();
     // Only styles that are used, plus what they are based on.
-    let used_p: std::collections::HashSet<String> = st.paras.iter().map(|p| p.style.clone()).collect();
-    let used_c: std::collections::HashSet<String> = st.runs().map(|(_, f)| f.style.clone()).collect();
+    let stories = || std::iter::once(&st).chain(st.notes.iter().map(|n| &n.text));
+    let used_p: std::collections::HashSet<String> = stories().flat_map(|s| s.paras.iter().map(|p| p.style.clone())).collect();
+    let used_c: std::collections::HashSet<String> = stories().flat_map(|s| s.runs().map(|(_, f)| f.style.clone())).collect();
     let keep = |list: Vec<ImportedStyle>, used: &std::collections::HashSet<String>| {
         let mut want: std::collections::HashSet<String> = used.clone();
         loop {
@@ -559,7 +605,7 @@ mod tests {
         assert!(st.text.starts_with("Title & more\nPlain bold styled\tx"), "{:?}", st.text);
         assert!(st.text.ends_with("After"));
         assert_eq!(st.paras[0].style, "heading 1");
-        assert_eq!(st.paras[1].style, BASIC_PARAGRAPH);
+        assert_eq!(st.paras[1].style, "Normal");
         let at = st.text.find("bold").unwrap();
         assert_eq!(st.format_after(at).over.font_style.as_deref(), Some("Bold"));
         assert_eq!(st.format_after(st.text.find("styled").unwrap()).style, "Emphasis");
@@ -567,9 +613,10 @@ mod tests {
         assert_eq!(st.notes[0].text.text, "The note.");
         assert_eq!(st.tables.len(), 1);
         let names: Vec<&str> = i.para_styles.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["heading 1"], "unused styles are skipped");
-        assert_eq!(i.para_styles[0].chars.size, Some(16.0));
-        assert_eq!(i.para_styles[0].para.space_before, Some(12.0));
+        assert_eq!(names, ["Normal", "heading 1"], "unused styles are skipped");
+        assert_eq!(i.para_styles[1].based_on.as_deref(), Some("Normal"));
+        assert_eq!(i.para_styles[1].chars.size, Some(16.0));
+        assert_eq!(i.para_styles[1].para.space_before, Some(12.0));
         assert_eq!(i.char_styles[0].chars.font_style.as_deref(), Some("Italic"));
     }
 
@@ -791,5 +838,60 @@ mod tests {
         let i = import(&docx_parts(&[("word/document.xml", &document), ("word/numbering.xml", "<w:numbering></w:num>")])).unwrap();
         assert_eq!(i.story.paras[0].para.list_type, None);
         assert_eq!(i.warnings.len(), 1);
+    }
+
+    #[test]
+    fn an_element_with_many_attributes_parses_in_linear_time() {
+        // RUSTSEC-2026-0194: before quick-xml 0.41 the duplicate-attribute check compared each name with every
+        // earlier one on the element, so a crafted .docx/.xlsx with one huge tag hung the import (O(N²)).
+        let attrs: String = (0..100_000).map(|i| format!(" w:a{i}=\"{i}\"")).collect();
+        let xml = format!("<w:document><w:body><w:p{attrs}/></w:body></w:document>");
+        let started = std::time::Instant::now();
+        let doc = parse(&xml).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "parse took {:?}", started.elapsed());
+        let p = doc.child("body").and_then(|b| b.child("p")).unwrap();
+        assert_eq!(p.attr("a0"), Some("0"));
+        assert_eq!(p.attr("a99999"), Some("99999"));
+    }
+
+    #[test]
+    fn table_cells_read_text_like_body_paragraphs() {
+        // Regression (#721): cells took every text node, so deleted text, move sources and field
+        // instructions showed up in the table.
+        let para = r#"<w:p><w:r><w:t xml:space="preserve">kept </w:t></w:r>
+            <w:del w:id="1" w:author="A"><w:r><w:delText>GONE</w:delText></w:r></w:del>
+            <w:moveFrom w:id="2" w:author="A"><w:r><w:t>MOVED AWAY</w:t></w:r></w:moveFrom>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+        let document = format!(r#"<w:document {W}><w:body>{para}<w:tbl><w:tr><w:tc>{para}<w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"#);
+        let i = import(&docx(&document, "", "")).unwrap();
+        assert!(i.story.text.starts_with("kept 7"), "{:?}", i.story.text);
+        let cell = &i.story.tables.values().next().unwrap().cell(0, 0).unwrap().text;
+        assert_eq!(cell.text, "kept 7\n");
+    }
+
+    #[test]
+    fn normal_is_its_own_style_over_the_document_defaults() {
+        // Regression (#722): text formatted only by Normal and the document defaults lost it.
+        let styles = format!(
+            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault>
+              <w:pPrDefault><w:pPr><w:spacing w:after="160"/></w:pPr></w:pPrDefault></w:docDefaults>
+              <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:rFonts w:ascii="Georgia"/><w:sz w:val="26"/></w:rPr></w:style>
+              <w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:rPr><w:i/></w:rPr></w:style>
+            </w:styles>"#
+        );
+        let document = format!(
+            r#"<w:document {W}><w:body><w:p><w:r><w:t>Plain</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pStyle w:val="Quote"/></w:pPr><w:r><w:t>Quoted</w:t></w:r></w:p></w:body></w:document>"#
+        );
+        let i = import(&docx(&document, &styles, "")).unwrap();
+        assert_eq!(i.story.paras[0].style, "Normal");
+        let normal = i.para_styles.iter().find(|s| s.name == "Normal").unwrap();
+        assert_eq!(normal.chars.size, Some(13.0), "Normal's size wins over the default");
+        assert_eq!(normal.chars.font_family.as_deref(), Some("Georgia"));
+        assert_eq!(normal.para.space_after, Some(8.0), "from the document defaults");
+        let quote = i.para_styles.iter().find(|s| s.name == "Quote").unwrap();
+        assert_eq!(quote.based_on.as_deref(), Some("Normal"));
+        assert_eq!(quote.chars.size, None, "inherited from Normal, not copied");
     }
 }

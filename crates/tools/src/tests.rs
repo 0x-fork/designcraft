@@ -1264,3 +1264,53 @@ fn eyedropper_ignores_inactive_states_of_a_multi_state_object() {
         assert_eq!(a.contains(&sample), samples, "active state {active}: {a:?}");
     }
 }
+
+#[test]
+fn pen_cursor_shows_add_delete_and_close() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let (fid, _) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(100.0, 100.0, 200.0, 200.0), lid, "", ParaFormat::default()).unwrap();
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let selected = Selection::items(vec![fid]);
+    let none = Selection::default();
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let at = |x: f64, y: f64| Point::new(x + off.x, y + off.y);
+    let mut t = create("pen");
+    let m = Mods::default();
+
+    let cx = ctx(&d, &selected, &c, &l);
+    assert_eq!(t.cursor(&cx, at(200.0, 100.0), m), Cursor::PenDelete, "on a selected path's anchor");
+    assert_eq!(t.cursor(&cx, at(150.0, 101.0), m), Cursor::PenAdd, "on a selected path's outline");
+    assert_eq!(t.cursor(&cx, at(150.0, 150.0), m), Cursor::Pen, "inside, away from the outline");
+    let click = |t: &mut Box<dyn Tool>, cx: &ToolContext, p: Point| {
+        let down = t.pointer(cx, &PointerEvent::new(PointerKind::Down, p.x, p.y));
+        let up = t.pointer(cx, &PointerEvent::new(PointerKind::Up, p.x, p.y));
+        (down, up)
+    };
+    let (down, up) = click(&mut t, &cx, at(200.0, 100.0));
+    assert_eq!(down, vec![Action::Exec("path.deleteAnchor".into(), serde_json::json!({"id": fid.0, "subpath": 0, "anchor": 1}))]);
+    assert!(up.is_empty() && !t.busy(), "deleting starts no path");
+    let (down, _) = click(&mut t, &cx, at(150.0, 101.0));
+    assert!(matches!(&down[..], [Action::Exec(cmd, p)] if cmd == "path.addAnchor" && p["id"] == fid.0), "{down:?}");
+
+    // Unselected paths are drawn over; the first anchor of the path being drawn closes it.
+    let cx = ctx(&d, &none, &c, &l);
+    assert_eq!(t.cursor(&cx, at(200.0, 100.0), m), Cursor::Pen, "unselected path");
+    click(&mut t, &cx, at(300.0, 300.0));
+    assert_eq!(t.cursor(&cx, at(300.0, 300.0), m), Cursor::Pen, "one anchor cannot close yet");
+    click(&mut t, &cx, at(400.0, 300.0));
+    assert_eq!(t.cursor(&cx, at(301.0, 301.0), m), Cursor::PenClose, "on the first anchor");
+    assert_eq!(t.cursor(&cx, at(350.0, 350.0), m), Cursor::Pen, "elsewhere while drawing");
+}
+
+#[test]
+fn anchor_tools_show_pen_state_cursors() {
+    let d = Document::new(&NewDocument::default());
+    let (s, c, l) = (Selection::default(), Cache::new(), CanvasLayout::new(&d, false));
+    let cx = ctx(&d, &s, &c, &l);
+    let p = Point::new(10.0, 10.0);
+    let cursor = |id: &str| create(id).cursor(&cx, p, Mods::default());
+    assert_eq!(cursor("addAnchor"), Cursor::PenAdd);
+    assert_eq!(cursor("deleteAnchor"), Cursor::PenDelete);
+    assert_eq!(cursor("convertDirection"), Cursor::PenConvert);
+}

@@ -54,6 +54,21 @@ impl Fill {
         }
     }
 
+    /// A linear gradient's axis on an object whose bounds (in its own space) are `b`: the
+    /// Gradient Swatch tool's vector, or the box's extent along the gradient's angle through its
+    /// centre. A box with no extent along that angle (a straight line, across it) takes its longer
+    /// side.
+    pub fn linear_axis(&self, b: Rect) -> (Point, Point) {
+        if let Some([x0, y0, x1, y1]) = self.gradient_vector {
+            return (Point::new(x0, y0), Point::new(x1, y1));
+        }
+        let a = self.gradient_angle.unwrap_or(0.0).to_radians();
+        let half = (b.width() * a.cos().abs() + b.height() * a.sin().abs()) / 2.0;
+        let half = if half > 1e-9 { half } else { b.width().max(b.height()).max(1e-3) / 2.0 };
+        let d = designcraft_geom::Vec2::new(a.cos(), -a.sin()) * half;
+        (b.center() - d, b.center() + d)
+    }
+
     pub fn none() -> Self {
         Fill { swatch: designcraft_color::swatch::NONE.into(), tint: 1.0, gradient_angle: None, gradient_vector: None, overprint: false }
     }
@@ -246,6 +261,12 @@ pub struct Stroke {
     /// Overprint Gap (Attributes panel).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub gap_overprint: bool,
+    /// A gradient swatch's angle on the stroke, as [`Fill::gradient_angle`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gradient_angle: Option<f64>,
+    /// The Gradient Swatch tool's vector on the stroke, as [`Fill::gradient_vector`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gradient_vector: Option<[f64; 4]>,
 }
 
 impl Default for Stroke {
@@ -266,11 +287,25 @@ impl Default for Stroke {
             gap_tint: 1.0,
             overprint: false,
             gap_overprint: false,
+            gradient_angle: None,
+            gradient_vector: None,
         }
     }
 }
 
 impl Stroke {
+    /// The stroke's paint (swatch, tint and gradient geometry) as a fill, to paint it the same way:
+    /// a gradient swatch on a stroke runs across the object's box as on its fill.
+    pub fn as_fill(&self) -> Fill {
+        Fill {
+            swatch: self.swatch.clone(),
+            tint: self.tint,
+            gradient_angle: self.gradient_angle,
+            gradient_vector: self.gradient_vector,
+            overprint: self.overprint,
+        }
+    }
+
     /// How far the painted stroke can reach beyond the path (arrowheads reach further).
     pub fn extent(&self) -> f64 {
         if self.start == Arrowhead::None && self.end == Arrowhead::None { self.weight } else { self.weight.max(0.5) * 5.5 }
@@ -1038,6 +1073,9 @@ pub struct Item {
     pub isolate: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub knockout: bool,
+    /// Flex Layout: this frame lays out the objects nested in it (see [`crate::flex`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flex: Option<crate::flex::FlexLayout>,
 }
 
 fn identity() -> Affine {
@@ -1083,6 +1121,7 @@ impl Item {
             active_state: 0,
             isolate: false,
             knockout: false,
+            flex: None,
         }
     }
 

@@ -23,6 +23,7 @@ use vello_cpu::{Pixmap, RenderContext, Resources};
 
 pub use vello_cpu;
 
+mod blendspace;
 pub mod damage;
 mod fx;
 
@@ -112,7 +113,7 @@ impl Rendered {
 }
 
 /// What to draw.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RenderOptions {
     /// Canvas background (premultiplied RGBA8); `None` = transparent.
     pub background: Option<[u8; 4]>,
@@ -143,6 +144,7 @@ pub struct RenderOptions {
     pub tag_markers: bool,
     /// Separations Preview: draw one process plate (0 = cyan … 3 = black) as grey ink coverage,
     /// from each object's own colour (CMYK as authored, others through the colour settings).
+    /// 4 (internal, the CMYK blend space): cyan, magenta and yellow coverage in red, green, blue.
     pub plate: Option<u8>,
     /// View › Display Performance.
     pub quality: DisplayQuality,
@@ -217,6 +219,17 @@ pub struct Renderer {
     glyphs: text::GlyphCache,
     /// Composed stories looked up during the current render.
     stories: HashMap<(StoryId, Option<usize>), Arc<ComposedStory>>,
+    cmyk_view: Option<blendspace::CachedView>,
+    /// Whether the last render ran the CMYK ink passes (only then is its view worth keeping).
+    cmyk_ran: bool,
+    #[cfg(test)]
+    cmyk_passes: usize,
+    /// Pixels the last ink pass covered (tests).
+    #[cfg(test)]
+    cmyk_pass_pixels: usize,
+    /// Items the last ink pass drew (tests).
+    #[cfg(test)]
+    cmyk_pass_items: usize,
     pub threads: u16,
     pub stats: FrameStats,
 }
@@ -262,13 +275,22 @@ impl Renderer {
             resources: Resources::new(),
             glyphs: text::GlyphCache::default(),
             stories: HashMap::new(),
+            cmyk_view: None,
+            cmyk_ran: false,
+            #[cfg(test)]
+            cmyk_passes: 0,
+            #[cfg(test)]
+            cmyk_pass_pixels: 0,
+            #[cfg(test)]
+            cmyk_pass_items: 0,
             threads: default_threads(),
             stats: FrameStats::default(),
         }
     }
 
-    /// Drop cached glyph paths (they are rebuilt on demand).
+    /// Drop cached glyph paths and the CMYK viewport (rebuilt on demand).
     pub fn clear_caches(&mut self) {
+        self.cmyk_view = None;
         self.glyphs.clear();
         self.stories.clear();
     }
@@ -280,6 +302,37 @@ impl Renderer {
 
     /// Render the given spreads into a `width`×`height` image with `view` (canvas → pixels).
     pub fn render(
+        &mut self,
+        doc: &Document,
+        cache: &Cache,
+        spreads: &[Placed],
+        width: u32,
+        height: u32,
+        view: Affine,
+        opts: &RenderOptions,
+    ) -> Rendered {
+        let start = now();
+        RICH_BLACK.with(|r| r.set(opts.rich_black));
+        PLATE.with(|p| p.set(opts.plate));
+        if let Some(hit) = self.cmyk_view.as_ref().filter(|entry| entry.matches(doc, spreads, width, height, view, opts, self.threads)) {
+            let image = hit.image();
+            self.stats = hit.stats();
+            self.stats.micros = now().saturating_sub(start);
+            return image;
+        }
+        // Release the old snapshot before rendering an edited document or resized viewport.
+        self.cmyk_view = None;
+        self.cmyk_ran = false;
+        let image = self.render_uncached(doc, cache, spreads, width, height, view, opts);
+        // Kept only when the ink passes ran: other views render at their usual cost anyway.
+        if self.cmyk_ran && image.pixels.len() <= blendspace::CachedView::MAX_BYTES {
+            self.cmyk_view = Some(blendspace::CachedView::new(doc, spreads, view, opts, &image, self.stats, self.threads));
+        }
+        self.stats.micros = now().saturating_sub(start);
+        image
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn render_uncached(
         &mut self,
         doc: &Document,
         cache: &Cache,
@@ -334,7 +387,7 @@ impl Renderer {
             let mut img = Rendered { width: w as u32, height: h as u32, pixels };
             for pl in spreads {
                 let Some(sp) = doc.spread(pl.spread) else { continue };
-                if sp.items.iter().any(|it| it.involves_transparency() && !it.hidden) {
+                if blendspace::uses_rgb_proof(doc, pl.spread, opts) {
                     let r = (view * pl.xf).transform_rect_bbox(sp.bounds());
                     blend_space_view(&mut img, r);
                 }
@@ -393,6 +446,10 @@ impl Renderer {
                     ctx.fill_rect(&p.bounds());
                 }
             }
+        }
+        if blendspace::uses_cmyk(doc, sr, f.opts) {
+            self.draw_cmyk_spread(ctx, f, sr);
+            return;
         }
         // Blend modes blend with the objects below, not with the paper (as in InDesign and in PDF,
         // where the page's group starts transparent): a Color Dodge or Screen object over blank paper
@@ -589,9 +646,9 @@ impl Renderer {
         {
             let r = it.inner_bounds();
             ctx.set_transform(f.view * xf);
-            ctx.set_paint(peniko::Color::from_rgba8(80, 140, 255, 40));
+            ctx.set_paint(screen_color([80, 140, 255], 40));
             ctx.fill_rect(&r);
-            ctx.set_paint(peniko::Color::from_rgba8(60, 110, 220, 200));
+            ctx.set_paint(screen_color([60, 110, 220], 200));
             ctx.set_stroke(kurbo::Stroke::new(0.75));
             ctx.stroke_path(&r.to_path(0.1));
             if ff.kind == designcraft_doc::FieldKind::CheckBox && !ff.value.is_empty() && ff.value != "Off" {
@@ -600,7 +657,7 @@ impl Renderer {
                 c.move_to((r.x0 + w * 0.22, r.y0 + h * 0.48));
                 c.line_to((r.x0 + w * 0.42, r.y0 + h * 0.72));
                 c.line_to((r.x0 + w * 0.78, r.y0 + h * 0.24));
-                ctx.set_paint(peniko::Color::BLACK);
+                ctx.set_paint(screen_color([0, 0, 0], 255));
                 ctx.set_stroke(kurbo::Stroke::new((w.min(h) * 0.12).max(0.8)).with_caps(kurbo::Cap::Round).with_join(kurbo::Join::Round));
                 ctx.stroke_path(&c);
             }
@@ -620,8 +677,17 @@ impl Renderer {
     }
 
     fn draw_stroke(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine) {
+        self.draw_stroke_painted(ctx, f, it, bp, xf);
+        ctx.reset_paint_transform();
+    }
+
+    /// The stroke, in its colour or gradient (a gradient runs across the path's box, as a fill's).
+    fn draw_stroke_painted(&mut self, ctx: &mut RenderContext, f: &Frame, it: &Item, bp: &BezPath, xf: Affine) {
         let st = &it.stroke;
-        let Some(c) = f.doc.resolve_color(&st.swatch, st.tint) else { return };
+        let (paint, bounds) = (st.as_fill(), bp.bounding_box());
+        if f.doc.resolve_color(&st.swatch, st.tint).is_none() && designcraft_color::swatch::resolve_gradient(&f.doc.swatches, &st.swatch).is_none() {
+            return;
+        }
         let mut stroke = kurbo::Stroke::new(st.weight)
             .with_caps(match st.cap {
                 designcraft_doc::Cap::Butt => kurbo::Cap::Butt,
@@ -641,7 +707,9 @@ impl Renderer {
             _ => {}
         }
         ctx.set_transform(f.view * xf);
-        ctx.set_paint(color_of(&c, 1.0));
+        if !set_fill_paint(ctx, f.doc, &paint, bounds) {
+            return;
+        }
         let closed = it.path.is_closed();
         // Arrowheads: the path is shortened under them; they're drawn after it.
         let arrows = designcraft_doc::arrow::apply(bp, st, closed);
@@ -668,7 +736,7 @@ impl Renderer {
             if op {
                 ctx.pop_layer();
             }
-            ctx.set_paint(color_of(&c, 1.0));
+            set_fill_paint(ctx, f.doc, &paint, bounds);
         }
         // Stripes, wavy and hash strokes are fills (along the path's centre line).
         if let Some(o) = kind.outline(bp, st.weight, 0.05 * f.px) {
@@ -726,7 +794,7 @@ impl Renderer {
         if designcraft_doc::media_kind(&asset.mime).is_some() {
             // Video / sound: a dark frame with a play mark (the poster, when set, is drawn by the item).
             ctx.set_transform(f.view * xf * g.xf);
-            ctx.set_paint(peniko::Color::from_rgba8(48, 48, 52, 255));
+            ctx.set_paint(screen_color([48, 48, 52], 255));
             ctx.fill_rect(&Rect::new(0.0, 0.0, g.size.0, g.size.1));
             let (cx, cy, r) = (g.size.0 / 2.0, g.size.1 / 2.0, g.size.0.min(g.size.1) * 0.18);
             let mut tri = BezPath::new();
@@ -734,13 +802,13 @@ impl Renderer {
             tri.line_to((cx + r, cy));
             tri.line_to((cx - r * 0.6, cy + r));
             tri.close_path();
-            ctx.set_paint(peniko::Color::from_rgba8(235, 235, 235, 255));
+            ctx.set_paint(screen_color([235, 235, 235], 255));
             ctx.fill_path(&tri);
             return;
         }
         if f.opts.quality == DisplayQuality::Fast {
             ctx.set_transform(f.view * xf * g.xf);
-            ctx.set_paint(peniko::Color::from_rgba8(178, 178, 178, 255));
+            ctx.set_paint(screen_color([178, 178, 178], 255));
             ctx.fill_rect(&Rect::new(0.0, 0.0, g.size.0, g.size.1));
             return;
         }
@@ -768,30 +836,35 @@ impl Renderer {
     }
 }
 
-/// sRGB → working CMYK through a 17³ table built once per colour settings (trilinear).
-fn cmyk_lut(rgb: [f32; 3]) -> [f32; 4] {
-    const N: usize = 17;
+const CMYK_N: usize = 17;
+
+/// The sRGB → working CMYK table for the current colour settings (17³, built once per settings,
+/// trilinear);
+/// sample it with [`cmyk_in`]. Fetch it once for many pixels.
+pub(crate) fn cmyk_table() -> std::sync::Arc<Vec<[f32; 4]>> {
+    const N: usize = CMYK_N;
     type Lut = (designcraft_color::cms::ColorSettings, std::sync::Arc<Vec<[f32; 4]>>);
     static LUT: std::sync::Mutex<Option<Lut>> = std::sync::Mutex::new(None);
     let settings = designcraft_color::cms::active_settings();
-    let table = {
-        let mut g = LUT.lock().unwrap_or_else(|e| e.into_inner());
-        match g.as_ref() {
-            Some((s, t)) if *s == settings => t.clone(),
-            _ => {
-                let cms = designcraft_color::cms::active();
-                let step = |i: usize| i as f32 / (N - 1) as f32;
-                let t: Vec<[f32; 4]> = (0..N * N * N)
-                    .map(|i| {
-                        cms.srgb_to_cmyk([step(i / (N * N)), step(i / N % N), step(i % N)], designcraft_color::cms::Intent::RelativeColorimetric)
-                    })
-                    .collect();
-                let t = std::sync::Arc::new(t);
-                *g = Some((settings, t.clone()));
-                t
-            }
+    let mut g = LUT.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some((s, t)) if *s == settings => t.clone(),
+        _ => {
+            let cms = designcraft_color::cms::active();
+            let step = |i: usize| i as f32 / (N - 1) as f32;
+            let t: Vec<[f32; 4]> = (0..N * N * N)
+                .map(|i| cms.srgb_to_cmyk([step(i / (N * N)), step(i / N % N), step(i % N)], designcraft_color::cms::Intent::RelativeColorimetric))
+                .collect();
+            let t = std::sync::Arc::new(t);
+            *g = Some((settings, t.clone()));
+            t
         }
-    };
+    }
+}
+
+/// Trilinear lookup of `rgb` in a [`cmyk_table`].
+pub(crate) fn cmyk_in(table: &[[f32; 4]], rgb: [f32; 3]) -> [f32; 4] {
+    const N: usize = CMYK_N;
     let f = rgb.map(|v| v.clamp(0.0, 1.0) * (N - 1) as f32);
     let i = f.map(|v| (v as usize).min(N - 2));
     let d = [f[0] - i[0] as f32, f[1] - i[1] as f32, f[2] - i[2] as f32];
@@ -801,8 +874,10 @@ fn cmyk_lut(rgb: [f32; 3]) -> [f32; 4] {
         let w = (if a == 1 { d[0] } else { 1.0 - d[0] }) * (if b == 1 { d[1] } else { 1.0 - d[1] }) * (if cc == 1 { d[2] } else { 1.0 - d[2] });
         ((i[0] + a) * N * N + (i[1] + b) * N + i[2] + cc, w)
     }) {
-        for k in 0..4 {
-            out[k] += table[corner][k] * w;
+        if let Some(t) = table.get(corner) {
+            for k in 0..4 {
+                out[k] += t[k] * w;
+            }
         }
     }
     out
@@ -810,12 +885,27 @@ fn cmyk_lut(rgb: [f32; 3]) -> [f32; 4] {
 
 /// An image's ink coverage on one process plate, as grey (cached per image and plate).
 fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync::Arc<vello_cpu::Pixmap> {
-    type Cache = std::collections::HashMap<(usize, u8), std::sync::Arc<vello_cpu::Pixmap>>;
+    // Keep source allocations alive (their addresses are keys), invalidate on colour settings,
+    // and cap derived raster memory rather than merely counting differently sized images.
+    type Entry = (std::sync::Arc<vello_cpu::Pixmap>, std::sync::Arc<vello_cpu::Pixmap>);
+    type Cache = (designcraft_color::cms::ColorSettings, std::collections::HashMap<(usize, u8), Entry>, usize);
+    const BUDGET: usize = 64 << 20;
     static CACHE: std::sync::Mutex<Option<Cache>> = std::sync::Mutex::new(None);
     let key = (std::sync::Arc::as_ptr(pm) as usize, plate);
-    if let Some(v) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.get(&key).cloned()) {
-        return v;
+    let settings = designcraft_color::cms::active_settings();
+    {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((previous, map, _)) = guard.as_ref() {
+            if *previous == settings {
+                if let Some((_, derived)) = map.get(&key) {
+                    return derived.clone();
+                }
+            } else {
+                *guard = None;
+            }
+        }
     }
+    let table = cmyk_table();
     let data: Vec<vello_cpu::color::PremulRgba8> = pm
         .data()
         .iter()
@@ -825,18 +915,29 @@ fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync:
             }
             let k = 255.0 / p.a as f32;
             let rgb = [p.r, p.g, p.b].map(|v| (v as f32 * k / 255.0).min(1.0));
-            let cmyk = cmyk_lut(rgb);
-            let v = ((1.0 - cmyk[plate.min(3) as usize].clamp(0.0, 1.0)) * p.a as f32).round() as u8;
+            let cmyk = cmyk_in(&table, rgb);
+            let ink = |i: usize| ((1.0 - cmyk[i].clamp(0.0, 1.0)) * p.a as f32).round() as u8;
+            if plate == 4 {
+                return vello_cpu::color::PremulRgba8 { r: ink(0), g: ink(1), b: ink(2), a: p.a };
+            }
+            let v = ink(plate.min(3) as usize);
             vello_cpu::color::PremulRgba8 { r: v, g: v, b: v, a: p.a }
         })
         .collect();
     let out = std::sync::Arc::new(vello_cpu::Pixmap::from_parts(data, pm.width(), pm.height()));
-    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let map = c.get_or_insert_with(Default::default);
-    if map.len() > 32 {
-        map.clear();
+    let bytes = (pm.width() as usize).saturating_mul(pm.height() as usize).saturating_mul(8);
+    if bytes <= BUDGET {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let (previous, map, used) = guard.get_or_insert_with(|| (settings.clone(), Default::default(), 0));
+        if *previous != settings || used.saturating_add(bytes) > BUDGET {
+            map.clear();
+            *used = 0;
+            *previous = settings;
+        }
+        if map.insert(key, (pm.clone(), out.clone())).is_none() {
+            *used += bytes;
+        }
     }
-    map.insert(key, out.clone());
     out
 }
 
@@ -853,14 +954,29 @@ thread_local! {
     static PLATE: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
 }
 
+/// Screen indicators and placeholders are display sRGB, independent of the document's RGB
+/// working profile. Encode their inks only while drawing a process plate or CMYK blend pass.
+pub(crate) fn screen_color(rgb: [u8; 3], alpha: u8) -> peniko::Color {
+    if PLATE.with(|plate| plate.get()).is_none() {
+        return peniko::Color::from_rgba8(rgb[0], rgb[1], rgb[2], alpha);
+    }
+    let [c, m, y, k] = cmyk_in(&cmyk_table(), rgb.map(|v| v as f32 / 255.0));
+    color_of(&designcraft_color::Color::Cmyk { c, m, y, k }, alpha as f32 / 255.0)
+}
+
 pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
     if let Some(p) = PLATE.with(|p| p.get()) {
         let cmyk = match *c {
             designcraft_color::Color::Cmyk { c, m, y, k } => [c, m, y, k],
             _ => c.to_cmyk_managed(designcraft_color::cms::Intent::RelativeColorimetric),
         };
-        let v = ((1.0 - cmyk[p.min(3) as usize].clamp(0.0, 1.0)) * 255.0).round() as u8;
-        return peniko::Color::from_rgba8(v, v, v, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let ink = |i: usize| ((1.0 - cmyk[i].clamp(0.0, 1.0)) * 255.0).round() as u8;
+        if p == 4 {
+            return peniko::Color::from_rgba8(ink(0), ink(1), ink(2), a);
+        }
+        let v = ink(p.min(3) as usize);
+        return peniko::Color::from_rgba8(v, v, v, a);
     }
     if RICH_BLACK.with(|r| r.get())
         && let designcraft_color::Color::Cmyk { c: cc, m, y, k } = *c
@@ -877,7 +993,7 @@ pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
 
 /// Set a swatch fill (solid or gradient) as the paint. Returns false for [None]/unknown.
 fn set_fill_paint(ctx: &mut RenderContext, doc: &Document, fill: &designcraft_doc::Fill, bounds: Rect) -> bool {
-    let (swatch, tint, angle) = (fill.swatch.as_str(), fill.tint, fill.gradient_angle);
+    let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
     if let Some(g) = designcraft_color::swatch::resolve_gradient(&doc.swatches, swatch) {
         // Sampled so process colours blend as inks, as InDesign shows them (and as the PDF's CMYK
         // shading prints).
@@ -885,7 +1001,6 @@ fn set_fill_paint(ctx: &mut RenderContext, doc: &Document, fill: &designcraft_do
         if stops.is_empty() {
             return false;
         }
-        let c = bounds.center();
         let grad = match (g.kind, fill.gradient_vector) {
             // Radial: a circle stretched into the object's ellipse (the paint transform).
             (designcraft_color::GradientKind::Radial, _) => {
@@ -894,12 +1009,9 @@ fn set_fill_paint(ctx: &mut RenderContext, doc: &Document, fill: &designcraft_do
                 ctx.set_paint_transform(Affine::translate(c.to_vec2()) * Affine::scale_non_uniform(1.0, ry / rx) * Affine::translate(-c.to_vec2()));
                 peniko::Gradient::new_radial(c, rx as f32).with_stops(stops.as_slice())
             }
-            (_, Some([x0, y0, x1, y1])) => peniko::Gradient::new_linear((x0, y0), (x1, y1)).with_stops(stops.as_slice()),
             _ => {
-                let a = angle.unwrap_or(0.0).to_radians();
-                let half = (bounds.width() * a.cos().abs() + bounds.height() * a.sin().abs()) / 2.0;
-                let d = Vec2::new(a.cos(), -a.sin()) * half;
-                peniko::Gradient::new_linear(c - d, c + d).with_stops(stops.as_slice())
+                let (a, b) = fill.linear_axis(bounds);
+                peniko::Gradient::new_linear(a, b).with_stops(stops.as_slice())
             }
         };
         ctx.set_paint(grad);
@@ -1378,6 +1490,54 @@ mod tests {
         d.settings.blend_space = designcraft_doc::BlendSpace::Rgb;
         let rgb = px(&d, &mut r);
         assert!(rgb[1] > 245 && rgb[0] < 10, "{rgb:?}");
+    }
+
+    #[test]
+    fn blend_modes_blend_in_cmyk_on_screen_in_a_cmyk_blend_space() {
+        // A lilac (RGB) rectangle, and a 100% K one over its lower half and the paper below it,
+        // in Color Dodge: in CMYK the black clears the lilac's inks (white), over the paper it
+        // shows as it is; in RGB, dodging with black changes nothing.
+        let mut d = Document::new(&NewDocument::default());
+        d.swatches.push(designcraft_color::swatch::Swatch::color("Lilac", designcraft_color::Color::rgb8(171, 154, 227)));
+        let lid = d.default_layer();
+        let rect = |d: &mut Document, r: Rect, fill: &str| {
+            let id = designcraft_doc::ItemId(d.alloc());
+            let mut it = Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(r));
+            it.fill = Fill::swatch(fill);
+            d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+            id
+        };
+        rect(&mut d, Rect::new(100.0, 100.0, 300.0, 200.0), "Lilac");
+        let black = rect(&mut d, Rect::new(150.0, 150.0, 250.0, 250.0), designcraft_color::swatch::BLACK);
+        d.item_mut(black).unwrap().blend = DcBlend::ColorDodge;
+        let cache = Cache::new();
+        let mut r = Renderer::new();
+        r.threads = 0;
+        let px = |d: &Document, r: &mut Renderer, x: u32, y: u32| {
+            r.render_page(d, &cache, 0, 1.0, false, &RenderOptions { blend_space_view: true, ..Default::default() }).unwrap().pixel(x, y)
+        };
+        let over_lilac = px(&d, &mut r, 200, 175);
+        assert!(over_lilac[..3].iter().all(|v| *v > 235), "dodged to white: {over_lilac:?}");
+        let over_paper = px(&d, &mut r, 200, 225);
+        assert!(over_paper[..3].iter().all(|v| *v < 90), "black as it is: {over_paper:?}");
+        let lilac = px(&d, &mut r, 120, 150);
+        assert!(lilac[2] > lilac[1] + 25, "the lilac beside it: {lilac:?}");
+        // Inside a group, the group's blend mode.
+        let g = designcraft_doc::ItemId(d.alloc());
+        let it = d.remove_item(black).unwrap();
+        let mut grp = Item::new(g, lid, designcraft_doc::Shape::Group, Default::default());
+        let mut inner = (*it).clone();
+        inner.blend = DcBlend::Normal;
+        grp.content = Content::Group { items: vec![Arc::new(inner)] };
+        grp.blend = DcBlend::ColorDodge;
+        d.insert_item(SpreadRef::Doc(0), grp, None).unwrap();
+        let grouped = px(&d, &mut r, 200, 175);
+        assert!(grouped[..3].iter().all(|v| *v > 235), "{grouped:?}");
+        // An RGB blend space: still lilac under the black (lightened a little: [Black] shows as a
+        // dark grey in RGB).
+        d.settings.blend_space = designcraft_doc::BlendSpace::Rgb;
+        let rgb = px(&d, &mut r, 200, 175);
+        assert!(rgb[2] > rgb[1] + 25 && rgb[1] < 220, "{rgb:?}");
     }
 
     #[test]

@@ -615,7 +615,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fitting",
             ["Object", "Fitting"],
             None,
-            "{mode: fillProportionally|fitProportionally|fitContentToFrame|centerContent|fitFrameToContent, ids?}",
+            "{mode: fillProportionally (preserves aspect ratio, covers frame, clips overflow)|fitProportionally (preserves aspect ratio, shows whole image, may leave empty space)|fitContentToFrame (stretches content to frame)|centerContent (keeps current size, positions at fitting alignment)|fitFrameToContent (resizes frame to content), ids?}",
             has_selection,
             fit
         ),
@@ -1087,6 +1087,12 @@ fn transform_move(s: &mut Session, p: &Value) -> Result<Value> {
             }
             it.xf = Affine::translate((dx, dy)) * it.xf;
         }
+        // An object dragged inside a Flex Layout takes the place it was dropped on.
+        if !copy {
+            for id in &ids {
+                super::flex::drop_in_container(d, *id);
+            }
+        }
         Ok(json!({"moved": ids.len(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
     })
 }
@@ -1117,6 +1123,8 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
                 it.xf = Affine::translate(m * c - c) * it.xf;
             } else if scale_content {
                 scale_item(it, m, (sx * sy).abs().sqrt(), strokes);
+            } else if it.flex.is_some() {
+                resize_container(it, m);
             } else if matches!(it.content, Content::Group { .. }) {
                 it.xf = m * it.xf;
             } else {
@@ -1136,16 +1144,36 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// A Flex Layout container takes the new box (its objects keep their size; the layout places them),
+/// and a side whose length changes becomes Fixed, as dragging a container's handle does in InDesign.
+fn resize_container(it: &mut Item, m: Affine) {
+    let before = it.inner_bounds();
+    let inner = it.xf.inverse() * m * it.xf;
+    bake(it, inner);
+    let after = it.inner_bounds();
+    if let Some(f) = it.flex.as_mut() {
+        if (after.width() - before.width()).abs() > 1e-6 {
+            f.width = designcraft_doc::FlexSize::Fixed;
+        }
+        if (after.height() - before.height()).abs() > 1e-6 {
+            f.height = designcraft_doc::FlexSize::Fixed;
+        }
+    }
+}
+
 fn union_bounds(d: &Document, ids: &[ItemId]) -> Rect {
     ids.iter().filter_map(|i| d.item(*i)).map(Item::bounds).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO)
 }
 
-/// Transform an item's geometry in its own space: the path and the gradient vector with it.
+/// Transform an item's geometry in its own space: the path and the gradient vectors (fill and
+/// stroke) with it.
 pub(crate) fn bake(it: &mut Item, inner: Affine) {
     it.path.transform(inner);
-    if let Some([x0, y0, x1, y1]) = it.fill.gradient_vector {
-        let (a, b) = (inner * Point::new(x0, y0), inner * Point::new(x1, y1));
-        it.fill.gradient_vector = Some([a.x, a.y, b.x, b.y]);
+    for v in [&mut it.fill.gradient_vector, &mut it.stroke.gradient_vector] {
+        if let Some([x0, y0, x1, y1]) = *v {
+            let (a, b) = (inner * Point::new(x0, y0), inner * Point::new(x1, y1));
+            *v = Some([a.x, a.y, b.x, b.y]);
+        }
     }
 }
 
@@ -1383,7 +1411,9 @@ fn transform_set(s: &mut Session, p: &Value) -> Result<Value> {
             * Affine::translate((-geom.x0, -geom.y0));
         for id in &ids {
             if let Some(it) = d.item_mut(*id) {
-                if matches!(it.content, Content::Group { .. }) {
+                if it.flex.is_some() {
+                    resize_container(it, m);
+                } else if matches!(it.content, Content::Group { .. }) {
                     it.xf = m * it.xf;
                 } else {
                     let inner = it.xf.inverse() * m * it.xf;

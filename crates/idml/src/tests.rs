@@ -763,6 +763,44 @@ fn round_trips_cross_references() {
     assert_eq!(back.xref_formats.len(), d.xref_formats.len());
 }
 
+/// A cross-reference source sits either inside a character range (holding the text directly) or at
+/// paragraph level around a range. Both give the generated text the paragraph's and the range's
+/// attributes, so both set the same text at the same width.
+#[test]
+fn cross_reference_source_nesting_keeps_formatting() {
+    let story = |body: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="16.0">
+<Story Self="s1"><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle" PointSize="11">{body}</ParagraphStyleRange></Story></idPkg:Story>"#
+        )
+    };
+    const CSR: &str = r#"<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" Tracking="200">"#;
+    let inside = story(&format!(
+        r#"{CSR}<Content>See section </Content><CrossReferenceSource Self="x1" AppliedFormat="n"><Content>11.</Content></CrossReferenceSource><Content>, then a few more words to wrap.</Content></CharacterStyleRange>"#
+    ));
+    let around = story(&format!(
+        r#"{CSR}<Content>See section </Content></CharacterStyleRange><CrossReferenceSource Self="x1" AppliedFormat="n">{CSR}<Content>11.</Content></CharacterStyleRange></CrossReferenceSource>{CSR}<Content>, then a few more words to wrap.</Content></CharacterStyleRange>"#
+    ));
+    let compose = |xml: &str| {
+        let d = import_idml(&fixture_with_story(xml)).unwrap();
+        d.check().unwrap();
+        let s = d.stories.values().find(|s| !s.xrefs.is_empty()).expect("story with a cross-reference").clone();
+        let cs = designcraft_compose::compose_story(&d, s.id, &Default::default());
+        let glyphs: Vec<_> = cs.frames.iter().flat_map(|f| &f.lines).flat_map(|l| l.glyphs.iter().map(move |g| (g.byte, g.x, l.baseline))).collect();
+        (s, glyphs)
+    };
+    let (a, ga) = compose(&inside);
+    let (b, gb) = compose(&around);
+    assert!(ga.len() > a.text.chars().count() / 2, "the story composes");
+    assert_eq!(a.text, b.text);
+    assert_eq!(a.chars, b.chars);
+    assert_eq!(a.chars.len(), 1, "the generated text shares its neighbours' format");
+    assert_eq!(a.chars[0].format.over.tracking, Some(200.0));
+    assert_eq!(a.chars[0].format.over.size, Some(11.0));
+    assert_eq!(ga, gb);
+}
+
 #[test]
 fn round_trips_index_references() {
     use designcraft_doc::index::IndexRange;
@@ -2177,6 +2215,23 @@ fn type_on_a_path_keeps_its_start_and_end_brackets() {
 }
 
 #[test]
+fn a_strokes_gradient_vector_round_trips() {
+    let mut d = designcraft_doc::Document::new(&designcraft_doc::build::NewDocument::default());
+    let id = designcraft_doc::ItemId(d.alloc());
+    let mut it = designcraft_doc::Item::new(
+        id,
+        d.default_layer(),
+        designcraft_doc::Shape::Path,
+        designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(10.0, 10.0, 110.0, 60.0)),
+    );
+    it.stroke.gradient_vector = Some([10.0, 35.0, 110.0, 35.0]);
+    d.insert_item(designcraft_doc::SpreadRef::Doc(0), it, None).unwrap();
+    let back = crate::import_idml(&crate::export_idml(&d)).unwrap();
+    let v = back.spreads[0].items[0].stroke.gradient_vector.unwrap();
+    assert!(v.iter().zip([10.0, 35.0, 110.0, 35.0]).all(|(a, b)| (a - b).abs() < 1e-6), "{v:?}");
+}
+
+#[test]
 fn frame_preference_import_caps_column_count_without_composition() {
     for (raw, expected) in [("4000000000", 216), ("1e300", 216), ("-100", 1), ("0", 1), ("NaN", 1), ("inf", 1), ("-inf", 1)] {
         for attribute in [true, false] {
@@ -2268,4 +2323,278 @@ fn ruler_guides_import_and_round_trip() {
     let back = import_idml(&export_idml(&d)).unwrap();
     assert_eq!(guides(&back), guides(&d));
     assert_eq!(back.parents[0].pages[0].guides.len(), 1);
+}
+
+/// A package entry nothing in `designmap.xml` refers to is never decompressed: a damaged one
+/// (its checksum no longer matches) does not stop the import.
+#[test]
+fn unreferenced_entries_are_not_read() {
+    use zip::write::SimpleFileOptions;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    w.start_file("mimetype", stored).unwrap();
+    w.write_all(MIMETYPE.as_bytes()).unwrap();
+    for (n, c) in [
+        ("designmap.xml", DESIGNMAP),
+        ("Resources/Graphic.xml", GRAPHIC),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", PREFS),
+        ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+        ("Spreads/Spread_sp1.xml", SPREAD),
+        ("Stories/Story_s1.xml", STORY),
+    ] {
+        w.start_file(n, SimpleFileOptions::default()).unwrap();
+        w.write_all(c.as_bytes()).unwrap();
+    }
+    w.start_file("junk/irrelevant.bin", stored).unwrap();
+    w.write_all(b"<<payload-of-an-unused-entry>>").unwrap();
+    let mut bytes = w.finish().unwrap().into_inner();
+    let at = bytes.windows(9).position(|w| w == b"<<payload").unwrap();
+    bytes[at] = b'X';
+    let d = import_idml(&bytes).unwrap();
+    assert_eq!(d.spreads.len(), 1);
+}
+
+/// A part that expands past the 512 MiB limit while claiming to hold one byte is refused once the
+/// limit is reached, with an error that says so, instead of being read whole into memory.
+#[test]
+fn oversized_part_is_refused() {
+    use zip::write::SimpleFileOptions;
+    let designmap = r#"<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" Self="d">
+          <idPkg:Story src="Stories/Story_big.xml"/>
+        </Document>"#;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    w.start_file("mimetype", SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+    w.write_all(MIMETYPE.as_bytes()).unwrap();
+    w.start_file("designmap.xml", SimpleFileOptions::default()).unwrap();
+    w.write_all(designmap.as_bytes()).unwrap();
+    w.start_file("Stories/Story_big.xml", SimpleFileOptions::default()).unwrap();
+    let chunk = vec![b' '; 1 << 20];
+    for _ in 0..512 {
+        w.write_all(&chunk).unwrap();
+    }
+    w.write_all(b" ").unwrap();
+    let mut bytes = w.finish().unwrap().into_inner();
+    assert!(bytes.len() < 8 << 20, "{}", bytes.len());
+    // Claim one byte in the local header and the central directory record (no ZIP64 fields or
+    // data descriptors here), so only the bytes actually decompressed can show the part is too big.
+    let mut patched = 0;
+    for i in 0..bytes.len().saturating_sub(46) {
+        let (size_at, len_at, name_at) = match &bytes[i..i + 4] {
+            b"PK\x03\x04" => (22, 26, 30),
+            b"PK\x01\x02" => (24, 28, 46),
+            _ => continue,
+        };
+        let len = u16::from_le_bytes([bytes[i + len_at], bytes[i + len_at + 1]]) as usize;
+        if bytes.get(i + name_at..i + name_at + len) == Some(b"Stories/Story_big.xml".as_slice()) {
+            bytes[i + size_at..i + size_at + 4].copy_from_slice(&1u32.to_le_bytes());
+            patched += 1;
+        }
+    }
+    assert_eq!(patched, 2);
+    let Err(err) = import_idml(&bytes) else { panic!("an oversized part imported") };
+    assert!(err.to_string().contains("limit"), "{err}");
+}
+
+/// A package with more entries than any document needs is refused before any is read.
+#[test]
+fn too_many_entries_are_refused() {
+    use zip::write::SimpleFileOptions;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    w.start_file("mimetype", stored).unwrap();
+    w.write_all(MIMETYPE.as_bytes()).unwrap();
+    for i in 0..100_000 {
+        w.start_file(format!("junk/{i}"), stored).unwrap();
+    }
+    let Err(err) = import_idml(&w.finish().unwrap().into_inner()) else { panic!("a package with 100 001 entries imported") };
+    assert!(err.to_string().contains("entries"), "{err}");
+}
+
+/// InDesign writes `LeadingModel="LeadingModelAkiBelow"` on [No paragraph style] of every
+/// document, but only its Japanese composers use the leading model: with the Paragraph Composer,
+/// a 24 pt paragraph after a 32 pt one sits a Roman 28.8 pt below it (Montilla Design's Flex Layout
+/// file: frames fitted to that came out overset).
+#[test]
+fn the_default_cjk_leading_model_applies_only_with_a_japanese_composer() {
+    let styles = |composer: &str| {
+        STYLES.replace(
+            r#"Name="$ID/[No paragraph style]" PointSize="12">"#,
+            &format!(r#"Name="$ID/[No paragraph style]" PointSize="12" LeadingModel="LeadingModelAkiBelow" Composer="{composer}">"#),
+        )
+    };
+    let model = |composer: &str| {
+        let s = styles(composer);
+        let pkg = zip_files(&[
+            ("designmap.xml", DESIGNMAP),
+            ("Resources/Graphic.xml", GRAPHIC),
+            ("Resources/Styles.xml", &s),
+            ("Resources/Preferences.xml", PREFS),
+            ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+            ("Spreads/Spread_sp1.xml", SPREAD),
+            ("Stories/Story_s1.xml", STORY),
+        ]);
+        let d = import_idml(&pkg).unwrap();
+        d.styles.para(designcraft_doc::NO_PARA_STYLE).unwrap().chars.leading_model
+    };
+    assert_eq!(model("HL Composer"), None, "the Paragraph Composer leads baseline to baseline");
+    assert_eq!(model("HL Single"), None);
+    assert_eq!(model("$ID/HL Composer J"), Some(designcraft_doc::cjk::LeadingModel::AkiBelow));
+    assert_eq!(model("$ID/HL Single J"), Some(designcraft_doc::cjk::LeadingModel::AkiBelow));
+}
+
+mod liquid_page_rules {
+    use super::*;
+    use designcraft_doc::LiquidRule as R;
+    use std::sync::Arc;
+
+    // Literal XML expectations, independent of names.rs and serde spellings.
+    const CASES: [(&str, R); 6] = [
+        ("Scale", R::Scale),
+        ("Off", R::Off),
+        ("Recenter", R::ReCenter),
+        ("GuideBased", R::GuideBased),
+        ("ObjectBased", R::ObjectBased),
+        ("UseMaster", R::ControlledByParent),
+    ];
+
+    fn fixture(rule: Option<&str>, parent_rule: Option<&str>) -> Vec<u8> {
+        let attribute = |value: Option<&str>| value.map(|v| format!(r#" LayoutRule="{v}""#)).unwrap_or_default();
+        let (rule, parent_rule) = (attribute(rule), attribute(parent_rule));
+        let map = r#"<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" Self="d">
+  <idPkg:Preferences src="Resources/Preferences.xml"/>
+  <idPkg:MasterSpread src="MasterSpreads/A.xml"/>
+  <idPkg:MasterSpread src="MasterSpreads/B.xml"/>
+  <idPkg:Spread src="Spreads/S.xml"/>
+</Document>"#;
+        let parent = format!(
+            r#"<idPkg:MasterSpread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+  <MasterSpread Self="ma" NamePrefix="A" BaseName="Base" PageCount="2">
+    <Page Self="a1" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350"/>
+    <Page Self="a2"{parent_rule} GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350"/>
+  </MasterSpread>
+</idPkg:MasterSpread>"#
+        );
+        // Based-on belongs to the whole derived master: both pages apply the same master.
+        let derived = format!(
+            r#"<idPkg:MasterSpread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+  <MasterSpread Self="mb" NamePrefix="B" BaseName="Derived" PageCount="2">
+    <Page Self="b1"{rule} AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350"/>
+    <Page Self="b2" AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350"/>
+  </MasterSpread>
+</idPkg:MasterSpread>"#
+        );
+        let spread = format!(
+            r#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+  <Spread Self="s" PageCount="2">
+    <Page Self="p1" AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350">
+      <MarginPreference ColumnCount="3" ColumnGutter="12" Top="10" Bottom="20" Left="30" Right="40"/>
+    </Page>
+    <Page Self="p2"{rule} AppliedMaster="ma" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350"/>
+  </Spread>
+</idPkg:Spread>"#
+        );
+        zip_files(&[
+            ("designmap.xml", map),
+            ("Resources/Preferences.xml", PREFS),
+            ("MasterSpreads/A.xml", &parent),
+            ("MasterSpreads/B.xml", &derived),
+            ("Spreads/S.xml", &spread),
+        ])
+    }
+
+    #[test]
+    fn import_literal_xml() {
+        let baseline = import_idml(&fixture(None, None)).unwrap();
+        assert_eq!((baseline.spreads.len(), baseline.parents.len()), (1, 2));
+        assert!(baseline.spreads.iter().chain(&baseline.parents).all(|sp| sp.pages.len() == 2));
+        assert!(baseline.spreads.iter().chain(&baseline.parents).flat_map(|sp| &sp.pages).all(|pg| pg.liquid == R::Off));
+        let cases = CASES.into_iter().map(|(literal, rule)| (Some(literal), rule)).chain([
+            (None, R::Off),
+            (Some("ReCenter"), R::Off),
+            (Some("controlledByParent"), R::Off),
+            (Some("PreserveExisting"), R::Off),
+        ]);
+        for (literal, rule) in cases {
+            let actual = import_idml(&fixture(literal, Some("Recenter"))).unwrap();
+            assert_eq!(actual.spreads[0].pages[1].liquid, rule, "ordinary Page: {literal:?}");
+            assert_eq!(actual.parents[1].pages[0].liquid, rule, "master Page: {literal:?}");
+            // Same XML without rule attributes supplies the complete allowed-delta oracle.
+            let mut expected = baseline.clone();
+            Arc::make_mut(&mut expected.spreads[0]).pages[1].liquid = rule;
+            Arc::make_mut(&mut expected.parents[1]).pages[0].liquid = rule;
+            Arc::make_mut(&mut expected.parents[0]).pages[1].liquid = R::ReCenter;
+            // Import assigns a fresh creation timestamp; all other document fields are compared.
+            expected.created = actual.created;
+            assert_eq!(actual, expected, "{literal:?}: only the three explicit rule fields may change apart from the import timestamp");
+            assert_eq!(actual.spreads[0].pages[0].liquid, R::Off, "omitted does not infer inheritance");
+            assert_eq!(actual.spreads[0].pages[0].parent, Some(actual.parents[0].id));
+            assert_eq!(actual.parents[1].parent.as_ref().unwrap().based_on, Some(actual.parents[0].id));
+            assert!(actual.parents.iter().flat_map(|sp| &sp.pages).all(|pg| pg.parent.is_none()));
+            if rule == R::ControlledByParent {
+                // The right document page resolves to A's right page, not B's controlled page.
+                assert_eq!(actual.parent_page_for(1), Some((0, 1)));
+                assert_eq!(actual.parents[0].pages[1].liquid, R::ReCenter);
+            }
+        }
+    }
+
+    #[test]
+    fn export_and_round_trip() {
+        use std::io::Read;
+
+        let baseline = import_idml(&fixture(None, None)).unwrap();
+        for (literal, rule) in CASES {
+            // Set native enums directly; the literal importer under test does not build this input.
+            let mut source = baseline.clone();
+            let pages = &mut Arc::make_mut(&mut source.spreads[0]).pages;
+            pages[0].parent = None;
+            pages[0].liquid = R::ControlledByParent;
+            pages[1].liquid = rule;
+            Arc::make_mut(&mut source.parents[0]).pages[1].liquid = R::ReCenter;
+            Arc::make_mut(&mut source.parents[1]).pages[0].liquid = rule;
+            source.check().unwrap();
+            let bytes = export_idml(&source);
+            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+            for (directory, tag, spread, rules) in [
+                ("Spreads", "Spread", &source.spreads[0], ["UseMaster", literal]),
+                ("MasterSpreads", "MasterSpread", &source.parents[0], ["Off", "Recenter"]),
+                ("MasterSpreads", "MasterSpread", &source.parents[1], [literal, "Off"]),
+            ] {
+                let path = format!("{directory}/{tag}_u{:x}.xml", spread.id.0);
+                let mut part = Vec::new();
+                archive.by_name(&path).unwrap().read_to_end(&mut part).unwrap();
+                let root = xml::parse(&part).unwrap();
+                let body = root.find(tag).unwrap();
+                let pages: Vec<_> = body.find_all("Page").collect();
+                assert_eq!(pages.len(), spread.pages.len(), "{path}");
+                for (page, expected) in spread.pages.iter().zip(rules) {
+                    let id = format!("u{:x}", page.id.0);
+                    let matches: Vec<_> = pages.iter().filter(|p| p.get("Self") == Some(id.as_str())).collect();
+                    assert_eq!(matches.len(), 1, "{path}: {id}");
+                    assert_eq!(matches[0].get("LayoutRule"), Some(expected), "{path}: {id}");
+                }
+            }
+            let actual = import_idml(&bytes).unwrap();
+            assert_eq!((actual.spreads.len(), actual.parents.len()), (1, 2));
+            assert_eq!(actual.spreads[0].pages[0].parent, None);
+            assert_eq!(actual.spreads[0].pages[1].parent, Some(actual.parents[0].id));
+            assert_eq!(actual.parent_page_for(1), Some((0, 1)));
+            assert!(actual.parents.iter().flat_map(|sp| &sp.pages).all(|pg| pg.parent.is_none()));
+            for (index, prefix, name, based_on) in [(0, "A", "Base", None), (1, "B", "Derived", Some(actual.parents[0].id))] {
+                let info = actual.parents[index].parent.as_ref().unwrap();
+                assert_eq!((&info.prefix[..], &info.name[..], info.based_on), (prefix, name, based_on));
+            }
+            for (got, want) in actual.spreads.iter().chain(&actual.parents).zip(source.spreads.iter().chain(&source.parents)) {
+                assert_eq!(got.pages.len(), want.pages.len());
+                for (got, want) in got.pages.iter().zip(&want.pages) {
+                    // IDs are allocated afresh; parent associations were checked explicitly above.
+                    let mut normalized = got.clone();
+                    normalized.id = want.id;
+                    normalized.parent = want.parent;
+                    assert_eq!(&normalized, want, "{literal}: all other Page fields, including the stored rule");
+                }
+            }
+        }
+    }
 }

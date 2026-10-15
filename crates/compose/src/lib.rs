@@ -1056,7 +1056,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 // Footnotes referenced on this line need room at the bottom of the column too
                 // (a line at the top of a column is set anyway).
                 let line_notes = if notes.active() { notes.refs_in(line_glyphs) } else { Vec::new() };
-                let col_w = cols[cur.fi][cur.col.min(cols[cur.fi].len() - 1)].width();
+                let col_w = notes.area(&cols[cur.fi], cur.col).map_or(0.0, |r| r.width());
                 let reserve = notes.reserve(doc, cur.fi, cur.col, &line_notes, col_w, f, opts);
                 let reserve = if cur.last_baseline.is_none() { notes.reserve(doc, cur.fi, cur.col, &[], col_w, f, opts) } else { reserve };
                 // As in InDesign, a line is set when its baseline fits: its descenders may hang below the frame.
@@ -1205,8 +1205,21 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     keep_violation: false,
                     drop_cap: drop_box,
                 });
+                let placed_notes = !line_notes.is_empty();
                 for k in line_notes {
                     notes.place(doc, k, cur.fi, cur.col, col_w, f, opts);
+                }
+                // Notes spanning the columns take room from the columns before this one too: re-lay
+                // the frame with that room left.
+                if placed_notes {
+                    let r = notes.reserve(doc, cur.fi, cur.col, &[], col_w, f, opts);
+                    if notes.earlier_columns_collide(&out.frames[cur.fi].lines, cur.fi, cur.col, &cols[cur.fi], r)
+                        && let Some(j) = out.frames[cur.fi].lines.first().map(|l| l.para)
+                    {
+                        rewind(j, &snaps, &note_snaps, &mut notes, &mut out, &mut cur, &mut list_counter, &mut force_col, &mut line_cap);
+                        pi = j;
+                        continue 'paras;
+                    }
                 }
                 if !sub_objects.is_empty() {
                     let ft = &mut out.frames[cur.fi];
@@ -1659,7 +1672,7 @@ fn apply_desired_spacing(glyphs: &mut [Glyph], pp: &ParaProps) {
         if g.locked_advance {
             continue;
         }
-        if g.ch == ' ' || (g.ch == '\u{3000}' && g.ideographic_space_elastic) {
+        if g.is_word_space() {
             g.adv += g.space * (ws - 1.0);
         } else if !g.is_space() && g.adv > 0.0 {
             g.adv = g.adv * gs + ls * g.space;
@@ -2553,7 +2566,8 @@ fn layout_line(
     // a line whose last tab is a right, centre, character or right-indent tab is not justified.
     let seg = last_tab.map_or(0, |(i, _)| i + 1);
     let seg_justifies = last_tab.is_none_or(|(_, left)| left);
-    let spaces: Vec<usize> = line.iter().enumerate().skip(seg).filter(|(_, g)| g.is_space() && !g.no_break).map(|(i, _)| i).collect();
+    // Spaces inside a jidori run keep the run's fitted width, as in the breaker.
+    let spaces: Vec<usize> = line.iter().enumerate().skip(seg).filter(|(_, g)| g.is_justify_space() && !g.locked_advance).map(|(i, _)| i).collect();
     let align = match pp.align {
         Align::TowardsSpine => {
             if left_page {
@@ -2654,7 +2668,7 @@ fn layout_line(
     let mut ratio_n = 0usize;
     for &i in &spaces {
         let g = &line[i];
-        if g.ch == ' ' && g.space > 0.0 {
+        if matches!(g.ch, ' ' | shape::NBSP) && g.space > 0.0 {
             ratio_sum += (g.adv + add[i]) / g.space;
             ratio_n += 1;
         }
@@ -2840,7 +2854,7 @@ fn distribute(line: &[Glyph], spaces: &[usize], extra: f64, sp: &Spacing, add: &
         .iter()
         .map(|&i| {
             let g = &line[i];
-            if g.ch != ' ' && !(g.ch == '\u{3000}' && g.ideographic_space_elastic) {
+            if !g.is_word_space() {
                 0.0
             } else if stretch {
                 g.space * (sp.word_max - sp.word_desired).max(0.0)
@@ -2850,8 +2864,8 @@ fn distribute(line: &[Glyph], spaces: &[usize], extra: f64, sp: &Spacing, add: &
         })
         .collect();
     // Letter gaps: between visible glyphs (not after the line's last glyph).
-    let last_box = line.iter().rposition(|g| !g.is_space() && g.adv > 0.0).unwrap_or(0);
-    let is_box = |i: usize, g: &Glyph| i < last_box && !g.is_space() && g.adv > 0.0 && (!g.locked_advance || g.break_after != Some(false));
+    let last_box = line.iter().rposition(|g| !g.is_justify_space() && g.adv > 0.0).unwrap_or(0);
+    let is_box = |i: usize, g: &Glyph| i < last_box && !g.is_justify_space() && g.adv > 0.0 && (!g.locked_advance || g.break_after != Some(false));
     let letter: Vec<f64> = line
         .iter()
         .enumerate()
@@ -2868,7 +2882,7 @@ fn distribute(line: &[Glyph], spaces: &[usize], extra: f64, sp: &Spacing, add: &
     let glyph: Vec<f64> = line
         .iter()
         .map(|g| {
-            if g.is_space() || g.adv <= 0.0 || g.locked_advance {
+            if g.is_justify_space() || g.adv <= 0.0 || g.locked_advance {
                 0.0
             } else {
                 let natural = g.adv / sp.glyph_desired.max(0.01);

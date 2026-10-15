@@ -35,7 +35,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create Outlines",
             ["Type"],
             Some("Cmd+Shift+O"),
-            "{ids?} — text frames become compound paths of their glyphs (one per text colour, grouped when several) → {ids}",
+            "{ids?} — text frames become compound paths of their glyphs (one per line and text colour, grouped when several, so Ungroup separates the lines) → {ids}",
             has_selection,
             create_outlines
         ),
@@ -247,9 +247,10 @@ fn create_outlines(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let cs = designcraft_compose::compose_story(d, tf.story, &Default::default());
             let Some(ft) = cs.frame(*id) else { continue };
-            // One path per text look (fill, stroke).
-            let mut runs: Vec<((String, f32, String, f32, f64, bool), BezPath)> = Vec::new();
-            for l in &ft.lines {
+            // One compound path per line and text look (fill, stroke), grouped: as in InDesign,
+            // Ungroup then leaves each line on its own.
+            let mut runs: Vec<((usize, String, f32, String, f32, f64, bool), BezPath)> = Vec::new();
+            for (li, l) in ft.lines.iter().enumerate() {
                 for g in l.glyphs.iter().filter(|g| g.visible) {
                     let st = &cs.styles[g.style as usize];
                     let outline = db.outline(&g.face, g.gid);
@@ -258,7 +259,7 @@ fn create_outlines(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     let skew = if st.skew != 0.0 { Affine::new([1.0, 0.0, -st.skew.to_radians().tan(), 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
                     let a = Affine::translate((g.x, l.baseline + g.y)) * skew * Affine::scale_non_uniform(g.sx, g.sy);
-                    let key = (st.fill.clone(), st.fill_tint, st.stroke.clone(), st.stroke_tint, st.stroke_weight, st.stroke_behind_fill);
+                    let key = (li, st.fill.clone(), st.fill_tint, st.stroke.clone(), st.stroke_tint, st.stroke_weight, st.stroke_behind_fill);
                     let k = match runs.iter().position(|r| r.0 == key) {
                         Some(k) => k,
                         None => {
@@ -276,7 +277,7 @@ fn create_outlines(s: &mut Session, p: &Value) -> Result<Value> {
             let (sr, _) = spread_xf(d, *id).ok_or(designcraft_doc::DocError::NoItem(*id))?;
             let at = d.spread(sr).and_then(|sp| sp.items.iter().position(|i| i.id == *id));
             let text_xf = d.text_xf(&it);
-            let make = |d: &mut Document, ((fill, ft, stroke, stt, sw, behind), bp): ((String, f32, String, f32, f64, bool), BezPath)| {
+            let make = |d: &mut Document, ((_, fill, ft, stroke, stt, sw, behind), bp): ((usize, String, f32, String, f32, f64, bool), BezPath)| {
                 let mut o = Item::new(ItemId(d.alloc()), it.layer, Shape::Path, PathData::from_bezpath(&bp));
                 o.xf = text_xf;
                 o.fill = Fill { swatch: fill, tint: ft, ..Fill::none() };
@@ -589,6 +590,31 @@ mod tests {
         let b = it.bounds();
         assert!(b.x0 >= 72.0 && b.y0 >= 72.0 && b.x1 < 400.0, "{b:?}");
         assert!(d.stories.is_empty() || !d.stories.values().any(|st| st.frames.contains(&ItemId(id))));
+    }
+
+    #[test]
+    fn outlines_of_several_lines_ungroup_line_by_line() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "GOOD\nMORNING"})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        s.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        let g = s.execute("type.createOutlines", &json!({})).unwrap()["ids"][0].as_u64().unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let group = d.item(ItemId(g)).unwrap();
+        assert!(group.is_group(), "a group of the lines");
+        let lines: Vec<_> = group.children().iter().map(|c| c.bounds()).collect();
+        assert_eq!(lines.len(), 2, "one compound path per line");
+        assert!(lines[0].y1 <= lines[1].y0 + 1.0, "GOOD above MORNING: {lines:?}");
+        // Ungroup: each line on its own, to space them and make one compound path again.
+        s.execute("object.ungroup", &json!({})).unwrap();
+        let sel = s.doc().unwrap().selection.items.clone();
+        assert_eq!(sel.len(), 2);
+        let d = s.doc().unwrap().doc.clone();
+        assert!(sel.iter().all(|i| d.item(*i).is_some_and(|it| it.shape == Shape::Path && it.path.subpaths.len() >= 4)));
+        s.execute("object.makeCompoundPath", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().selection.items.len(), 1);
+        s.doc().unwrap().doc.check().unwrap();
     }
 
     #[test]

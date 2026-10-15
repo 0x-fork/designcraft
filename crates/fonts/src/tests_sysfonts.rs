@@ -6,6 +6,64 @@ use super::*;
 
 const FAMILY: &str = "Sysfont Sans3";
 
+#[cfg(not(any(target_os = "macos", windows)))]
+mod user_font_dirs {
+    use super::*;
+
+    #[test]
+    fn user_font_dirs_when_xdg_is_absolute() {
+        let home = Path::new("/home/font-user");
+        let xdg = Path::new("/custom/data");
+        let dirs = unix_font_dirs(Some(home), Some(xdg));
+        assert_eq!(dirs, ["/usr/share/fonts", "/usr/local/share/fonts", "/home/font-user/.fonts", "/custom/data/fonts"].map(PathBuf::from));
+    }
+
+    #[test]
+    fn user_font_dirs_when_xdg_is_unset() {
+        let home = Path::new("/home/font-user");
+        let dirs = unix_font_dirs(Some(home), None);
+        assert_eq!(
+            dirs,
+            ["/usr/share/fonts", "/usr/local/share/fonts", "/home/font-user/.fonts", "/home/font-user/.local/share/fonts"].map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn user_font_dirs_when_xdg_is_relative() {
+        let home = Path::new("/home/font-user");
+        let xdg = Path::new("relative/data");
+        let dirs = unix_font_dirs(Some(home), Some(xdg));
+        assert_eq!(
+            dirs,
+            ["/usr/share/fonts", "/usr/local/share/fonts", "/home/font-user/.fonts", "/home/font-user/.local/share/fonts"].map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn user_font_dirs_when_xdg_is_empty() {
+        let home = Path::new("/home/font-user");
+        let xdg = Path::new("");
+        let dirs = unix_font_dirs(Some(home), Some(xdg));
+        assert_eq!(
+            dirs,
+            ["/usr/share/fonts", "/usr/local/share/fonts", "/home/font-user/.fonts", "/home/font-user/.local/share/fonts"].map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn user_font_dirs_when_home_is_unset_and_xdg_is_absolute() {
+        let xdg = Path::new("/custom/data");
+        let dirs = unix_font_dirs(None, Some(xdg));
+        assert_eq!(dirs, ["/usr/share/fonts", "/usr/local/share/fonts", "/custom/data/fonts"].map(PathBuf::from));
+    }
+
+    #[test]
+    fn user_font_dirs_when_home_and_xdg_are_unset() {
+        let dirs = unix_font_dirs(None, None);
+        assert_eq!(dirs, ["/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from));
+    }
+}
+
 /// A bundled Source Sans 3 file renamed [`FAMILY`] (as long as the original name).
 fn renamed(file: &str) -> Vec<u8> {
     let mut data = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts").join(file)).unwrap();

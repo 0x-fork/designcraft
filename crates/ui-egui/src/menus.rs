@@ -27,6 +27,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("app.exportFixedEpub", "Export EPUB (Fixed Layout)…", None, "{path?} — pre-paginated EPUB 3"),
     ("app.exportHtml", "Export HTML…", None, "{path?} — one self-contained web page"),
+    ("app.exportPptx", "Export PowerPoint…", None, "{path?} — every page as a slide of editable shapes, pictures and text"),
     ("app.exportXml", "Export XML…", None, "{path?} — the tagged content"),
     ("app.printBooklet", "Print Booklet…", None, "{path?} — saddle-stitched printer spreads as PDF"),
     ("app.qrCode", "Generate QR Code…", None, "{} — the QR Code dialog (object.qrCode does the work)"),
@@ -249,6 +250,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.exportFixedEpub",
             "ui:app.exportInteractivePdf",
             "ui:app.exportHtml",
+            "ui:app.exportPptx",
             "ui:app.exportXml",
             "ui:app.exportText",
             ">Export",
@@ -513,6 +515,13 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:transform.again|Transform Sequence Again|{\"sequence\": true}",
             "cmd:transform.again|Transform Sequence Again Individually|{\"sequence\": true, \"individually\": true}",
             "<",
+            ">Flex Layout",
+            "cmd:flex.add",
+            "cmd:flex.convert",
+            "cmd:flex.remove",
+            "-",
+            "ui:window.panel|Show Flex Controls|{\"panel\": \"flexLayout\"}",
+            "<",
             ">Paths",
             "cmd:object.makeCompoundPath",
             "cmd:object.releaseCompoundPath",
@@ -764,6 +773,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:window.panel|Links|{\"panel\": \"links\"}",
             ">Object & Layout",
             "ui:window.panel|Align|{\"panel\": \"align\"}",
+            "ui:window.panel|Flex Layout|{\"panel\": \"flexLayout\"}",
             "ui:window.panel|Pathfinder|{\"panel\": \"pathfinder\"}",
             "<",
             ">Output",
@@ -922,6 +932,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "app.exportFixedEpub" => export_bytes(app, p, "epub", "file.exportFixedEpub"),
         "app.exportHtml" => export_bytes(app, p, "html", "file.exportHtml"),
+        "app.exportPptx" => export_bytes(app, p, "pptx", "file.exportPptx"),
         "app.exportXml" => export_bytes(app, p, "xml", "file.exportXml"),
         "app.printBooklet" => export_bytes(app, p, "pdf", "file.printBooklet"),
         "app.menus" => {
@@ -2005,7 +2016,7 @@ pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
         return enabled(app, "object.fit");
     }
     if ui_label(id).is_some() {
-        return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.");
+        return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.") || id.starts_with("help.");
     }
     enabled(app, id)
 }
@@ -2052,6 +2063,14 @@ fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
         crate::dialogs::open_print(app);
         return;
     }
+    if params.is_null() && id == "layout.createGuides" {
+        crate::dialogs::open_create_guides(app);
+        return;
+    }
+    if params.is_null() && id == "layout.marginsAndColumns" {
+        crate::dialogs::open_margins_and_columns(app);
+        return;
+    }
     if params.is_null() && id == "object.textFrameOptions" {
         app.ui.dialog = Some(crate::dialogs::Dialog::new("textFrameOptions", json!({})));
         return;
@@ -2080,6 +2099,11 @@ fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
         return;
     }
     let p = if params.is_null() { json!({}) } else { params.clone() };
+    // Update Link asks before replacing edits made to linked text in the layout.
+    if id == "links.update" {
+        crate::panels::properties::update_links(app, p);
+        return;
+    }
     let _ = app.run(id, p);
 }
 
@@ -2167,9 +2191,15 @@ fn clipped_submenu<'a, R>(
 /// ⌘A, ⌘C, ⌘X, ⌘V, ⌘Z and ⇧⌘Z before the window sees them, so while a text field has keyboard
 /// focus, Select All, Copy, Cut, Paste, Undo and Redo act on that field, as in any Mac app.
 pub fn activate_native(app: &mut DesignApp, ctx: &egui::Context, id: &str, params: &Value) {
-    if !(ctx.text_edit_focused() && params.is_null() && forward_to_text_field(app, ctx, id)) {
-        activate(app, id, params);
+    if params.is_null() && ctx.text_edit_focused() && forward_to_text_edit(app, ctx, id) {
+        return;
     }
+    // The canvas text editor is not an egui TextEdit, so its clipboard events must pass through
+    // egui for the desktop integration to read/write the macOS clipboard.
+    if params.is_null() && app.session.wants_text() && matches!(id, "edit.copy" | "edit.cut" | "edit.paste") && forward_to_text_edit(app, ctx, id) {
+        return;
+    }
+    activate(app, id, params);
 }
 
 /// Whether a native menu bar item can be chosen: as in the in-window menus, but the editing
@@ -2183,7 +2213,7 @@ const TEXT_FIELD_COMMANDS: [&str; 6] = ["edit.selectAll", "edit.copy", "edit.cut
 
 /// Hand a standard editing command to the focused text field as next frame's input; false when
 /// `id` isn't one of them.
-fn forward_to_text_field(app: &mut DesignApp, ctx: &egui::Context, id: &str) -> bool {
+fn forward_to_text_edit(app: &mut DesignApp, ctx: &egui::Context, id: &str) -> bool {
     let key = |key: egui::Key, modifiers: egui::Modifiers| {
         [true, false].map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers })
     };
@@ -2337,10 +2367,12 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
         let all = effective_shortcuts(app);
         for (id, sc) in &all {
             let id = id.as_str();
+            // On layouts with a dedicated + key (German) or Shift+= (US), Cmd+= arrives as Plus.
+            let plus_for_equals = key == egui::Key::Plus;
             if let Some((m, k)) = parse_shortcut(sc)
-                && k == key
+                && (k == key || (plus_for_equals && k == egui::Key::Equals))
                 && m.command == modifiers.command
-                && m.shift == modifiers.shift
+                && (m.shift == modifiers.shift || (plus_for_equals && !m.shift))
                 && m.alt == modifiers.alt
                 && (m.command || m.alt || !typing)
                 && !(id == "edit.clear" && typing)
@@ -3316,6 +3348,49 @@ mod tests {
     }
 
     #[test]
+    fn cmd_plus_zooms_the_canvas_not_the_window() {
+        // A German keyboard has its own + key, so Cmd+= arrives as Plus; it must zoom the canvas like
+        // Cmd+- does, not hand the key to egui's whole-window zoom.
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let key = |k: egui::Key, modifiers: egui::Modifiers| {
+            vec![
+                egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers },
+                egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers },
+            ]
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        let scale = ctx.zoom_factor();
+        for (k, m, zooms_in) in [
+            (egui::Key::Plus, egui::Modifiers::COMMAND, true),
+            (egui::Key::Plus, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, true),
+            (egui::Key::Equals, egui::Modifiers::COMMAND, true),
+            (egui::Key::Minus, egui::Modifiers::COMMAND, false),
+        ] {
+            let z0 = app.view().unwrap().zoom;
+            frame(&mut app, key(k, m));
+            frame(&mut app, vec![]);
+            let z = app.view().unwrap().zoom;
+            assert!(if zooms_in { z > z0 } else { z < z0 }, "{k:?} {m:?}: {z0} -> {z}");
+            assert_eq!(ctx.zoom_factor(), scale, "{k:?} {m:?} leaves the UI scale alone");
+        }
+    }
+
+    #[test]
     fn the_quick_apply_shortcut_opens_it_without_running_an_entry() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", &json!({})).unwrap();
@@ -3628,6 +3703,31 @@ mod tests {
         native_frame(&mut app, &ctx, vec![egui::Event::Paste("text".into())], None);
         assert_eq!(app.ui.palette.as_deref(), Some("text"));
         assert_eq!(document_items(&app), (2, 0), "nothing was pasted into the document");
+    }
+
+    #[test]
+    fn native_copy_and_paste_use_the_system_clipboard_for_canvas_text() {
+        let ctx = egui::Context::default();
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        app.session.execute("frame.create", &json!({"rect": [36, 36, 200, 200], "content": "text", "text": "hello"})).unwrap();
+        let story = *app.session.active().unwrap().doc.stories.keys().next().unwrap();
+        app.select_tool("type");
+        app.run("text.select", json!({"story": story.0, "anchor": 0, "focus": 5})).unwrap();
+        for _ in 0..3 {
+            native_frame(&mut app, &ctx, vec![], None);
+        }
+        assert!(app.session.wants_text());
+
+        native_frame(&mut app, &ctx, vec![], Some("edit.copy"));
+        let copied = native_frame(&mut app, &ctx, vec![], None);
+        assert!(copied.platform_output.commands.contains(&egui::OutputCommand::CopyText("hello".into())));
+
+        let paste = native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        let commands = &paste.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::RequestPaste), "{commands:?}");
+        native_frame(&mut app, &ctx, vec![egui::Event::Paste("world".into())], None);
+        assert_eq!(app.session.active().unwrap().doc.story(story).unwrap().text, "world");
     }
 
     #[test]

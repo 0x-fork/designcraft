@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{ItemId, LayerId, PageId, SpreadId};
 use crate::item::Item;
-use crate::page::{Columns, Margins, Page, PageSide, ParentInfo, Section, Spread};
+use crate::page::{Columns, Guide, Margins, Orientation, Page, PageSide, ParentInfo, Section, Spread};
 use crate::styles::Styles;
 use crate::{DataMerge, DocError, DocSettings, Document, Intent, LAYER_COLORS, Layer, ParaFormat, Result, SpreadRef};
 
@@ -560,8 +560,31 @@ impl Document {
         let pi = self.parent_index(page.parent?)?;
         let ps = &self.parents[pi];
         // A parent spread can come without pages from a file.
-        let idx = if ps.pages.len() >= 2 && page.side == PageSide::Left { 0 } else { ps.pages.len().checked_sub(1)? };
+        // A single-sided page takes the parent's first page, like a left-hand page.
+        let first = ps.pages.len() >= 2 && matches!(page.side, PageSide::Left | PageSide::Single);
+        let idx = if first { 0 } else { ps.pages.len().checked_sub(1)? };
         Some((pi, idx))
+    }
+
+    /// Ruler guides document page `abs` inherits from its applied parent page. They are stored on
+    /// the parent page only: positions are moved from the parent page's place in its spread to
+    /// this page's place in its own, so they draw and snap where the page is. Editing them
+    /// happens on the parent page.
+    pub fn inherited_guides(&self, abs: usize) -> Vec<Guide> {
+        let (Some(page), Some((pi, qi))) = (self.page(abs), self.parent_page_for(abs)) else { return Vec::new() };
+        let Some(parent) = self.parents.get(pi).and_then(|ps| ps.pages.get(qi)) else { return Vec::new() };
+        let dx = page.x - parent.x;
+        parent
+            .guides
+            .iter()
+            .map(|g| {
+                let mut g = g.clone();
+                if g.orientation == Orientation::Vertical {
+                    g.position += dx;
+                }
+                g
+            })
+            .collect()
     }
 }
 
@@ -593,6 +616,19 @@ mod tests {
         d.check().unwrap();
         assert_eq!(d.parent_page_for(0), None);
         assert_eq!(d.parent_page_for(1), None);
+    }
+
+    /// A single-sided page applying a two-page parent shows the parent's first page.
+    #[test]
+    fn single_sided_page_shows_first_parent_page() {
+        let mut d = Document::new(&NewDocument { pages: 2, facing_pages: false, ..Default::default() });
+        let extra = d.parents[0].pages[0].clone();
+        Arc::make_mut(&mut d.parents[0]).pages.push(extra);
+        assert_eq!(d.parents[0].pages.len(), 2);
+        assert_eq!(d.parent_page_for(0), Some((0, 0)));
+        assert_eq!(d.parent_page_for(1), Some((0, 0)));
+        Arc::make_mut(&mut d.parents[0]).pages.clear();
+        assert_eq!(d.parent_page_for(0), None);
     }
 
     #[test]

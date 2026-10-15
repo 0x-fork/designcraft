@@ -55,6 +55,18 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         cmd!("text.insert", "Type", [], None, "{text, raw?: bool (no typographer's quotes)} — replaces the selected text", has_text, insert),
+        // Neither journalled nor undoable: what is composed is a preview until it's typed.
+        CommandSpec {
+            id: "text.compose",
+            label: "Compose Text",
+            menu: &[],
+            shortcut: None,
+            params: "{text} — input-method text being composed (a dead key's accent), shown at the caret in the text's format until text.insert types the result; \"\" drops it",
+            enabled: has_doc,
+            run: compose_text,
+            journal: false,
+            undoable: false,
+        },
         cmd!("text.delete", "Delete Text", [], None, "{forward?: bool, word?: bool}", has_text, delete),
         cmd!(noundo "text.move", "Move Caret", [], None, "{dir: left|right|up|down|lineStart|lineEnd|storyStart|storyEnd, extend?, word?}", has_text, move_caret),
         cmd!(noundo "text.exitToFrame", "Select Frame", [], None, "{}", has_doc, |s, _| {
@@ -148,7 +160,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph Formatting",
             [],
             None,
-            "{attrs: {align?, leftIndent?, firstLineIndent?, spaceBefore?, spaceAfter?, dropCapLines?, dropCapChars?, dropCapStyle?, dropCapAlignLeft?, dropCapScaleDescenders?, hyphenate?, composer?, tabs?, ruleAbove?/ruleBelow?: {on?, weight?, color?, tint?, columnWidth?, offset?, leftIndent?, rightIndent?} (only the named rule fields change), …}}",
+            "{attrs: {align?, leftIndent?, firstLineIndent?, spaceBefore?, spaceAfter?, dropCapLines?, dropCapChars?, dropCapStyle?, dropCapAlignLeft?, dropCapScaleDescenders?, hyphenate?: bool (default true), composer?, tabs?, ruleAbove?/ruleBelow?: {on?, weight?, color?, tint?, columnWidth?, offset?, leftIndent?, rightIndent?} (only the named rule fields change), …}}",
             has_text_or_frames,
             |s, p| format_paras(s, p.get("attrs").unwrap_or(p))
         ),
@@ -506,6 +518,30 @@ fn release(s: &mut Session, p: &Value) -> Result<Value> {
         sel.text = Some(TextSel { story: sid, anchor: at, focus: end, frame: Some(frame), cell });
         Ok(json!({"moved": piece.text.len(), "at": at}))
     })
+}
+
+/// `text.compose`: show input-method text at the caret, typed in the format the next
+/// character would get, without making it part of the story. Replaces what was composed before.
+fn compose_text(s: &mut Session, p: &Value) -> Result<Value> {
+    let text = super::text_param(p, "text");
+    s.end_composition();
+    if text.is_empty() {
+        return ok();
+    }
+    has_text(s).map_err(|e| bad("text.compose", &e))?;
+    // The preview types the text; the format chosen at the caret is still for the real typing.
+    let typing = s.typing_format.clone();
+    s.begin_interaction("Type")?;
+    let r = s.preview("text.insert", json!({"text": text, "raw": true}));
+    s.typing_format = typing;
+    if let Err(e) = r {
+        s.cancel_interaction();
+        return Err(e);
+    }
+    let uid = s.doc()?.uid;
+    s.composition = Some((uid, text.len()));
+    let pos = s.doc()?.selection.text.map_or(0, |t| t.focus);
+    Ok(json!({"range": [pos.saturating_sub(text.len()), pos]}))
 }
 
 fn insert(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1551,20 +1587,30 @@ fn fill_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
             story_of(s, p).ok_or_else(|| bad("type.fillWithPlaceholder", "select a text frame"))?
         }
     };
-    // Fill until overset: repeat the filler sentences.
+    // Fill until overset with paragraphs of two to five sentences, as InDesign's placeholder text
+    // comes (so a paragraph can be styled on its own).
+    const SENTENCES_PER_PARAGRAPH: [usize; 7] = [2, 2, 3, 3, 5, 2, 4];
     let mut text = String::new();
-    let sentences: Vec<&str> = PLACEHOLDER.split_inclusive(". ").collect();
+    let sentences: Vec<&str> = PLACEHOLDER.split_inclusive(". ").map(str::trim_end).collect();
     let doc = s.doc()?.doc.clone();
     let mut d2 = (*doc).clone();
+    let (mut paragraph, mut in_paragraph) = (0, 0);
     for i in 0..400 {
         text.push_str(sentences[i % sentences.len()]);
+        in_paragraph += 1;
+        if in_paragraph >= SENTENCES_PER_PARAGRAPH[paragraph % SENTENCES_PER_PARAGRAPH.len()] {
+            text.push('\n');
+            (paragraph, in_paragraph) = (paragraph + 1, 0);
+        } else {
+            text.push(' ');
+        }
         if i % 3 == 2 {
             d2.set_story_text(sid, &text)?;
             let cs = compose::compose_story(&d2, sid, &compose::ComposeOptions::default());
             if cs.is_overset() {
                 // Trim to the last sentence that fits.
-                let cut = cs.overset_at.unwrap_or(text.len());
-                let keep = text[..cut.min(text.len())].rfind(". ").map(|k| k + 1).unwrap_or(cut);
+                let cut = cs.overset_at.unwrap_or(text.len()).min(text.len());
+                let keep = text.get(..cut).and_then(|t| t.rfind('.')).map(|k| k + 1).unwrap_or(cut);
                 text.truncate(keep);
                 break;
             }
@@ -2781,5 +2827,221 @@ mod open_type_features_tests {
         s.execute("text.select", &json!({"story": story, "anchor": 0, "focus": 11})).unwrap();
         let v = s.execute("type.openTypeFeatures", &json!({})).unwrap();
         assert_eq!(feature(&v, "lnum")["applied"], "none", "{v}");
+    }
+}
+
+#[cfg(test)]
+mod gradient_text_tests {
+    use serde_json::json;
+
+    /// Mean red and blue of the ink (pixels whose green is low: red → blue has none) in columns
+    /// `x0..x1`.
+    fn ink(img: &designcraft_render::Rendered, x0: u32, x1: u32) -> (f64, f64) {
+        let (mut r, mut b, mut n) = (0.0, 0.0, 0.0);
+        for x in x0..x1 {
+            for y in 0..img.height {
+                let p = img.pixel(x, y);
+                if p[1] < 100 {
+                    (r, b, n) = (r + p[0] as f64, b + p[2] as f64, n + 1.0);
+                }
+            }
+        }
+        assert!(n > 50.0, "no ink in {x0}..{x1}");
+        (r / n, b / n)
+    }
+
+    /// Red ink at the frame's left, blue at its right.
+    fn check(img: &designcraft_render::Rendered, what: &str) {
+        let (lr, lb) = ink(img, 0, 60);
+        let (rr, rb) = ink(img, 200, 300);
+        assert!(lr > lb + 80.0, "{what}: the left ink is red ({lr:.0}, {lb:.0})");
+        assert!(rb > rr + 80.0, "{what}: the right ink is blue ({rr:.0}, {rb:.0})");
+    }
+
+    #[test]
+    fn a_gradient_on_text_spans_its_frame_on_screen_and_in_pdf() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false, "margins": 0})).unwrap();
+        // A gradient swatch (an off-page object's unnamed one), red → blue.
+        let shape = s.execute("frame.create", &json!({"rect": [-60, 0, -50, 10], "content": "unassigned"})).unwrap()["id"].clone();
+        s.execute("object.gradient", &json!({"ids": [shape], "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}))
+            .unwrap();
+        let id = designcraft_doc::ItemId(shape.as_u64().unwrap());
+        let swatch = s.doc().unwrap().doc.item(id).unwrap().fill.swatch.clone();
+        let r = s.execute("frame.create", &json!({"rect": [0, 0, 300, 120], "content": "text", "text": "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII"})).unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 30})).unwrap();
+        s.execute("type.char", &json!({"size": 60, "tracking": 0, "fill": swatch})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let mut rr = designcraft_render::Renderer::new();
+        check(&rr.render_page(&d, &s.cache, 0, 1.0, false, &Default::default()).unwrap(), "screen");
+        // The PDF, placed back and drawn: the same gradient.
+        let pdf = designcraft_pdf::export_pdf(&d, &s.cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": super::super::file::base64_encode(&pdf), "name": "text.pdf", "x": 0, "y": 0, "width": 300}))
+            .unwrap();
+        let d = p.doc().unwrap().doc.clone();
+        check(&rr.render_page(&d, &p.cache, 0, 1.0, false, &Default::default()).unwrap(), "pdf");
+    }
+
+    /// The columns the red → blue ink spans (black table edges left out).
+    fn ink_span(img: &designcraft_render::Rendered) -> (u32, u32) {
+        let cols: Vec<u32> = (0..img.width)
+            .filter(|&x| {
+                (0..img.height).any(|y| {
+                    let p = img.pixel(x, y);
+                    p[1] < 100 && p[0].max(p[2]) > 100
+                })
+            })
+            .collect();
+        (*cols.first().unwrap(), *cols.last().unwrap())
+    }
+
+    /// Mean red and blue of the red → blue ink in columns `x0..x1`.
+    fn coloured_ink(img: &designcraft_render::Rendered, x0: u32, x1: u32) -> (f64, f64) {
+        let (mut r, mut b, mut n) = (0.0, 0.0, 0.0);
+        for x in x0..x1 {
+            for y in 0..img.height {
+                let p = img.pixel(x, y);
+                if p[1] < 100 && p[0].max(p[2]) > 100 {
+                    (r, b, n) = (r + p[0] as f64, b + p[2] as f64, n + 1.0);
+                }
+            }
+        }
+        assert!(n > 20.0, "no ink in {x0}..{x1}");
+        (r / n, b / n)
+    }
+
+    #[test]
+    fn a_gradient_on_table_cell_text_spans_the_cells_text_in_pdf_as_on_screen() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false, "margins": 0})).unwrap();
+        // A gradient swatch (an off-page object's unnamed one), red → blue.
+        let shape = s.execute("frame.create", &json!({"rect": [-60, 0, -50, 10], "content": "unassigned"})).unwrap()["id"].clone();
+        s.execute("object.gradient", &json!({"ids": [shape], "stops": [{"location": 0, "color": "#ff0000"}, {"location": 100, "color": "#0000ff"}]}))
+            .unwrap();
+        let g = s.doc().unwrap().doc.item(designcraft_doc::ItemId(shape.as_u64().unwrap())).unwrap().fill.swatch.clone();
+        let r = s.execute("frame.create", &json!({"rect": [0, 0, 300, 120], "content": "text", "text": ""})).unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 0})).unwrap();
+        s.execute("table.insert", &json!({"rows": 1, "cols": 3})).unwrap();
+        // A third of the frame's width: the cell's text, red → blue.
+        let mut d: designcraft_doc::Document = (*s.doc().unwrap().doc).clone();
+        let sid = d.stories.values().find(|st| !st.tables.is_empty()).unwrap().id;
+        let t = std::sync::Arc::make_mut(d.story_mut(sid).unwrap().tables.values_mut().next().unwrap());
+        let text = &mut t.cell_mut(0, 0).unwrap().text;
+        text.insert(0, "HHHH");
+        text.format_chars(0..4, |f| {
+            f.over.fill = Some(g.clone());
+            f.over.size = Some(24.0);
+        });
+        let mut rr = designcraft_render::Renderer::new();
+        let cache = designcraft_compose::Cache::new();
+        let screen = rr.render_page(&d, &cache, 0, 1.0, false, &Default::default()).unwrap();
+        let pdf = designcraft_pdf::export_pdf(&d, &cache, &Default::default()).unwrap();
+        let mut p = crate::Session::new();
+        p.execute("file.new", &json!({"width": 300, "height": 120, "facingPages": false})).unwrap();
+        p.execute("file.place", &json!({"base64": super::super::file::base64_encode(&pdf), "name": "cell.pdf", "x": 0, "y": 0, "width": 300}))
+            .unwrap();
+        let placed = rr.render_page(&p.doc().unwrap().doc.clone(), &p.cache, 0, 1.0, false, &Default::default()).unwrap();
+        let (x0, x1) = ink_span(&screen);
+        assert!(x1 < 120, "the text stays in the first column: {x0}..{x1}");
+        let q = (x1 - x0) / 4;
+        for (what, img) in [("screen", &screen), ("pdf", &placed)] {
+            let (lr, lb) = coloured_ink(img, x0, x0 + q);
+            let (rr, rb) = coloured_ink(img, x1 + 1 - q, x1 + 1);
+            assert!(lr > lb + 50.0, "{what}: the left ink is red ({lr:.0}, {lb:.0})");
+            assert!(rb > rr + 50.0, "{what}: the right ink is blue ({rr:.0}, {rb:.0})");
+        }
+    }
+}
+
+#[cfg(test)]
+mod compose_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// A story "Ta" with the caret after "T" and 30 pt chosen for the next typing.
+    fn session() -> (Session, u64) {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 500, 200], "content": "text", "text": "Ta"})).unwrap();
+        let sid = r["story"].as_u64().unwrap();
+        s.set_tool("type");
+        s.execute("text.select", &json!({"story": sid, "anchor": 1})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"size": 30}})).unwrap();
+        (s, sid)
+    }
+
+    fn text(s: &Session, sid: u64) -> String {
+        s.doc().unwrap().doc.story(designcraft_doc::StoryId(sid)).unwrap().text.clone()
+    }
+
+    /// ⌥E shows the accent in the story, in the format it will be typed in, then I types "í":
+    /// one undo step, and the accent was never part of the document.
+    #[test]
+    fn composed_text_shows_in_the_typing_format_until_it_is_typed() {
+        let (mut s, sid) = session();
+        let r = s.execute("text.compose", &json!({"text": "´"})).unwrap();
+        assert_eq!(r["range"], json!([1, 3]));
+        assert_eq!(text(&s, sid), "T´a");
+        let size_at = |s: &Session, b| s.doc().unwrap().doc.story(designcraft_doc::StoryId(sid)).unwrap().char_format_at(b).over.size;
+        assert_eq!(size_at(&s, 2), Some(30.0), "the accent is shown in the format chosen at the caret");
+        assert_eq!(s.composition().map(|c| c.2), Some(1..3));
+        s.execute("text.compose", &json!({"text": "¨"})).unwrap();
+        assert_eq!(text(&s, sid), "T¨a", "a new composition replaces the last one");
+        s.execute("text.compose", &json!({"text": ""})).unwrap();
+        assert_eq!(text(&s, sid), "Ta");
+        assert!(s.composition().is_none());
+        s.execute("text.insert", &json!({"text": "í"})).unwrap();
+        assert_eq!(text(&s, sid), "Tía");
+        assert_eq!(size_at(&s, 2), Some(30.0), "the typing format survived the composition");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(text(&s, sid), "Ta");
+    }
+
+    /// Anything else that edits, a tool change or a drag drops the uncommitted accent.
+    #[test]
+    fn other_edits_drop_the_composed_text() {
+        for act in 0..3 {
+            let (mut s, sid) = session();
+            s.execute("text.compose", &json!({"text": "´"})).unwrap();
+            match act {
+                0 => {
+                    s.execute("text.move", &json!({"dir": "right"})).unwrap();
+                }
+                1 => s.set_tool("selection"),
+                _ => s.begin_interaction("Move").unwrap(),
+            }
+            assert_eq!(text(&s, sid), "Ta", "case {act}");
+            assert!(s.composition().is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod placeholder_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// Fill with Placeholder Text gives paragraphs of a few sentences, as InDesign's does (it was one
+    /// paragraph, and the filler ran sentences together: "interit.Ovid").
+    #[test]
+    fn placeholder_text_comes_in_paragraphs() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [36, 36, 336, 736], "content": "text", "text": ""})).unwrap();
+        s.execute("type.fillWithPlaceholder", &json!({"frame": r["id"]})).unwrap();
+        let st = s.execute("story.get", &json!({"story": r["story"]})).unwrap();
+        let text = st["text"].as_str().unwrap();
+        let paragraphs: Vec<&str> = text.split('\n').collect();
+        assert!(paragraphs.len() >= 4, "{} paragraphs", paragraphs.len());
+        for p in &paragraphs {
+            assert!(p.ends_with('.') && !p.starts_with(' '), "a paragraph of whole sentences: {p:?}");
+        }
+        assert!(!text.contains(".O") && !text.contains(".L"), "sentences are spaced: {text}");
+        assert!(st["overset"].is_null(), "nothing overset: {}", st["overset"]);
+        assert!(text.len() > 1500, "the frame is filled: {}", text.len());
     }
 }

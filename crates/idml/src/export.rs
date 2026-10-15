@@ -1667,6 +1667,7 @@ impl<'a> Ex<'a> {
                 .attr("Self", uid(pg.id.0))
                 .attr("Name", name)
                 .attr("AppliedMaster", applied.map(|s| uid(s.0)).unwrap_or_else(|| "n".into()))
+                .attr("LayoutRule", names::liquid_rule_out(pg.liquid))
                 .attr("OverrideList", overrides.join(" "))
                 .attr("GeometricBounds", format!("0 0 {} {}", num(pg.height), num(pg.width)))
                 .attr("ItemTransform", format!("1 0 0 1 {} {}", num(pg.x - ox), num(-oy)))
@@ -1774,6 +1775,14 @@ impl<'a> Ex<'a> {
             el.set("GradientFillAngle", num((-(y1 - y0)).atan2(x1 - x0).to_degrees()));
         } else if let Some(a) = it.fill.gradient_angle {
             el.set("GradientFillAngle", num(a));
+        }
+        // The same on the stroke.
+        if let Some([x0, y0, x1, y1]) = it.stroke.gradient_vector {
+            el.set("GradientStrokeStart", format!("{} {}", num(x0), num(y0)));
+            el.set("GradientStrokeLength", num((x1 - x0).hypot(y1 - y0)));
+            el.set("GradientStrokeAngle", num((-(y1 - y0)).atan2(x1 - x0).to_degrees()));
+        } else if let Some(a) = it.stroke.gradient_angle {
+            el.set("GradientStrokeAngle", num(a));
         }
         self.stroke_attrs(&mut el, &it.stroke);
         // Corner options: map path-order corners to the named corners by geometry.
@@ -1911,6 +1920,11 @@ impl<'a> Ex<'a> {
                 .attr("ImportPolicy", "NoAutoImport")
                 .attr("ExportPolicy", "NoAutoExport"),
         );
+        if is_pdf && asset.page > 0 {
+            // PDF Import Options: the page is 1-based; page 1 (the default) needs no element, as
+            // InDesign omits it too.
+            el.push(El::new("PDFAttribute").attr("PageNumber", asset.page.saturating_add(1).to_string()));
+        }
         el
     }
 

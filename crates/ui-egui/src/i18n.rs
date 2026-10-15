@@ -4,6 +4,7 @@
 use std::{collections::HashMap, sync::OnceLock};
 
 mod ar;
+mod de;
 mod it;
 mod ja;
 mod ka;
@@ -74,6 +75,102 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Frame Edges", ["Rahmenkanten", "Bords du bloc", "Bordes del marco", "フレーム枠", "框架边缘"]),
     ("Rulers", ["Lineale", "Règles", "Reglas", "定規", "标尺"]),
     ("Hidden Characters", ["Verborgene Zeichen", "Caractères masqués", "Caracteres ocultos", "制御文字", "隐藏字符"]),
+    ("Flex Layout", ["Flex-Layout", "Mise en page flexible", "Diseño flexible", "フレックスレイアウト", "弹性布局"]),
+    (
+        "Create Flex Layout",
+        ["Flex-Layout erstellen", "Créer une mise en page flexible", "Crear diseño flexible", "フレックスレイアウトを作成", "创建弹性布局"],
+    ),
+    (
+        "Add to Flex Layout",
+        [
+            "Zu Flex-Layout hinzufügen",
+            "Ajouter à la mise en page flexible",
+            "Añadir a diseño flexible",
+            "フレックスレイアウトに追加",
+            "添加到弹性布局",
+        ],
+    ),
+    (
+        "Convert to Flex Layout",
+        [
+            "In Flex-Layout umwandeln",
+            "Convertir en mise en page flexible",
+            "Convertir en diseño flexible",
+            "フレックスレイアウトに変換",
+            "转换为弹性布局",
+        ],
+    ),
+    (
+        "Remove Flex Layout",
+        ["Flex-Layout entfernen", "Supprimer la mise en page flexible", "Quitar diseño flexible", "フレックスレイアウトを削除", "移除弹性布局"],
+    ),
+    (
+        "Show Flex Controls",
+        [
+            "Flex-Steuerelemente einblenden",
+            "Afficher les commandes flexibles",
+            "Mostrar controles flexibles",
+            "フレックスコントロールを表示",
+            "显示弹性控件",
+        ],
+    ),
+    (
+        "Flex Layout Options",
+        ["Flex-Layout-Optionen", "Options de mise en page flexible", "Opciones de diseño flexible", "フレックスレイアウトオプション", "弹性布局选项"],
+    ),
+    (
+        "Reorder in Flex Layout",
+        [
+            "Im Flex-Layout umordnen",
+            "Réorganiser dans la mise en page flexible",
+            "Reordenar en diseño flexible",
+            "フレックスレイアウト内で並べ替え",
+            "在弹性布局中重新排序",
+        ],
+    ),
+    ("Flex Start", ["Flex-Anfang", "Début flexible", "Inicio flexible", "フレックス開始", "弹性起点"]),
+    ("Flex End", ["Flex-Ende", "Fin flexible", "Fin flexible", "フレックス終了", "弹性终点"]),
+    ("Space Between", ["Abstand dazwischen", "Espace entre", "Espacio entre", "間隔を均等", "两端对齐"]),
+    ("Space Around", ["Abstand ringsum", "Espace autour", "Espacio alrededor", "周囲に間隔", "周围间距"]),
+    ("Space Evenly", ["Gleichmäßig verteilen", "Espace uniforme", "Espacio uniforme", "均等に配置", "均匀分布"]),
+    ("Row", ["Zeile", "Ligne", "Fila", "行", "行"]),
+    ("Reverse Row", ["Zeile umgekehrt", "Ligne inversée", "Fila invertida", "行（逆方向）", "反向行"]),
+    ("Reverse Column", ["Spalte umgekehrt", "Colonne inversée", "Columna invertida", "列（逆方向）", "反向列"]),
+    ("Wrap Content", ["Inhalt umbrechen", "Renvoyer le contenu à la ligne", "Ajustar contenido", "コンテンツを折り返す", "内容换行"]),
+    ("Spacing", ["Abstände", "Espacement", "Espaciado", "間隔", "间距"]),
+    ("Horizontal Spacing", ["Horizontaler Abstand", "Espacement horizontal", "Espaciado horizontal", "水平方向の間隔", "水平间距"]),
+    ("Vertical Spacing", ["Vertikaler Abstand", "Espacement vertical", "Espaciado vertical", "垂直方向の間隔", "垂直间距"]),
+    ("Constrain proportions", ["Proportionen beibehalten", "Conserver les proportions", "Restringir proporciones", "縦横比を固定", "约束比例"]),
+    ("Auto", ["Automatisch", "Automatique", "Automático", "自動", "自动"]),
+    ("W:", ["B:", "L :", "An.:", "幅:", "宽:"]),
+    ("H:", ["H:", "H :", "Al.:", "高さ:", "高:"]),
+    ("Number:", ["Anzahl:", "Nombre :", "Número:", "数:", "数量："]),
+    ("Gutter:", ["Steg:", "Gouttière :", "Medianil:", "間隔:", "栏间距："]),
+    ("Fit Guides to:", ["Hilfslinien einpassen in:", "Ajuster les repères à :", "Ajustar guías a:", "ガイドの適用先:", "参考线适合："]),
+    ("Top:", ["Oben:", "Haut :", "Superior:", "天:", "上："]),
+    ("Bottom:", ["Unten:", "Bas :", "Inferior:", "地:", "下："]),
+    ("Inside:", ["Innen:", "Intérieur :", "Interior:", "ノド:", "内："]),
+    ("Outside:", ["Außen:", "Extérieur :", "Exterior:", "小口:", "外："]),
+    ("Left:", ["Links:", "Gauche :", "Izquierda:", "左:", "左："]),
+    ("Right:", ["Rechts:", "Droite :", "Derecha:", "右:", "右："]),
+    ("Paths:", ["Pfade:", "Tracés :", "Trazados:", "パス:", "路径："]),
+    ("Pathfinder:", ["Pathfinder:", "Pathfinder :", "Buscatrazos:", "パスファインダー:", "路径查找器："]),
+    ("Convert Shape:", ["Form konvertieren:", "Convertir la forme :", "Convertir forma:", "シェイプを変換:", "转换形状："]),
+    ("Convert Point:", ["Punkt konvertieren:", "Convertir le point :", "Convertir punto:", "ポイントを変換:", "转换点："]),
+    ("Join Path", ["Pfad zusammenfügen", "Joindre le tracé", "Unir trazado", "パスを連結", "连接路径"]),
+    ("Open Path", ["Pfad öffnen", "Ouvrir le tracé", "Abrir trazado", "パスをオープン", "开放路径"]),
+    ("Plain", ["Einfach", "Simple", "Normal", "プレーン", "普通"]),
+    ("Symmetrical", ["Symmetrisch", "Symétrique", "Simétrico", "対称", "对称"]),
+    (
+        "The stroke isn't a gradient.",
+        [
+            "Die Kontur ist kein Verlauf.",
+            "Le contour n’est pas un dégradé.",
+            "El trazo no es un degradado.",
+            "線はグラデーションではありません。",
+            "描边不是渐变。",
+        ],
+    ),
     ("Reverse Path", ["Pfadrichtung umkehren", "Inverser le tracé", "Invertir trazado", "パスの方向反転", "反转路径"]),
     ("Set Anchor", ["Ankerpunkt festlegen", "Définir le point d’ancrage", "Definir punto de ancla", "アンカーポイントを設定", "设置锚点"]),
     ("Clear", ["Löschen", "Effacer", "Borrar", "消去", "清除"]),
@@ -3035,6 +3132,7 @@ fn column(lang: &str) -> Option<usize> {
 
 /// `s` in `lang` (English, or the string itself, when there's no translation).
 pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
+    static GERMAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static JAPANESE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static TRANSLATIONS: OnceLock<HashMap<&'static str, [&'static str; 5]>> = OnceLock::new();
     static ARABIC: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
@@ -3045,8 +3143,13 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     if lang == "ar" {
         return ARABIC.get_or_init(|| ar::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
     }
-    // The Japanese table covers the whole interface; the shared table's Japanese column is the fallback
-    // for keys added there after it.
+    // The German and Japanese tables cover the whole interface; the shared table's German and Japanese
+    // columns are the fallback for keys added there after them.
+    if lang == "de"
+        && let Some(text) = GERMAN.get_or_init(|| de::TABLE.iter().copied().collect()).get(s).copied()
+    {
+        return text;
+    }
     if lang == "ja"
         && let Some(text) = JAPANESE.get_or_init(|| ja::TABLE.iter().copied().collect()).get(s).copied()
     {
@@ -3119,12 +3222,15 @@ mod tests {
     fn cached_lookup_preserves_every_translation_across_language_switches() {
         for (key, translations) in TABLE {
             for (lang, expected) in ["de", "fr", "es", "ja", "zh"].into_iter().zip(translations) {
-                // `ja::TABLE` translates the whole interface and wins over the shared Japanese column.
-                if lang != "ja" {
+                // `de::TABLE` and `ja::TABLE` translate the whole interface and win over the shared columns.
+                if lang != "de" && lang != "ja" {
                     assert_eq!(tr(lang, key), *expected, "{lang}: {key}");
                 }
             }
             assert_eq!(tr("", key), *key);
+        }
+        for (key, expected) in de::TABLE {
+            assert_eq!(tr("de", key), *expected, "de: {key}");
         }
         for (key, expected) in ar::TABLE {
             assert_eq!(tr("ar", key), *expected, "ar: {key}");

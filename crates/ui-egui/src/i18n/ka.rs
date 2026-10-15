@@ -1826,4 +1826,9 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Object & Layout", "ობიექტი და განლაგება"),
     ("Editorial", "სარედაქციო"),
     ("Essentials Classic", "ძირითადი (კლასიკური)"),
+    ("Add to Flex Layout", "მოქნილ განლაგებაში დამატება"),
+    ("Convert to Flex Layout", "მოქნილ განლაგებად გარდაქმნა"),
+    ("Remove Flex Layout", "მოქნილი განლაგების წაშლა"),
+    ("Show Flex Controls", "მოქნილი მართვის ელემენტების ჩვენება"),
+    ("Export PowerPoint…", "PowerPoint-ად ექსპორტი…"),
 ];
