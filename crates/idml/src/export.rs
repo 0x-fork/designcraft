@@ -1671,6 +1671,26 @@ impl<'a> Ex<'a> {
                 .attr("GeometricBounds", format!("0 0 {} {}", num(pg.height), num(pg.width)))
                 .attr("ItemTransform", format!("1 0 0 1 {} {}", num(pg.x - ox), num(-oy)))
                 .child(margin_el(pg));
+            let mut pe = pe;
+            // Ruler guides, measured from the spread's top left (RulerOrigin is SpreadOrigin).
+            let left = sp.pages.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+            let left = if left.is_finite() { left } else { 0.0 };
+            for g in &pg.guides {
+                let vertical = g.orientation == designcraft_doc::Orientation::Vertical;
+                let mut ge = El::new("Guide")
+                    .attr("Self", format!("{}g{}", uid(pg.id.0), pe.elements().count()))
+                    .attr("Orientation", if vertical { "Vertical" } else { "Horizontal" })
+                    .attr("Location", num(if vertical { g.position - left } else { g.position }))
+                    .attr("FitToPage", bool_s(!g.spread))
+                    .attr("ViewThreshold", "5")
+                    .attr("Locked", bool_s(g.locked))
+                    .attr("PageIndex", (first_page + i).to_string())
+                    .attr("GuideType", "Ruler");
+                if let Some(l) = g.layer {
+                    ge.set("ItemLayer", uid(l.0));
+                }
+                pe.push(ge);
+            }
             el.push(pe);
         }
         let origin = Affine::translate((-ox, -oy));

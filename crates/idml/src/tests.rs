@@ -2218,3 +2218,54 @@ fn frame_preference_property_color_resolves_for_frames_and_object_styles() {
     assert_eq!(colors, vec!["Near", "Near", "Far", designcraft_color::swatch::NONE]);
     assert_eq!(d.styles.object_style("Child").unwrap().text_frame.as_ref().unwrap().column_rule_color, "Near");
 }
+
+/// A two-page spread with ruler guides on its pages (and one on the parent), in `origin` ruler
+/// coordinates.
+fn guides_package(origin: &str) -> Vec<u8> {
+    let prefs = PREFS.replace("</idPkg:Preferences>", &format!(r#"<ViewPreference RulerOrigin="{origin}"/></idPkg:Preferences>"#));
+    let spread = SPREAD.replace(
+        r#"<Page Self="p2" AppliedMaster="m1" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350"/>"#,
+        r#"<Page Self="p2" AppliedMaster="m1" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 0 -350">
+      <Guide Self="g1" Orientation="Vertical" Location="40" FitToPage="true" ItemLayer="L1" Locked="true"/>
+      <Guide Self="g2" Orientation="Horizontal" Location="100" FitToPage="false"/>
+    </Page>"#,
+    );
+    let master = MASTER.replace(
+        r#"<Page Self="mp1" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350"/>"#,
+        r#"<Page Self="mp1" GeometricBounds="0 0 700 500" ItemTransform="1 0 0 1 -500 -350"><Guide Self="mg" Orientation="Vertical" Location="84"/></Page>"#,
+    );
+    zip_files(&[
+        ("designmap.xml", DESIGNMAP),
+        ("Resources/Graphic.xml", GRAPHIC),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", &prefs),
+        ("MasterSpreads/MasterSpread_m1.xml", &master),
+        ("Spreads/Spread_sp1.xml", &spread),
+        ("Stories/Story_s1.xml", STORY),
+    ])
+}
+
+/// Ruler guides come in from IDML (they were dropped): on their page, measured from the ruler
+/// origin, with Fit to Page, Locked and their layer; parent pages' too. They go out again.
+#[test]
+fn ruler_guides_import_and_round_trip() {
+    use designcraft_doc::Orientation::{Horizontal, Vertical};
+    let guides = |d: &Document| {
+        let p = &d.spreads[0].pages[1];
+        p.guides.iter().map(|g| (g.orientation, g.position, g.spread, g.locked, g.layer.is_some())).collect::<Vec<_>>()
+    };
+    // The second page starts at x 500 in our spread coordinates.
+    let d = import_idml(&guides_package("PageOrigin")).unwrap();
+    assert_eq!(guides(&d), [(Vertical, 540.0, false, true, true), (Horizontal, 100.0, true, false, false)]);
+    let d = import_idml(&guides_package("SpineOrigin")).unwrap();
+    assert_eq!(guides(&d)[0].1, 540.0, "the spine is the second page's left edge");
+    let d = import_idml(&guides_package("SpreadOrigin")).unwrap();
+    assert_eq!(guides(&d)[0].1, 40.0);
+    assert_eq!(d.parents[0].pages[0].guides.len(), 1, "a parent page's guide");
+    assert_eq!(d.parents[0].pages[0].guides[0].position, 84.0);
+    // Round trip: written under each page, read back where they were.
+    let d = import_idml(&guides_package("PageOrigin")).unwrap();
+    let back = import_idml(&export_idml(&d)).unwrap();
+    assert_eq!(guides(&back), guides(&d));
+    assert_eq!(back.parents[0].pages[0].guides.len(), 1);
+}
