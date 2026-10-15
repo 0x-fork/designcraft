@@ -16,6 +16,8 @@ use crate::{DOM_VERSION, MIMETYPE, base64_encode};
 
 const PKG_NS: &str = "http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging";
 const NO_PARA_ID: &str = "ParagraphStyle/$ID/[No paragraph style]";
+const TOC_STYLE_ID: &str = "TOCStyle/Table of Contents";
+const TOC_STYLE_NAME: &str = "Table of Contents";
 const NO_CHAR_ID: &str = "CharacterStyle/$ID/[No character style]";
 
 /// Export options.
@@ -33,10 +35,17 @@ impl Default for ExportOptions {
 }
 
 /// Export a document as an IDML package (ZIP bytes).
+///
+/// IDML has one sort key per index topic path. If native references disagree, the first
+/// reference serialized for that path supplies its key, including an empty/default key.
+/// Later references cannot overwrite it; no synthetic topic names or sort keys are created.
+/// Consistent references retain their keys. Conflicting per-reference keys cannot all survive
+/// this topic-level representation. This policy also applies to [`export_idml_with`].
 pub fn export_idml(doc: &Document) -> Vec<u8> {
     export_idml_with(doc, &ExportOptions::default())
 }
 
+/// Export with options, using the index sort-key conflict policy of [`export_idml`].
 pub fn export_idml_with(doc: &Document, opts: &ExportOptions) -> Vec<u8> {
     let mut ex = Ex::new(doc, opts);
     let parts = ex.build();
@@ -133,8 +142,8 @@ struct Ex<'a> {
     threads: HashMap<u64, (Option<u64>, Option<u64>)>,
     /// Cross-reference sources written so far: (Self, target anchor).
     xref_sources: Vec<(String, u64)>,
-    /// Index topics (paths) and their See / See also cross-references.
-    index_topics: BTreeSet<Vec<String>>,
+    /// Index topic path → first serialized sort key; See / See also cross-references.
+    index_topics: BTreeMap<Vec<String>, String>,
     index_xrefs: Vec<(Vec<String>, &'static str, String)>,
 }
 
@@ -148,7 +157,7 @@ impl<'a> Ex<'a> {
             fonts: BTreeMap::new(),
             threads: HashMap::new(),
             xref_sources: Vec::new(),
-            index_topics: BTreeSet::new(),
+            index_topics: BTreeMap::new(),
             index_xrefs: Vec::new(),
         };
         ex.assign_swatch_ids();
@@ -1043,7 +1052,44 @@ impl<'a> Ex<'a> {
         let mut ro = El::new("RootObjectStyleGroup").attr("Self", self.fresh());
         og.emit(&mut ro, "ObjectStyleGroup", "");
         root.push(ro);
+        if let Some(toc) = d.toc.as_ref().filter(|t| d.story(t.story).is_some()) {
+            root.push(self.toc_style_el(toc));
+        }
         document(&root)
+    }
+
+    /// The document's table of contents as a TOC style; its story names it in `AppliedTOCStyle`.
+    fn toc_style_el(&mut self, toc: &designcraft_doc::Toc) -> El {
+        let para = |n: &str| names::style_self("ParagraphStyle", PARA_BUILTINS, n);
+        let mut el = El::new("TOCStyle")
+            .attr("Self", TOC_STYLE_ID)
+            .attr("Name", TOC_STYLE_NAME)
+            .attr("Title", &toc.title)
+            .attr("TitleStyle", para(toc.title_style.as_deref().unwrap_or("TOC Title")))
+            .attr("RunIn", "false")
+            .attr("IncludeHidden", "false")
+            .attr("IncludeBookDocuments", "false")
+            .attr("CreatePdfBookmarks", "false");
+        for e in &toc.entries {
+            let format = e.entry_style.clone().unwrap_or_else(|| format!("TOC Level {}", e.level));
+            let position = match e.page_number {
+                _ if !toc.page_numbers => "NoPageNumber",
+                designcraft_doc::TocPageNumber::After => "AfterEntry",
+                designcraft_doc::TocPageNumber::Before => "BeforeEntry",
+                designcraft_doc::TocPageNumber::None => "NoPageNumber",
+            };
+            el.push(
+                El::new("TOCStyleEntry")
+                    .attr("Self", self.fresh())
+                    .attr("Name", names::style_name_out(PARA_BUILTINS, &e.style))
+                    .attr("FormatStyle", para(&format))
+                    .attr("Level", e.level)
+                    .attr("PageNumberPosition", position)
+                    .attr("Separator", names::toc_separator_out(e.separator.as_deref().unwrap_or("\t")))
+                    .attr("Sort", "false"),
+            );
+        }
+        el
     }
 
     fn char_attrs(&mut self, el: &mut El, props: &mut Vec<El>, a: &CharAttrs) {
@@ -1117,6 +1163,9 @@ impl<'a> Ex<'a> {
         }
         if let Some(v) = a.stroke_weight {
             el.set("StrokeWeight", num(v));
+        }
+        if let Some(v) = a.stroke_behind_fill {
+            el.set("StrokeAlignment", if v { "OutsideAlignment" } else { "CenterAlignment" });
         }
         if let Some(v) = a.capitalization {
             el.set("Capitalization", names::caps_out(v));
@@ -1397,7 +1446,7 @@ impl<'a> Ex<'a> {
         n!(drop_cap_lines, "DropCapLines");
         n!(drop_cap_chars, "DropCapCharacters");
         if a.drop_cap_align_left.is_some() || a.drop_cap_scale_descenders.is_some() {
-            let d = designcraft_doc::ParaProps::default();
+            let d = parent.map(|name| self.d.styles.resolve_para_style(name).0).unwrap_or_default();
             let bits = u32::from(a.drop_cap_align_left.unwrap_or(d.drop_cap_align_left))
                 | u32::from(a.drop_cap_scale_descenders.unwrap_or(d.drop_cap_scale_descenders)) << 1;
             el.set("DropcapDetail", bits);
@@ -1613,14 +1662,36 @@ impl<'a> Ex<'a> {
         for (i, pg) in sp.pages.iter().enumerate() {
             let name = if master { sp.parent.as_ref().map(|i| i.prefix.clone()).unwrap_or_default() } else { d.page_name(first_page + i) };
             let applied = if master { based_on } else { pg.parent };
+            let overrides: Vec<String> = pg.overridden.iter().map(|i| uid(i.0)).collect();
             let pe = El::new("Page")
                 .attr("Self", uid(pg.id.0))
                 .attr("Name", name)
                 .attr("AppliedMaster", applied.map(|s| uid(s.0)).unwrap_or_else(|| "n".into()))
-                .attr("OverrideList", "")
+                .attr("LayoutRule", names::liquid_rule_out(pg.liquid))
+                .attr("OverrideList", overrides.join(" "))
                 .attr("GeometricBounds", format!("0 0 {} {}", num(pg.height), num(pg.width)))
                 .attr("ItemTransform", format!("1 0 0 1 {} {}", num(pg.x - ox), num(-oy)))
                 .child(margin_el(pg));
+            let mut pe = pe;
+            // Ruler guides, measured from the spread's top left (RulerOrigin is SpreadOrigin).
+            let left = sp.pages.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+            let left = if left.is_finite() { left } else { 0.0 };
+            for g in &pg.guides {
+                let vertical = g.orientation == designcraft_doc::Orientation::Vertical;
+                let mut ge = El::new("Guide")
+                    .attr("Self", format!("{}g{}", uid(pg.id.0), pe.elements().count()))
+                    .attr("Orientation", if vertical { "Vertical" } else { "Horizontal" })
+                    .attr("Location", num(if vertical { g.position - left } else { g.position }))
+                    .attr("FitToPage", bool_s(!g.spread))
+                    .attr("ViewThreshold", "5")
+                    .attr("Locked", bool_s(g.locked))
+                    .attr("PageIndex", (first_page + i).to_string())
+                    .attr("GuideType", "Ruler");
+                if let Some(l) = g.layer {
+                    ge.set("ItemLayer", uid(l.0));
+                }
+                pe.push(ge);
+            }
             el.push(pe);
         }
         let origin = Affine::translate((-ox, -oy));
@@ -1649,6 +1720,9 @@ impl<'a> Ex<'a> {
             _ => "Rectangle",
         };
         let mut el = El::new(tag).attr("Self", uid(it.id.0));
+        if let Some(o) = it.overrides {
+            el.set("OverriddenPageItem", uid(o.0));
+        }
         if let Content::Text(t) = &it.content
             && let Some(pt) = &t.options.path
         {
@@ -1665,7 +1739,7 @@ impl<'a> Ex<'a> {
                     .attr("TextAlignment", names::path_align_out(pt.align))
                     .attr("FlipPathEffect", if pt.flip { "Flipped" } else { "NotFlipped" })
                     .attr("StartBracket", num(pt.start))
-                    .attr("EndBracket", num(len)),
+                    .attr("EndBracket", num(pt.end.map_or(len, |e| e.min(len)))),
             );
         } else if let Content::Text(t) = &it.content {
             let (prev, next) = self.threads.get(&it.id.0).copied().unwrap_or((None, None));
@@ -1701,6 +1775,14 @@ impl<'a> Ex<'a> {
             el.set("GradientFillAngle", num((-(y1 - y0)).atan2(x1 - x0).to_degrees()));
         } else if let Some(a) = it.fill.gradient_angle {
             el.set("GradientFillAngle", num(a));
+        }
+        // The same on the stroke.
+        if let Some([x0, y0, x1, y1]) = it.stroke.gradient_vector {
+            el.set("GradientStrokeStart", format!("{} {}", num(x0), num(y0)));
+            el.set("GradientStrokeLength", num((x1 - x0).hypot(y1 - y0)));
+            el.set("GradientStrokeAngle", num((-(y1 - y0)).atan2(x1 - x0).to_degrees()));
+        } else if let Some(a) = it.stroke.gradient_angle {
+            el.set("GradientStrokeAngle", num(a));
         }
         self.stroke_attrs(&mut el, &it.stroke);
         // Corner options: map path-order corners to the named corners by geometry.
@@ -1838,6 +1920,11 @@ impl<'a> Ex<'a> {
                 .attr("ImportPolicy", "NoAutoImport")
                 .attr("ExportPolicy", "NoAutoExport"),
         );
+        if is_pdf && asset.page > 0 {
+            // PDF Import Options: the page is 1-based; page 1 (the default) needs no element, as
+            // InDesign omits it too.
+            el.push(El::new("PDFAttribute").attr("PageNumber", asset.page.saturating_add(1).to_string()));
+        }
         el
     }
 
@@ -1845,12 +1932,12 @@ impl<'a> Ex<'a> {
     fn index_el(&mut self) -> El {
         let mut topics = self.index_topics.clone();
         for (_, _, target) in &self.index_xrefs {
-            topics.insert(vec![target.clone()]);
+            topics.entry(vec![target.clone()]).or_default();
         }
-        fn build(ex: &mut Ex, topics: &BTreeSet<Vec<String>>, prefix: &[String]) -> Vec<El> {
+        fn build(ex: &mut Ex, topics: &BTreeMap<Vec<String>, String>, prefix: &[String]) -> Vec<El> {
             let mut out = Vec::new();
-            for t in topics.iter().filter(|t| t.len() == prefix.len() + 1 && t.starts_with(prefix)) {
-                let mut el = El::new("Topic").attr("Self", topic_self(t)).attr("SortOrder", "").attr("Name", t.last().map_or("", String::as_str));
+            for (t, sort) in topics.iter().filter(|(t, _)| t.len() == prefix.len() + 1 && t.starts_with(prefix)) {
+                let mut el = El::new("Topic").attr("Self", topic_self(t)).attr("SortOrder", sort).attr("Name", t.last().map_or("", String::as_str));
                 for (from, kind, target) in ex.index_xrefs.clone() {
                     if from == *t {
                         el.push(
@@ -1952,7 +2039,12 @@ impl<'a> Ex<'a> {
     // ---------- stories ----------
 
     fn story_el(&mut self, s: &Story) -> El {
-        let mut el = El::new("Story").attr("Self", uid(s.id.0)).attr("AppliedTOCStyle", "n").attr("TrackChanges", "false").attr("StoryTitle", "$ID/");
+        let toc = self.d.toc.as_ref().is_some_and(|t| t.story == s.id);
+        let mut el = El::new("Story")
+            .attr("Self", uid(s.id.0))
+            .attr("AppliedTOCStyle", if toc { TOC_STYLE_ID } else { "n" })
+            .attr("TrackChanges", "false")
+            .attr("StoryTitle", "$ID/");
         el.push(
             El::new("StoryPreference")
                 .attr("OpticalMarginAlignment", "false")
@@ -2105,7 +2197,9 @@ impl<'a> Ex<'a> {
                         if let Some(r) = s.index_refs.get(k).filter(|r| !r.topics.is_empty()) {
                             use designcraft_doc::index::IndexRange as R;
                             for n in 1..=r.topics.len() {
-                                self.index_topics.insert(r.topics[..n].to_vec());
+                                // A shared topic has one key: keep the first reference's
+                                // value (even empty), rather than inventing a merged key.
+                                self.index_topics.entry(r.topics[..n].to_vec()).or_insert_with(|| r.sort.get(n - 1).cloned().unwrap_or_default());
                             }
                             let (kind, limit) = match &r.range {
                                 R::CurrentPage => (Some("CurrentPage"), None),

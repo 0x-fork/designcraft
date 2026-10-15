@@ -7,9 +7,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod atomic;
 pub mod cmd;
 pub mod dtd;
+pub mod file_access;
 pub mod guard;
+pub mod io;
 pub mod links;
 pub mod math;
 pub mod recovery;
@@ -95,6 +99,9 @@ pub struct DocState {
     /// Editing parent spreads (Pages panel double-click on a parent).
     pub editing_parents: bool,
     pub uid: u64,
+    /// Recovery entries this state actually opened or published, for repeated-open and cleanup.
+    /// Bounded, deduplicated checkpoint addresses; never inferred from uid alone.
+    pub(crate) recovery_entries: Vec<(std::path::PathBuf, u64)>,
     /// Unfilled document while data-merge preview is showing a record. Not saved.
     pub preview_stash: Option<Arc<Document>>,
     /// 1-based record currently previewed.
@@ -108,6 +115,16 @@ pub struct DocState {
 /// session ended.
 #[derive(Debug)]
 pub struct FontScope(pub u32);
+
+/// A graphic loaded in the place cursor (`place.load`, File › Place with no frame to fill).
+#[derive(Clone, Copy, Debug)]
+pub struct LoadedGraphic {
+    pub asset: designcraft_doc::AssetId,
+    /// Natural size in points.
+    pub size: (f64, f64),
+    /// Image Import Options › Crop to: the box of the graphic a new frame shows (x, y, w, h).
+    pub crop: Option<(f64, f64, f64, f64)>,
+}
 
 impl Drop for FontScope {
     fn drop(&mut self) {
@@ -139,6 +156,7 @@ impl DocState {
             interaction: None,
             editing_parents: false,
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            recovery_entries: Vec::new(),
             preview_stash: None,
             preview_record: None,
             fonts: None,
@@ -193,6 +211,8 @@ pub struct Prefs {
     pub rich_black_output: bool,
     /// Font menu favourites (family names).
     pub favorite_fonts: Vec<String>,
+    /// Fonts picked in the font menus, most recent first (shown at the menus' top).
+    pub recent_fonts: Vec<String>,
     /// Preferences › Type › Show Font Names in English: the font menus show CJK families by their
     /// English names instead of their native ones. Documents store the English name either way.
     pub show_font_names_in_english: bool,
@@ -209,6 +229,9 @@ pub struct Prefs {
     pub show_note_anchors: bool,
     /// Preferences › File Handling: minutes between document recovery saves.
     pub recovery_minutes: f64,
+    /// Preferences › File Handling › Create Links When Placing Text Files: placed text files are
+    /// linked (Links panel) unless `file.place` says otherwise.
+    pub link_text_files: bool,
 }
 
 /// A starter autocorrect list (common English typing slips).
@@ -249,6 +272,7 @@ impl Default for Prefs {
             highlight_substituted_fonts: true,
             rich_black_output: false,
             favorite_fonts: Vec::new(),
+            recent_fonts: Vec::new(),
             show_font_names_in_english: false,
             smart_text_reflow: true,
             autocorrect: false,
@@ -256,6 +280,7 @@ impl Default for Prefs {
             show_added_text: true,
             show_note_anchors: true,
             recovery_minutes: 0.5,
+            link_text_files: false,
         }
     }
 }
@@ -267,6 +292,7 @@ pub struct Session {
     pub cache: Arc<Cache>,
     pub(crate) tool: Box<dyn designcraft_tools::Tool>,
     pub journal: Vec<(String, Value)>,
+    pub(crate) find_context: Option<cmd::find::FindContext>,
     pub clipboard: Option<Arc<Document>>,
     /// Crash-recovery folder (the app sets it; saving or closing a document removes its entry).
     pub recovery_dir: Option<std::path::PathBuf>,
@@ -274,8 +300,8 @@ pub struct Session {
     pub text_clipboard: Option<(Arc<designcraft_doc::Story>, String)>,
     /// Requests for the UI (dialogs, view changes) produced by tools/commands.
     pub ui_requests: Vec<UiRequest>,
-    /// Graphic loaded in the place cursor: (asset, natural size in points).
-    pub loaded: Option<(designcraft_doc::AssetId, (f64, f64))>,
+    /// Graphic loaded in the place cursor.
+    pub loaded: Option<LoadedGraphic>,
     pub(crate) untitled: u32,
     /// Transforms applied to the current selection, oldest first (Transform Again / Sequence
     /// Again), with the selection they were applied to and whether the last one came from a
@@ -291,6 +317,9 @@ pub struct Session {
     pub book: Option<cmd::book::Book>,
     /// Content Collector conveyor: collected objects as snippets (name, bytes).
     pub conveyor: Vec<(String, Vec<u8>)>,
+    /// Linked text files checked by the Links panel: path → the size and modification time the
+    /// file had and the hash of its contents then, so a file touched but not changed is read once.
+    pub(crate) text_link_checks: std::collections::HashMap<String, (designcraft_doc::Fingerprint, String)>,
 }
 
 impl Default for Session {
@@ -309,9 +338,11 @@ impl Session {
             cache: Arc::new(Cache::new()),
             tool: designcraft_tools::create("selection"),
             journal: vec![],
+            find_context: None,
             clipboard: None,
             recovery_dir: None,
             text_clipboard: None,
+            text_link_checks: Default::default(),
             ui_requests: vec![],
             loaded: None,
             transforms: Default::default(),
@@ -368,12 +399,24 @@ impl Session {
     pub fn doc_mut(&mut self) -> Result<&mut DocState> {
         self.active_mut().ok_or(EngineError::NoDocument)
     }
+    /// Release the transient Find/Change domain when its caller starts or closes a search.
+    pub fn reset_find_scope(&mut self) {
+        self.find_context = None;
+    }
+
+    fn discard_stale_find_scope(&mut self) {
+        if self.find_context.as_ref().is_some_and(|c| self.active().is_none_or(|st| !c.is_current(st))) {
+            self.reset_find_scope();
+        }
+    }
+
     pub fn set_active(&mut self, i: usize) {
         if i < self.docs.len() && self.active != Some(i) {
             // The composition belongs to the document it shows in.
             if let Err(e) = self.end_composition() {
                 log::warn!("ending the IME composition: {e}");
             }
+            self.reset_find_scope();
             self.stop_data_preview();
             self.active = Some(i);
         }
@@ -382,6 +425,7 @@ impl Session {
         if let Err(e) = self.end_composition() {
             log::warn!("ending the IME composition: {e}");
         }
+        self.reset_find_scope();
         self.stop_data_preview();
         self.docs.push(d);
         self.active = Some(self.docs.len() - 1);
@@ -400,10 +444,12 @@ impl Session {
             self.stop_data_preview();
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let (Some(dir), Some(d)) = (&self.recovery_dir, self.docs.get(i)) {
-            recovery::discard(dir, d.uid);
+        {
+            let recovery_dir = self.recovery_dir.clone();
+            recovery::discard_document(self, i, recovery_dir.as_deref());
         }
         if i < self.docs.len() {
+            self.reset_find_scope();
             self.docs.remove(i);
             self.active = if self.docs.is_empty() { None } else { Some(i.min(self.docs.len() - 1)) };
         }
@@ -440,6 +486,8 @@ impl Session {
         if id != "data.preview" && (spec.undoable || spec.journal) {
             self.stop_data_preview();
         }
+        // Preview restoration can replace the document before a Find handler resolves bounds.
+        self.discard_stale_find_scope();
         let before = self.active().map(|d| (d.uid, d.doc.clone()));
         let r = (spec.run)(self, params)?;
         // Undo, redo or deleting layers can take the active layer away: new objects would land on
@@ -477,6 +525,7 @@ impl Session {
         if spec.journal {
             self.journal.push((id.to_string(), params.clone()));
         }
+        self.discard_stale_find_scope();
         Ok(r)
     }
 
@@ -560,10 +609,12 @@ impl Session {
         let mut sel = st.selection.clone();
         let r = f(&mut doc, &mut sel)?;
         crate::cmd::sync_placeholders(&mut doc);
+        crate::cmd::flex::sync(&mut doc);
         doc.sync_endnote_story();
         st.doc = Arc::new(doc);
         st.selection = sel;
         st.bump_revision();
+        self.reset_find_scope();
         Ok(r)
     }
 }
@@ -581,8 +632,12 @@ pub(crate) use push_undo as record_undo;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_file_guard;
+#[cfg(test)]
 mod tests_idml;
 #[cfg(test)]
 mod tests_ime;
+#[cfg(test)]
+mod tests_roots;
 #[cfg(test)]
 mod tests_table;
