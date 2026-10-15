@@ -1574,6 +1574,10 @@ pub fn paragraph_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             let _ = app.run("type.para", json!({"attrs": {"gridAlign": if grid { "allLines" } else { "none" }}}));
         }
     });
+    let mut optical = p["opticalMargin"].as_bool().unwrap_or(false);
+    if ui.checkbox(&mut optical, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Optical Margin Alignment"))).changed() {
+        let _ = app.run("type.para", json!({"attrs": {"opticalMargin": optical}}));
+    }
     ui.horizontal(|ui| {
         caption(ui, crate::i18n::tr(&app.ui.language, "Composer"));
         let single = p["composer"].as_str() == Some("singleLine");
