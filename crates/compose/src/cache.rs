@@ -47,7 +47,18 @@ fn doc_signature(doc: &Document) -> u64 {
     }
     (Arc::as_ptr(&doc.styles) as usize).hash(&mut h);
     format!("{:?}", doc.text_variables).hash(&mut h);
+    sections_hash(doc).hash(&mut h);
+    h.finish()
+}
+
+/// Everything page names and section markers are made from.
+fn sections_hash(doc: &Document) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
     doc.sections.len().hash(&mut h);
+    for s in &doc.sections {
+        (s.start, s.start_number, s.style as u8, &s.prefix, &s.marker, s.include_prefix).hash(&mut h);
+    }
     h.finish()
 }
 
@@ -261,8 +272,17 @@ impl Cache {
 
 fn signature(doc: &Document, story: &Arc<Story>) -> (Vec<usize>, Vec<Arc<Item>>) {
     // The document's font scope: another document's fonts of the same name set it differently.
-    let mut sig =
-        vec![Arc::as_ptr(story) as usize, story.rev as usize, Arc::as_ptr(&doc.styles) as usize, doc.sections.len(), doc.font_scope as usize];
+    // Sections name the pages under the frames (page-number and section markers).
+    let g = &doc.settings.baseline_grid;
+    let mut sig = vec![
+        Arc::as_ptr(story) as usize,
+        story.rev as usize,
+        Arc::as_ptr(&doc.styles) as usize,
+        sections_hash(doc) as usize,
+        doc.font_scope as usize,
+        g.start.to_bits() as usize,
+        g.increment.to_bits() as usize,
+    ];
     let mut keep = Vec::new();
     let mut spreads = Vec::new();
     for f in &story.frames {
@@ -281,6 +301,8 @@ fn signature(doc: &Document, story: &Arc<Story>) -> (Vec<usize>, Vec<Arc<Item>>)
                 for it in &sp.items {
                     if it.wrap.mode != WrapMode::None {
                         sig.push(Arc::as_ptr(it) as usize);
+                        // Wrap objects on hidden layers don't wrap text.
+                        sig.push(usize::from(doc.layer(it.layer).is_some_and(|l| l.visible)));
                         keep.push(it.clone());
                     }
                 }
