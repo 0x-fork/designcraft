@@ -155,6 +155,7 @@ Newest first.
 - **2026-10-13** · The Text Wrap panel is laid out as InDesign's: the wrap buttons with Invert, and the four offsets (Top, Left, Bottom, Right) showing the object's values, with the link button that sets them all the same. It used to show a single offset, always 0. No readiness percentage change.
 - **2026-10-13** · Radial gradients stretch with the object's box, as InDesign draws them: by default an ellipse reaching the frame's sides (it was a circle reaching only the longer side), and a Gradient Swatch tool drag keeps the box's proportions; on screen and in PDF. No readiness percentage change.
 - **2026-10-13** · The Window menu follows InDesign's order (Arrange, Workspace, then the panels alphabetically with Color, Editorial, Object & Layout, Styles… submenus), and Window › Workspace lists the workspaces as InDesign does, now with Essentials Classic: the Control panel and an icon column of named panel groups. No readiness percentage change.
+- **2026-10-14** · In a facing document, pages take their side from their section's page numbers, as InDesign shuffles them: a section that starts at 1 on a left page moves it to the right and the pages after it follow, with their objects. No readiness percentage change.
 - **2026-10-12** · Text threads by hand: click a selected text frame's in or out port to load
   the text cursor, then click a frame to thread it, click empty space for a column-wide frame or
   drag one (it snaps like frame drawing); Shift-click autoflows, Alt-click stays loaded on the
