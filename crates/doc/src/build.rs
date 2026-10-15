@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{ItemId, LayerId, PageId, SpreadId};
 use crate::item::Item;
-use crate::page::{Columns, Margins, Page, PageSide, ParentInfo, Section, Spread};
+use crate::page::{Columns, Guide, Margins, Orientation, Page, PageSide, ParentInfo, Section, Spread};
 use crate::styles::Styles;
 use crate::{DataMerge, DocError, DocSettings, Document, Intent, LAYER_COLORS, Layer, ParaFormat, Result, SpreadRef};
 
@@ -562,6 +562,27 @@ impl Document {
         // A parent spread can come without pages from a file.
         let idx = if ps.pages.len() >= 2 && page.side == PageSide::Left { 0 } else { ps.pages.len().checked_sub(1)? };
         Some((pi, idx))
+    }
+
+    /// Ruler guides document page `abs` inherits from its applied parent page. They are stored on
+    /// the parent page only: positions are moved from the parent page's place in its spread to
+    /// this page's place in its own, so they draw and snap where the page is. Editing them
+    /// happens on the parent page.
+    pub fn inherited_guides(&self, abs: usize) -> Vec<Guide> {
+        let (Some(page), Some((pi, qi))) = (self.page(abs), self.parent_page_for(abs)) else { return Vec::new() };
+        let Some(parent) = self.parents.get(pi).and_then(|ps| ps.pages.get(qi)) else { return Vec::new() };
+        let dx = page.x - parent.x;
+        parent
+            .guides
+            .iter()
+            .map(|g| {
+                let mut g = g.clone();
+                if g.orientation == Orientation::Vertical {
+                    g.position += dx;
+                }
+                g
+            })
+            .collect()
     }
 }
 

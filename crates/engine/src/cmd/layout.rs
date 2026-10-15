@@ -75,6 +75,25 @@ fn dist(r: designcraft_geom::Rect, x: f64) -> f64 {
     }
 }
 
+/// Apply the `margins`, `columns` and `gutter` params of `layout.marginsAndColumns` to one page.
+fn set_margins_columns(pg: &mut designcraft_doc::Page, p: &Value) {
+    match p.get("margins") {
+        Some(Value::Number(n)) => pg.margins = Margins::uniform(n.as_f64().unwrap_or(36.0)),
+        Some(v @ Value::Object(_)) => {
+            if let Ok(m) = serde_json::from_value(v.clone()) {
+                pg.margins = m;
+            }
+        }
+        _ => {}
+    }
+    if let Some(c) = p.get("columns").and_then(Value::as_u64) {
+        pg.columns.count = (c as u32).clamp(1, 216);
+    }
+    if let Some(g) = p.get("gutter").and_then(Value::as_f64) {
+        pg.columns.gutter = g.max(0.0);
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -233,33 +252,51 @@ pub fn specs() -> Vec<CommandSpec> {
             "Margins and Columns…",
             ["Layout"],
             None,
-            "{pages?: [index] (default all), margins?: number|{top,bottom,inside,outside}, columns?, gutter?, adjustLayout?: bool (objects follow the margins)}",
+            "{pages?: [index] (default all), parent?: index (edit that parent spread instead; `pages` then index its pages), margins?: number|{top,bottom,inside,outside}, columns?, gutter?, adjustLayout?: bool (objects follow the margins)}",
             has_doc,
             |s, p| {
                 let pages: Option<Vec<usize>> =
                     p.get("pages").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|v| v as usize).collect());
                 let p = p.clone();
                 let adjust = p.get("adjustLayout").and_then(Value::as_bool).unwrap_or(false);
+                let parent = p.get("parent").and_then(Value::as_u64).map(|v| v as usize);
                 s.edit(|d, _| {
                     let before = adjust.then(|| margin_boxes(d));
-                    let all: Vec<usize> = pages.clone().unwrap_or_else(|| (0..d.page_count()).collect());
-                    for abs in all {
-                        let Some((si, pi)) = d.page_loc(abs) else { continue };
-                        let pg = &mut std::sync::Arc::make_mut(&mut d.spreads[si]).pages[pi];
-                        match p.get("margins") {
-                            Some(Value::Number(n)) => pg.margins = Margins::uniform(n.as_f64().unwrap_or(36.0)),
-                            Some(v @ Value::Object(_)) => {
-                                if let Ok(m) = serde_json::from_value(v.clone()) {
-                                    pg.margins = m;
+                    if let Some(pi) = parent {
+                        // A parent spread: its own pages change, and so do the document pages based
+                        // on it that still have the parent's old margins and columns (not overridden).
+                        let Some(ps) = d.parents.get(pi) else {
+                            return Err(bad("layout.marginsAndColumns", format!("no parent spread {pi}")));
+                        };
+                        let idxs: Vec<usize> = pages.clone().unwrap_or_else(|| (0..ps.pages.len()).collect());
+                        let old: Vec<(usize, Margins, designcraft_doc::Columns)> =
+                            idxs.iter().filter_map(|&qi| ps.pages.get(qi).map(|pg| (qi, pg.margins, pg.columns.clone()))).collect();
+                        if let Some(ps) = d.parents.get_mut(pi) {
+                            let ps = std::sync::Arc::make_mut(ps);
+                            for &qi in &idxs {
+                                if let Some(pg) = ps.pages.get_mut(qi) {
+                                    set_margins_columns(pg, &p);
                                 }
                             }
-                            _ => {}
                         }
-                        if let Some(c) = p.get("columns").and_then(Value::as_u64) {
-                            pg.columns.count = (c as u32).clamp(1, 216);
+                        for abs in 0..d.page_count() {
+                            let Some((ppi, qi)) = d.parent_page_for(abs) else { continue };
+                            if ppi != pi {
+                                continue;
+                            }
+                            let Some((_, om, oc)) = old.iter().find(|o| o.0 == qi) else { continue };
+                            let Some((si, pj)) = d.page_loc(abs) else { continue };
+                            let Some(pg) = d.spreads.get_mut(si).and_then(|sp| std::sync::Arc::make_mut(sp).pages.get_mut(pj)) else { continue };
+                            if pg.margins == *om && pg.columns == *oc {
+                                set_margins_columns(pg, &p);
+                            }
                         }
-                        if let Some(g) = p.get("gutter").and_then(Value::as_f64) {
-                            pg.columns.gutter = g.max(0.0);
+                    } else {
+                        let all: Vec<usize> = pages.clone().unwrap_or_else(|| (0..d.page_count()).collect());
+                        for abs in all {
+                            let Some((si, pi)) = d.page_loc(abs) else { continue };
+                            let Some(pg) = d.spreads.get_mut(si).and_then(|sp| std::sync::Arc::make_mut(sp).pages.get_mut(pi)) else { continue };
+                            set_margins_columns(pg, &p);
                         }
                     }
                     if let Some(b) = before {
@@ -1067,6 +1104,7 @@ mod page_numbering_view_tests {
 
 #[cfg(test)]
 mod adjust_tests {
+    use designcraft_doc::Margins;
     use serde_json::json;
 
     use crate::Session;
@@ -1087,6 +1125,27 @@ mod adjust_tests {
         s.execute("layout.marginsAndColumns", &json!({"margins": 36})).unwrap();
         let b2 = s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().bounds();
         assert_eq!(b, b2);
+    }
+
+    #[test]
+    fn parent_margins_change_the_parent_and_follow_unoverridden_pages() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 3, "facingPages": false})).unwrap();
+        // Page 3 has its own margins (an override); pages 1 and 2 still follow the parent.
+        s.execute("layout.marginsAndColumns", &json!({"pages": [2], "margins": 100})).unwrap();
+        let parent_before = s.doc().unwrap().doc.parents[0].pages[0].margins;
+        assert_eq!(parent_before, Margins::uniform(36.0));
+        s.execute("layout.marginsAndColumns", &json!({"parent": 0, "margins": 60, "columns": 2})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        // The parent page itself changed (this is what was drawn on screen).
+        assert_eq!(d.parents[0].pages[0].margins, Margins::uniform(60.0));
+        assert_eq!(d.parents[0].pages[0].columns.count, 2);
+        // Pages that matched the parent follow; the overridden page keeps its margins.
+        assert_eq!(d.page(0).unwrap().margins, Margins::uniform(60.0));
+        assert_eq!(d.page(1).unwrap().margins, Margins::uniform(60.0));
+        assert_eq!(d.page(2).unwrap().margins, Margins::uniform(100.0));
+        // An unknown parent is an error, not a silent no-op.
+        assert!(s.execute("layout.marginsAndColumns", &json!({"parent": 9, "margins": 10})).is_err());
     }
 }
 

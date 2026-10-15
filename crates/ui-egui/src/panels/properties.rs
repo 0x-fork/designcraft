@@ -263,7 +263,14 @@ fn document_sections(app: &mut DesignApp, ui: &mut Ui) {
     // Margins.
     section(ui, crate::i18n::tr(&app.ui.language, "Margins"), true);
     let cur = crate::canvas::current_page(app).unwrap_or(0);
-    if let Some(p) = d.page(cur).cloned() {
+    // While parent spreads are edited the fields belong to the parent page in view; they used to
+    // show (and change) the document pages instead, so nothing changed on the parent.
+    let parent_target = crate::canvas::current_parent_page(app);
+    let shown = match parent_target {
+        Some((pi, qi)) => d.parents.get(pi).and_then(|s| s.pages.get(qi)).cloned(),
+        None => d.page(cur).cloned(),
+    };
+    if let Some(p) = shown {
         let linked = temp_bool(ui, "margins_linked", true);
         let b = block(ui, 2.0 * FIELD_H + 5.0);
         let mut set: Option<designcraft_doc::Margins> = None;
@@ -306,7 +313,15 @@ fn document_sections(app: &mut DesignApp, ui: &mut Ui) {
             set_temp_bool(ui, "margins_linked", !linked);
         }
         if let Some(m) = set {
-            let _ = app.run("layout.marginsAndColumns", json!({"margins": m}));
+            let params = match parent_target {
+                // Both pages of a facing parent spread, so the margins show wherever the parent is used.
+                Some((pi, _)) => {
+                    let n = app.session.active().and_then(|st| st.doc.parents.get(pi)).map_or(1, |sp| sp.pages.len());
+                    json!({"margins": m, "parent": pi, "pages": (0..n).collect::<Vec<_>>()})
+                }
+                None => json!({"margins": m}),
+            };
+            let _ = app.run("layout.marginsAndColumns", params);
         }
     }
     ui.add_space(6.0);
