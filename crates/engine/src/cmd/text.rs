@@ -614,7 +614,7 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         if tracking && t.cell.is_none() {
             // Track Changes: the replaced text is marked deleted, the typing inserted after it.
             let at = super::changes::mark_deleted(st, r.clone());
-            let mut fmt = st.char_format_at(at).clone();
+            let mut fmt = st.insert_format_at(at).clone();
             if let Some(f) = &typing {
                 apply_typing_format(&mut fmt, f);
             }
@@ -1295,7 +1295,8 @@ fn selection_attrs(s: &mut Session, _p: &Value) -> Result<Value> {
 /// inheritance separate from paragraph defaults for style creation from the selection.
 pub(crate) fn effective_char_format(s: &Session, target: &Target) -> Result<designcraft_doc::CharFormat> {
     let story = s.doc()?.doc.text_story(target.story, target.cell).ok_or(designcraft_doc::DocError::NoStory(target.story))?;
-    let mut format = if target.range.is_empty() { story.char_format_at(target.range.start) } else { story.format_after(target.range.start) }.clone();
+    let mut format =
+        if target.range.is_empty() { story.insert_format_at(target.range.start) } else { story.format_after(target.range.start) }.clone();
     if let Some(pending) = typing_format(s)
         && target.story == pending.at.story
         && target.cell == pending.at.cell
@@ -1891,6 +1892,29 @@ What's new in typography this season, and why it matters to every designer"}),
             assert_eq!(st.format_after(b).over.size, Some(30.0), "byte {b}");
         }
         assert_eq!(st.format_after(blank - 1).over.size, None, "the first paragraph's mark keeps its size");
+    }
+
+    /// A blank line keeps its format for typing after the caret has left it: text typed on it
+    /// takes its paragraph mark's format, with no pending typing format.
+    #[test]
+    fn a_blank_lines_mark_format_is_typed_after_the_caret_returns() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let text = "Para one\n\nPara two";
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 300, 200], "content": "text", "text": text})).unwrap();
+        let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
+        let blank = text.find("\n\n").unwrap() + 1;
+        s.execute("text.select", &json!({"story": sid.0, "anchor": blank})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"size": 30}})).unwrap();
+        s.execute("text.select", &json!({"story": sid.0, "anchor": 2})).unwrap();
+        s.execute("text.select", &json!({"story": sid.0, "anchor": blank})).unwrap();
+        assert!(s.typing_format.is_none());
+        s.execute("text.insert", &json!({"text": "Middle"})).unwrap();
+        let st = s.doc().unwrap().doc.story(sid).unwrap();
+        assert_eq!(st.text, "Para one\nMiddle\nPara two");
+        assert_eq!(st.format_after(blank).over.size, Some(30.0));
+        assert_eq!(st.format_after(blank - 1).over.size, None, "the first paragraph's mark keeps its size");
+        assert_eq!(st.format_after(2).over.size, None);
     }
 }
 
