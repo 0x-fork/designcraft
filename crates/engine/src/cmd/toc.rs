@@ -34,7 +34,8 @@ pub fn specs() -> Vec<CommandSpec> {
             let entries = entries_param(p)?;
             let d = &s.doc()?.doc;
             let skip = d.toc.as_ref().map(|t| t.story);
-            Ok(json!(collect(d, &entries, skip).into_iter().map(|e| json!({"level": e.level, "text": e.text, "page": e.page})).collect::<Vec<_>>()))
+            let found = sort_entries(collect(d, &entries, skip), &entries);
+            Ok(json!(found.into_iter().map(|e| json!({"level": e.level, "text": e.text, "page": e.page})).collect::<Vec<_>>()))
         }),
     ]
 }
@@ -118,6 +119,9 @@ fn char_style_exists(d: &Document, name: &str) -> Result<()> {
 /// other among their siblings (entries under the same entry of a higher level), each taking the
 /// lower-level entries under it along. Other entries keep their places.
 fn sort_entries(found: Vec<Found>, entries: &[TocEntry]) -> Vec<Found> {
+    if !entries.iter().any(|e| e.sort) {
+        return found;
+    }
     // Siblings: each entry with the deeper entries that follow it.
     let mut blocks: Vec<Vec<Found>> = Vec::new();
     for f in found {
@@ -246,7 +250,7 @@ fn fill(d: &mut Document, toc: &Toc, width: Option<f64>) -> Result<usize> {
     for name in toc.entries.iter().flat_map(|e| [e.page_number_style.as_deref(), e.separator_style.as_deref()]).flatten() {
         char_style_exists(d, name)?;
     }
-    let found = if toc.entries.iter().any(|e| e.sort) { sort_entries(found, &toc.entries) } else { found };
+    let found = sort_entries(found, &toc.entries);
     let mut text = String::new();
     let mut styles = Vec::new();
     // Character styles of page numbers and separators: (byte range, style).
@@ -595,6 +599,10 @@ mod tests {
         assert_eq!(lines(&s), ["Zucchini", "Bake", "Zest", "apricot", "Mix", "Bread"]);
         s.execute("toc.update", &json!({})).unwrap();
         assert_eq!(lines(&s), ["Zucchini", "Bake", "Zest", "apricot", "Mix", "Bread"]);
+        // The preview lists them as they will be set.
+        let preview = s.execute("toc.entries", &json!({"entries": [{"style": "Chapter", "level": 1, "sort": true}]})).unwrap();
+        let texts: Vec<&str> = preview.as_array().unwrap().iter().map(|e| e["text"].as_str().unwrap()).collect();
+        assert_eq!(texts, ["apricot", "Bread", "Zucchini"]);
         // Unsorted: page order.
         s.execute("toc.generate", &json!({"page": page, "styles": ["Chapter", "Section"]})).unwrap();
         assert_eq!(lines(&s), ["Zucchini", "Zest", "Bake", "apricot", "Mix", "Bread"]);
