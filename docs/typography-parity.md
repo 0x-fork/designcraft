@@ -1,6 +1,6 @@
 # Typography and composition parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first version, from the full re-measure) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (character stroke behind fill) · **Target:** Adobe InDesign 2026 (21.6)
 
 Typesetting is what InDesign is bought for. A feature can exist and still set text differently
 from InDesign: different line breaks, different page count, overset where InDesign fits. This
@@ -40,6 +40,7 @@ Fidelity: **unmeasured** unless stated.
 | Spelling | per-language dictionaries | English (Moby) + document/user dictionary | ~ | |
 | Kerning | Metrics, Optical, manual, none | Metrics, manual, none | ~ | **Optical treated as Metrics** (#181): imported display text sets wider and can overset |
 | Tracking, scale, skew, baseline shift | ✓ | ✓ | ✓ | |
+| Character fill and stroke | fill, stroke, tint, weight, stroke aligned to centre or outside | fill, stroke, tints, weight, stroke behind fill (screen, PNG, PDF, IDML `StrokeAlignment`) | ~ | text strokes have no join or miter limit settings (#619 for stroke behind fill) |
 | OpenType features | ligatures, discretionary, swash, fractions, ordinals, figures, small caps, stylistic sets, positional forms | through harfrust | ✓ | |
 | Variable fonts | axes in Character panel | named instances and free axis values; PDF embeds the instance | ✓ | |
 | Leading | auto (120%), absolute, leading model | ✓ | ✓ | CJK leading models in cjk-typography.md |

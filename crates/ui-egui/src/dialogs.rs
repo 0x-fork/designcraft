@@ -3271,6 +3271,9 @@ fn character_color(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, cf: &CharField
         crate::rtl::label(ui, crate::i18n::tr(lang, "Weight:"));
         char_number(ui, d, cf, "strokeWeight", " pt", 1.0, (0.0, 800.0));
         ui.end_row();
+        ui.label("");
+        char_check(ui, d, cf, "strokeBehindFill", crate::i18n::tr(lang, "Stroke Behind Fill"));
+        ui.end_row();
     });
 }
 
