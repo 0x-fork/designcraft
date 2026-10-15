@@ -777,6 +777,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:window.panel|Glyphs|{\"panel\": \"glyphs\"}",
             "ui:window.panel|Paragraph|{\"panel\": \"paragraph\"}",
             "ui:window.panel|Table|{\"panel\": \"table\"}",
+            "ui:window.panel|Typography|{\"panel\": \"typography\"}",
             "<",
             ">Utilities",
             "ui:window.panel|Book|{\"panel\": \"book\"}",
@@ -2993,8 +2994,10 @@ mod tests {
                     _ => {}
                 }
             }
-            // Labels without letters ("180°") read the same in every language.
-            untranslated.extend(labels.into_iter().filter(|l| l.chars().any(char::is_alphabetic) && crate::i18n::tr("ka", l) == l.as_str()));
+            // Labels without letters ("180°") or point sizes ("72 pt") read the same in every language.
+            let size = |l: &str| l.strip_suffix(" pt").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+            untranslated
+                .extend(labels.into_iter().filter(|l| l.chars().any(char::is_alphabetic) && !size(l) && crate::i18n::tr("ka", l) == l.as_str()));
         }
         assert!(untranslated.is_empty(), "untranslated Georgian menu labels: {untranslated:?}");
     }

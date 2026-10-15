@@ -1821,4 +1821,9 @@ pub(super) const TABLE: &[(&str, &str)] = &[
         "The object's height is locked. Click to let the object change height as the page changes height.",
         "ობიექტის სიმაღლე ჩაკეტილია. დაწკაპეთ, რომ ობიექტის სიმაღლე გვერდის სიმაღლესთან ერთად შეიცვალოს.",
     ),
+    ("Bulleted & Numbered Lists", "მარკირებული და დანომრილი სიები"),
+    ("Styles", "სტილები"),
+    ("Object & Layout", "ობიექტი და განლაგება"),
+    ("Editorial", "სარედაქციო"),
+    ("Essentials Classic", "ძირითადი (კლასიკური)"),
 ];
