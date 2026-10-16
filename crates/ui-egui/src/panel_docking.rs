@@ -589,10 +589,7 @@ fn tab_commands(app: &mut DesignApp, ui: &mut egui::Ui, panel: &'static str, clo
     let layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
     let minimizable = open_in_stack(&layout, panel);
     if ui.add_enabled(minimizable, egui::Button::new(crate::rtl::widget(ui, tr("Minimize")))).clicked() {
-        if let Err(error) = apply_action(app, Action::SetStackOpen { panel: panel.to_string(), open: false }) {
-            app.status(error);
-        }
-        ui.close();
+        run(app, ui, "window.panel.layout", json!({"action": {"SetStackOpen": {"panel": panel, "open": false}}}));
     }
     ui.separator();
     if ui.add_enabled(app.ui.dock_expanded, egui::Button::new(crate::rtl::widget(ui, tr("Collapse to Icons")))).clicked() {
