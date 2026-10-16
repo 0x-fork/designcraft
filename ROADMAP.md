@@ -348,6 +348,8 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-15** · Character panel: dragging a variable font axis slider previews on the page and is one undo step when let go (with several axes it piled up an undo step per frame); each axis takes a typed value, and narrow axes (Skia's 0.48–3.2) step by hundredths instead of jumping to whole numbers. The fields line up in two columns, auto leading shows in parentheses, and an axis-set style shows its axes. New `edit.preview` / `edit.commitPreview` / `edit.cancelPreview` commands give panels, the control channel and MCP live previews. No readiness percentage change.
+
 - **2026-10-15** · Selection tool: once a frame's content is selected (double-click, or the content grabber), the pointer is a hand over it and a drag anywhere on it moves the content inside the frame (Shift keeps one axis), as in InDesign; it moved the frame unless the press was on the grabber. No readiness percentage change.
 
 - **2026-10-15** · Scaling a text frame (Cmd+Shift-dragging a handle, the Scale tool, Transform panel scale fields) sets its text larger or smaller and leaves the frame at 100%, as InDesign's default When Scaling: Apply to Content does; it used to keep the text's size with the scale on the frame. No readiness percentage change.
