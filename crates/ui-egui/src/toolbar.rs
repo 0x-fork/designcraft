@@ -45,6 +45,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             ui.add_space(2.0);
             let current = app.session.tool_id();
             let mut chosen: Option<&'static str> = None;
+            let mut opened_now = false;
             // A slot is a group (its current tool shown, the others in its flyout) or, in two
             // columns, one tool of a group InDesign lays out tool by tool.
             let mut row_items: Vec<Option<(usize, Option<usize>)>> = Vec::new();
@@ -98,8 +99,15 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                                         Stroke::NONE,
                                     ));
                                 }
-                                if resp.clicked() {
+                                // The release that ends a hold which opened the flyout isn't a click
+                                // on the tool (egui reports releases within 0.8 s as clicks).
+                                let hold_id = egui::Id::new(("flyout_hold", gi));
+                                let ended_hold = resp.clicked() && ui.data_mut(|d| d.remove_temp::<bool>(hold_id)).unwrap_or(false);
+                                if resp.clicked() && !ended_hold {
                                     chosen = Some(shown.id);
+                                }
+                                if !resp.is_pointer_button_down_on() {
+                                    ui.data_mut(|d| d.remove::<bool>(hold_id));
                                 }
                                 // Double-click a polygon tool: Polygon Settings.
                                 if resp.double_clicked() && matches!(shown.id, "polygon" | "polygonFrame") {
@@ -112,12 +120,13 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                                 {
                                     crate::menus::activate(app, cmd, &Value::Null);
                                 }
-                                if g.len() > 1
-                                    && (resp.secondary_clicked()
-                                        || resp.long_touched()
-                                        || (resp.is_pointer_button_down_on()
-                                            && ui.input(|i| i.pointer.press_start_time().is_some_and(|s| i.time - s > 0.35))))
-                                {
+                                let held =
+                                    resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.press_start_time().is_some_and(|s| i.time - s > 0.35));
+                                if g.len() > 1 && held {
+                                    ui.data_mut(|d| d.insert_temp(hold_id, true));
+                                }
+                                if g.len() > 1 && (resp.secondary_clicked() || resp.long_touched() || held) {
+                                    opened_now |= app.ui.flyout != Some(gi);
                                     app.ui.flyout = Some(gi);
                                 }
                                 if app.ui.flyout == Some(gi) {
@@ -157,6 +166,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                                                                 t.text_dim,
                                                             );
                                                         }
+                                                        row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tl.label));
                                                         if row.clicked() {
                                                             chosen = Some(tl.id);
                                                         }
@@ -178,8 +188,19 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             if let Some(id) = chosen {
                 app.select_tool(id);
             }
-            if app.ui.flyout.is_some() && ui.input(|i| i.pointer.any_click()) && chosen.is_none() && !ui.ctx().is_pointer_over_egui() {
-                app.ui.flyout = None;
+            // As InDesign's, an open flyout closes on Esc and on a click anywhere outside it (a
+            // panel, a swatch, the canvas), not only on the canvas. A new press counts, not a
+            // click: the release that ends the hold which opened it is one.
+            if let Some(gi) = app.ui.flyout
+                && chosen.is_none()
+                && !opened_now
+            {
+                let area = ui.ctx().memory(|m| m.area_rect(egui::Id::new(("flyout", gi))));
+                let outside = ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| area.is_none_or(|a| !a.contains(p))));
+                let esc = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                if outside || esc {
+                    app.ui.flyout = None;
+                }
             }
             ui.add_space(8.0);
             fill_stroke_proxy(app, ui, width, cols);
@@ -616,6 +637,63 @@ mod tests {
 
     fn rect(h: &egui_kittest::Harness<'static, test_window::Window>, label: &str) -> egui::Rect {
         h.get_by_label(label).rect()
+    }
+
+    /// As InDesign's: a tool group's flyout closes on Esc and on a click outside it (the fill
+    /// swatch, a panel), not only on the canvas.
+    #[test]
+    fn a_tool_flyout_closes_on_escape_and_on_a_click_elsewhere() {
+        use egui::{Event, Modifiers, PointerButton};
+        use egui_kittest::kittest::Queryable;
+        let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let mut h = crate::test_window::open(app, vec2(1400.0, 900.0));
+        let open = |h: &mut egui_kittest::Harness<'static, crate::test_window::Window>| {
+            let at = h.get_by_label("Rectangle Frame Tool (F)").rect().center();
+            h.input_mut().events.push(Event::PointerMoved(at));
+            for pressed in [true, false] {
+                h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE });
+            }
+            h.run_steps(3);
+            assert!(h.state().app.ui.flyout.is_some(), "a right-click opens the flyout");
+            let _ = h.get_by_label("Ellipse Frame Tool");
+        };
+        open(&mut h);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert!(h.state().app.ui.flyout.is_none(), "Esc closes it");
+        // A click on a panel closes it.
+        open(&mut h);
+        crate::test_window::click_at(&mut h, egui::pos2(1300.0, 700.0));
+        assert!(h.state().app.ui.flyout.is_none(), "a click elsewhere closes it");
+        // Choosing a tool in it closes it and selects the tool.
+        open(&mut h);
+        h.get_by_label("Ellipse Frame Tool").click();
+        h.run_steps(3);
+        assert_eq!((h.state().app.session.tool_id(), h.state().app.ui.flyout), ("ellipseFrame", None));
+    }
+
+    /// A flyout opened by holding the group button stays open after the release, and Esc closes
+    /// it without switching the active tool.
+    #[test]
+    fn a_tool_flyout_opened_by_holding_stays_open_and_esc_keeps_the_tool() {
+        use egui::{Event, Modifiers, PointerButton};
+        use egui_kittest::kittest::Queryable;
+        let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let mut h = crate::test_window::open_stepped(app, vec2(1400.0, 900.0), 1.0, 1.0 / 60.0);
+        h.state_mut().app.select_tool("rectangleFrame");
+        h.run_steps(2);
+        let at = h.get_by_label("Rectangle Frame Tool (F)").rect().center();
+        h.input_mut().events.push(Event::PointerMoved(at));
+        h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        // Held for half a second: shorter than egui's longest click.
+        h.run_steps(30);
+        assert!(h.state().app.ui.flyout.is_some(), "holding opens the flyout");
+        h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(3);
+        assert!(h.state().app.ui.flyout.is_some(), "the release keeps it open");
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert_eq!((h.state().app.session.tool_id(), h.state().app.ui.flyout), ("rectangleFrame", None));
     }
 
     #[test]

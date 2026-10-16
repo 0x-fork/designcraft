@@ -349,6 +349,18 @@ Newest first.
 
 - **2026-10-15** · Color Theme: the toolbar tool previews up to five colours from a placed raster and adds them as one undoable swatch group. Local deterministic extraction; transparent padding is ignored. No readiness percentage change.
 - **2026-10-14** · Load Swatches adds the colors of an `.ase` file that repeat a name or have none: a repeated name gets a number (`Red 2`), and a color without a name is named by its value (`C=0 M=0 Y=0 K=55`). Before, a repeated name kept one of its colors, and only the first unnamed color was added, with an empty name. No readiness percentage change.
+- **2026-10-15** · Applying text styles removes matching local formatting so capture sources
+  inherit later edits; real overrides and named character styles remain.
+- **2026-10-15** · Redefine paragraph and character styles from local formatting, including the
+  Styles panel context menu, global updates and one-step undo.
+- **2026-10-15** · Paragraph Styles marks local character overrides and offers Clear Overrides
+  in the style row menu; named character styles and equal local values are not false overrides.
+- **2026-10-15** · Existing paragraph and character styles preview their attribute edits in
+  Style Options; Cancel restores the document and OK records one edit.
+- **2026-10-15** · Paragraph Style Options summarizes captured and pending color, size and
+  paragraph settings relative to the Based On style.
+- **2026-10-15** · Typography uses named panel groups with the Control panel and restores that
+  arrangement on Reset Workspace, leaving the page clear until a panel is opened. No readiness percentage change.
 - **2026-10-14** · Threading keeps generated and linked stories, text that refers to a story, local IDs and locked frames intact; a colour chosen at a caret waits for the typing, Swap Fill and Stroke on text keeps each run's colours, control-channel input never reads or writes the system clipboard, and IDML frame preferences given as properties import with bounded column counts (#84). No readiness percentage change.
 - **2026-10-14** · The Liquid Layout panel follows InDesign's: Liquid Page Rule with the page number, Content › Auto-Fit, and Object Constraints › Resize with Page and Pin for the selected object on an object-based page; Create Alternate Layout moved to the Layout menu. No readiness percentage change.
 - **2026-10-14** · On an object-based page the Page tool shows a selected object's liquid pins and resize locks as InDesign does: a click pins a side to the page edge or locks the width or height, with InDesign's tooltips. No readiness percentage change.
@@ -444,6 +456,20 @@ Newest first.
 - **2026-10-16** · A swatch applied to a placed greyscale or bitmap image colours it, as in InDesign: IDML's `<Image FillColor>` is read and written, greyscale pixels become a tint of the swatch on opaque white and a bitmap's white lets the frame show through, on screen and in PDF (spot swatches print on their plate). Colour images keep their colours. Applying the swatch from the Swatches panel comes next. No readiness percentage change.
 - **2026-10-15** · Table ▸ Convert Rows ▸ To Header / To Body / To Footer, as in InDesign: the selected rows become header rows when they touch the top of the table or its header rows, footer rows when they touch the bottom or its footer rows, and header or footer rows next to the body go back to body rows. The items are greyed out when the rows can't change (a gap, the last body row, a merged cell across the new boundary); one undo step. No readiness percentage change.
 - **2026-10-15** · Table of Contents: each included style can set a character style for its page number and for the text between entry and number, and Sort Entries in Alphabetical Order lists its entries alphabetically among their siblings, each with the entries under it (#1069). Both survive Update Table of Contents, renaming or deleting the character style, and IDML (`PageNumberStyle`, `SeparatorStyle`, `Sort`). No readiness percentage change.
+- 2026-10-15: Measures in inches show four decimals, as InDesign's fields do (A4 is 8.2677 × 11.6929 in, a 1p0 gutter 0.1667 in); other units keep three.
+- 2026-10-15: Ruler menus as InDesign's: right-clicking where the rulers meet sets the units of both; each ruler's menu lists InDesign's units and Hide Rulers, the horizontal one Delete All Guides on Spread.
+- 2026-10-15: Properties › Edit Page works as InDesign's: the Page tool on the page in view, and Properties shows that page alone (Page Size: page, preset, orientation, W/H; Margins and Columns; Quick Actions) with Back. It opened Document Setup, which changes every page.
+- 2026-10-15: Deleting pages that contain objects asks first, as InDesign does ("The affected page contains objects. Delete the page anyway?", with Don't show again), from the Pages panel, Layout › Pages › Delete Page and Properties.
+- 2026-10-15: A page scrolled or jumped to shows its paper while its render is on its way, as in InDesign, instead of the black of its shadow.
+- 2026-10-15: Tab, Shift+Tab and Presentation hide the icon column's panel flyout and the classic floating panels too, as InDesign hides floating panels.
+- 2026-10-15: Layers panel: an object's row is renamed with a slow double-click (a second click on the selected row), as in InDesign; a quick double-click only selects it.
+- **2026-10-15** · New Workspace is InDesign's: Name, and Capture › Panel Locations and Menu Customization (the items hidden with Edit › Menus), both on by default; a workspace saved without panel locations leaves the panels where they are. No readiness percentage change.
+- 2026-10-15: Presentation shows one spread at a time, as large as the screen allows; the arrow keys, Page Up/Down, Home, End, a click and Shift-click go through the spreads.
+- 2026-10-15: Layout › First Page, Previous Page, Next Page, Last Page, Next Spread and Previous Spread, with InDesign's shortcuts (Shift+Page Up/Down, Shift+Cmd+Page Up/Down, Alt+Page Up/Down).
+- **2026-10-15** · A panel tab's context menu (and the end of its panel menu) has InDesign's Close, Close Tab Group, Minimize and Collapse to Icons, before Float Panel and Group with; `window.panel.closeGroup` and `window.collapseToIcons` are commands. No readiness percentage change.
+- **2026-10-15** · Window › Styles › Paragraph Styles (or Character Styles) opens InDesign's floating Character Styles | Paragraph Styles group, which stays open while other panels open; it was a flyout that the next panel replaced. No readiness percentage change.
+- 2026-10-15: Double-clicking the status bar's preflight count or its light shows the Preflight panel, as in InDesign.
+- 2026-10-15: A tool group's flyout closes on Esc and on a click anywhere outside it (a panel, the Fill swatch), as InDesign's; it only closed on a click on the canvas.
 - **2026-10-14** · The Type tool draws a new text frame over a locked empty frame, as InDesign does, instead of turning the locked frame into a text frame. No readiness percentage change.
 - **2026-10-14** · 100% black shows as pure black on screen by default, as InDesign's Appearance of Black does out of the box (Display All Blacks as Rich Black); Preferences › Appearance of Black › Display All Blacks Accurately still shows it as the dark grey it prints, and a saved choice is kept. No readiness percentage change.
 - **2026-10-14** · Pathfinder keeps the frontmost object, as InDesign does: a photo placed over shapes and intersected with them shows through the shapes (it was dropped, and the shapes kept their black fill); Add, Exclude Overlap and Minus Back take the front object's fill too, Subtract still keeps the back one. No readiness percentage change.

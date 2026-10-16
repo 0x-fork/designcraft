@@ -89,10 +89,48 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Cut", ["Ausschneiden", "Couper", "Cortar", "カット", "剪切"]),
     ("Copy", ["Kopieren", "Copier", "Copiar", "コピー", "复制"]),
     ("Paste", ["Einfügen", "Coller", "Pegar", "ペースト", "粘贴"]),
+    ("Hide Rulers", ["Lineale ausblenden", "Masquer les règles", "Ocultar reglas", "定規を隠す", "隐藏标尺"]),
+    ("Inches Decimal", ["Zoll dezimal", "Pouces décimaux", "Pulgadas decimales", "インチ（10 進）", "十进制英寸"]),
     (
         "Paste Vector Art",
         ["Vektorgrafik einfügen", "Coller l’illustration vectorielle", "Pegar ilustración vectorial", "ベクトルアートをペースト", "粘贴矢量图稿"],
     ),
+    ("Back", ["Zurück", "Retour", "Atrás", "戻る", "返回"]),
+    ("Margins and Columns", ["Ränder und Spalten", "Marges et colonnes", "Márgenes y columnas", "マージン・段組", "边距和分栏"]),
+    ("Warning", ["Warnung", "Avertissement", "Advertencia", "警告", "警告"]),
+    ("Don't show again", ["Nicht mehr anzeigen", "Ne plus afficher", "No volver a mostrar", "今後表示しない", "不再显示"]),
+    (
+        "The affected page contains objects. Delete the page anyway?",
+        [
+            "Die betroffene Seite enthält Objekte. Seite trotzdem löschen?",
+            "La page concernée contient des objets. Supprimer quand même la page ?",
+            "La página afectada contiene objetos. ¿Desea eliminarla de todos modos?",
+            "対象のページにはオブジェクトが含まれています。ページを削除しますか？",
+            "受影响的页面包含对象。仍要删除该页面吗？",
+        ],
+    ),
+    (
+        "The affected pages contain objects. Delete the pages anyway?",
+        [
+            "Die betroffenen Seiten enthalten Objekte. Seiten trotzdem löschen?",
+            "Les pages concernées contiennent des objets. Supprimer quand même les pages ?",
+            "Las páginas afectadas contienen objetos. ¿Desea eliminarlas de todos modos?",
+            "対象のページにはオブジェクトが含まれています。ページを削除しますか？",
+            "受影响的页面包含对象。仍要删除这些页面吗？",
+        ],
+    ),
+    ("Capture", ["Erfassen", "Capturer", "Capturar", "取り込み", "捕捉"]),
+    ("Panel Locations", ["Bedienfeldpositionen", "Emplacements des panneaux", "Ubicaciones de paneles", "パネルの位置", "面板位置"]),
+    ("First Page", ["Erste Seite", "Première page", "Primera página", "最初のページ", "第一页"]),
+    ("Previous Page", ["Vorherige Seite", "Page précédente", "Página anterior", "前のページ", "上一页"]),
+    ("Next Page", ["Nächste Seite", "Page suivante", "Página siguiente", "次のページ", "下一页"]),
+    ("Last Page", ["Letzte Seite", "Dernière page", "Última página", "最後のページ", "最后一页"]),
+    (
+        "Close Tab Group",
+        ["Registerkartengruppe schließen", "Fermer le groupe d'onglets", "Cerrar grupo de fichas", "タブグループを閉じる", "关闭选项卡组"],
+    ),
+    ("Minimize", ["Minimieren", "Réduire", "Minimizar", "最小化", "最小化"]),
+    ("Collapse to Icons", ["Auf Symbole minimieren", "Réduire en icônes", "Contraer a iconos", "アイコンパネルに折りたたむ", "折叠为图标"]),
     (
         "Bulleted & Numbered Lists",
         [
@@ -733,6 +771,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Break Link to Style",
         ["Break Link to Style", "Rompre le lien avec le style", "Break Link to Style", "Break Link to Style", "断开与样式的链接"],
     ),
+    ("Redefine Style", ["Format neu definieren", "Redéfinir le style", "Redefinir estilo", "スタイルを再定義", "重新定义样式"]),
     ("Bullets and Numbering", ["Bullets and Numbering", "Puces et numérotation", "Bullets and Numbering", "Bullets and Numbering", "项目符号和编号"]),
     ("Business Card", ["Business Card", "Carte de visite", "Business Card", "Business Card", "名片"]),
     ("CMYK", ["CMYK", "CMJN", "CMYK", "CMYK", "CMYK"]),
@@ -2778,6 +2817,26 @@ const TABLE: &[(&str, [&str; 5])] = &[
     (
         "⌥-click clears overrides",
         ["⌥-click clears overrides", "⌥-clic efface les remplacements", "⌥-click clears overrides", "⌥-click clears overrides", "⌥-单击清除覆盖"],
+    ),
+    (
+        "Alt-click clears overrides",
+        [
+            "Alt-Klick entfernt Abweichungen",
+            "Alt-clic efface les remplacements",
+            "Alt-clic borra las modificaciones",
+            "Alt を押しながらクリックするとオーバーライドを消去します",
+            "Alt-单击清除覆盖",
+        ],
+    ),
+    (
+        "Apply \"{name}\", Clear Overrides",
+        [
+            "„{name}“ anwenden, Abweichungen löschen",
+            "Appliquer « {name} », effacer les remplacements",
+            "Aplicar \"{name}\", borrar modificaciones",
+            "\"{name}\" を適用、オーバーライドを消去",
+            "应用\"{name}\"，清除覆盖",
+        ],
     ),
     ("⚠ out of date", ["⚠ out of date", "⚠ obsolète", "⚠ out of date", "⚠ out of date", "⚠ 已过期"]),
     ("General", ["General", "Général", "General", "General", "常规"]),
@@ -5041,5 +5100,14 @@ mod tests {
         assert_eq!(tr("de", "Low Quality Print"), "Low Quality Print");
         // Fixed standard names stay identical in every language.
         assert_eq!(tr("ja", "PDF/X-4"), "PDF/X-4");
+    }
+
+    #[test]
+    fn style_row_menu_strings_are_translated_in_every_language() {
+        for (code, _) in LANGUAGES.iter().filter(|(c, _)| !c.is_empty()) {
+            for key in ["Redefine Style", "Alt-click clears overrides", "Apply \"{name}\", Clear Overrides"] {
+                assert_ne!(tr(code, key), key, "{code}: {key}");
+            }
+        }
     }
 }

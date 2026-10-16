@@ -2065,6 +2065,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "userDictionary" => crate::i18n::tr(&app.ui.language, "User Dictionary"),
         "newWorkspace" => crate::i18n::tr(&app.ui.language, "New Workspace"),
         "closeDocument" => crate::i18n::tr(&app.ui.language, "Unsaved Changes"),
+        "deletePages" => crate::i18n::tr(&app.ui.language, "Warning"),
         "updateLink" => crate::i18n::tr(&app.ui.language, "Update Link"),
         "menus" => crate::i18n::tr(&app.ui.language, "Menu Customization"),
         "importOptions" => crate::i18n::tr(&app.ui.language, "Import Options"),
@@ -2096,7 +2097,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let available = (ctx.content_rect().size() - frame_margin - egui::vec2(16.0, 16.0)).max(egui::Vec2::splat(1.0));
         let preferred_width: f32 = match d.id.as_str() {
             "alert" => 440.0,
-            "closeDocument" | "updateLink" => 380.0,
+            "closeDocument" | "updateLink" | "deletePages" | "newWorkspace" => 380.0,
             "newDocument" => 960.0,
             "numberingSection" => 560.0,
             crate::effects_dialog::ID => 720.0,
@@ -2565,6 +2566,22 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                             .replace("{}", &d.s("title"));
                         crate::rtl::label(ui, text);
                     }
+                    "deletePages" => {
+                        let several = d.fields.get("pages").and_then(Value::as_array).is_some_and(|p| p.len() > 1);
+                        crate::rtl::label(
+                            ui,
+                            crate::i18n::tr(
+                                &app.ui.language,
+                                if several {
+                                    "The affected pages contain objects. Delete the pages anyway?"
+                                } else {
+                                    "The affected page contains objects. Delete the page anyway?"
+                                },
+                            ),
+                        );
+                        ui.add_space(8.0);
+                        check(ui, &mut d, "dontShowAgain", crate::i18n::tr(&app.ui.language, "Don't show again"));
+                    }
                     "updateLink" => {
                         let text = crate::i18n::tr(
                             &app.ui.language,
@@ -2578,10 +2595,10 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                             crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Name:"));
                             text_field(ui, &mut d, "name", 220.0);
                         });
-                        crate::rtl::label(
-                            ui,
-                            egui::RichText::new(crate::i18n::tr(&app.ui.language, "Saves which bars show and where the panels are.")).size(10.5),
-                        );
+                        ui.add_space(6.0);
+                        crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Capture")).font(semibold(12.0)));
+                        check(ui, &mut d, "panelLocations", crate::i18n::tr(&app.ui.language, "Panel Locations"));
+                        check(ui, &mut d, "menuCustomization", crate::i18n::tr(&app.ui.language, "Menu Customization"));
                     }
                     "fittingOptions" => {
                         check(ui, &mut d, "autoFit", crate::i18n::tr(&app.ui.language, "Auto-Fit"));
@@ -2768,6 +2785,10 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             _ => "Cancel",
         };
         ui.horizontal(|ui| {
+            if matches!(d.id.as_str(), "paragraphStyleOptions" | "characterStyleOptions") && !d.b("new") {
+                check(ui, &mut d, "preview", crate::i18n::tr(&app.ui.language, "Preview"));
+                style_options_preview(app, &mut d);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
@@ -2922,6 +2943,17 @@ fn confirm_cell_options(app: &mut DesignApp, d: &Dialog) -> Result<Value, String
     app.run("table.setCell", Value::Object(params))
 }
 
+/// Delete absolute pages `pages` as the Pages panel and Layout › Pages › Delete Page do: when
+/// they hold objects, InDesign's warning asks first, unless it was told not to.
+pub fn delete_pages(app: &mut DesignApp, pages: Vec<usize>) -> Result<Value, String> {
+    let has_items = app.session.active().is_some_and(|st| pages.iter().any(|&abs| st.doc.page_has_items(abs)));
+    if has_items && !app.ui.skip_delete_pages_warning {
+        app.ui.dialog = Some(Dialog::new("deletePages", json!({"pages": pages})));
+        return Ok(Value::Null);
+    }
+    app.run("layout.pages.delete", json!({"pages": pages}))
+}
+
 /// Close the open dialog without applying it (Cancel, Esc, the control channel): a previewing
 /// dialog puts the document back as it was, and Preferences puts back the interface language it
 /// opened with, since choosing one previews it at once.
@@ -2958,6 +2990,10 @@ fn find_change_params(d: &Dialog) -> Value {
 /// Apply the open dialog.
 pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
     let Some(d) = app.ui.dialog.take() else { return Err("no dialog open".into()) };
+    if matches!(d.id.as_str(), "paragraphStyleOptions" | "characterStyleOptions") && d.fields.contains_key(PREVIEWED) {
+        // Restore the original before the ordinary command commits one undoable edit.
+        app.session.cancel_interaction();
+    }
     if d.id != "pdfImport" || !d.b("async") {
         app.cancel_pdf_import();
     }
@@ -3363,7 +3399,16 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             doc["glyphFallback"] = json!(d.b("glyphFallback"));
             app.run("document.preferences", doc)
         }
-        "newWorkspace" => app.run("window.newWorkspace", json!({"name": d.s("name")})),
+        "newWorkspace" => app.run(
+            "window.newWorkspace",
+            json!({"name": d.s("name"), "panelLocations": d.b("panelLocations"), "menuCustomization": d.b("menuCustomization")}),
+        ),
+        "deletePages" => {
+            if d.b("dontShowAgain") {
+                app.ui.skip_delete_pages_warning = true;
+            }
+            app.run("layout.pages.delete", json!({"pages": d.fields.get("pages").cloned().unwrap_or_else(|| json!([]))}))
+        }
         "updateLink" => crate::panels::properties::run_update_links(app, d.fields.get("target").cloned().unwrap_or_else(|| json!({}))),
         "closeDocument" => {
             // The document may have moved in the tab row (or gone) while the dialog was open.
@@ -3544,13 +3589,18 @@ fn grep_error(p: &str) -> Option<String> {
     designcraft_compose::grep::Grep::new(p, Default::default()).err().map(|e| e.to_string())
 }
 
-fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Value, String> {
-    let name = d.s("name");
-    // What the Justification section showed: the style's own values, or a new style's Based On.
-    let shown = if d.b("new") { d.s("basedOn") } else { name.clone() };
+/// The Justification spacing check of Paragraph Style Options, against what the section showed:
+/// the style's own values, or a new style's Based On.
+fn check_paragraph_style_justification(app: &DesignApp, d: &Dialog) -> Result<(), String> {
+    let shown = if d.b("new") { d.s("basedOn") } else { d.s("name") };
     let base =
         app.session.active().map(|st| serde_json::to_value(st.doc.styles.resolve_para_style(&shown).0).unwrap_or_default()).unwrap_or_default();
-    if let Err(e) = check_justification(d, "p.", &base) {
+    check_justification(d, "p.", &base)
+}
+
+fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Value, String> {
+    let name = d.s("name");
+    if let Err(e) = check_paragraph_style_justification(app, d) {
         // The caller shows the reason in the dialog's status line.
         d.fields.insert("section".into(), json!("justify"));
         return Err(e);
@@ -3606,6 +3656,74 @@ fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Resul
         app.run("style.exportTag", json!({"style": style, "tag": tag, "class": d.s("x.class")}))?;
     }
     Ok(r)
+}
+
+/// Preview the changed style attributes through the same engine commands as OK. Renaming and
+/// export tagging have no visual effect and wait for OK, so the dialog can keep looking up the
+/// original style while the preview is visible. The interaction restores its starting document
+/// before each update, including after a field is cleared or Preview is switched off.
+fn style_options_preview(app: &mut DesignApp, d: &mut Dialog) {
+    let shown = d.fields.get(PREVIEWED).cloned();
+    if !d.b("preview") || d.b("new") {
+        if shown.is_some() {
+            app.session.cancel_interaction();
+            d.fields.remove(PREVIEWED);
+            d.fields.remove("status");
+        }
+        return;
+    }
+    let paragraph = d.id == "paragraphStyleOptions";
+    // Values OK would refuse don't reach the page either: the page goes back and the status
+    // line says why.
+    if paragraph && let Err(e) = check_paragraph_style_justification(app, d) {
+        if shown.is_some() {
+            app.session.cancel_interaction();
+            d.fields.remove(PREVIEWED);
+        }
+        d.fields.insert("status".into(), json!(e));
+        return;
+    }
+    let mut params = json!({"name": d.s("name"), "chars": {}});
+    if paragraph {
+        params["para"] = json!({});
+    }
+    for (key, value) in &d.fields {
+        if let Some(attr) = key.strip_prefix("c.") {
+            params["chars"][attr] = value.clone();
+        } else if paragraph && let Some(attr) = key.strip_prefix("p.") {
+            if let Some((attr, field)) = attr.split_once('.') {
+                if params["para"][attr].is_null() {
+                    params["para"][attr] = json!({});
+                }
+                if let Some(fields) = params["para"][attr].as_object_mut() {
+                    fields.insert(field.into(), value.clone());
+                }
+            } else {
+                params["para"][attr] = value.clone();
+            }
+        }
+    }
+    if let Some(based) = d.fields.get("basedOn") {
+        params["basedOn"] = match based.as_str() {
+            Some(designcraft_doc::NO_PARA_STYLE | designcraft_doc::NO_CHAR_STYLE) => Value::Null,
+            _ => based.clone(),
+        };
+    }
+    if shown.as_ref() == Some(&params) {
+        return;
+    }
+    if shown.is_none()
+        && let Err(error) = app.session.begin_interaction("Style Options")
+    {
+        d.fields.insert("status".into(), json!(error.to_string()));
+        return;
+    }
+    let command = if paragraph { "style.paragraph.edit" } else { "style.character.edit" };
+    match app.session.preview(command, params.clone()) {
+        Ok(()) => d.fields.remove("status"),
+        Err(error) => d.fields.insert("status".into(), json!(error.to_string())),
+    };
+    d.fields.insert(PREVIEWED.into(), params);
 }
 
 /// Paragraph Style Options: sections in a left list (like InDesign), fields on the right.
@@ -4069,17 +4187,11 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                     ui.end_row();
                 });
                 ui.add_space(8.0);
-                crate::rtl::label(
-                    ui,
-                    egui::RichText::new(format!(
-                        "{} {} {:.1} pt · {}",
-                        cp.font_family,
-                        cp.font_style,
-                        cp.size,
-                        crate::i18n::tr(&app.ui.language, pp.align.label())
-                    ))
-                    .color(crate::theme::Tokens::get(ui.ctx()).text_dim),
-                );
+                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Style Settings:")).font(semibold(12.0)));
+                let summary = paragraph_style_summary(&app.ui.language, d, &style, &doc.styles);
+                egui::ScrollArea::vertical().id_salt("paragraph_style_settings").max_height(220.0).show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(summary).color(crate::theme::Tokens::get(ui.ctx()).text_dim)).wrap());
+                });
             }
         });
     });
@@ -4088,6 +4200,51 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
     if !status.is_empty() {
         crate::rtl::label(ui, egui::RichText::new(status).color(crate::theme::Tokens::get(ui.ctx()).text_strong));
     }
+}
+
+/// Show what the style changes from its parent, including edits waiting for OK. Fully captured
+/// styles contain every default, so comparing resolved values keeps the summary readable.
+fn paragraph_style_summary(lang: &str, d: &Dialog, style: &designcraft_doc::ParagraphStyle, styles: &designcraft_doc::Styles) -> String {
+    let based = d.fields.get("basedOn").and_then(Value::as_str).or(style.based_on.as_deref()).unwrap_or(designcraft_doc::NO_PARA_STYLE);
+    let (base_para, base_chars) = styles.resolve_para_style(based);
+    let (mut para, mut chars) = (base_para.clone(), base_chars.clone());
+    para.apply(&style.para);
+    chars.apply(&style.chars);
+    for (key, value) in &d.fields {
+        if let Some(key) = key.strip_prefix("c.") {
+            let mut delta = designcraft_doc::CharAttrs::default();
+            if delta.set_json(key, value).is_ok() {
+                chars.apply(&delta);
+            }
+        } else if let Some(key) = key.strip_prefix("p.") {
+            let (key, value) = key.split_once('.').map_or((key, value.clone()), |(attr, field)| (attr, json!({field:value})));
+            let mut delta = designcraft_doc::ParaAttrs::default();
+            if delta.set_json_over(key, &value, &para).is_ok() {
+                para.apply(&delta);
+            }
+        }
+    }
+    let mut char_delta = base_chars.delta(&chars);
+    if base_chars.font_family != chars.font_family {
+        char_delta.font_style = Some(chars.font_style.clone());
+    }
+    let mut parts = vec![crate::i18n::style_name(lang, based).to_string()];
+    for value in [serde_json::to_value(base_para.delta(&para)), serde_json::to_value(char_delta)] {
+        if let Ok(Value::Object(attrs)) = value {
+            for (key, value) in attrs {
+                let suffix = if matches!(
+                    key.as_str(),
+                    "size" | "spaceBefore" | "spaceAfter" | "leftIndent" | "rightIndent" | "firstLineIndent" | "lastLineIndent"
+                ) {
+                    " pt"
+                } else {
+                    ""
+                };
+                parts.push(format!("{}: {}{suffix}", setting_label(lang, &key), setting_text(&value)));
+            }
+        }
+    }
+    parts.join(" + ")
 }
 
 fn delete_paragraph_style(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
@@ -6692,6 +6849,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn paragraph_style_settings_show_captured_color_and_pending_spacing_without_changing_the_document() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let f = app.run("frame.create", json!({"rect":[36,36,300,200],"content":"text","text":"Heading"})).unwrap();
+        app.run("text.select", json!({"story":f["story"],"anchor":0,"focus":7})).unwrap();
+        app.run("type.char", json!({"fontFamily":"Source Sans 3","fontStyle":"Bold","size":16,"fill":"[Paper]"})).unwrap();
+        app.run("style.paragraph.create", json!({"name":"Header","fromSelection":true})).unwrap();
+        let doc = app.session.doc().unwrap().doc.clone();
+        let style = doc.styles.para("Header").unwrap();
+        let mut d = Dialog::new("paragraphStyleOptions", json!({"name":"Header"}));
+        let summary = paragraph_style_summary("", &d, style, &doc.styles);
+        for value in ["Source Sans 3", "Bold", "16 pt", "[Paper]"] {
+            assert!(summary.contains(value), "{summary}");
+        }
+        assert!(summary.len() < 250, "default attributes do not swamp the captured settings: {summary}");
+        d.fields.insert("c.fill".into(), json!("[Registration]"));
+        d.fields.insert("p.spaceAfter".into(), json!(4.5));
+        let summary = paragraph_style_summary("", &d, style, &doc.styles);
+        assert!(summary.contains("[Registration]") && !summary.contains("[Paper]"), "{summary}");
+        assert!(summary.contains("4.5 pt"), "{summary}");
+        assert_eq!(app.session.doc().unwrap().doc, doc);
+    }
+
+    #[test]
+    fn paragraph_style_settings_compare_with_the_chosen_parent() {
+        let mut styles = designcraft_doc::Styles::default();
+        styles.paragraph.push(designcraft_doc::ParagraphStyle {
+            name: "Parent".into(),
+            chars: designcraft_doc::CharAttrs { size: Some(20.0), ..Default::default() },
+            based_on: None,
+            next_style: None,
+            para: Default::default(),
+            shortcut: String::new(),
+        });
+        let style = designcraft_doc::ParagraphStyle {
+            name: "Child".into(),
+            based_on: Some("Parent".into()),
+            next_style: None,
+            para: Default::default(),
+            chars: Default::default(),
+            shortcut: String::new(),
+        };
+        let d = Dialog::new("paragraphStyleOptions", json!({"name":"Child"}));
+        assert_eq!(paragraph_style_summary("", &d, &style, &styles), "Parent");
+    }
+
+    #[test]
     fn step_and_repeat_dialog_previews_and_makes_the_copies_as_one_undo_step() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({})).unwrap();
@@ -7476,6 +7680,124 @@ mod tests {
         let dialog = app.ui.dialog.as_ref().unwrap();
         assert_eq!(dialog.fields["width"], 0);
         assert!(dialog.fields["status"].as_str().unwrap().contains("page size out of range"));
+    }
+
+    #[test]
+    fn style_options_preview_updates_all_uses_cancels_and_commits_once() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        for paragraph in [true, false] {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({})).unwrap();
+            let f = app.run("frame.create", json!({"rect":[36,36,300,300],"content":"text","text":"First\nSecond"})).unwrap();
+            app.run("text.select", json!({"story":f["story"],"anchor":0,"focus":12})).unwrap();
+            let kind = if paragraph { "paragraph" } else { "character" };
+            app.run(&format!("style.{kind}.create"), json!({"name":"Tutorial","chars":{"size":10}})).unwrap();
+            app.run(&format!("style.{kind}.apply"), json!({"name":"Tutorial"})).unwrap();
+            let before = app.session.doc().unwrap().doc.clone();
+            let undo = app.session.doc().unwrap().history.undo.len();
+            let journal = app.session.journal.len();
+            open_style_options(&mut app, paragraph, "Tutorial");
+            let mut h = Harness::builder().with_size(egui::vec2(1000.0, 800.0)).build_ui_state(
+                |ui, app: &mut DesignApp| {
+                    let key = egui::Id::new("style_preview_test_fonts");
+                    if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
+                        crate::theme::install_fonts(ui.ctx(), "");
+                        ui.data_mut(|d| d.insert_temp(key, true));
+                        return;
+                    }
+                    show(app, ui.ctx());
+                },
+                app,
+            );
+            h.run_steps(3);
+            h.get_by_label("Preview").click();
+            h.run_steps(3);
+            h.state_mut().ui.dialog.as_mut().unwrap().fields.insert("c.size".into(), json!(18));
+            h.run_steps(3);
+            let app = h.state_mut();
+            assert_eq!(app.run("type.selectionAttrs", json!({})).unwrap()["chars"]["size"], 18.0);
+            assert_eq!(app.session.doc().unwrap().history.undo.len(), undo);
+            assert_eq!(app.session.journal.len(), journal);
+            // Repeated previews replace each other, never accumulate undo entries.
+            app.ui.dialog.as_mut().unwrap().fields.insert("c.size".into(), json!(20));
+            h.run_steps(3);
+            assert_eq!(h.state_mut().run("type.selectionAttrs", json!({})).unwrap()["chars"]["size"], 20.0);
+            h.get_by_label("Preview").click();
+            h.run_steps(3);
+            assert_eq!(h.state().session.doc().unwrap().doc, before);
+            h.get_by_label("Preview").click();
+            h.run_steps(3);
+            cancel(h.state_mut());
+            assert_eq!(h.state().session.doc().unwrap().doc, before);
+            assert_eq!(h.state().session.doc().unwrap().history.undo.len(), undo);
+            open_style_options(h.state_mut(), paragraph, "Tutorial");
+            let d = h.state_mut().ui.dialog.as_mut().unwrap();
+            d.fields.insert("preview".into(), json!(true));
+            d.fields.insert("c.size".into(), json!(24));
+            h.run_steps(3);
+            confirm(h.state_mut()).unwrap();
+            assert_eq!(h.state().session.doc().unwrap().history.undo.len(), undo + 1);
+            // Both paragraphs/character runs still use the globally edited definition.
+            for pos in [0, 6] {
+                h.state_mut().run("text.select", json!({"story":f["story"],"anchor":pos,"focus":pos+1})).unwrap();
+                assert_eq!(h.state_mut().run("type.selectionAttrs", json!({})).unwrap()["chars"]["size"], 24.0);
+            }
+            h.state_mut().run("edit.undo", json!({})).unwrap();
+            assert_eq!(h.state().session.doc().unwrap().doc, before);
+        }
+    }
+
+    #[test]
+    fn style_preview_refuses_justification_spacing_ok_would_refuse() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let before = app.session.doc().unwrap().doc.clone();
+        let mut d =
+            Dialog::new("paragraphStyleOptions", json!({"name": designcraft_doc::BASIC_PARAGRAPH, "preview": true, "p.wordSpaceDesired": 1.1}));
+        style_options_preview(&mut app, &mut d);
+        assert_ne!(app.session.doc().unwrap().doc, before, "a valid value previews");
+        // Minimum above Desired: the page goes back and the dialog says why.
+        d.fields.insert("p.wordSpaceMin".into(), json!(1.5));
+        style_options_preview(&mut app, &mut d);
+        assert_eq!(app.session.doc().unwrap().doc, before);
+        assert!(d.s("status").contains("Word Spacing"), "{:?}", d.fields.get("status"));
+        assert!(app.session.doc().unwrap().interaction.is_none());
+    }
+
+    #[test]
+    fn invalid_style_preview_leaves_the_starting_document_and_can_be_cancelled() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("style.character.create", json!({"name":"Emphasis"})).unwrap();
+        let before = app.session.doc().unwrap().doc.clone();
+        let mut d = Dialog::new("characterStyleOptions", json!({"name":"Emphasis","preview":true,"basedOn":"Emphasis"}));
+        style_options_preview(&mut app, &mut d);
+        assert!(d.fields.contains_key("status"));
+        assert_eq!(app.session.doc().unwrap().doc, before);
+        app.ui.dialog = Some(d);
+        cancel(&mut app);
+        assert_eq!(app.session.doc().unwrap().doc, before);
+        assert!(app.session.doc().unwrap().interaction.is_none());
+    }
+
+    #[test]
+    fn style_preview_rejects_conflicting_scalar_and_nested_rule_fields_without_panicking() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let before = app.session.doc().unwrap().doc.clone();
+        let mut dialog = Dialog::new(
+            "paragraphStyleOptions",
+            json!({
+                "name": designcraft_doc::BASIC_PARAGRAPH, "preview": true,
+                "p.ruleAbove": false, "p.ruleAbove.weight": 2
+            }),
+        );
+        style_options_preview(&mut app, &mut dialog);
+        assert!(dialog.fields.contains_key("status"));
+        assert_eq!(app.session.doc().unwrap().doc, before);
+        app.ui.dialog = Some(dialog);
+        cancel(&mut app);
+        assert!(app.session.doc().unwrap().interaction.is_none());
     }
 
     #[test]

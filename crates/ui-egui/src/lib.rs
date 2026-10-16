@@ -119,6 +119,13 @@ pub struct SavedWorkspace {
     /// The workspace's own icon column (see [`UiState::icon_groups`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_groups: Option<Vec<Vec<String>>>,
+    /// Saved with New Workspace › Capture › Panel Locations off: choosing the workspace leaves the
+    /// bars and panels where they are.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_panels: bool,
+    /// New Workspace › Capture › Menu Customization: the menu items hidden with Edit › Menus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_menu_items: Option<Vec<String>>,
 }
 
 /// A missing on-by-default bool stays on. `bool::default` is false.
@@ -182,6 +189,9 @@ pub struct UiState {
     pub screen_mode: ScreenMode,
     /// The screen mode leaving Presentation returns to: the one it was entered from.
     pub presentation_return: ScreenMode,
+    /// The view (by its `views` key) Presentation was entered from; leaving puts it back.
+    #[serde(skip)]
+    pub presentation_view: Option<(u64, View)>,
     pub frame_edges: bool,
     pub rulers: bool,
     pub guides: bool,
@@ -203,6 +213,8 @@ pub struct UiState {
     pub flattener_preview: bool,
     /// Tab / Shift+Tab: 1 = every panel hidden, 2 = all but the Tools panel (0 = shown).
     pub hidden_panels: u8,
+    /// "Don't show again" in the warning before deleting pages that contain objects.
+    pub skip_delete_pages_warning: bool,
     /// Edit › Color Settings (re-applied at start).
     pub color_settings: Option<designcraft_color::cms::ColorSettings>,
     /// View › Proof Colors and View › Proof Setup.
@@ -341,6 +353,7 @@ impl Default for UiState {
             brightness: theme::Brightness::MediumDark,
             screen_mode: ScreenMode::Normal,
             presentation_return: ScreenMode::Normal,
+            presentation_view: None,
             frame_edges: true,
             rulers: true,
             guides: true,
@@ -359,6 +372,7 @@ impl Default for UiState {
             tag_markers: false,
             flattener_preview: false,
             hidden_panels: 0,
+            skip_delete_pages_warning: false,
             color_settings: None,
             proof_colors: false,
             proof_setup: Default::default(),
@@ -1553,8 +1567,11 @@ impl DesignApp {
             );
             self.switch_pane(self.focus_pane);
         }
-        dock::flyout(self, &ctx);
-        dock::floating(self, &ctx);
+        // Tab, Shift+Tab and Presentation hide the floating panels with the docked ones.
+        if !presenting && self.ui.hidden_panels == 0 {
+            dock::flyout(self, &ctx);
+            dock::floating(self, &ctx);
+        }
         story_editor::show(self, &ctx);
         dialogs::show(self, &ctx);
         about::show(self, &ctx);
@@ -2670,22 +2687,29 @@ pub(crate) mod test_window {
     }
 
     /// The window at a size in points and a scale, with a new document open.
-    pub fn open_scaled(mut app: crate::DesignApp, size: egui::Vec2, pixels_per_point: f32) -> Harness<'static, Window> {
+    pub fn open_scaled(app: crate::DesignApp, size: egui::Vec2, pixels_per_point: f32) -> Harness<'static, Window> {
+        open_stepped(app, size, pixels_per_point, 0.25)
+    }
+
+    /// As `open_scaled`, with `step_dt` seconds between frames (a double-click needs its two
+    /// clicks closer together than the default quarter second).
+    pub fn open_stepped(mut app: crate::DesignApp, size: egui::Vec2, pixels_per_point: f32, step_dt: f32) -> Harness<'static, Window> {
         if app.session.active().is_none() {
             app.run("file.new", serde_json::json!({})).unwrap();
         }
-        let mut h = Harness::builder().with_size(size).with_pixels_per_point(pixels_per_point).with_max_steps(1000).build_ui_state(
-            |ui, w: &mut Window| {
-                // The builder runs a frame before the texture size can be raised: skip it.
-                if !w.ready {
-                    return;
-                }
-                let ctx = ui.ctx().clone();
-                w.app.logic(&ctx);
-                w.app.ui(ui);
-            },
-            Window { app, ready: false },
-        );
+        let mut h =
+            Harness::builder().with_size(size).with_pixels_per_point(pixels_per_point).with_max_steps(1000).with_step_dt(step_dt).build_ui_state(
+                |ui, w: &mut Window| {
+                    // The builder runs a frame before the texture size can be raised: skip it.
+                    if !w.ready {
+                        return;
+                    }
+                    let ctx = ui.ctx().clone();
+                    w.app.logic(&ctx);
+                    w.app.ui(ui);
+                },
+                Window { app, ready: false },
+            );
         h.input_mut().max_texture_side = Some(8192);
         h.state_mut().ready = true;
         h.run_steps(6);

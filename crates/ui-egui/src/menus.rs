@@ -223,12 +223,18 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.fastDisplay", "Fast Display", Some("Cmd+Alt+Shift+Z"), "{} — placed graphics as grey boxes, no effects"),
     ("view.typicalDisplay", "Typical Display", Some("Cmd+Alt+Z"), "{} — low-resolution image proxies"),
     ("view.highQualityDisplay", "High Quality Display", Some("Cmd+Alt+H"), "{} — full-resolution images"),
+    ("view.firstPage", "First Page", Some("Cmd+Shift+PageUp"), "{} — scroll to the document's first page (zoom kept)"),
+    ("view.previousPage", "Previous Page", Some("Shift+PageUp"), "{} — scroll to the page before the one in view"),
+    ("view.nextPage", "Next Page", Some("Shift+PageDown"), "{} — scroll to the page after the one in view"),
+    ("view.lastPage", "Last Page", Some("Cmd+Shift+PageDown"), "{} — scroll to the document's last page"),
+    ("view.nextSpread", "Next Spread", Some("Alt+PageDown"), "{} — centre the spread after the one in view"),
+    ("view.previousSpread", "Previous Spread", Some("Alt+PageUp"), "{} — centre the spread before the one in view"),
     ("view.goToPage", "Go to Page…", Some("Cmd+J"), "{page: number (position) | \"name\" (section page name, or \"+n\" for a position)}"),
     (
         "window.panel",
         "Show Panel",
         None,
-        "{panel: properties|pages|layers|swatches|paragraphStyles|characterStyles|stroke|character|paragraph|textWrap|links|table}",
+        "{panel: properties|pages|layers|swatches|paragraphStyles|characterStyles|stroke|character|paragraph|textWrap|links|table|preflight}",
     ),
     ("window.floatPanel", "Float Panel", None, "{panel, x?, y?} — the panel in its own movable window"),
     (
@@ -247,6 +253,8 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("window.panel.dock", "Dock Panel", None, "{panel, anchor?, zone?, before?} — return a floating panel to a dock group"),
     ("window.panel.activate", "Activate Panel", None, "{panel} — show and select a panel in its current group"),
     ("window.panel.close", "Close Panel", None, "{panel} — hide a panel"),
+    ("window.panel.closeGroup", "Close Tab Group", None, "{panel} — hide the panel and the panels tabbed with it"),
+    ("window.collapseToIcons", "Collapse to Icons", None, "{} — the panel dock shrinks to its column of icons"),
     ("window.dockPanel", "Dock Panel", None, "{panel} — back into the dock's icon column"),
     ("window.controlBar", "Control", Some("Cmd+Alt+6"), "{}"),
     // Object › Fitting with InDesign's shortcuts (one `object.fit` mode each).
@@ -289,7 +297,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         None,
         "{name: Advanced|Book|Digital Publishing|Essentials|Essentials Classic|Interactive for PDF|Printing and Proofing|Typography or a saved workspace}",
     ),
-    ("window.newWorkspace", "New Workspace…", None, "{name} — saves the current bars and panel arrangement"),
+    (
+        "window.newWorkspace",
+        "New Workspace…",
+        None,
+        "{name, panelLocations?: bool (default true: the bars and panels), menuCustomization?: bool (default true: the menu items hidden with Edit › Menus)} — saves the workspace",
+    ),
     ("window.deleteWorkspace", "Delete Workspace…", None, "{name}"),
     ("window.resetWorkspace", "Reset Workspace", None, "{} — back to the current workspace as saved (or its defaults)"),
     ("window.brightness", "Interface Color Theme", None, "{brightness: dark|mediumDark|mediumLight|light|highContrast}"),
@@ -399,6 +412,12 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:layout.createGuides",
             "cmd:layout.createAlternate",
             "-",
+            "ui:view.firstPage",
+            "ui:view.previousPage",
+            "ui:view.nextPage",
+            "ui:view.lastPage",
+            "ui:view.nextSpread",
+            "ui:view.previousSpread",
             "ui:view.goToPage",
             "-",
             "cmd:layout.section",
@@ -918,6 +937,17 @@ pub const CLASSIC_GROUPS: &[&[&str]] = &[
     &["gradient"],
 ];
 
+/// The Typography preset's available panels in the order observed in InDesign's workspace.
+/// CC Libraries and the separate Story panel have no corresponding DesignCraft panel.
+pub const TYPOGRAPHY_GROUPS: &[&[&str]] = &[
+    &["pages", "layers", "swatches"],
+    &["glyphs", "textWrap"],
+    &["stroke", "gradient"],
+    &["hyperlinks", "effects"],
+    &["paragraph", "paragraphStyles"],
+    &["character", "characterStyles"],
+];
+
 pub fn ui_label(id: &str) -> Option<(&'static str, Option<&'static str>)> {
     UI_COMMANDS.iter().find(|c| c.0 == id).map(|c| (c.1, c.2))
 }
@@ -1305,7 +1335,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             let Some(st) = app.session.active() else { return Some(Err("no document open".into())) };
             let page = crate::canvas::current_page(app).unwrap_or(0);
             let r = if id == "app.deletePage" {
-                app.run("layout.pages.delete", json!({"pages": [page]}))
+                crate::dialogs::delete_pages(app, vec![page])
             } else {
                 let spread = st.doc.page_loc(page).map_or(0, |l| l.0);
                 app.run("layout.pages.duplicateSpread", json!({"spread": spread}))
@@ -1577,6 +1607,24 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.canvas.shown = None;
             Ok(Value::Null)
         }
+        "view.firstPage" | "view.previousPage" | "view.nextPage" | "view.lastPage" => {
+            let n = app.session.active().map_or(0, |d| d.doc.page_count());
+            if n > 0 {
+                let cur = crate::canvas::current_page(app).unwrap_or(0);
+                let to = match id {
+                    "view.firstPage" => 0,
+                    "view.previousPage" => cur.saturating_sub(1),
+                    "view.nextPage" => cur.saturating_add(1).min(n - 1),
+                    _ => n - 1,
+                };
+                crate::canvas::go_to_page(app, to);
+            }
+            Ok(Value::Null)
+        }
+        "view.nextSpread" | "view.previousSpread" => {
+            crate::canvas::step_spread(app, if id == "view.nextSpread" { 1 } else { -1 });
+            Ok(Value::Null)
+        }
         "view.goToPage" => {
             match p.get("page") {
                 Some(Value::Number(n)) => crate::canvas::go_to_page(app, (n.as_u64().unwrap_or(1) as usize).saturating_sub(1)),
@@ -1778,9 +1826,15 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             Ok(json!({"url": url}))
         }
         "window.toolsDoubleColumn" => flag(&mut app.ui.tools_double_column),
+        "window.collapseToIcons" => {
+            app.ui.dock_expanded = false;
+            app.ui.open_panel = None;
+            Ok(Value::Null)
+        }
         "window.newWorkspace" => {
             let Some(name) = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) else {
-                app.ui.dialog = Some(crate::dialogs::Dialog::new("newWorkspace", json!({"name": ""})));
+                app.ui.dialog =
+                    Some(crate::dialogs::Dialog::new("newWorkspace", json!({"name": "", "panelLocations": true, "menuCustomization": true})));
                 return Some(Ok(Value::Null));
             };
             let u = &app.ui;
@@ -1797,6 +1851,8 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
                 docking: u.docking.clone(),
                 docking_hidden: u.docking_hidden.clone(),
                 icon_groups: u.icon_groups.clone(),
+                keep_panels: !p.get("panelLocations").and_then(Value::as_bool).unwrap_or(true),
+                hidden_menu_items: p.get("menuCustomization").and_then(Value::as_bool).unwrap_or(true).then(|| u.hidden_menu_items.clone()),
             };
             app.ui.custom_workspaces.retain(|x| x.name != name);
             app.ui.custom_workspaces.push(w);
@@ -1825,6 +1881,13 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.docking_opened = None;
             let name = p.get("name").and_then(Value::as_str).unwrap_or("Essentials");
             if let Some(w) = app.ui.custom_workspaces.iter().find(|w| w.name == name).cloned() {
+                if let Some(hidden) = w.hidden_menu_items {
+                    app.ui.hidden_menu_items = hidden;
+                }
+                if w.keep_panels {
+                    app.ui.workspace = w.name;
+                    return Some(Ok(Value::Null));
+                }
                 app.ui.control_bar = w.control_bar;
                 app.ui.task_bar = w.task_bar;
                 app.ui.task_bar_pin = w.task_bar_pin;
@@ -1848,11 +1911,14 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.control_bar = matches!(name, "Advanced" | "Typography" | "Printing and Proofing" | "Book" | "Essentials Classic");
             // Essentials Classic: the Control panel and an icon column of grouped panels, no
             // Properties stack.
-            let classic = name == "Essentials Classic";
-            app.ui.icon_groups = classic.then(|| CLASSIC_GROUPS.iter().map(|g| g.iter().map(|p| p.to_string()).collect()).collect());
-            app.ui.dock_expanded = !classic;
+            let groups = match name {
+                "Essentials Classic" => Some(CLASSIC_GROUPS),
+                "Typography" => Some(TYPOGRAPHY_GROUPS),
+                _ => None,
+            };
+            app.ui.icon_groups = groups.map(|groups| groups.iter().map(|g| g.iter().map(|p| p.to_string()).collect()).collect());
+            app.ui.dock_expanded = groups.is_none();
             let dock_tab = match name {
-                "Typography" => Some("properties"),
                 "Interactive for PDF" | "Digital Publishing" => Some("pages"),
                 _ => None,
             };
@@ -1861,7 +1927,6 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
                 app.ui.dock_expanded = true;
             }
             app.ui.open_panel = match name {
-                "Typography" => Some("paragraphStyles".into()),
                 "Printing and Proofing" => Some("swatches".into()),
                 "Interactive for PDF" => Some("buttons".into()),
                 "Digital Publishing" => Some("liquid".into()),
@@ -1883,8 +1948,18 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
 /// Save by handing the serialized document to the host as a download (web).
 /// Switch screen modes; entering Presentation remembers the mode to return to.
 fn set_screen_mode(app: &mut DesignApp, mode: ScreenMode) {
-    if mode == ScreenMode::Presentation && app.ui.screen_mode != ScreenMode::Presentation {
+    let presenting = app.ui.screen_mode == ScreenMode::Presentation;
+    if mode == ScreenMode::Presentation && !presenting {
         app.ui.presentation_return = app.ui.screen_mode;
+        // Presentation fits the spread to the screen; leaving it puts the user's view back.
+        app.ui.presentation_view = app.view_key().zip(app.view().copied());
+    }
+    if mode != ScreenMode::Presentation
+        && presenting
+        && let Some((k, v)) = app.ui.presentation_view.take()
+        && let Some(view) = app.views.get_mut(&k)
+    {
+        *view = v;
     }
     app.ui.screen_mode = mode;
 }
@@ -2946,6 +3021,21 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
             let _ = app.run("view.togglePresentation", json!({}));
             continue;
         }
+        // Presentation goes through the spreads with the arrow keys, Page Up/Down, Home and End.
+        if app.ui.screen_mode == ScreenMode::Presentation && !modifiers.command && !modifiers.alt {
+            let step = match key {
+                egui::Key::ArrowRight | egui::Key::ArrowDown | egui::Key::PageDown => Some(1),
+                egui::Key::ArrowLeft | egui::Key::ArrowUp | egui::Key::PageUp => Some(-1),
+                egui::Key::Home => Some(isize::MIN),
+                egui::Key::End => Some(isize::MAX),
+                _ => None,
+            };
+            if let Some(step) = step {
+                ctx.input_mut(|i| i.consume_key(modifiers, key));
+                crate::canvas::step_spread(app, step);
+                continue;
+            }
+        }
         // Command shortcuts.
         let mut fired: Option<(String, bool)> = None;
         let all = effective_shortcuts(app);
@@ -2990,7 +3080,7 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
                     eprintln!("tool shortcut {sc} ({key:?}, {modifiers:?}) -> {tool}");
                 }
                 app.select_tool(tool);
-            } else if key == egui::Key::Escape && app.session.tool_id() != "selection" && !app.session.tool_busy() {
+            } else if key == egui::Key::Escape && app.session.tool_id() != "selection" && !app.session.tool_busy() && app.ui.flyout.is_none() {
                 app.select_tool("selection");
             }
         }
@@ -3874,6 +3964,57 @@ mod tests {
     }
 
     #[test]
+    fn tab_and_presentation_hide_floating_panels_too() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp| {
+            for _ in 0..2 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(input, |ui| {
+                    app.logic(&ui.ctx().clone());
+                    app.ui(ui);
+                });
+                out.textures_delta.clear();
+            }
+        };
+        // The icon column's flyout (the classic dock) and a floating panel group (the docking layout).
+        let flyout = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("panel_flyout"));
+        let group = egui::LayerId::new(egui::Order::Middle, egui::Id::new("designcraft-panel-docking").with(("floating", "preflight")));
+        let shown = |layer: egui::LayerId| ctx.memory(|m| m.areas().is_visible(&layer));
+        let toggles = [
+            ("window.hidePanels", json!({}), json!({})),
+            ("window.hidePanelsExceptTools", json!({}), json!({})),
+            ("view.screenMode", json!({"mode": "presentation"}), json!({"mode": "normal"})),
+        ];
+        app.run("window.panel", json!({"panel": "preflight"})).unwrap();
+        frame(&mut app);
+        assert!(app.ui.docking.is_none() && shown(flyout));
+        for (id, hide, show) in &toggles {
+            app.run(id, hide.clone()).unwrap();
+            frame(&mut app);
+            assert!(!shown(flyout), "{id} hides the flyout");
+            app.run(id, show.clone()).unwrap();
+            frame(&mut app);
+            assert!(shown(flyout), "{id} again brings it back");
+        }
+        app.run("window.floatPanel", json!({"panel": "preflight", "x": 400, "y": 200})).unwrap();
+        frame(&mut app);
+        assert!(app.ui.docking.is_some() && shown(group));
+        for (id, hide, show) in &toggles {
+            app.run(id, hide.clone()).unwrap();
+            frame(&mut app);
+            assert!(!shown(group), "{id} hides the floating panel");
+            app.run(id, show.clone()).unwrap();
+            frame(&mut app);
+            assert!(shown(group), "{id} again brings it back");
+        }
+    }
+
+    #[test]
     fn tab_hides_panels_and_documents_cycle() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         assert_eq!(shortcut_of(&app, "window.hidePanels").as_deref(), Some("Tab"));
@@ -4003,6 +4144,183 @@ mod tests {
         assert!((v.zoom - v0.zoom).abs() < 1e-9, "panning keeps the zoom");
         assert!(v.origin.x < v0.origin.x && v.origin.y < v0.origin.y, "dragging right/down moves the view: {v0:?} -> {v:?}");
         assert_eq!(items(&app), items0, "the tool saw nothing");
+    }
+
+    #[test]
+    fn layout_menu_goes_through_pages_and_spreads_with_their_shortcuts() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({"pages": 7, "facingPages": true})).unwrap();
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let key = |k: egui::Key, modifiers: egui::Modifiers| {
+            vec![
+                egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers },
+                egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers },
+            ]
+        };
+        let page = |app: &crate::DesignApp| crate::canvas::current_page(app).unwrap();
+        let spread = |app: &crate::DesignApp| {
+            let st = app.session.active().unwrap();
+            crate::canvas::current_slot(app, &designcraft_tools::layout::CanvasLayout::new(&st.doc, false)).unwrap()
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        // The Layout menu lists them, as InDesign's does, before Go to Page.
+        let layout = MENUS.iter().find(|m| m.0 == "Layout").unwrap().1;
+        let at = |id: &str| layout.iter().position(|e| e.starts_with(&format!("ui:{id}"))).unwrap();
+        assert!(at("view.firstPage") < at("view.previousPage"));
+        assert!(at("view.previousPage") < at("view.nextPage"));
+        assert!(at("view.nextPage") < at("view.lastPage"));
+        assert!(at("view.lastPage") < at("view.nextSpread"));
+        assert!(at("view.nextSpread") < at("view.previousSpread"));
+        assert!(at("view.previousSpread") < at("view.goToPage"));
+        let shift = egui::Modifiers::SHIFT;
+        let cmd_shift = egui::Modifiers { shift: true, command: true, ctrl: true, ..Default::default() };
+        let alt = egui::Modifiers::ALT;
+        // Pages 1 | 2-3 | 4-5 | 6-7.
+        frame(&mut app, key(egui::Key::PageDown, shift));
+        assert_eq!(page(&app), 1, "Next Page");
+        frame(&mut app, key(egui::Key::PageDown, shift));
+        assert_eq!(page(&app), 2, "Next Page goes to the right page of the spread");
+        frame(&mut app, key(egui::Key::PageUp, shift));
+        assert_eq!(page(&app), 1, "Previous Page");
+        frame(&mut app, key(egui::Key::PageDown, cmd_shift));
+        assert_eq!(page(&app), 6, "Last Page");
+        frame(&mut app, key(egui::Key::PageDown, shift));
+        assert_eq!(page(&app), 6, "Next Page stops at the last page");
+        frame(&mut app, key(egui::Key::PageUp, cmd_shift));
+        assert_eq!(page(&app), 0, "First Page");
+        frame(&mut app, key(egui::Key::PageUp, shift));
+        assert_eq!(page(&app), 0, "Previous Page stops at the first page");
+        frame(&mut app, key(egui::Key::PageDown, alt));
+        assert_eq!(spread(&app), 1, "Next Spread");
+        frame(&mut app, key(egui::Key::PageDown, alt));
+        frame(&mut app, key(egui::Key::PageDown, alt));
+        frame(&mut app, key(egui::Key::PageDown, alt));
+        assert_eq!(spread(&app), 3, "Next Spread stops at the last spread");
+        frame(&mut app, key(egui::Key::PageUp, alt));
+        assert_eq!(spread(&app), 2, "Previous Spread");
+        // The spread is centred, the zoom kept.
+        let zoom = app.view().unwrap().zoom;
+        app.run("view.previousSpread", json!({})).unwrap();
+        let st = app.session.active().unwrap();
+        let slot = designcraft_tools::layout::CanvasLayout::new(&st.doc, false).slots[1];
+        let (v, r) = (*app.view().unwrap(), app.canvas_rect.unwrap());
+        let centre = (v.origin.x + r.width() as f64 / 2.0 / v.zoom, v.origin.y + r.height() as f64 / 2.0 / v.zoom);
+        assert!((centre.0 - slot.bounds.center().x).abs() < 1e-6 && (centre.1 - slot.bounds.center().y).abs() < 1e-6);
+        assert_eq!(v.zoom, zoom);
+    }
+
+    #[test]
+    fn presentation_shows_one_spread_and_goes_through_them_with_keys_and_clicks() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({"pages": 7, "facingPages": true})).unwrap();
+        app.session.execute("frame.create", &json!({"rect": [100, 100, 300, 300]})).unwrap();
+        let id = app.session.active().unwrap().selection.items[0];
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let key = |k: egui::Key| {
+            vec![
+                egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() },
+                egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers: Default::default() },
+            ]
+        };
+        let click = |pos: egui::Pos2, modifiers: egui::Modifiers| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers },
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers },
+            ]
+        };
+        let spread = |app: &crate::DesignApp| {
+            let st = app.session.active().unwrap();
+            crate::canvas::current_slot(app, &designcraft_tools::layout::CanvasLayout::new(&st.doc, false)).unwrap()
+        };
+        // The spread fills the screen: as wide or as tall as it, centred.
+        let fills = |app: &crate::DesignApp| {
+            let st = app.session.active().unwrap();
+            let b = designcraft_tools::layout::CanvasLayout::new(&st.doc, false).slots[spread(app)].bounds;
+            let (v, r) = (*app.view().unwrap(), app.canvas_rect.unwrap());
+            let (w, h) = (b.width() * v.zoom, b.height() * v.zoom);
+            let x0 = (b.x0 - v.origin.x) * v.zoom;
+            let y0 = (b.y0 - v.origin.y) * v.zoom;
+            ((w - r.width() as f64).abs() < 0.01 || (h - r.height() as f64).abs() < 0.01)
+                && w <= r.width() as f64 + 0.01
+                && h <= r.height() as f64 + 0.01
+                && (x0 * 2.0 + w - r.width() as f64).abs() < 0.01
+                && (y0 * 2.0 + h - r.height() as f64).abs() < 0.01
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        // The user's own view (zoomed in, scrolled) comes back after Presentation.
+        let view = app.view_mut().unwrap();
+        view.zoom = 2.0;
+        view.origin.x += 150.0;
+        view.origin.y += 300.0;
+        let before = *app.view().unwrap();
+        app.run("view.screenMode", json!({"mode": "presentation"})).unwrap();
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        assert_eq!(app.canvas_rect.unwrap().size(), egui::vec2(1400.0, 900.0), "the whole window");
+        assert_eq!(spread(&app), 0);
+        assert!(fills(&app));
+        let bounds = app.session.active().unwrap().doc.item(id).unwrap().bounds();
+        frame(&mut app, key(egui::Key::ArrowRight));
+        frame(&mut app, vec![]);
+        assert_eq!(spread(&app), 1, "Right Arrow shows the next spread");
+        assert!(fills(&app));
+        assert_eq!(app.session.active().unwrap().doc.item(id).unwrap().bounds(), bounds, "the arrow doesn't nudge the selection");
+        frame(&mut app, key(egui::Key::PageDown));
+        assert_eq!(spread(&app), 2, "Page Down");
+        frame(&mut app, key(egui::Key::ArrowLeft));
+        assert_eq!(spread(&app), 1, "Left Arrow");
+        frame(&mut app, key(egui::Key::End));
+        assert_eq!(spread(&app), 3, "End");
+        frame(&mut app, key(egui::Key::ArrowRight));
+        assert_eq!(spread(&app), 3, "the last spread stays");
+        frame(&mut app, key(egui::Key::Home));
+        assert_eq!(spread(&app), 0, "Home");
+        frame(&mut app, key(egui::Key::PageUp));
+        assert_eq!(spread(&app), 0, "the first spread stays");
+        let c = app.canvas_rect.unwrap().center();
+        frame(&mut app, click(c, egui::Modifiers::NONE));
+        frame(&mut app, vec![]);
+        assert_eq!(spread(&app), 1, "a click shows the next spread");
+        assert!(fills(&app));
+        frame(&mut app, click(c, egui::Modifiers::SHIFT));
+        frame(&mut app, vec![]);
+        assert_eq!(spread(&app), 0, "Shift-click the previous one");
+        assert_eq!(app.session.active().unwrap().selection.items, vec![id], "clicks don't select");
+        assert_eq!(app.session.tool_id(), "selection");
+        // Out of Presentation, the view is the one it was entered from, and the arrow keys nudge
+        // again.
+        app.run("view.screenMode", json!({"mode": "normal"})).unwrap();
+        assert_eq!(*app.view().unwrap(), before);
+        frame(&mut app, vec![]);
+        frame(&mut app, key(egui::Key::ArrowRight));
+        assert_ne!(app.session.active().unwrap().doc.item(id).unwrap().bounds(), bounds);
     }
 
     #[test]
@@ -4716,8 +5034,10 @@ mod tests {
         app.run("file.new", json!({})).unwrap();
         activate(&mut app, "app.characterPanel", &Value::Null);
         assert_eq!(app.ui.open_panel.as_deref(), Some("character"));
+        // Paragraph Styles opens floating, grouped with Character Styles, as in InDesign.
         activate(&mut app, "app.paragraphStylesPanel", &Value::Null);
-        assert_eq!(app.ui.open_panel.as_deref(), Some("paragraphStyles"));
+        let layout = app.ui.docking.as_ref().unwrap();
+        assert!(layout.floating.iter().any(|g| g.panels == ["characterStyles", "paragraphStyles"] && g.active == 1));
         let story = app.run("frame.create", json!({"rect": [36, 36, 200, 100], "content": "text", "text": "Page "})).unwrap()["story"].clone();
         app.run("text.select", json!({"story": story, "anchor": 5, "focus": 5})).unwrap();
         activate(&mut app, "app.insertCurrentPageNumber", &Value::Null);
@@ -4743,6 +5063,41 @@ mod tests {
         assert_eq!(app.ui.workspace, "Essentials");
     }
 
+    /// New Workspace › Capture (Learn Skills Daily's InDesign course, 11:40): Panel Locations and
+    /// Menu Customization, both on by default.
+    #[test]
+    fn new_workspace_captures_panel_locations_and_menu_customization() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        // The dialog offers both, checked.
+        run_ui(&mut app, "window.newWorkspace", &json!({})).unwrap().unwrap();
+        let d = app.ui.dialog.take().unwrap();
+        assert_eq!(
+            (d.id.as_str(), d.fields["panelLocations"].clone(), d.fields["menuCustomization"].clone()),
+            ("newWorkspace", json!(true), json!(true))
+        );
+        // Both captured.
+        app.ui.dock_tab = "swatches".into();
+        app.ui.hidden_menu_items = vec!["Type/Glyphs".into()];
+        run_ui(&mut app, "window.newWorkspace", &json!({"name": "All"})).unwrap().unwrap();
+        // Menus only: choosing it leaves the panels where they are.
+        app.ui.hidden_menu_items = vec!["Layout/Pages".into()];
+        run_ui(&mut app, "window.newWorkspace", &json!({"name": "Menus", "panelLocations": false})).unwrap().unwrap();
+        // Panels only: the menus stay as they are.
+        app.ui.dock_tab = "layers".into();
+        run_ui(&mut app, "window.newWorkspace", &json!({"name": "Panels", "menuCustomization": false})).unwrap().unwrap();
+        app.ui.dock_tab = "properties".into();
+        app.ui.hidden_menu_items.clear();
+        run_ui(&mut app, "window.workspace", &json!({"name": "Menus"})).unwrap().unwrap();
+        assert_eq!((app.ui.dock_tab.as_str(), app.ui.hidden_menu_items.clone()), ("properties", vec!["Layout/Pages".to_string()]));
+        run_ui(&mut app, "window.workspace", &json!({"name": "Panels"})).unwrap().unwrap();
+        assert_eq!((app.ui.dock_tab.as_str(), app.ui.hidden_menu_items.clone()), ("layers", vec!["Layout/Pages".to_string()]));
+        run_ui(&mut app, "window.workspace", &json!({"name": "All"})).unwrap().unwrap();
+        assert_eq!((app.ui.dock_tab.as_str(), app.ui.hidden_menu_items.clone()), ("swatches", vec!["Type/Glyphs".to_string()]));
+        // A workspace saved before the options existed restores its panels.
+        let old: crate::SavedWorkspace = serde_json::from_value(json!({"name": "Old", "dockTab": "pages"})).unwrap();
+        assert!(!old.keep_panels && old.hidden_menu_items.is_none());
+    }
+
     #[test]
     fn essentials_classic_is_the_control_panel_and_iconic_groups() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -4762,6 +5117,31 @@ mod tests {
         assert_eq!((app.ui.icon_groups.as_ref(), app.ui.dock_expanded, app.ui.control_bar), (None, true, false));
         run_ui(&mut app, "window.workspace", &json!({"name": "Mine"})).unwrap().unwrap();
         assert_eq!(app.ui.icon_groups, Some(groups));
+    }
+
+    #[test]
+    fn typography_workspace_opens_its_panels_from_named_icon_groups_and_resets() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        run_ui(&mut app, "window.workspace", &json!({"name":"Typography"})).unwrap().unwrap();
+        assert!(app.ui.control_bar);
+        assert!(!app.ui.dock_expanded);
+        assert!(app.ui.open_panel.is_none());
+        let groups = app.ui.icon_groups.clone().unwrap();
+        assert_eq!(groups[0], ["pages", "layers", "swatches"]);
+        assert_eq!(groups[4], ["paragraph", "paragraphStyles"]);
+        assert_eq!(groups[5], ["character", "characterStyles"]);
+        for panel in ["pages", "paragraphStyles", "characterStyles"] {
+            run_ui(&mut app, "window.panel", &json!({"panel":panel})).unwrap().unwrap();
+            assert_eq!(app.ui.open_panel.as_deref(), Some(panel));
+            assert!(!app.ui.dock_expanded);
+        }
+        run_ui(&mut app, "window.resetWorkspace", &json!({})).unwrap().unwrap();
+        assert_eq!(app.ui.icon_groups, Some(groups));
+        assert!(app.ui.open_panel.is_none());
+        assert!(!app.ui.dock_expanded);
+        run_ui(&mut app, "window.workspace", &json!({"name":"Essentials"})).unwrap().unwrap();
+        assert!(app.ui.icon_groups.is_none());
+        assert!(app.ui.dock_expanded);
     }
 
     #[test]

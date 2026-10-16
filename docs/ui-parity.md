@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (live corners work; document views row: scrollbars, Alt pans while editing text; Tabs panel listed as present (#343); spring-loaded Zoom navigation) · **Target:** Adobe InDesign 2026 (21.6, Medium Dark, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (live corners work; document views row: scrollbars, Alt pans while editing text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; paragraph style override feedback and clearing) · **Target:** Adobe InDesign 2026 (21.6, Medium Dark, macOS)
 
 Tools, handles, snapping, nudging, modifiers, shortcuts, panels, menus, context menus and feel,
 against InDesign 2026. The look was measured from the running app
@@ -69,6 +69,45 @@ history (DC-1).
 
 ## Remaining effort
 
+Applying a paragraph or character style now removes local values equal to the applied style,
+so text used to capture a style follows later edits to that style. Different local formatting
+and named character styles stay intact. Paragraph-style application treats selection endpoints
+as exclusive; Clear Overrides removes character formatting only inside a nonempty selection.
+Regressions cover the capture/edit workflow at 2:16 and 6:02 in
+[Jessica Garrity's styles tutorial](https://www.youtube.com/watch?v=pG9JkAPLgs8).
+
+Redefining a character style at a caret also normalizes the sampled source run, so subsequent
+style edits reach that text while different local overrides in adjacent runs remain intact.
+
+The selected style's context menu now offers Redefine Style for paragraph and character styles.
+It incorporates the source text's local changes, updates every use, and removes matching source
+overrides in one undo step. Named character styles remain separate when redefining a paragraph
+style. Commands: `style.paragraph.redefine` and `style.character.redefine` (optional `name`,
+which must match the source). This implements the global color, size and spacing updates at
+about 5:10–6:00 in [Jessica Garrity's styles tutorial](https://www.youtube.com/watch?v=pG9JkAPLgs8).
+
+The Paragraph Styles panel now includes character formatting in its `+` indicator, on both
+the current-style summary and the selected row. The row menu offers Apply "name", Clear
+Overrides through the existing command, retaining named character styles. Selection attribute
+counts compare effective values with their style definitions, so equal local values and named
+character styles alone do not report overrides. This covers the color-override/clear workflow
+at 4:25–5:20 in [Jessica Garrity's styles tutorial](https://www.youtube.com/watch?v=pG9JkAPLgs8).
+
+Style Preview rejects conflicting scalar/nested automation fields without a panic. Replacing a
+previewing dialog through the control channel cancels its transaction, restoring the original
+document and normal undo recording before the replacement opens.
+
+Paragraph and Character Style Options now preview edits to existing styles. Preview updates
+every use, remains outside undo history, and restores the starting document when disabled or
+cancelled. OK applies the final edit once. The color-preview step at about 4:00 in
+[Jessica Garrity's styles tutorial](https://www.youtube.com/watch?v=pG9JkAPLgs8) is reproducible
+offscreen. New-style creation, renaming and export tagging are committed on OK; they are not
+included in the visual preview.
+
+Paragraph Style Options' General pane shows a Style Settings summary of differences from its
+parent, including captured color, size and spacing. Pending edits appear before OK without
+changing the document. Fully captured default attributes do not overwhelm the summary. This
+covers checking the sampled and redefined settings in the styles tutorial (2:45 and 5:15).
 | Work | Opus 5.5 h |
 |---|---|
 | Copy/paste, context menus, threading clicks, caret formatting on every platform, with control-channel regression tests | 30–50 |
