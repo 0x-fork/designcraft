@@ -1299,7 +1299,8 @@ impl DesignApp {
         }
         let document = opens_as_document(path)
             || (std::path::Path::new(path).extension().is_none()
-                && designcraft_engine::io::read(path).is_ok_and(|b| designcraft_engine::cmd::is_document(&b)));
+                && designcraft_engine::io::read_capped(path, designcraft_engine::cmd::DOCUMENT_SNIFF_BYTES)
+                    .is_ok_and(|b| designcraft_engine::cmd::is_document(&b)));
         if document {
             return self.open_file("file.open", json!({"path": path}));
         }

@@ -174,9 +174,14 @@ pub fn with_document_extension(path: &str) -> String {
 }
 
 /// Whether `bytes` are a document `file.open` reads: a DesignCraft package or an IDML package.
+/// The first [`DOCUMENT_SNIFF_BYTES`] of a file are enough for packages that start with their
+/// `mimetype` entry, as both formats write them.
 pub fn is_document(bytes: &[u8]) -> bool {
-    designcraft_idml::is_idml(bytes) || designcraft_format::is_designcraft(bytes)
+    designcraft_idml::is_idml(bytes) || designcraft_format::starts_designcraft(bytes) || designcraft_format::is_designcraft(bytes)
 }
+
+/// How much of a file [`is_document`] needs to recognise a package by its `mimetype` entry.
+pub const DOCUMENT_SNIFF_BYTES: u64 = 64 << 10;
 
 /// The longer side of the first-page picture saved in the file, in pixels.
 const PREVIEW_PX: f64 = 320.0;
@@ -1923,6 +1928,11 @@ mod extension_tests {
         let idml = dir.join("Package");
         std::fs::write(&idml, designcraft_idml::export_idml(&s.doc().unwrap().doc)).unwrap();
         assert!(is_document(&std::fs::read(&idml).unwrap()) && is_document(&std::fs::read(&bare).unwrap()));
+        // The start of the file is enough.
+        for path in [&idml, &bare] {
+            let bytes = std::fs::read(path).unwrap();
+            assert!(is_document(&bytes[..bytes.len().min(128)]), "{path:?}");
+        }
         t.execute("file.open", &json!({"path": idml.to_string_lossy()})).unwrap();
         assert_eq!(t.doc().unwrap().path, None);
 

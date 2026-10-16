@@ -107,6 +107,16 @@ pub fn is_designcraft(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK") && zip::ZipArchive::new(Cursor::new(bytes)).is_ok_and(|z| z.index_for_name("document.json").is_some())
 }
 
+/// Whether `prefix`, the start of a file, opens a DesignCraft package: a zip whose first, stored
+/// entry is the `mimetype` naming this format. Packages saved before they had one are recognised
+/// only whole ([`is_designcraft`]).
+pub fn starts_designcraft(prefix: &[u8]) -> bool {
+    prefix.starts_with(b"PK\x03\x04") && prefix.get(26..28) == Some(&8u16.to_le_bytes()[..]) && prefix.get(30..38) == Some(b"mimetype") && {
+        let extra = prefix.get(28..30).map_or(0, |e| usize::from(u16::from_le_bytes([e[0], e[1]])));
+        prefix.get(38 + extra..).is_some_and(|rest| rest.starts_with(MIME.as_bytes()))
+    }
+}
+
 /// The zip entry holding the first page's picture.
 pub const PREVIEW: &str = "preview.png";
 
