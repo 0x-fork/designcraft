@@ -726,9 +726,6 @@ fn rename_char_refs(p: &mut ParaAttrs, from: &str, to: &str) {
             *n = to.to_string();
         }
     }
-    if p.drop_cap_style.as_deref() == Some(from) {
-        p.drop_cap_style = Some(to.to_string());
-    }
 }
 
 fn group_styles(s: &mut Session, p: &Value) -> Result<Value> {
