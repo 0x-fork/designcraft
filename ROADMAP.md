@@ -348,6 +348,8 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-15** · With nothing selected, the Tools panel's fill and stroke (the Color Picker, swatches, Apply None, Swap, Default) set the colours new shapes are drawn with, as InDesign's document defaults; the proxy shows them. They were refused ("nothing selected").
+
 - **2026-10-15** · The Eyedropper with text selected picks up the formatting of the text it clicks (character style and overrides, paragraph style and overrides) and applies it to the selection, as InDesign's does; it copied the clicked frame's fill and stroke instead. No readiness percentage change.
 
 - **2026-10-15** · A0, A1 and A2 poster presets are available in New Document, Document Setup, Properties, the Page tool and the Pages panel's size menu, as well as `file.new` and `layout.pageSize`. No readiness percentage change.
