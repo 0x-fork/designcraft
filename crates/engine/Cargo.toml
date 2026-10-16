@@ -37,6 +37,9 @@ unicode-segmentation = { workspace = true }
 craft-atomic = { workspace = true }
 tempfile = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+same-file = { workspace = true }
+
 [dev-dependencies]
 designcraft-fonts = { workspace = true, features = ["testing"] }
 zip = { workspace = true }
