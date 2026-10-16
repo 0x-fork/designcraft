@@ -1051,6 +1051,7 @@ fn draw_frames(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
     if !app.ui.frame_edges {
         return;
     }
+    let ported = ported_frames(app, doc);
     for slot in &layout.slots {
         let Some(sp) = doc.spread(slot.spread) else { continue };
         let a = slot.xf;
@@ -1079,12 +1080,9 @@ fn draw_frames(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
         // Every overset frame, selected or not and inside groups too, shows its red mark at the
         // out port (InDesign shows it only on the selected frame; a report in Preflight is easy
         // to miss while laying out).
-        let mut overset = Vec::new();
-        overset_frames(app, doc, &sp.items, a, 0, &mut overset);
-        for (it, m) in overset {
-            let r = it.inner_bounds();
-            let c = xf.to_screen(m * Point::new(r.x1, r.y1)) - vec2(0.0, 12.0);
-            let s = 8.5;
+        for (it, c) in overset_marks(app, doc, layout, &sp.items, xf.zoom, &ported) {
+            let c = xf.to_screen(c);
+            let s = designcraft_tools::thread::PORT_SIZE_PX as f32;
             painter.rect_filled(Rect::from_center_size(c, vec2(s, s)), 0.0, Color32::WHITE);
             painter.rect_stroke(Rect::from_center_size(c, vec2(s, s)), 0.0, Stroke::new(hair(painter), layer_color(doc, it)), StrokeKind::Inside);
             let red = Color32::from_rgb(230, 20, 20);
@@ -1185,8 +1183,8 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
         // Text frame ports, also of the frames inside a selected group (so an overset frame in a
         // group shows its red mark).
         let mut frames = Vec::new();
-        text_frames_in(it, a, 0, &mut frames);
-        for (frame, story, _) in frames {
+        text_frames_in(it, 0, &mut frames);
+        for (frame, story) in frames {
             draw_ports(app, painter, xf, doc, layout, frame, story, color);
         }
         if let Content::Graphic(g) = &it.content
@@ -1268,16 +1266,40 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
 /// How deep a selected group is walked for the text frames whose ports are drawn.
 const PORT_GROUP_DEPTH: usize = 32;
 
-/// The visible text frames among `items` (groups walked) that end an overset story, each with
-/// its full transform (`a` is the transform of the items' parent).
-fn overset_frames<'a>(
+/// The text frames whose ports `draw_selection` draws: the selected text frames and the text
+/// frames inside selected groups.
+fn ported_frames(app: &DesignApp, doc: &Document) -> std::collections::HashSet<designcraft_doc::ItemId> {
+    let mut frames = Vec::new();
+    if let Some(st) = app.session.active() {
+        for it in st.selection.items.iter().filter_map(|id| doc.item(*id)) {
+            text_frames_in(it, 0, &mut frames);
+        }
+    }
+    frames.into_iter().map(|(f, _)| f.id).collect()
+}
+
+/// Canvas centres of the always-on overset marks among `items`: the out port of every visible
+/// frame that ends an overset story, except the frames in `ported`, whose out port `draw_ports`
+/// already marks.
+fn overset_marks<'a>(
     app: &DesignApp,
     doc: &Document,
+    layout: &CanvasLayout,
     items: &'a [std::sync::Arc<Item>],
-    a: Affine,
-    depth: usize,
-    out: &mut Vec<(&'a Item, Affine)>,
-) {
+    zoom: f64,
+    ported: &std::collections::HashSet<designcraft_doc::ItemId>,
+) -> Vec<(&'a Item, Point)> {
+    let mut frames = Vec::new();
+    overset_frames(app, doc, items, 0, &mut frames);
+    frames
+        .into_iter()
+        .filter(|it| !ported.contains(&it.id))
+        .filter_map(|it| Some((it, designcraft_tools::thread::port_center(doc, layout, it.id, true, zoom)?)))
+        .collect()
+}
+
+/// The visible text frames among `items` (groups walked) that end an overset story.
+fn overset_frames<'a>(app: &DesignApp, doc: &Document, items: &'a [std::sync::Arc<Item>], depth: usize, out: &mut Vec<&'a Item>) {
     if depth > PORT_GROUP_DEPTH {
         return;
     }
@@ -1289,23 +1311,23 @@ fn overset_frames<'a>(
             Content::Text(tf) => {
                 let Some(story) = doc.story(tf.story) else { continue };
                 if story.frames.last() == Some(&it.id) && app.session.cache.get(doc, tf.story, None).is_overset() {
-                    out.push((it, a * it.xf));
+                    out.push(it);
                 }
             }
-            Content::Group { items } => overset_frames(app, doc, items, a * it.xf, depth + 1, out),
+            Content::Group { items } => overset_frames(app, doc, items, depth + 1, out),
             _ => {}
         }
     }
 }
 
 /// `it` when it is a text frame, or every text frame nested in it when it is a group, each with
-/// its story and the transform of its parent (`a` is the transform of `it`'s parent).
-fn text_frames_in<'a>(it: &'a Item, a: Affine, depth: usize, out: &mut Vec<(&'a Item, designcraft_doc::StoryId, Affine)>) {
+/// its story.
+fn text_frames_in<'a>(it: &'a Item, depth: usize, out: &mut Vec<(&'a Item, designcraft_doc::StoryId)>) {
     match &it.content {
-        Content::Text(tf) => out.push((it, tf.story, a)),
+        Content::Text(tf) => out.push((it, tf.story)),
         Content::Group { items } if depth < PORT_GROUP_DEPTH => {
             for child in items {
-                text_frames_in(child, a * it.xf, depth + 1, out);
+                text_frames_in(child, depth + 1, out);
             }
         }
         _ => {}
@@ -3559,7 +3581,7 @@ mod tests {
         }
     }
 
-    /// A selected group lists the text frames inside it for ports, with the group's transform.
+    /// A selected group lists the text frames inside it for ports.
     #[test]
     fn grouped_text_frames_get_ports() {
         let mut s = designcraft_engine::Session::new();
@@ -3568,19 +3590,15 @@ mod tests {
         let b = s.execute("frame.create", &json!({"rect": [10, 80, 110, 130]})).unwrap()["id"].as_u64().unwrap();
         s.execute("selection.set", &json!({"ids": [a, b]})).unwrap();
         let g = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
-        s.execute("transform.move", &json!({"dx": 5, "dy": 7, "ids": [g]})).unwrap();
         let doc = &s.doc().unwrap().doc;
         let group = doc.item(designcraft_doc::ItemId(g)).unwrap();
         let mut out = Vec::new();
-        text_frames_in(group, Affine::IDENTITY, 0, &mut out);
-        assert_eq!(out.len(), 1, "one text frame in the group");
-        assert_eq!(out[0].0.id.0, a);
-        assert_eq!(out[0].2, group.xf);
-        // A plain text frame lists itself with the given parent transform.
+        text_frames_in(group, 0, &mut out);
+        assert_eq!(out.iter().map(|(it, _)| it.id.0).collect::<Vec<_>>(), vec![a], "one text frame in the group");
+        // A plain text frame lists itself.
         out.clear();
-        text_frames_in(out_frame(doc, a), Affine::translate((1.0, 2.0)), 0, &mut out);
+        text_frames_in(out_frame(doc, a), 0, &mut out);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].2, Affine::translate((1.0, 2.0)));
     }
 
     fn out_frame(doc: &Document, id: u64) -> &Item {
@@ -3604,14 +3622,49 @@ mod tests {
         s.execute("selection.set", &json!({"ids": []})).unwrap();
         let doc = app.session.doc().unwrap().doc.clone();
         let mut out = Vec::new();
-        overset_frames(&app, &doc, &doc.spreads[0].items, Affine::IDENTITY, 0, &mut out);
-        assert_eq!(out.iter().map(|(it, _)| it.id.0).collect::<Vec<_>>(), vec![tiny]);
+        overset_frames(&app, &doc, &doc.spreads[0].items, 0, &mut out);
+        assert_eq!(out.iter().map(|it| it.id.0).collect::<Vec<_>>(), vec![tiny]);
         // Hidden: no mark.
         app.session.execute("object.hide", &json!({"ids": [tiny]})).unwrap();
         let doc = app.session.doc().unwrap().doc.clone();
         out.clear();
-        overset_frames(&app, &doc, &doc.spreads[0].items, Affine::IDENTITY, 0, &mut out);
+        overset_frames(&app, &doc, &doc.spreads[0].items, 0, &mut out);
         assert!(out.is_empty());
+    }
+
+    /// The always-on overset mark sits at the frame's out port, a step along its own right edge
+    /// (so a rotated frame gets it inside its edge, not straight up from the corner), and a
+    /// selected overset frame gets only the mark its ports draw.
+    #[test]
+    fn overset_mark_sits_on_the_out_port_once() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let s = &mut app.session;
+        let id = s
+            .execute("frame.create", &json!({"rect": [100, 100, 200, 160], "content": "text", "text": "far too much text for a frame this small, over and over again ".repeat(8)}))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        s.execute("transform.rotate", &json!({"angle": 90, "ids": [id]})).unwrap();
+        s.execute("selection.set", &json!({"ids": []})).unwrap();
+        let doc = app.session.doc().unwrap().doc.clone();
+        let layout = CanvasLayout::new(&doc, false);
+        let zoom = 1.0;
+        let marks = overset_marks(&app, &doc, &layout, &doc.spreads[0].items, zoom, &ported_frames(&app, &doc));
+        assert_eq!(marks.len(), 1);
+        let it = out_frame(&doc, id);
+        let (a, _) = item_canvas_xf(&doc, &layout, it.id).unwrap();
+        let m = a * it.xf;
+        let r = it.inner_bounds();
+        let corner = m * Point::new(r.x1, r.y1);
+        let edge = (m * Point::new(r.x1, r.y0)) - corner;
+        let d = marks[0].1 - corner;
+        assert!((d.x * edge.y - d.y * edge.x).abs() < 1e-6, "the mark lies on the frame's right edge: {d:?} along {edge:?}");
+        assert!((d.hypot() - 12.0 / zoom).abs() < 1e-6, "12 screen px from the corner: {d:?}");
+        // Selected: the ports draw the mark, so no always-on mark is added.
+        app.session.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        let marks = overset_marks(&app, &doc, &layout, &doc.spreads[0].items, zoom, &ported_frames(&app, &doc));
+        assert!(marks.is_empty());
     }
 
     #[test]
