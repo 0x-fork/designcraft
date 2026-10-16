@@ -140,6 +140,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Body Rows", "Řádky těla"),
     ("Bottom", "Dole"),
     ("Break Link to Style", "Zrušit propojení se stylem"),
+    ("Redefine Style", "Předefinovat styl"),
     ("Bullets and Numbering", "Odrážky a číslování"),
     ("Business Card", "Vizitka"),
     ("CMYK", "CMYK"),

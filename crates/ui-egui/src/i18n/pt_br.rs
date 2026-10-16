@@ -965,6 +965,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Bleed and Slug", "Sangria e área de informações"),
     ("Body Rows", "Linhas do corpo"),
     ("Break Link to Style", "Romper vínculo com o estilo"),
+    ("Redefine Style", "Redefinir estilo"),
     ("Bullets and Numbering", "Marcadores e numeração"),
     ("Business Card", "Cartão de visita"),
     ("Buttons act in interactive PDF export.", "Os botões agem na exportação de PDF interativo."),

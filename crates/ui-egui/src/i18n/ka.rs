@@ -148,6 +148,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Body Rows", "ძირითადი სტრიქონები"),
     ("Bottom", "ქვემოთ"),
     ("Break Link to Style", "სტილთან კავშირის გაწყვეტა"),
+    ("Redefine Style", "სტილის ხელახლა განსაზღვრა"),
     ("Bullets and Numbering", "ბურთულები და დანომვრა"),
     ("Business Card", "სავიზიტო ბარათი"),
     ("CMYK", "CMYK"),

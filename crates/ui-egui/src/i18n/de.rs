@@ -159,6 +159,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Body Rows", "Tabellenkörperzeilen"),
     ("Bottom", "Unten"),
     ("Break Link to Style", "Verknüpfung mit Format aufheben"),
+    ("Redefine Style", "Format neu definieren"),
     ("Bullets and Numbering", "Aufzählungszeichen und Nummerierung"),
     ("Business Card", "Visitenkarte"),
     ("CMYK", "CMYK"),

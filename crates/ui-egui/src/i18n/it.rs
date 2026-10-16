@@ -228,6 +228,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Body Rows", "Righe di corpo"),
     ("Bottom", "Basso"),
     ("Break Link to Style", "Interrompi collegamento allo stile"),
+    ("Redefine Style", "Ridefinisci stile"),
     ("Bullets and Numbering", "Elenchi puntati e numerati"),
     ("Business Card", "Biglietto da visita"),
     ("CMYK", "CMYK"),

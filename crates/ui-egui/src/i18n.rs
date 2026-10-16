@@ -759,6 +759,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Break Link to Style",
         ["Break Link to Style", "Rompre le lien avec le style", "Break Link to Style", "Break Link to Style", "断开与样式的链接"],
     ),
+    ("Redefine Style", ["Format neu definieren", "Redéfinir le style", "Redefinir estilo", "スタイルを再定義", "重新定义样式"]),
     ("Bullets and Numbering", ["Bullets and Numbering", "Puces et numérotation", "Bullets and Numbering", "Bullets and Numbering", "项目符号和编号"]),
     ("Business Card", ["Business Card", "Carte de visite", "Business Card", "Business Card", "名片"]),
     ("CMYK", ["CMYK", "CMJN", "CMYK", "CMYK", "CMYK"]),
@@ -5011,5 +5012,12 @@ mod tests {
         assert_eq!(tr("de", "Low Quality Print"), "Low Quality Print");
         // Fixed standard names stay identical in every language.
         assert_eq!(tr("ja", "PDF/X-4"), "PDF/X-4");
+    }
+
+    #[test]
+    fn redefine_style_is_translated_in_every_language() {
+        for (code, _) in LANGUAGES.iter().filter(|(c, _)| !c.is_empty()) {
+            assert_ne!(tr(code, "Redefine Style"), "Redefine Style", "{code}");
+        }
     }
 }

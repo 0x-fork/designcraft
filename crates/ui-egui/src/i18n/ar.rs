@@ -964,6 +964,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Bleed and Slug", "النزف ومنطقة المعلومات"),
     ("Body Rows", "صفوف المتن"),
     ("Break Link to Style", "فك الارتباط بالنمط"),
+    ("Redefine Style", "إعادة تعريف النمط"),
     ("Bullets and Numbering", "التعداد النقطي والرقمي"),
     ("Business Card", "بطاقة عمل"),
     ("Buttons act in interactive PDF export.", "تعمل الأزرار عند التصدير إلى PDF تفاعلي."),
