@@ -499,7 +499,8 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) -> bool {
                 )
                 .to_owned()
             },
-            |_| craft_ui::docking::Permissions::default(),
+            // Close comes from the panel's own tab commands, so the surface doesn't add another.
+            |_| craft_ui::docking::Permissions { closable: false, ..Default::default() },
             |_| craft_ui::docking::PanelLimits { min: egui::vec2(220.0, 80.0), ..Default::default() },
             &mut PanelContent(app),
         )
@@ -598,10 +599,33 @@ pub(crate) fn legacy_tab(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str, re
     }
 }
 
+/// The menu behind a panel's three-line button, in either dock: the panel's own commands, then
+/// its docking commands.
+pub(crate) fn three_line_menu(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
+    if panel == "pages" {
+        crate::panels::pages::panel_menu(app, ui);
+        ui.separator();
+    }
+    panel_menu(app, ui, panel);
+}
+
+/// The three-line button at the right of a tab strip, for the panel in front.
+fn three_line_button(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let area = ui.max_rect();
+    let r = egui::Rect::from_center_size(area.center(), egui::vec2(18.0, 18.0));
+    let menu = ui.interact(r, ui.id().with("panel-menu"), egui::Sense::click());
+    if menu.hovered() {
+        ui.painter().rect_filled(r, 3.0, t.hover);
+    }
+    crate::icons::paint(ui.painter(), r, "menu", t.icon);
+    egui::Popup::menu(&menu).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| three_line_menu(app, ui, panel));
+}
+
 /// The docking commands of a panel: its tab's context menu and the end of its panel menu.
 pub(crate) fn panel_menu(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
     let Some(panel) = normalize(panel) else { return };
-    tab_commands(app, ui, panel, true);
+    tab_commands(app, ui, panel);
     ui.separator();
     let language = app.ui.language.clone();
     if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&language, "Float Panel"))).clicked() {
@@ -643,10 +667,19 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
         });
     }
     fn panel_menu(&mut self, ui: &mut egui::Ui, id: &String) {
-        // The docking surface adds Float, Group with and Close after these.
+        // The docking surface adds Float Panel and Group with after these, so a tab's menu lists
+        // what the classic dock's does.
         if let Some(panel) = normalize(id) {
-            tab_commands(self.0, ui, panel, false);
+            tab_commands(self.0, ui, panel);
             ui.separator();
+        }
+    }
+    fn group_header_width(&self, _: &[String], _: &String, _: bool) -> f32 {
+        24.0
+    }
+    fn group_header(&mut self, ui: &mut egui::Ui, _: &[String], active: &String, _: bool) {
+        if let Some(panel) = normalize(active) {
+            three_line_button(self.0, ui, panel);
         }
     }
     fn label(&mut self, ui: &egui::Ui, _: &String, logical: &str, font: &egui::FontId, color: egui::Color32) -> egui::WidgetText {
@@ -670,9 +703,8 @@ fn close_group(app: &mut DesignApp, params: &Value) -> Result<Value, String> {
 }
 
 /// InDesign's commands on a panel tab (and at the end of its panel menu): Close, Close Tab Group,
-/// Minimize (an open accordion entry) and Collapse to Icons. `close` is false where the docking
-/// surface adds its own Close.
-fn tab_commands(app: &mut DesignApp, ui: &mut egui::Ui, panel: &'static str, close: bool) {
+/// Minimize (an open accordion entry) and Collapse to Icons.
+fn tab_commands(app: &mut DesignApp, ui: &mut egui::Ui, panel: &'static str) {
     let language = app.ui.language.clone();
     let tr = |s: &str| crate::i18n::tr(&language, s).to_owned();
     let run = |app: &mut DesignApp, ui: &mut egui::Ui, id: &str, p: Value| {
@@ -681,7 +713,7 @@ fn tab_commands(app: &mut DesignApp, ui: &mut egui::Ui, panel: &'static str, clo
         }
         ui.close();
     };
-    if close && ui.button(crate::rtl::widget(ui, tr("Close"))).clicked() {
+    if ui.button(crate::rtl::widget(ui, tr("Close"))).clicked() {
         run(app, ui, "window.panel.close", json!({"panel": panel}));
     }
     if ui.button(crate::rtl::widget(ui, tr("Close Tab Group"))).clicked() {

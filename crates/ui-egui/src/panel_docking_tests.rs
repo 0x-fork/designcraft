@@ -746,3 +746,44 @@ fn paragraph_styles_closed_from_the_dock_reopen_there() {
     assert!(layout.contains(&"paragraphStyles".to_string()));
     assert!(layout.floating.iter().all(|g| !g.panels.iter().any(|p| p == "paragraphStyles")), "{:?}", layout.floating);
 }
+
+fn click(h: &mut Harness<'static, DesignApp>, at: Pos2, button: PointerButton) {
+    h.event(Event::PointerMoved(at));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: at, button, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+}
+
+/// Window › Paragraph Styles switches to the docking layout. After Window › Pages the Pages panel
+/// keeps its three-line panel menu, and its tab menu lists what the classic dock's does.
+#[test]
+fn pages_keeps_its_panel_menu_in_the_docking_layout() {
+    let mut app = app();
+    app.run("file.new", json!({})).unwrap();
+    app.run("window.panel", json!({"panel":"paragraphStyles"})).unwrap();
+    app.run("window.panel", json!({"panel":"pages"})).unwrap();
+    assert!(app.ui.docking.is_some());
+    let mut h = harness(app, vec2(1280.0, 800.0));
+    let tab = h.query_all_by_label("Pages").find(|node| node.rect().height() <= 45.0).unwrap().rect();
+    let dock = egui::containers::panel::PanelState::load(&h.ctx, egui::Id::new("shared-panel-dock")).unwrap().outer_rect;
+    click(&mut h, egui::pos2(dock.right() - 12.0, tab.center().y), PointerButton::Primary);
+    assert!(egui::Popup::is_any_open(&h.ctx), "the three-line button must open a menu");
+    for item in ["Numbering & Section Options…", "Close Tab Group", "Float Panel"] {
+        assert!(h.query_by_label(item).is_some(), "{item}");
+    }
+    h.get_by_label("Panel Options…").click();
+    h.run_steps(3);
+    assert!(h.state().ui.dialog.as_ref().is_some_and(|d| d.id == "pagesPanelOptions"));
+    h.state_mut().ui.dialog = None;
+    h.run_steps(2);
+
+    click(&mut h, tab.center(), PointerButton::Secondary);
+    for item in ["Close", "Close Tab Group", "Minimize", "Collapse to Icons", "Float Panel", "Group with"] {
+        assert!(h.query_all_by_label(item).next().is_some(), "{item}");
+    }
+    assert!(h.query_by_label("Close Panel").is_none());
+    assert!(h.query_by_label("Panel Options…").is_none(), "the panel's own commands stay in its panel menu");
+}

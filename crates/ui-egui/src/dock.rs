@@ -106,13 +106,9 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                 }
                 icons::paint(ui.painter(), menu_r, "menu", t.icon);
                 let tab = app.ui.dock_tab.clone();
-                egui::Popup::menu(&menu).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                    if tab == "pages" {
-                        panels::pages::panel_menu(app, ui);
-                        ui.separator();
-                    }
-                    crate::panel_docking::panel_menu(app, ui, &tab);
-                });
+                egui::Popup::menu(&menu)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| crate::panel_docking::three_line_menu(app, ui, &tab));
                 egui::Frame::NONE.inner_margin(egui::Margin { left: 10, right: 10, top: 4, bottom: 6 }).show(ui, |ui| {
                     // The Pages panel scrolls its parts itself and keeps its footer at the bottom.
                     if app.ui.dock_tab == "pages" {
