@@ -348,6 +348,8 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-15** · Scaling a text frame (Cmd+Shift-dragging a handle, the Scale tool, Transform panel scale fields) sets its text larger or smaller and leaves the frame at 100%, as InDesign's default When Scaling: Apply to Content does; it used to keep the text's size with the scale on the frame. No readiness percentage change.
+
 - **2026-10-15** · With nothing selected, the Tools panel's fill and stroke (the Color Picker, swatches, Apply None, Swap, Default) set the colours new shapes are drawn with, as InDesign's document defaults; the proxy shows them. They were refused ("nothing selected").
 
 - **2026-10-15** · The Eyedropper with text selected picks up the formatting of the text it clicks (character style and overrides, paragraph style and overrides) and applies it to the selection, as InDesign's does; it copied the clicked frame's fill and stroke instead. No readiness percentage change.
