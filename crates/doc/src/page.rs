@@ -460,10 +460,7 @@ mod tests {
     #[test]
     fn bleed_rect_uses_the_outer_pages() {
         let bleed = [1.0, 2.0, 3.0, 4.0];
-        for pages in [
-            vec![page(PageSide::Left, 0.0), page(PageSide::Right, 612.0)],
-            vec![page(PageSide::Right, 612.0), page(PageSide::Left, 0.0)],
-        ] {
+        for pages in [vec![page(PageSide::Left, 0.0), page(PageSide::Right, 612.0)], vec![page(PageSide::Right, 612.0), page(PageSide::Left, 0.0)]] {
             let s = Spread { id: SpreadId(1), pages, items: vec![], parent: None, allow_shuffle: true };
             assert_eq!(s.bleed_rect(bleed), Some(Rect::new(-4.0, -1.0, 1228.0, 794.0)));
             assert_eq!(s.bleed_rect([0.0; 4]), None);
