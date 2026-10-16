@@ -4316,6 +4316,17 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("OpenType font", ["OpenType-Schrift", "Police OpenType", "Fuente OpenType", "OpenType フォント", "OpenType 字体"]),
     ("Variable font", ["Variable Schrift", "Police variable", "Fuente variable", "バリアブルフォント", "可变字体"]),
     ("Color font", ["Farbschrift", "Police couleur", "Fuente de color", "カラーフォント", "彩色字体"]),
+    // Table of Contents.
+    (
+        "Sort Entries in Alphabetical Order",
+        [
+            "Einträge alphabetisch sortieren",
+            "Trier les entrées par ordre alphabétique",
+            "Ordenar entradas alfabéticamente",
+            "項目をアルファベット順に並べ替え",
+            "按字母顺序排列条目",
+        ],
+    ),
 ];
 
 /// Interface direction; independent of document binding and paragraph direction.
