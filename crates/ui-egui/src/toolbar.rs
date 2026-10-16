@@ -99,8 +99,15 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                                         Stroke::NONE,
                                     ));
                                 }
-                                if resp.clicked() {
+                                // The release that ends a hold which opened the flyout isn't a click
+                                // on the tool (egui reports releases within 0.8 s as clicks).
+                                let hold_id = egui::Id::new(("flyout_hold", gi));
+                                let ended_hold = resp.clicked() && ui.data_mut(|d| d.remove_temp::<bool>(hold_id)).unwrap_or(false);
+                                if resp.clicked() && !ended_hold {
                                     chosen = Some(shown.id);
+                                }
+                                if !resp.is_pointer_button_down_on() {
+                                    ui.data_mut(|d| d.remove::<bool>(hold_id));
                                 }
                                 // Double-click a polygon tool: Polygon Settings.
                                 if resp.double_clicked() && matches!(shown.id, "polygon" | "polygonFrame") {
@@ -113,12 +120,12 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                                 {
                                     crate::menus::activate(app, cmd, &Value::Null);
                                 }
-                                if g.len() > 1
-                                    && (resp.secondary_clicked()
-                                        || resp.long_touched()
-                                        || (resp.is_pointer_button_down_on()
-                                            && ui.input(|i| i.pointer.press_start_time().is_some_and(|s| i.time - s > 0.35))))
-                                {
+                                let held =
+                                    resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.press_start_time().is_some_and(|s| i.time - s > 0.35));
+                                if g.len() > 1 && held {
+                                    ui.data_mut(|d| d.insert_temp(hold_id, true));
+                                }
+                                if g.len() > 1 && (resp.secondary_clicked() || resp.long_touched() || held) {
                                     opened_now |= app.ui.flyout != Some(gi);
                                     app.ui.flyout = Some(gi);
                                 }
