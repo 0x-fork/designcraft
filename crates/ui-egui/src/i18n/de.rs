@@ -1645,7 +1645,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("A, B, C, D...", "A, B, C, D..."),
     ("Alpha Channel", "Alphakanal"),
     ("Black", "Schwarz"),
-    ("Bleed:", "Beschnitt:"),
     // Document Setup
     ("Page Size:", "Seitenformat:"),
     ("Inside:", "Innen:"),
@@ -2005,21 +2004,14 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Default Fill and Stroke", "Standardfläche und -kontur"),
     ("Distribute Rows Evenly", "Zeilen gleichmäßig verteilen"),
     ("Don't Save", "Nicht speichern"),
-    ("Em Box Height", "Höhe des Gevierts"),
     ("Group with", "Gruppieren mit"),
     ("Pin Bar Position", "Leistenposition fixieren"),
     ("Reset Bar Position", "Leistenposition zurücksetzen"),
     ("Resize panel window", "Größe des Bedienfeldfensters ändern"),
     ("Resize panels", "Größe der Bedienfelder ändern"),
-    ("Select an object or text to color its fill or stroke.", "Ein Objekt oder Text auswählen, um Fläche oder Kontur zu färben."),
     ("Swap Fill and Stroke", "Fläche und Kontur vertauschen"),
     ("Toggle Fill and Stroke", "Zwischen Fläche und Kontur wechseln"),
     ("Unsaved Changes", "Nicht gespeicherte Änderungen"),
-    ("View/Proof Setup", "Ansicht/Proof einrichten"),
-    ("View/Rotate Spread", "Ansicht/Druckbogen drehen"),
-    ("View/Screen Mode", "Ansicht/Bildschirmmodus"),
-    ("View/Separations Preview", "Ansicht/Separationsvorschau"),
-    ("View/Structure", "Ansicht/Struktur"),
     ("“{}” has changes that are not saved. Save them before closing?", "„{}“ enthält nicht gespeicherte Änderungen. Vor dem Schließen speichern?"),
     ("Text Anchor", "Textanker"),
     ("Parent Pages", "Vorlagenseiten"),
@@ -2045,7 +2037,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Stop Preview", "Vorschau beenden"),
     ("Update Data Source", "Datenquelle aktualisieren"),
     ("Validate from Root Element", "Ab Stammelement prüfen"),
-    ("View/Extras", "Ansicht/Extras"),
 ];
 
 #[cfg(test)]
