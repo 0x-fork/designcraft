@@ -2066,6 +2066,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "newWorkspace" => crate::i18n::tr(&app.ui.language, "New Workspace"),
         "closeDocument" => crate::i18n::tr(&app.ui.language, "Unsaved Changes"),
         "deletePages" => crate::i18n::tr(&app.ui.language, "Warning"),
+        "pagesPanelOptions" => crate::i18n::tr(&app.ui.language, "Panel Options"),
         "updateLink" => crate::i18n::tr(&app.ui.language, "Update Link"),
         "menus" => crate::i18n::tr(&app.ui.language, "Menu Customization"),
         "importOptions" => crate::i18n::tr(&app.ui.language, "Import Options"),
@@ -2097,7 +2098,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let available = (ctx.content_rect().size() - frame_margin - egui::vec2(16.0, 16.0)).max(egui::Vec2::splat(1.0));
         let preferred_width: f32 = match d.id.as_str() {
             "alert" => 440.0,
-            "closeDocument" | "updateLink" | "deletePages" | "newWorkspace" => 380.0,
+            "closeDocument" | "updateLink" | "deletePages" | "newWorkspace" | "pagesPanelOptions" => 380.0,
             "newDocument" => 960.0,
             "numberingSection" => 560.0,
             crate::effects_dialog::ID => 720.0,
@@ -2581,6 +2582,45 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         );
                         ui.add_space(8.0);
                         check(ui, &mut d, "dontShowAgain", crate::i18n::tr(&app.ui.language, "Don't show again"));
+                    }
+                    "pagesPanelOptions" => {
+                        // As InDesign's: Pages, Parents, Panel Layout.
+                        use crate::panels::pages::{IconSize, PanelResize};
+                        let lang = app.ui.language.clone();
+                        let sizes: Vec<(&str, &str)> = IconSize::ALL.iter().map(|s| (s.key(), crate::i18n::tr(&lang, s.label()))).collect();
+                        let group = |ui: &mut egui::Ui, title: &str| {
+                            ui.add_space(4.0);
+                            crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&lang, title)).strong());
+                        };
+                        group(ui, "Pages");
+                        ui.horizontal(|ui| {
+                            crate::rtl::label(ui, crate::i18n::tr(&lang, "Size:"));
+                            combo(ui, &mut d, "pageSize", &sizes);
+                        });
+                        // Extra Small pages have no room for a thumbnail.
+                        ui.add_enabled_ui(d.s("pageSize") != "extraSmall", |ui| {
+                            check(ui, &mut d, "pageThumbnails", crate::i18n::tr(&lang, "Show Thumbnails"))
+                        });
+                        group(ui, "Parents");
+                        ui.horizontal(|ui| {
+                            crate::rtl::label(ui, crate::i18n::tr(&lang, "Size:"));
+                            combo(ui, &mut d, "parentSize", &sizes);
+                        });
+                        ui.add_enabled_ui(d.s("parentSize") != "extraSmall", |ui| {
+                            check(ui, &mut d, "parentThumbnails", crate::i18n::tr(&lang, "Show Thumbnails"))
+                        });
+                        check(ui, &mut d, "parentsVertical", crate::i18n::tr(&lang, "Show Vertically"));
+                        group(ui, "Panel Layout");
+                        for (v, label) in [("pagesOnTop", "Pages on Top"), ("parentsOnTop", "Parents on Top")] {
+                            if ui.radio(d.s("layout") == v, crate::rtl::widget(ui, crate::i18n::tr(&lang, label))).clicked() {
+                                d.fields.insert("layout".into(), json!(v));
+                            }
+                        }
+                        let resizes: Vec<(&str, &str)> = PanelResize::ALL.iter().map(|r| (r.key(), crate::i18n::tr(&lang, r.label()))).collect();
+                        ui.horizontal(|ui| {
+                            crate::rtl::label(ui, crate::i18n::tr(&lang, "Resize:"));
+                            combo(ui, &mut d, "resize", &resizes);
+                        });
                     }
                     "updateLink" => {
                         let text = crate::i18n::tr(
@@ -3408,6 +3448,18 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 app.ui.skip_delete_pages_warning = true;
             }
             app.run("layout.pages.delete", json!({"pages": d.fields.get("pages").cloned().unwrap_or_else(|| json!([]))}))
+        }
+        "pagesPanelOptions" => {
+            use crate::panels::pages::{IconSize, PanelResize};
+            let o = &mut app.ui.pages_panel;
+            o.page_size = IconSize::from_key(&d.s("pageSize")).unwrap_or(o.page_size);
+            o.page_thumbnails = d.b("pageThumbnails");
+            o.parent_size = IconSize::from_key(&d.s("parentSize")).unwrap_or(o.parent_size);
+            o.parent_thumbnails = d.b("parentThumbnails");
+            o.parents_vertical = d.b("parentsVertical");
+            o.pages_on_top = d.s("layout") == "pagesOnTop";
+            o.resize = PanelResize::from_key(&d.s("resize")).unwrap_or(o.resize);
+            Ok(Value::Null)
         }
         "updateLink" => crate::panels::properties::run_update_links(app, d.fields.get("target").cloned().unwrap_or_else(|| json!({}))),
         "closeDocument" => {
