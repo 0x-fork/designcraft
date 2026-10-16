@@ -56,7 +56,7 @@ fn smart_quotes_and_formatting() {
 }
 
 /// Issue #919: with Cmd held, a press with the Type (or any drawing) tool selects and drags like
-/// the Selection tool, and the chosen tool stays; the Pen family borrows Direct Selection.
+/// the Selection tool, and the chosen tool stays.
 #[test]
 fn cmd_held_press_borrows_the_selection_tool_for_one_gesture() {
     use designcraft_tools::{Mods, PointerEvent, PointerKind};
@@ -86,12 +86,35 @@ fn cmd_held_press_borrows_the_selection_tool_for_one_gesture() {
     s.pointer(&PointerEvent::new(PointerKind::Down, 200.0, 150.0).with_mods(cmd), v).unwrap();
     assert!(s.temp_tool.is_none());
     s.pointer(&PointerEvent::new(PointerKind::Up, 200.0, 150.0).with_mods(cmd), v).unwrap();
-    // The Pen borrows the Direct Selection tool.
     s.set_tool("pen");
     s.pointer(&PointerEvent::new(PointerKind::Down, 200.0, 150.0).with_mods(cmd), v).unwrap();
-    assert_eq!(s.temp_tool.as_ref().map(|t| t.id()), Some("directSelection"));
+    assert_eq!(s.temp_tool.as_ref().map(|t| t.id()), Some("selection"));
     s.pointer(&PointerEvent::new(PointerKind::Up, 200.0, 150.0).with_mods(cmd), v).unwrap();
     assert_eq!(s.tool_id(), "pen");
+}
+
+/// Cmd borrows whichever selection tool was chosen last, whatever the chosen tool is.
+#[test]
+fn cmd_borrows_the_last_used_selection_tool() {
+    use designcraft_tools::{Mods, PointerEvent, PointerKind};
+    let mut s = session();
+    let v = ViewInfo::at_zoom(1.0);
+    let cmd = Mods { cmd: true, ..Mods::default() };
+    let borrowed = |s: &mut Session| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, 400.0, 400.0).with_mods(cmd), v).unwrap();
+        let id = s.temp_tool.as_ref().map(|t| t.id());
+        s.pointer(&PointerEvent::new(PointerKind::Up, 400.0, 400.0).with_mods(cmd), v).unwrap();
+        id
+    };
+    s.set_tool("directSelection");
+    s.set_tool("rectangle");
+    assert_eq!(borrowed(&mut s), Some("directSelection"));
+    s.set_tool("selection");
+    s.set_tool("rectangle");
+    assert_eq!(borrowed(&mut s), Some("selection"));
+    s.set_tool("directSelection");
+    s.set_tool("pen");
+    assert_eq!(borrowed(&mut s), Some("directSelection"));
 }
 
 #[test]

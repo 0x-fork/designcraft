@@ -66,6 +66,9 @@ impl Session {
         }
         self.tool = designcraft_tools::create(id);
         self.temp_tool = None;
+        if matches!(self.tool.id(), "selection" | "directSelection") {
+            self.last_selection_tool = self.tool.id();
+        }
         // Any other tool unloads the place cursor.
         if id != "placeGun" {
             self.loaded = None;
@@ -118,15 +121,13 @@ impl Session {
         }
     }
 
-    /// Which selection tool a Cmd-held press borrows while `tool` is chosen, as InDesign's
-    /// Cmd/Ctrl does: the Direct Selection tool for the Pen family and Pencil, the Selection
-    /// tool for the drawing, type and other tools; none for the selection tools themselves,
+    /// Which selection tool a Cmd-held press borrows while another tool is chosen: whichever of
+    /// Selection and Direct Selection was chosen last. None for the selection tools themselves,
     /// Hand, Zoom and a loaded place cursor, where Cmd means something else or nothing.
-    fn borrowed_selection_tool(tool: &str) -> Option<&'static str> {
-        match tool {
+    fn borrowed_selection_tool(&self) -> Option<&'static str> {
+        match self.tool.id() {
             "selection" | "directSelection" | "hand" | "zoom" | "placeGun" => None,
-            "pen" | "addAnchor" | "deleteAnchor" | "convertDirection" | "pencil" | "smooth" | "erase" | "scissors" => Some("directSelection"),
-            _ => Some("selection"),
+            _ => Some(self.last_selection_tool),
         }
     }
 
@@ -142,7 +143,7 @@ impl Session {
             && ev.mods.cmd
             && self.temp_tool.is_none()
             && !self.tool.busy()
-            && let Some(id) = Self::borrowed_selection_tool(self.tool.id())
+            && let Some(id) = self.borrowed_selection_tool()
         {
             self.temp_tool = Some(designcraft_tools::create(id));
         }
@@ -181,7 +182,7 @@ impl Session {
         if mods.cmd
             && self.temp_tool.is_none()
             && !self.tool.busy()
-            && let Some(id) = Self::borrowed_selection_tool(self.tool.id())
+            && let Some(id) = self.borrowed_selection_tool()
         {
             let borrowed = designcraft_tools::create(id);
             return self.with_ctx(view, |_, cx| borrowed.cursor(cx, p, mods)).unwrap_or_default();
