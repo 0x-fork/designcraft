@@ -2995,6 +2995,21 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
             let _ = app.run("view.togglePresentation", json!({}));
             continue;
         }
+        // Presentation goes through the spreads with the arrow keys, Page Up/Down, Home and End.
+        if app.ui.screen_mode == ScreenMode::Presentation && !modifiers.command && !modifiers.alt {
+            let step = match key {
+                egui::Key::ArrowRight | egui::Key::ArrowDown | egui::Key::PageDown => Some(1),
+                egui::Key::ArrowLeft | egui::Key::ArrowUp | egui::Key::PageUp => Some(-1),
+                egui::Key::Home => Some(isize::MIN),
+                egui::Key::End => Some(isize::MAX),
+                _ => None,
+            };
+            if let Some(step) = step {
+                ctx.input_mut(|i| i.consume_key(modifiers, key));
+                crate::canvas::step_spread(app, step);
+                continue;
+            }
+        }
         // Command shortcuts.
         let mut fired: Option<(String, bool)> = None;
         let all = effective_shortcuts(app);
@@ -4179,6 +4194,99 @@ mod tests {
         let centre = (v.origin.x + r.width() as f64 / 2.0 / v.zoom, v.origin.y + r.height() as f64 / 2.0 / v.zoom);
         assert!((centre.0 - slot.bounds.center().x).abs() < 1e-6 && (centre.1 - slot.bounds.center().y).abs() < 1e-6);
         assert_eq!(v.zoom, zoom);
+    }
+
+    #[test]
+    fn presentation_shows_one_spread_and_goes_through_them_with_keys_and_clicks() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({"pages": 7, "facingPages": true})).unwrap();
+        app.session.execute("frame.create", &json!({"rect": [100, 100, 300, 300]})).unwrap();
+        let id = app.session.active().unwrap().selection.items[0];
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let key = |k: egui::Key| {
+            vec![
+                egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() },
+                egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers: Default::default() },
+            ]
+        };
+        let click = |pos: egui::Pos2, modifiers: egui::Modifiers| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers },
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers },
+            ]
+        };
+        let spread = |app: &crate::DesignApp| {
+            let st = app.session.active().unwrap();
+            crate::canvas::current_slot(app, &designcraft_tools::layout::CanvasLayout::new(&st.doc, false)).unwrap()
+        };
+        // The spread fills the screen: as wide or as tall as it, centred.
+        let fills = |app: &crate::DesignApp| {
+            let st = app.session.active().unwrap();
+            let b = designcraft_tools::layout::CanvasLayout::new(&st.doc, false).slots[spread(app)].bounds;
+            let (v, r) = (*app.view().unwrap(), app.canvas_rect.unwrap());
+            let (w, h) = (b.width() * v.zoom, b.height() * v.zoom);
+            let x0 = (b.x0 - v.origin.x) * v.zoom;
+            let y0 = (b.y0 - v.origin.y) * v.zoom;
+            ((w - r.width() as f64).abs() < 0.01 || (h - r.height() as f64).abs() < 0.01)
+                && w <= r.width() as f64 + 0.01
+                && h <= r.height() as f64 + 0.01
+                && (x0 * 2.0 + w - r.width() as f64).abs() < 0.01
+                && (y0 * 2.0 + h - r.height() as f64).abs() < 0.01
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        app.run("view.screenMode", json!({"mode": "presentation"})).unwrap();
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        assert_eq!(app.canvas_rect.unwrap().size(), egui::vec2(1400.0, 900.0), "the whole window");
+        assert_eq!(spread(&app), 0);
+        assert!(fills(&app));
+        let bounds = app.session.active().unwrap().doc.item(id).unwrap().bounds();
+        frame(&mut app, key(egui::Key::ArrowRight));
+        frame(&mut app, vec![]);
+        assert_eq!(spread(&app), 1, "Right Arrow shows the next spread");
+        assert!(fills(&app));
+        assert_eq!(app.session.active().unwrap().doc.item(id).unwrap().bounds(), bounds, "the arrow doesn't nudge the selection");
+        frame(&mut app, key(egui::Key::PageDown));
+        assert_eq!(spread(&app), 2, "Page Down");
+        frame(&mut app, key(egui::Key::ArrowLeft));
+        assert_eq!(spread(&app), 1, "Left Arrow");
+        frame(&mut app, key(egui::Key::End));
+        assert_eq!(spread(&app), 3, "End");
+        frame(&mut app, key(egui::Key::ArrowRight));
+        assert_eq!(spread(&app), 3, "the last spread stays");
+        frame(&mut app, key(egui::Key::Home));
+        assert_eq!(spread(&app), 0, "Home");
+        frame(&mut app, key(egui::Key::PageUp));
+        assert_eq!(spread(&app), 0, "the first spread stays");
+        let c = app.canvas_rect.unwrap().center();
+        frame(&mut app, click(c, egui::Modifiers::NONE));
+        frame(&mut app, vec![]);
+        assert_eq!(spread(&app), 1, "a click shows the next spread");
+        assert!(fills(&app));
+        frame(&mut app, click(c, egui::Modifiers::SHIFT));
+        frame(&mut app, vec![]);
+        assert_eq!(spread(&app), 0, "Shift-click the previous one");
+        assert_eq!(app.session.active().unwrap().selection.items, vec![id], "clicks don't select");
+        assert_eq!(app.session.tool_id(), "selection");
+        // Out of Presentation, the arrow keys nudge again.
+        app.run("view.screenMode", json!({"mode": "normal"})).unwrap();
+        frame(&mut app, vec![]);
+        frame(&mut app, key(egui::Key::ArrowRight));
+        assert_ne!(app.session.active().unwrap().doc.item(id).unwrap().bounds(), bounds);
     }
 
     #[test]
