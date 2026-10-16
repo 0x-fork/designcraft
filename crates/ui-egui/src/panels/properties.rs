@@ -2604,7 +2604,7 @@ fn variable_font_axes(app: &mut DesignApp, ui: &mut egui::Ui, family: &str, styl
         return;
     }
     let db = super::fonts(app);
-    let axes = db.axes(family, style);
+    let axes = usable_axes(db.axes(family, style));
     if axes.is_empty() {
         return;
     }
@@ -2652,6 +2652,12 @@ fn variable_font_axes(app: &mut DesignApp, ui: &mut egui::Ui, family: &str, styl
 
 /// The slider step and the field's decimals for an axis: whole units, or hundredths for an axis
 /// whose whole range is a few units (Skia's weight runs 0.48–3.2).
+/// The axes a slider can show: a malformed font's axis whose minimum lies above its maximum (or
+/// isn't a number) is left out, since no value fits its range.
+fn usable_axes(axes: Vec<(String, String, f32, f32, f32)>) -> Vec<(String, String, f32, f32, f32)> {
+    axes.into_iter().filter(|a| a.2 <= a.4).collect()
+}
+
 fn axis_step(min: f32, max: f32) -> (f32, usize) {
     if max - min >= 10.0 { (1.0, 0) } else { (0.01, 2) }
 }
@@ -2900,6 +2906,14 @@ mod tests {
 
     fn font_style(app: &mut DesignApp) -> String {
         text_attrs(app).unwrap()["chars"]["fontStyle"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn axes_with_an_inverted_or_missing_range_get_no_slider() {
+        let axis = |tag: &str, min: f32, max: f32| (tag.to_string(), tag.to_string(), min, min, max);
+        let kept = usable_axes(vec![axis("wght", 100.0, 900.0), axis("wdth", 125.0, 75.0), axis("opsz", f32::NAN, 72.0), axis("slnt", 0.0, 0.0)]);
+        let tags: Vec<&str> = kept.iter().map(|a| a.0.as_str()).collect();
+        assert_eq!(tags, ["wght", "slnt"]);
     }
 
     #[test]

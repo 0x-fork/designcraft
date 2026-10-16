@@ -397,13 +397,22 @@ fn preview(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(super::bad("edit.preview", format!("{command} is not an edit that can be previewed")));
     }
     let params = p.get("params").cloned().unwrap_or_else(|| json!({}));
-    match s.doc()?.interaction.as_ref().map(|i| i.label.as_str()) {
-        None => s.begin_interaction(label)?,
-        Some(open) if open == label => {}
+    let opened = match s.doc()?.interaction.as_ref().map(|i| i.label.as_str()) {
+        None => {
+            s.begin_interaction(label)?;
+            true
+        }
+        Some(open) if open == label => false,
         // A tool's drag (or another preview) is in progress: leave it alone.
         Some(open) => return Err(super::bad("edit.preview", format!("{open} is in progress"))),
+    };
+    if let Err(e) = s.preview(command, params) {
+        // A preview this call opened must not stay open: later edits would get no undo step.
+        if opened {
+            s.cancel_interaction();
+        }
+        return Err(e);
     }
-    s.preview(command, params)?;
     ok()
 }
 
@@ -1014,6 +1023,19 @@ mod preview_tests {
         assert!(s.doc().unwrap().interaction.is_none());
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(size(&mut s), before);
+    }
+
+    /// A preview whose command fails closes again, so the next edit is its own undo step.
+    #[test]
+    fn a_failed_preview_leaves_no_preview_open() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("edit.preview", &json!({"label": "Size", "command": "type.char", "params": {"attrs": {"size": 20}}}));
+        assert!(r.is_err(), "nothing selected: type.char fails");
+        assert!(s.doc().unwrap().interaction.is_none());
+        let steps = s.doc().unwrap().history.undo.len();
+        s.execute("frame.create", &json!({"rect": [72, 72, 144, 144]})).unwrap();
+        assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
     }
 
     #[test]
