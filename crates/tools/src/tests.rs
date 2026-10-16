@@ -1079,6 +1079,7 @@ fn graphic_frame(doc: &mut Document) -> ItemId {
         fit_align: 4,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     doc.insert_item(SpreadRef::Doc(0), item, None).unwrap();
     id
@@ -1442,6 +1443,7 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
         fit_align: 4,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     d.assets.insert(
         designcraft_doc::AssetId(1),
@@ -1794,6 +1796,7 @@ fn eyedropper_ignores_inactive_states_of_a_multi_state_object() {
             fit_align: 4,
             crop: [0.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         it
     };

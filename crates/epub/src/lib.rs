@@ -1543,6 +1543,7 @@ mod tests {
                 crop: [0.0; 4],
                 clip: None,
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             item
         };
@@ -1942,6 +1943,7 @@ mod tests {
                 crop: [0.0; 4],
                 clip: None,
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
             aid.0
@@ -2057,6 +2059,7 @@ mod tests {
             fit_align: 4,
             crop: [0.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
 

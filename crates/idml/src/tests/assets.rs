@@ -219,3 +219,54 @@ fn a_pdf_page_placed_with_two_crops_imports_as_two_assets() {
     assert_eq!(d.assets.len(), 2);
     assert_eq!(reads.get(), 2);
 }
+
+/// The swatch applied to a placed image (`<Image FillColor FillTint>`) colours a greyscale or
+/// bitmap image in InDesign (#1094). Black at 100%, InDesign's own value for an image nobody
+/// coloured, and None leave the image as it is, like a missing attribute.
+#[test]
+fn the_swatch_applied_to_an_image_is_kept() {
+    let bytes = vec![42u8; 300];
+    let reader = |p: &str| p.ends_with("couple.jpg").then(|| bytes.clone());
+    let coloured = |n: usize, attrs: &str| image(n, PHOTO, None).replacen(&format!(r#"Self="im{n}""#), &format!(r#"Self="im{n}" {attrs}"#), 1);
+    let frames = vec![
+        frame(1, 0.0, 0.0, &coloured(1, r#"FillColor="Color/Brand" FillTint="50""#)),
+        frame(2, 100.0, 0.0, &coloured(2, r#"FillColor="Color/Black" FillTint="-1""#)),
+        frame(3, 200.0, 0.0, &coloured(3, r#"FillColor="Swatch/None""#)),
+        frame(4, 300.0, 0.0, &image(4, PHOTO, None)),
+        frame(5, 400.0, 0.0, &coloured(5, r#"FillColor="Color/u9""#)),
+        frame(6, 500.0, 0.0, &coloured(6, r#"FillColor="Color/Black" FillTint="40""#)),
+    ];
+    let fills = |d: &Document| {
+        let mut v: Vec<(f64, (String, f32))> = d.spreads[0]
+            .items
+            .iter()
+            .filter_map(|i| match &i.content {
+                Content::Graphic(g) => Some((i.xf.translation().x, (g.fill.swatch.clone(), g.fill.tint))),
+                _ => None,
+            })
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v.into_iter().map(|(_, f)| f).collect::<Vec<_>>()
+    };
+    let none = || (designcraft_color::swatch::NONE.to_string(), 1.0);
+    let want = vec![
+        ("Brand".to_string(), 0.5),
+        none(),
+        none(),
+        none(),
+        ("C=10 M=20 Y=30 K=40".to_string(), 1.0),
+        (designcraft_color::swatch::BLACK.to_string(), 0.4),
+    ];
+    let d = import_idml_with(&package(&frames), &reader).unwrap();
+    assert_eq!(fills(&d), want);
+
+    let out = export_idml_with(&d, &ExportOptions::default());
+    let spreads = zip_text(&out, "Spreads/");
+    let images: Vec<&str> = spreads.split("<Image ").skip(1).map(|s| s.split('>').next().unwrap_or("")).collect();
+    assert_eq!(images.len(), 6);
+    // Only an image with a swatch says so; none of them gets an invented `Swatch/None`.
+    assert_eq!(images.iter().filter(|e| e.contains("FillColor=")).count(), 3, "{images:?}");
+    assert!(images.iter().any(|e| e.contains(r#"FillColor="Color/Brand""#) && e.contains(r#"FillTint="50""#)), "{images:?}");
+    assert!(!images.iter().any(|e| e.contains("Swatch/None")), "{images:?}");
+    assert_eq!(fills(&import_idml_with(&out, &reader).unwrap()), want);
+}

@@ -540,6 +540,7 @@ fn same_as_clipping_wrap_follows_the_clipping_path() {
         fit_align: 0,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     it.wrap.mode = WrapMode::Contour;
     it.wrap.side = WrapSide::LeftSide;
@@ -687,6 +688,7 @@ fn an_image_contour_stops_at_its_frame() {
         fit_align: 4,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     it.wrap.mode = WrapMode::Contour;
     it.wrap.side = WrapSide::RightSide;
@@ -730,6 +732,7 @@ fn a_clipping_path_contour_stops_at_its_frame() {
         fit_align: 0,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     it.wrap.mode = WrapMode::Contour;
     it.wrap.side = WrapSide::LeftSide;

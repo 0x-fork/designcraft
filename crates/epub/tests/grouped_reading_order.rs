@@ -108,6 +108,7 @@ fn nested_and_item_rotations_are_combined_before_measuring_graphics() {
         fit_align: 4,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     // The export writes the alt text, not the file name.
     item.alt_text = "Grouped image".into();

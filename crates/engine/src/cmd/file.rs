@@ -709,6 +709,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
                 fit_align: 4,
                 crop: [0.0; 4],
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             fid
         } else {
@@ -731,6 +732,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
                 fit_align: 4,
                 crop: [0.0; 4],
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             d.insert_item(spread, it, None)?;
             id
@@ -852,6 +854,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     fit_align: 4,
                     crop: [0.0; 4],
                     wrap: Default::default(),
+                    fill: Default::default(),
                 });
                 fid
             }
@@ -879,6 +882,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     fit_align: 4,
                     crop: [0.0; 4],
                     wrap: Default::default(),
+                    fill: Default::default(),
                 });
                 d.insert_item(sr, it, None)?;
                 id

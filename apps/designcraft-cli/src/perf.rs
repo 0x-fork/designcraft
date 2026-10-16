@@ -247,6 +247,7 @@ pub fn synthetic(spec: &Spec) -> Result<Document, String> {
                 fit_align: 4,
                 crop: [0.0; 4],
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             if k == 0 && pi == 0 {
                 it.effects.drop_shadow.on = true;

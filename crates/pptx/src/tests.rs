@@ -220,6 +220,7 @@ fn pictures_are_cropped_to_their_frames() {
             crop: [0.0; 4],
             clip: None,
             wrap: Default::default(),
+            fill: Default::default(),
         });
     });
     let mut z = export(&d, &PptxOptions::default());

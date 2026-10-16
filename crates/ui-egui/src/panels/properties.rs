@@ -2677,6 +2677,7 @@ mod tests {
                 fit_align: 4,
                 crop: [0.0; 4],
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             items.push(id);
             assets.push(aid);

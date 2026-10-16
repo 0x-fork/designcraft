@@ -619,6 +619,10 @@ pub struct Graphic {
     /// Text wrap set on the graphic itself (Direct Selection), around the part its frame shows.
     #[serde(default, skip_serializing_if = "TextWrap::is_default")]
     pub wrap: TextWrap,
+    /// The swatch applied to the image itself: InDesign colours a greyscale or bitmap image with
+    /// it, colour images ignore it. `None` (the default, like InDesign's Black) leaves it as is.
+    #[serde(default, skip_serializing_if = "Fill::is_none")]
+    pub fill: Fill,
 }
 
 fn center_ref() -> u8 {
@@ -1633,6 +1637,7 @@ mod tests {
             fit_align: 4,
             crop: [0.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         };
         let v = serde_json::to_value(&g).unwrap();
         assert!(v.get("clip").is_none(), "{v}");

@@ -40,6 +40,7 @@ pub(crate) fn place_media(s: &mut Session, p: &Value, name: String, mime: &str, 
                     fit_align: 4,
                     crop: [0.0; 4],
                     wrap: Default::default(),
+                    fill: Default::default(),
                 });
                 it.media = Some(MediaOptions { controls: true, ..Default::default() });
                 fid
@@ -58,6 +59,7 @@ pub(crate) fn place_media(s: &mut Session, p: &Value, name: String, mime: &str, 
                     fit_align: 4,
                     crop: [0.0; 4],
                     wrap: Default::default(),
+                    fill: Default::default(),
                 });
                 it.media = Some(MediaOptions { controls: true, ..Default::default() });
                 d.insert_item(spread, it, None)?;

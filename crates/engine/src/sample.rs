@@ -87,6 +87,7 @@ fn graphic_frame(d: &mut Document, sr: SpreadRef, r: Rect, asset: AssetId, px: (
         fit_align: 4,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     it.object_style = designcraft_doc::BASIC_GRAPHICS_FRAME.into();
     d.insert_item(sr, it, None)?;

@@ -251,6 +251,7 @@ fn place(d: &mut Document, data: Vec<u8>, px: (u32, u32)) {
         fit_align: 4,
         crop: [0.0; 4],
         wrap: Default::default(),
+        fill: Default::default(),
     });
     d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
 }
@@ -772,4 +773,49 @@ fn empty_and_populated_export_metadata_preserve_key_presence() {
         assert!(s.contains(key), "missing populated metadata {key}");
     }
     assert!(s.contains("Synthetic title") && s.contains("Test author"));
+}
+
+/// A swatch applied to a placed greyscale image colours it (#1094): the image's darkness is the
+/// coverage of the swatch, so a spot swatch prints on its own plate. A colour image, or a swatch
+/// that no longer exists, exports as the image itself.
+#[test]
+fn a_swatch_colours_a_greyscale_image() {
+    let encode = |px: &[u8], ct: image::ExtendedColorType| {
+        let mut b = Vec::new();
+        image::ImageEncoder::write_image(image::codecs::png::PngEncoder::new(&mut b), px, 3, 1, ct).unwrap();
+        b
+    };
+    let grey = encode(&[0, 64, 255], image::ExtendedColorType::L8);
+    let rgb = encode(&[0, 0, 0, 200, 40, 40, 255, 255, 255], image::ExtendedColorType::Rgb8);
+    let export = |file: &[u8], swatch: Option<&str>| {
+        let mut d = doc_with_text("x");
+        d.swatches.push(Swatch {
+            name: "PANTONE Test".into(),
+            value: SwatchValue::Color { color: Color::cmyk(0.0, 0.5, 1.0, 0.0), color_type: ColorType::Spot },
+            locked: false,
+            named: true,
+            hidden: false,
+        });
+        place(&mut d, file.to_vec(), (3, 1));
+        if let Some(sw) = swatch {
+            let id = d.spreads[0].items.last().unwrap().id;
+            if let designcraft_doc::Content::Graphic(g) = &mut d.item_mut(id).unwrap().content {
+                g.fill = Fill::swatch(sw);
+            }
+        }
+        let bytes = export_pdf(&d, &Cache::new(), &PdfOptions { compress: false, ..Default::default() }).unwrap();
+        (String::from_utf8_lossy(&bytes).into_owned(), image_xobjects(&bytes))
+    };
+    let (plain, plain_images) = export(&grey, None);
+    assert!(!plain.contains("PANTONE#20Test"), "the spot is used by nothing else");
+    let (s, images) = export(&grey, Some("PANTONE Test"));
+    assert!(s.contains("/Separation") && s.contains("/PANTONE#20Test"), "the image prints on the spot plate");
+    // The swatch is painted through the image's coverage: black is full ink, white none.
+    assert!(images.contains(&("DeviceGray".to_string(), vec![255, 191, 0])), "{images:?}");
+
+    let (gone, gone_images) = export(&grey, Some("Gone"));
+    assert_eq!(gone_images, plain_images, "a deleted swatch: the image as it is");
+    assert!(!gone.contains("/SMask"), "nothing painted through it");
+    let (s, _) = export(&rgb, Some("PANTONE Test"));
+    assert!(!s.contains("PANTONE#20Test"), "a colour image keeps its colours");
 }

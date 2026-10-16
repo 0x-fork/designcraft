@@ -2958,6 +2958,10 @@ impl<'r> Importer<'r> {
             _ => {
                 if let Some(g) = e.elements().find(|c| matches!(c.local(), "Image" | "PDF" | "EPS" | "ImportedPage" | "WMF" | "PICT" | "SVG")) {
                     it.content = self.graphic(g);
+                    let fill = self.image_fill(g);
+                    if let Content::Graphic(gr) = &mut it.content {
+                        gr.fill = fill;
+                    }
                     if let (Some(ff), Content::Graphic(gr)) = (self.with_style(e, "FrameFittingOption"), &mut it.content) {
                         gr.crop = [ff.num("TopCrop"), ff.num("LeftCrop"), ff.num("BottomCrop"), ff.num("RightCrop")].map(|v| v.unwrap_or(0.0));
                         gr.fit_align = ff.get("FittingAlignment").map_or(4, names::anchor_in);
@@ -2983,6 +2987,18 @@ impl<'r> Importer<'r> {
             }
         }
         Some(it)
+    }
+
+    /// The swatch applied to a placed image (`FillColor`, `FillTint`): it colours a greyscale or
+    /// bitmap image. Black at 100% is how InDesign writes an image nobody coloured: no swatch.
+    fn image_fill(&mut self, g: &El) -> Fill {
+        let Some(r) = g.get("FillColor") else { return Fill::none() };
+        let swatch = self.swatch_ref(r);
+        let tint = tint(g.num("FillTint")).unwrap_or(1.0);
+        if swatch == swatch::BLACK && tint >= 1.0 {
+            return Fill::none();
+        }
+        Fill { swatch, tint, ..Fill::none() }
     }
 
     fn graphic(&mut self, g: &El) -> Content {
@@ -3012,6 +3028,7 @@ impl<'r> Importer<'r> {
                 // A wrap set on the placed graphic (Direct Selection) is stored on the graphic element,
                 // over the graphic's own object style when it names one.
                 wrap,
+                fill: Default::default(),
             })
         };
         let mut data = g.prop_el("Contents").map(|c| base64_decode(&c.text_content())).unwrap_or_default();

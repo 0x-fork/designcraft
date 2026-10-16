@@ -2090,6 +2090,13 @@ impl<'a> Ex<'a> {
             el.set("ActualPpi", pt(pw as f64 * 72.0 / g.size.0, ph as f64 * 72.0 / g.size.1));
         }
         el.set("ItemTransform", affine_s(g.xf));
+        // The swatch that colours a greyscale or bitmap image; written only when it exists.
+        if !g.fill.is_none()
+            && let Some(id) = self.swatch_ids.get(&g.fill.swatch)
+        {
+            el.set("FillColor", id.clone());
+            el.set("FillTint", pct(g.fill.tint as f64));
+        }
         let embed = !asset.data.is_empty() && (self.opts.embed_images || asset.link.is_none());
         let mut props = Vec::new();
         if embed {

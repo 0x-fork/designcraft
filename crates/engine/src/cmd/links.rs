@@ -627,6 +627,7 @@ mod shared_asset_tests {
             fit_align: 4,
             crop: [1.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         src.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         let ids = super::super::object::duplicate_from(&mut dst, &src, &[iid], SpreadRef::Doc(0), designcraft_geom::Vec2::ZERO).unwrap();
@@ -671,6 +672,7 @@ mod shared_asset_tests {
             fit_align: 4,
             crop: [1.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         src.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         let ids = super::super::object::duplicate_from(&mut dst, &src, &[iid], SpreadRef::Doc(0), designcraft_geom::Vec2::ZERO).unwrap();
@@ -706,6 +708,7 @@ mod shared_asset_tests {
             fit_align: 4,
             crop: [1.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         src.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         let ids = super::super::object::duplicate_from(&mut dst, &src, &[iid], SpreadRef::Doc(0), designcraft_geom::Vec2::ZERO).unwrap();
