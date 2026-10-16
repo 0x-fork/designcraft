@@ -1,6 +1,6 @@
 # Where DesignCraft falls short of InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (.indd and .indt open through indd-utils; gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML; Tabs panel listed as present (#343); book chapter update safety; gap 16: Based on Parent leftovers; bounded control click/drag input) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (.indd and .indt open through indd-utils; gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML; Tabs panel listed as present (#343); book chapter update safety; gap 16: Based on Parent leftovers; bounded control click/drag input; swatches on placed greyscale and bitmap images) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every known shortfall against InDesign 2026, one entry each, ranked by how much it stops an
 InDesign professional from doing real work. This is the work list: agents pick from the top.
@@ -138,8 +138,8 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 
 ### 12. Tables in depth (F)
 - **Missing:** anchored objects in cells not drawn (#163); Table ▸ Table Options and Cell Options
-  submenus as InDesign lays them out, Diagonal Lines, Convert Rows to Header/Body/Footer, Edit
-  Header/Footer, Go to Row; general reliability (#20).
+  submenus as InDesign lays them out, Diagonal Lines, Edit Header/Footer,
+  Go to Row; general reliability (#20).
 - **Estimate:** 25–40 h.
 
 ### 13. Hyphenation and spelling languages (T, L)
@@ -172,7 +172,7 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   Window ▸ Arrange (2-up … 6-up), Trap Presets, Overlays, Edit ▸ Assign Profiles / Convert to
   Profile / Edit Original, File ▸ File Info / Open PDF / Document and Print Presets / User
   Settings, Type ▸ Size presets, Table ▸ Table Options / Cell Options submenus, Paste Before/After,
-  Convert Rows/Columns, Object ▸ Interactive ▸ Convert to (form fields),
+  Convert Columns, Object ▸ Interactive ▸ Convert to (form fields),
   View ▸ Extras badges and Story Editor options. Pages panel ▸ Parent Options (Based on Parent is
   the `layout.parents.options` command only); overriding a base parent's items on a parent spread
   itself (overrides work on document pages only).
@@ -194,7 +194,9 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   comps beyond visibility; the Clipping Path Options dialog (tracing into a clip that keeps the
   frame, Threshold/Tolerance/Inset Frame preview, picking an alpha channel or a path saved in a
   TIFF/PSD); Text Wrap › Same As Clipping following an imported clipping path; Edit Original / Edit With; PDF placed as editable vectors (#227, #24);
-  QuarkXPress import (#73).
+  QuarkXPress import (#73); applying a swatch to a selected greyscale or bitmap image (Direct
+  Selection + Swatches). A swatch already on the image (IDML `<Image FillColor>`) colours it on
+  screen and in PDF and IDML export (#1094).
 - **Estimate:** 30–60 h (PostScript interpreter is a large separate project: +80–150 h).
 
 ### 20. Performance on large documents (P)

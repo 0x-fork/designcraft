@@ -31,6 +31,9 @@ pub enum FormatError {
     TooNew(u32),
     #[error("{0}")]
     Io(String),
+    /// The document holds something the file can't represent; nothing is written.
+    #[error("{0}")]
+    Unsaveable(String),
 }
 
 fn ext_for(mime: &str) -> &'static str {
@@ -62,6 +65,10 @@ pub fn save_with_preview(doc: &Document, preview: Option<&[u8]>) -> Result<Vec<u
 const LARGE_ENTRY: usize = (u32::MAX as usize).saturating_sub(64 << 20);
 
 fn save_with_large_entries_from(doc: &Document, preview: Option<&[u8]>, large_entry: usize) -> Result<Vec<u8>, FormatError> {
+    // JSON writes infinity and NaN as null, which no load accepts: the file would not open.
+    if let Some(id) = doc.non_finite_item() {
+        return Err(FormatError::Unsaveable(format!("object {} has a position or size that is not a finite number", id.0)));
+    }
     let mut compact = doc.clone();
     compact.compact_assets();
     let doc = &compact;
@@ -398,6 +405,7 @@ mod tests {
             fit_align: 4,
             crop: [crop; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         id

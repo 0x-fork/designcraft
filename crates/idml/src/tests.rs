@@ -11,6 +11,7 @@ mod assets;
 mod clipping;
 mod decorations;
 mod index_sort;
+mod liquid_guides;
 mod object_styles;
 mod rtl_binding;
 mod spread_rotation;
@@ -4006,6 +4007,29 @@ fn a_japanese_composer_and_its_leading_model_round_trip() {
         assert_eq!(root.chars.leading_model, Some(designcraft_doc::cjk::LeadingModel::AkiBelow));
     }
     assert!((second_line_gap(&d) - second_line_gap(&back)).abs() < 0.01);
+}
+
+/// A composite-font metric `Document::check` refuses (zero, NaN, infinity) must
+/// not make the whole package fail to open: the entry falls back to a usable value instead.
+#[test]
+fn unusable_cjk_metrics_do_not_refuse_the_whole_file() {
+    let designmap = r#"<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" Self="d">
+          <CompositeFont Self="cf" Name="Rubies">
+            <CompositeFontEntry Self="e1" Name="Dot" AppliedFont="Myriad Pro" RelativeSize="0"/>
+            <CompositeFontEntry Self="e2" Name="Bar" AppliedFont="Myriad Pro" BaselineShift="NaN"/>
+            <CompositeFontEntry Self="e3" Name="Tiny" AppliedFont="Myriad Pro" RelativeSize="5e-324" HorizontalScale="5e-324" VerticalScale="5e-324"/>
+          </CompositeFont>
+          <idPkg:Spread src="Spreads/Spread_s.xml"/>
+        </Document>"#;
+    let spread = r#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+          <Spread Self="s"><Page Self="p" GeometricBounds="0 0 100 100" ItemTransform="1 0 0 1 0 0"/></Spread>
+        </idPkg:Spread>"#;
+    let d = import_idml(&zip_files(&[("designmap.xml", designmap), ("Spreads/Spread_s.xml", spread)])).unwrap();
+    let entries = &d.styles.composite_fonts[0].entries;
+    assert_eq!(entries[0].relative_size, 1.0, "an unusable relative size falls back to full size");
+    assert_eq!(entries[1].baseline_shift, 0.0, "an unusable shift falls back to none");
+    // Positive in the file but zero once read as a fraction.
+    assert_eq!((entries[2].relative_size, entries[2].horizontal_scale, entries[2].vertical_scale), (1.0, 1.0, 1.0));
 }
 
 mod liquid_page_rules {

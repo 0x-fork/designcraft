@@ -619,6 +619,10 @@ pub struct Graphic {
     /// Text wrap set on the graphic itself (Direct Selection), around the part its frame shows.
     #[serde(default, skip_serializing_if = "TextWrap::is_default")]
     pub wrap: TextWrap,
+    /// The swatch applied to the image itself: InDesign colours a greyscale or bitmap image with
+    /// it, colour images ignore it. `None` (the default, like InDesign's Black) leaves it as is.
+    #[serde(default, skip_serializing_if = "Fill::is_none")]
+    pub fill: Fill,
 }
 
 fn center_ref() -> u8 {
@@ -1608,6 +1612,19 @@ impl Item {
         }
     }
 
+    /// Whether the item's own geometry (path, transform, a placed graphic's size and transform)
+    /// is finite. JSON has no infinity or NaN, so a document holding one can't be saved.
+    pub fn geometry_is_finite(&self) -> bool {
+        let pt = |p: Point| p.x.is_finite() && p.y.is_finite();
+        let affine = |a: &Affine| a.as_coeffs().iter().all(|c| c.is_finite());
+        let path = self.path.subpaths.iter().flat_map(|s| &s.anchors).all(|a| pt(a.p) && pt(a.h_in) && pt(a.h_out));
+        let graphic = match &self.content {
+            Content::Graphic(g) => g.size.0.is_finite() && g.size.1.is_finite() && affine(&g.xf),
+            _ => true,
+        };
+        path && affine(&self.xf) && graphic
+    }
+
     /// Visit this item and descendants (pre-order).
     pub fn walk<'a>(&'a self, f: &mut impl FnMut(&'a Item)) {
         f(self);
@@ -1633,6 +1650,7 @@ mod tests {
             fit_align: 4,
             crop: [0.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         };
         let v = serde_json::to_value(&g).unwrap();
         assert!(v.get("clip").is_none(), "{v}");

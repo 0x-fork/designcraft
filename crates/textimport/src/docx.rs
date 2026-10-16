@@ -47,8 +47,9 @@ impl El {
     pub(crate) fn val(&self, name: &str) -> Option<String> {
         self.child(name).map(|e| e.attr("val").unwrap_or("true").to_string())
     }
+    /// A toggle property (`ST_OnOff`: a boolean, or the words `on` and `off`). None when unset.
     pub(crate) fn on(&self, name: &str) -> Option<bool> {
-        self.val(name).map(|v| !matches!(v.as_str(), "0" | "false" | "none"))
+        self.val(name).map(|v| !matches!(v.as_str(), "0" | "false" | "none" | "off"))
     }
 }
 
@@ -57,12 +58,20 @@ fn local(n: &[u8]) -> String {
     s.rsplit(':').next().unwrap_or(&s).to_string()
 }
 
+/// How deep elements may nest. Word's own XML stays well under a hundred levels; the tree is read
+/// recursively afterwards (`El::text`, the block walk) and dropped recursively, so a document
+/// nested without bound must be refused here, not run into the stack (#712).
+pub(crate) const MAX_DEPTH: usize = 256;
+
 pub(crate) fn parse(xml: &str) -> Result<El, ImportError> {
     let mut r = quick_xml::Reader::from_str(xml);
     let mut stack: Vec<El> = vec![El::default()];
     loop {
         match r.read_event().map_err(|e| ImportError::Corrupt(e.to_string()))? {
             Event::Start(e) => {
+                if stack.len() > MAX_DEPTH {
+                    return Err(ImportError::Corrupt(format!("XML elements nested deeper than {MAX_DEPTH} levels")));
+                }
                 let el = El {
                     name: local(e.name().as_ref()),
                     attrs: e
@@ -166,7 +175,7 @@ fn run_attrs(rpr: Option<&El>) -> CharAttrs {
         _ => None,
     };
     if let Some(u) = r.val("u") {
-        a.underline = Some(u != "none" && u != "0" && u != "false");
+        a.underline = Some(!matches!(u.as_str(), "none" | "0" | "false" | "off"));
     }
     if let Some(s) = r.on("strike") {
         a.strikethrough = Some(s);
@@ -368,6 +377,12 @@ impl Ctx {
                 // Tracked changes import as accepted: insertions and move destinations are kept,
                 // deletions (`del`) and move sources (`moveFrom`) are dropped.
                 "hyperlink" | "smartTag" | "ins" | "moveTo" | "fldSimple" | "customXml" => self.inline(e, st, allow_notes),
+                // A content control (date picker, drop-down, plain text) keeps its runs in `sdtContent`.
+                "sdt" => {
+                    if let Some(c) = e.child("sdtContent") {
+                        self.inline(c, st, allow_notes);
+                    }
+                }
                 _ => {}
             }
         }
@@ -563,6 +578,17 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    /// Issue #712: nesting past the budget is an error from the parser, not a stack overflow later.
+    #[test]
+    fn nesting_past_the_budget_is_refused() {
+        let nested = |n: usize| format!("{}{}", "<w:p>".repeat(n), "</w:p>".repeat(n));
+        let ok = parse(&nested(MAX_DEPTH)).expect("the budget itself parses");
+        assert_eq!(ok.name, "p");
+        let err = parse(&nested(MAX_DEPTH + 1)).expect_err("one level more is refused");
+        assert!(err.to_string().contains("nested deeper"), "{err}");
+        assert!(parse(&nested(100_000)).is_err());
+    }
+
     pub(crate) fn docx(document: &str, styles: &str, footnotes: &str) -> Vec<u8> {
         docx_parts(&[("word/document.xml", document), ("word/styles.xml", styles), ("word/footnotes.xml", footnotes)])
     }
@@ -638,6 +664,20 @@ mod tests {
         assert_eq!(i.para_styles[1].chars.size, Some(16.0));
         assert_eq!(i.para_styles[1].para.space_before, Some(12.0));
         assert_eq!(i.char_styles[0].chars.font_style.as_deref(), Some("Italic"));
+    }
+
+    /// A content control inside a paragraph (`w:sdt`) keeps its text, also around a hyperlink.
+    #[test]
+    fn inline_content_control_text_is_kept() {
+        let document = format!(
+            r#"<w:document {W}><w:body>
+              <w:p><w:r><w:t xml:space="preserve">Date: </w:t></w:r><w:sdt><w:sdtPr><w:alias w:val="d"/></w:sdtPr><w:sdtContent><w:r><w:t>1 May 2026</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t>.</w:t></w:r></w:p>
+              <w:p><w:sdt><w:sdtContent><w:hyperlink><w:r><w:t>Link</w:t></w:r></w:hyperlink></w:sdtContent></w:sdt></w:p>
+            </w:body></w:document>"#
+        );
+        let st = import(&docx(&document, "", "")).unwrap().story;
+        st.check().unwrap();
+        assert_eq!(st.text, "Date: 1 May 2026.\nLink");
     }
 
     #[test]
@@ -955,5 +995,25 @@ mod tests {
         let quote = i.para_styles.iter().find(|s| s.name == "Quote").unwrap();
         assert_eq!(quote.based_on.as_deref(), Some("Normal"));
         assert_eq!(quote.chars.size, None, "inherited from Normal, not copied");
+    }
+
+    /// `ST_OnOff` is a boolean plus the words `on` and `off`: an explicit `off` is off.
+    #[test]
+    fn off_valued_toggles_stay_off() {
+        let document = format!(
+            r#"<w:document {W}><w:body><w:p>
+              <w:r><w:rPr><w:b w:val="off"/><w:i w:val="0"/><w:strike w:val="off"/><w:u w:val="off"/><w:caps w:val="off"/></w:rPr><w:t>plain</w:t></w:r>
+              <w:r><w:rPr><w:b w:val="on"/></w:rPr><w:t>bold</w:t></w:r>
+            </w:p></w:body></w:document>"#
+        );
+        let st = import(&docx(&document, "", "")).unwrap().story;
+        st.check().unwrap();
+        let plain = st.format_after(st.text.find("plain").unwrap()).clone().over;
+        assert_eq!(plain.font_style.as_deref(), Some("Regular"), "an explicit `off` is not bold");
+        assert_eq!(plain.strikethrough, Some(false));
+        assert_eq!(plain.underline, Some(false));
+        assert_eq!(plain.capitalization, None, "no all-caps");
+        let on = st.format_after(st.text.find("bold").unwrap()).clone().over;
+        assert_eq!(on.font_style.as_deref(), Some("Bold"), "`on` is still on");
     }
 }

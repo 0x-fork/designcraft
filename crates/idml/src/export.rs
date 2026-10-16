@@ -1102,6 +1102,7 @@ impl<'a> Ex<'a> {
     /// The document's table of contents as a TOC style; its story names it in `AppliedTOCStyle`.
     fn toc_style_el(&mut self, toc: &designcraft_doc::Toc) -> El {
         let para = |n: &str| names::style_self("ParagraphStyle", PARA_BUILTINS, n);
+        let chars = |n: Option<&str>| names::style_self("CharacterStyle", CHAR_BUILTINS, n.unwrap_or(designcraft_doc::NO_CHAR_STYLE));
         let mut el = El::new("TOCStyle")
             .attr("Self", TOC_STYLE_ID)
             .attr("Name", TOC_STYLE_NAME)
@@ -1127,7 +1128,9 @@ impl<'a> Ex<'a> {
                     .attr("Level", e.level)
                     .attr("PageNumberPosition", position)
                     .attr("Separator", names::toc_separator_out(e.separator.as_deref().unwrap_or("\t")))
-                    .attr("Sort", "false"),
+                    .attr("PageNumberStyle", chars(e.page_number_style.as_deref()))
+                    .attr("SeparatorStyle", chars(e.separator_style.as_deref()))
+                    .attr("Sort", if e.sort { "true" } else { "false" }),
             );
         }
         el
@@ -1840,7 +1843,7 @@ impl<'a> Ex<'a> {
                     .attr("ViewThreshold", "5")
                     .attr("Locked", bool_s(g.locked))
                     .attr("PageIndex", (first_page + i).to_string())
-                    .attr("GuideType", "Ruler");
+                    .attr("GuideType", if g.liquid { "Liquid" } else { "Ruler" });
                 if let Some(l) = g.layer {
                     ge.set("ItemLayer", uid(l.0));
                 }
@@ -2090,6 +2093,13 @@ impl<'a> Ex<'a> {
             el.set("ActualPpi", pt(pw as f64 * 72.0 / g.size.0, ph as f64 * 72.0 / g.size.1));
         }
         el.set("ItemTransform", affine_s(g.xf));
+        // The swatch that colours a greyscale or bitmap image; written only when it exists.
+        if !g.fill.is_none()
+            && let Some(id) = self.swatch_ids.get(&g.fill.swatch)
+        {
+            el.set("FillColor", id.clone());
+            el.set("FillTint", pct(g.fill.tint as f64));
+        }
         let embed = !asset.data.is_empty() && (self.opts.embed_images || asset.link.is_none());
         let mut props = Vec::new();
         if embed {

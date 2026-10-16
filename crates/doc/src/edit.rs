@@ -609,6 +609,22 @@ impl Document {
         None
     }
 
+    /// The first item on a document or parent spread whose geometry isn't finite
+    /// ([`Item::geometry_is_finite`]).
+    pub fn non_finite_item(&self) -> Option<ItemId> {
+        let mut found = None;
+        for sp in self.spreads.iter().chain(&self.parents) {
+            for it in &sp.items {
+                it.walk(&mut |i| {
+                    if found.is_none() && !i.geometry_is_finite() {
+                        found = Some(i.id);
+                    }
+                });
+            }
+        }
+        found
+    }
+
     /// Every item id (pre-order) on document spreads.
     pub fn all_items(&self) -> Vec<ItemId> {
         let mut v = Vec::new();

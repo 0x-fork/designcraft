@@ -98,6 +98,10 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                     let _ = app.run("app.swatchOptionsDialog", json!({"name": current}));
                     ui.close();
                 }
+                if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Color Theme…"))).clicked() {
+                    crate::menus::activate(app, "swatch.addColorTheme", &serde_json::Value::Null);
+                    ui.close();
+                }
                 crate::menus::menu_button(ui, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Ink Manager")), |ui| {
                     let Ok(l) = app.session.execute("ink.list", &json!({})) else { return };
                     let mut all = l["allToProcess"].as_bool().unwrap_or(false);

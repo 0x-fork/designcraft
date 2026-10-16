@@ -717,6 +717,11 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.graphicCell|Convert Cell to Graphic Cell…",
             "cmd:table.textCell",
             "<",
+            ">Convert Rows",
+            "cmd:table.convertRowsToHeader",
+            "cmd:table.convertRowsToBody",
+            "cmd:table.convertRowsToFooter",
+            "<",
             "cmd:table.splitHorizontally",
             "cmd:table.splitVertically",
             "cmd:table.distributeColumns",
@@ -2376,6 +2381,10 @@ fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
         && let Some(page) = crate::effects_dialog::page_of_command(id)
     {
         crate::effects_dialog::open(app, page);
+        return;
+    }
+    if params.is_null() && id == "swatch.addColorTheme" {
+        crate::dialogs::open_color_theme(app, json!({}));
         return;
     }
     if params.is_null() && id == "file.close" {

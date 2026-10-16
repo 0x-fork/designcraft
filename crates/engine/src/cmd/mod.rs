@@ -7,6 +7,7 @@ pub mod book;
 mod buttons;
 pub(crate) mod captions;
 mod changes;
+mod color_theme;
 mod colorsettings;
 mod conditions;
 mod datamerge;
@@ -182,6 +183,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(buttons::specs());
         v.extend(captions::specs());
         v.extend(colorsettings::specs());
+        v.extend(color_theme::specs());
         v.extend(changes::specs());
         v.extend(conditions::specs());
         v.extend(library::specs());
@@ -271,6 +273,12 @@ pub(crate) fn point_param(p: &Value, key: &str) -> Option<Point> {
     let a = p.get(key)?.as_array()?;
     Some(Point::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?))
 }
+/// `r`, computed from coordinate params, or an error when a value overflowed to infinity or NaN:
+/// a document holding one can't be saved (#1050).
+pub(crate) fn finite_rect(command: &str, r: Rect) -> Result<Rect> {
+    if [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite()) { Ok(r) } else { Err(bad(command, "the position and size must stay finite numbers")) }
+}
+
 pub(crate) fn rect_param(p: &Value, key: &str) -> Option<Rect> {
     let a = p.get(key)?.as_array()?;
     let f = |i: usize| a.get(i).and_then(Value::as_f64);

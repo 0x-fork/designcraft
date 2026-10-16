@@ -86,6 +86,7 @@ fn placed(size: f64, pdf: Vec<u8>) -> Rendered {
             fit_align: 4,
             crop: [0.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
         let mut renderer = Renderer::new();

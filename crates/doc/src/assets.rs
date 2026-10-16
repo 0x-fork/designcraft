@@ -364,6 +364,7 @@ mod tests {
             fit_align: 4,
             crop: [crop; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         it
     }

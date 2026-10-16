@@ -24,6 +24,7 @@ use vello_cpu::{Pixmap, RenderContext, Resources};
 pub use vello_cpu;
 
 mod blendspace;
+mod colorize;
 pub mod damage;
 mod fx;
 mod grid;
@@ -880,9 +881,11 @@ impl Renderer {
         let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
         let page = Rect::new(-l * page_w, -t * page_h, (1.0 - l) * page_w, (1.0 - t) * page_h);
         let Some(pm) = images::mip(&data, asset.page, page_w, on_screen) else { return };
-        let pm = match PLATE.with(|p| p.get()) {
-            Some(plate) => plate_pixmap(&pm, plate),
-            None => pm,
+        // A coloured image is already in the plate's inks (its colours come from `color_of`).
+        let pm = match (colorize::colorized(f.doc, &g.fill, &asset.data, &pm), PLATE.with(|p| p.get())) {
+            (Some(coloured), _) => coloured,
+            (None, Some(plate)) => plate_pixmap(&pm, plate),
+            (None, None) => pm,
         };
         // Only where the page is: a box reaching past it (a media box larger than the crop box)
         // shows nothing there.
@@ -1849,6 +1852,7 @@ mod tests {
             fit_align: 4,
             crop: [0.0; 4],
             wrap: Default::default(),
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         let cache = Cache::new();
@@ -1902,6 +1906,7 @@ mod tests {
             crop: [0.0; 4],
             wrap: Default::default(),
             clip: Some(Arc::new(clip.clone())),
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         let cache = Cache::new();

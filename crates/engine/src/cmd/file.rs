@@ -714,6 +714,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
                 fit_align: 4,
                 crop: [0.0; 4],
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             fid
         } else {
@@ -722,7 +723,8 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
             let (x, y) = (px.unwrap_or(pr.x0), py.unwrap_or(pr.y0));
             let id = ItemId(d.alloc());
             let k = w / nw;
-            let mut it = Item::new(id, lid, Shape::Rectangle, shapes::rectangle(Rect::new(x, y, x + bw * k, y + bh * k)));
+            let r = super::finite_rect("file.place", Rect::new(x, y, x + bw * k, y + bh * k))?;
+            let mut it = Item::new(id, lid, Shape::Rectangle, shapes::rectangle(r));
             it.object_style = d.styles.default_graphic_frame.clone();
             if let Some(e) = d.styles.object_effects(&it.object_style) {
                 it.effects = e.clone();
@@ -736,6 +738,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
                 fit_align: 4,
                 crop: [0.0; 4],
                 wrap: Default::default(),
+                fill: Default::default(),
             });
             d.insert_item(spread, it, None)?;
             id
@@ -857,6 +860,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     fit_align: 4,
                     crop: [0.0; 4],
                     wrap: Default::default(),
+                    fill: Default::default(),
                 });
                 fid
             }
@@ -869,6 +873,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     _ => (Rect::new(x, y, x + nw, y + nh), 1.0),
                 };
+                let frame_r = super::finite_rect("place.drop", frame_r)?;
                 let id = ItemId(d.alloc());
                 let mut it = Item::new(id, lid, Shape::Rectangle, shapes::rectangle(frame_r));
                 it.object_style = d.styles.default_graphic_frame.clone();
@@ -884,6 +889,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
                     fit_align: 4,
                     crop: [0.0; 4],
                     wrap: Default::default(),
+                    fill: Default::default(),
                 });
                 d.insert_item(sr, it, None)?;
                 id
@@ -1077,7 +1083,7 @@ mod image_place_tests {
 
     use crate::Session;
 
-    fn image_file() -> std::io::Result<tempfile::NamedTempFile> {
+    pub(super) fn image_file() -> std::io::Result<tempfile::NamedTempFile> {
         image_file_with_color(30)
     }
 
@@ -1622,6 +1628,34 @@ mod save_tests {
         assert!(!s.prefs.recent_files.iter().any(|p| p.ends_with("other.designcraft")), "a failed Save As isn't a recent file");
         assert!(s.doc().unwrap().is_dirty(), "the document still has unsaved changes");
         assert!(checkpoint.exists(), "the recovery checkpoint stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #1050: a placement whose coordinates overflow to infinity is refused, and Save refuses a
+    /// document holding a non-finite rect anyway, leaving the file on disk as it was.
+    #[test]
+    fn non_finite_coordinates_are_refused_and_never_saved() {
+        let image = super::image_place_tests::image_file().unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let e = s.execute("file.place", &json!({"path": image.path(), "x": 1e308, "width": 1e308})).unwrap_err();
+        assert!(e.to_string().contains("finite"), "{e}");
+        assert!(s.doc().unwrap().doc.all_items().is_empty(), "nothing is placed");
+
+        let dir = std::env::temp_dir().join(format!("dc-save-non-finite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("doc.designcraft");
+        s.execute("file.save", &json!({"path": path.to_string_lossy()})).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let id = designcraft_doc::ItemId(s.execute("frame.create", &json!({"rect": [36, 36, 300, 200]})).unwrap()["id"].as_u64().unwrap());
+        let st = s.doc_mut().unwrap();
+        let infinite = designcraft_geom::Rect::new(36.0, 36.0, f64::INFINITY, 200.0);
+        std::sync::Arc::make_mut(&mut st.doc).item_mut(id).unwrap().path = designcraft_geom::shapes::rectangle(infinite);
+        let e = s.execute("file.save", &json!({})).unwrap_err();
+        assert!(e.to_string().contains("not a finite number"), "{e}");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "the saved file is untouched");
+        assert!(s.doc().unwrap().is_dirty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
