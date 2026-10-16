@@ -7,7 +7,6 @@
 //! shortcut contexts); a type command with no Default entry takes its Text entry.
 
 use std::collections::{BTreeSet, HashMap};
-use std::io::Read;
 
 use serde_json::{Value, json};
 
@@ -58,10 +57,8 @@ pub fn decode(bytes: &[u8]) -> Result<String, String> {
 
 /// Reads and decodes a set file, refusing one over [`MAX_BYTES`].
 pub fn read_file(path: &str) -> Result<String, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("can't open {path}: {e}"))?;
-    let mut bytes = Vec::new();
-    let cap = u64::try_from(MAX_BYTES).unwrap_or(u64::MAX).saturating_add(1);
-    file.take(cap).read_to_end(&mut bytes).map_err(|e| format!("can't read {path}: {e}"))?;
+    let cap = u64::try_from(MAX_BYTES).unwrap_or(u64::MAX);
+    let bytes = designcraft_engine::io::read_capped(path, cap).map_err(|e| format!("can't read {path}: {e}"))?;
     decode(&bytes)
 }
 
