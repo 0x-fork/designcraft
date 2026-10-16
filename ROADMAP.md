@@ -355,6 +355,8 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
   Style Options; Cancel restores the document and OK records one edit.
 - **2026-10-15** · Paragraph Style Options summarizes captured and pending color, size and
   paragraph settings relative to the Based On style.
+- **2026-10-15** · Typography uses named panel groups with the Control panel and restores that
+  arrangement on Reset Workspace, leaving the page clear until a panel is opened.
 
 - **2026-10-13** · Switching between document and parent pages refreshes the canvas immediately, preventing black parent pages and stale document objects when the zoom stays the same. Ordinary edits retain partial repainting. No readiness percentage change.
 
