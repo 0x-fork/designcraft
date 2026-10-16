@@ -52,6 +52,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("app.exportFixedEpub", "Export EPUB (Fixed Layout)…", None, "{path?} — pre-paginated EPUB 3"),
     ("app.exportHtml", "Export HTML…", None, "{path?} — one self-contained web page"),
+    ("app.exportPptx", "Export PowerPoint…", None, "{path?} — every page as a slide of editable shapes, pictures and text"),
     ("app.exportXml", "Export XML…", None, "{path?} — the tagged content"),
     ("app.printBooklet", "Print Booklet…", None, "{path?} — saddle-stitched printer spreads as PDF"),
     ("app.qrCode", "Generate QR Code…", None, "{} — the QR Code dialog (object.qrCode does the work)"),
@@ -64,7 +65,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "app.language",
         "Interface Language",
         None,
-        "{lang?: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk|ru|cs} — menus and panel names (the macOS menu bar follows at once); without lang, opens Preferences, where it is the first setting",
+        "{lang?: \"\"|de|fr|es|ja|zh|ar|pt-br|it|uk|ru|cs|pl|ka} — menus and panel names (the macOS menu bar follows at once); without lang, opens Preferences, where it is the first setting",
     ),
     (
         "app.flattener",
@@ -121,6 +122,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.duplicateSpread", "Duplicate Spread", None, "{} — duplicates the spread in view (pages and items)"),
     ("app.tablePanel", "Table Panel", Some("Shift+F9"), "{}"),
     ("app.tabsPanel", "Tabs", Some("Cmd+Shift+T"), "{} — show or hide the Tabs panel (it opens above the selected text frame)"),
+    ("app.characterPanel", "Character", Some("Cmd+T"), "{} — the Character panel"),
+    ("app.paragraphPanel", "Paragraph", Some("Cmd+Alt+T"), "{} — the Paragraph panel"),
+    ("app.glyphsPanel", "Glyphs", Some("Alt+Shift+F11"), "{} — the Glyphs panel"),
+    ("app.characterStylesPanel", "Character Styles", Some("Cmd+Shift+F11"), "{} — the Character Styles panel"),
+    ("app.paragraphStylesPanel", "Paragraph Styles", Some("Cmd+F11"), "{} — the Paragraph Styles panel"),
+    ("app.insertCurrentPageNumber", "Current Page Number", Some("Cmd+Alt+Shift+N"), "{} — the Current Page Number marker at the insertion point"),
     ("app.storyEditor", "Edit in Story Editor", Some("Cmd+Y"), "{story?}"),
     ("view.zoomIn", "Zoom In", Some("Cmd+="), "{}"),
     ("view.zoomOut", "Zoom Out", Some("Cmd+-"), "{}"),
@@ -163,6 +170,13 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         Some("/"),
         "{} — [None] for the fill or stroke in front of the proxy, of the objects or the text (Formatting Affects Text)",
     ),
+    ("color.applyColor", "Apply Color", Some(","), "{} — the colour applied last ([Black] at first) to the fill or stroke in front of the proxy"),
+    (
+        "color.applyGradient",
+        "Apply Gradient",
+        Some("."),
+        "{} — the gradient applied last (else the document's first, else white to black) to the fill or stroke in front of the proxy",
+    ),
     ("view.frameEdges", "Show/Hide Frame Edges", Some("Cmd+H"), "{}"),
     ("view.rulers", "Show/Hide Rulers", Some("Cmd+R"), "{}"),
     ("view.guides", "Show/Hide Guides", Some("Cmd+;"), "{}"),
@@ -178,7 +192,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.baselineGrid", "Show/Hide Baseline Grid", Some("Cmd+Alt+'"), "{}"),
     ("view.documentGrid", "Show/Hide Document Grid", Some("Cmd+'"), "{}"),
     ("view.textThreads", "Show/Hide Text Threads", Some("Cmd+Alt+Y"), "{}"),
-    ("view.hiddenCharacters", "Show/Hide Hidden Characters", Some("Cmd+Alt+I"), "{}"),
+    ("view.hiddenCharacters", "Show Hidden Characters", Some("Cmd+Alt+I"), "{}"),
     ("view.taggedFrames", "Show/Hide Tagged Frames", None, "{} — XML-tagged frames outlined in their tag colour"),
     ("window.hidePanels", "Show/Hide Panels", Some("Tab"), "{} — every panel, the Tools panel included"),
     ("window.hidePanelsExceptTools", "Show/Hide Panels Except Tools", Some("Shift+Tab"), "{}"),
@@ -310,6 +324,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.exportFixedEpub",
             "ui:app.exportInteractivePdf",
             "ui:app.exportHtml",
+            "ui:app.exportPptx",
             "ui:app.exportXml",
             "ui:app.exportText",
             ">Export",
@@ -399,19 +414,77 @@ pub const MENUS: &[(&str, &[&str])] = &[
     (
         "Type",
         &[
-            "ui:app.findFontDialog",
+            ">Size",
+            "cmd:type.char|6 pt|{\"attrs\": {\"size\": 6}}",
+            "cmd:type.char|7 pt|{\"attrs\": {\"size\": 7}}",
+            "cmd:type.char|8 pt|{\"attrs\": {\"size\": 8}}",
+            "cmd:type.char|9 pt|{\"attrs\": {\"size\": 9}}",
+            "cmd:type.char|10 pt|{\"attrs\": {\"size\": 10}}",
+            "cmd:type.char|11 pt|{\"attrs\": {\"size\": 11}}",
+            "cmd:type.char|12 pt|{\"attrs\": {\"size\": 12}}",
+            "cmd:type.char|14 pt|{\"attrs\": {\"size\": 14}}",
+            "cmd:type.char|18 pt|{\"attrs\": {\"size\": 18}}",
+            "cmd:type.char|24 pt|{\"attrs\": {\"size\": 24}}",
+            "cmd:type.char|30 pt|{\"attrs\": {\"size\": 30}}",
+            "cmd:type.char|36 pt|{\"attrs\": {\"size\": 36}}",
+            "cmd:type.char|48 pt|{\"attrs\": {\"size\": 48}}",
+            "cmd:type.char|60 pt|{\"attrs\": {\"size\": 60}}",
+            "cmd:type.char|72 pt|{\"attrs\": {\"size\": 72}}",
+            "<",
+            "-",
+            "ui:app.characterPanel",
+            "ui:app.paragraphPanel",
+            "ui:app.tabsPanel",
+            "ui:app.glyphsPanel",
+            "-",
+            "ui:app.characterStylesPanel",
+            "ui:app.paragraphStylesPanel",
             "-",
             "cmd:type.createOutlines",
-            ">Bulleted and Numbered Lists",
-            "cmd:list.define",
+            "ui:app.findFontDialog",
+            ">Change Case",
+            "cmd:type.changeCase|UPPERCASE|{\"case\": \"upper\"}",
+            "cmd:type.changeCase|lowercase|{\"case\": \"lower\"}",
+            "cmd:type.changeCase|Title Case|{\"case\": \"title\"}",
+            "cmd:type.changeCase|Sentence case|{\"case\": \"sentence\"}",
             "<",
+            "-",
             ">Type on a Path",
             "cmd:type.pathOptions",
             "cmd:type.pathOptions|Delete Type from Path|{\"delete\": true}",
             "<",
-            "ui:app.tabsPanel",
-            "ui:window.panel|Glyphs|{\"panel\": \"glyphs\"}",
-            "cmd:type.fillWithPlaceholder",
+            "-",
+            ">Notes",
+            "cmd:note.new",
+            "ui:window.panel|Notes|{\"panel\": \"notes\"}",
+            "<",
+            ">Track Changes",
+            "cmd:changes.track",
+            "cmd:changes.acceptAll",
+            "cmd:changes.rejectAll",
+            "<",
+            "-",
+            "cmd:footnote.insert",
+            "ui:app.footnoteOptionsDialog",
+            "cmd:endnote.insert",
+            "cmd:footnote.goToReference",
+            "-",
+            ">Hyperlinks & Cross-References",
+            "cmd:hyperlink.create",
+            "cmd:anchor.create",
+            "-",
+            "ui:app.insertXrefDialog",
+            "cmd:xref.defineFormat",
+            "<",
+            ">Text Variables",
+            "cmd:variables.define",
+            "cmd:variables.insert",
+            "<",
+            "-",
+            ">Bulleted & Numbered Lists",
+            "cmd:list.define",
+            "<",
+            "-",
             ">Insert Special Character",
             ">Symbols",
             "cmd:text.insert|Bullet Character|{\"text\": \"\u{2022}\", \"raw\": true}",
@@ -423,7 +496,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:text.insert|Trademark Symbol|{\"text\": \"\u{2122}\", \"raw\": true}",
             "<",
             ">Markers",
-            "cmd:text.insert|Current Page Number|{\"text\": \"\u{e000}\", \"raw\": true}",
+            "ui:app.insertCurrentPageNumber",
             "cmd:text.insert|Next Page Number|{\"text\": \"\u{e007}\", \"raw\": true}",
             "cmd:text.insert|Previous Page Number|{\"text\": \"\u{e008}\", \"raw\": true}",
             "cmd:text.insert|Section Marker|{\"text\": \"\u{e001}\", \"raw\": true}",
@@ -470,48 +543,10 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:text.insert|Paragraph Return|{\"text\": \"\\n\", \"raw\": true}",
             "cmd:text.insert|Forced Line Break|{\"text\": \"\u{2028}\", \"raw\": true}",
             "<",
-            "-",
-            ">Change Case",
-            "cmd:type.changeCase|UPPERCASE|{\"case\": \"upper\"}",
-            "cmd:type.changeCase|lowercase|{\"case\": \"lower\"}",
-            "cmd:type.changeCase|Title Case|{\"case\": \"title\"}",
-            "cmd:type.changeCase|Sentence case|{\"case\": \"sentence\"}",
-            "<",
-            "-",
-            "cmd:type.alignLeft",
-            "cmd:type.alignCenter",
-            "cmd:type.alignRight",
-            "cmd:type.justify",
-            "ui:app.paragraphRulesDialog",
-            "ui:app.justificationDialog",
-            "ui:app.paragraphBordersDialog",
-            "ui:app.spanColumnsDialog",
-            "ui:app.bulletsNumberingDialog",
-            "-",
-            "cmd:type.bold",
-            "cmd:type.italic",
-            "cmd:type.underline",
-            "cmd:type.allCaps",
-            "-",
-            "cmd:type.sizeUp",
-            "cmd:type.sizeDown",
+            "cmd:type.fillWithPlaceholder",
             "-",
             "ui:view.hiddenCharacters",
             "-",
-            ">Hyperlinks & Cross-References",
-            "cmd:hyperlink.create",
-            "cmd:anchor.create",
-            "-",
-            "ui:app.insertXrefDialog",
-            "cmd:xref.defineFormat",
-            "<",
-            ">Text Variables",
-            "cmd:variables.define",
-            "cmd:variables.insert",
-            "<",
-            "-",
-            "cmd:footnote.insert",
-            "cmd:endnote.insert",
             "cmd:math.insert",
             ">Story Direction",
             "cmd:type.storyDirection|Horizontal|{\"vertical\": false}",
@@ -521,13 +556,6 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.rubyDialog",
             "cmd:type.kenten",
             "cmd:type.warichu",
-            ">Track Changes",
-            "cmd:changes.track",
-            "cmd:changes.acceptAll",
-            "cmd:changes.rejectAll",
-            "<",
-            "ui:app.footnoteOptionsDialog",
-            "cmd:footnote.goToReference",
         ],
     ),
     (
@@ -548,6 +576,13 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:transform.again|Transform Again Individually|{\"individually\": true}",
             "cmd:transform.again|Transform Sequence Again|{\"sequence\": true}",
             "cmd:transform.again|Transform Sequence Again Individually|{\"sequence\": true, \"individually\": true}",
+            "<",
+            ">Flex Layout",
+            "cmd:flex.add",
+            "cmd:flex.convert",
+            "cmd:flex.remove",
+            "-",
+            "ui:window.panel|Show Flex Controls|{\"panel\": \"flexLayout\"}",
             "<",
             ">Paths",
             "cmd:object.makeCompoundPath",
@@ -806,6 +841,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:window.panel|Links|{\"panel\": \"links\"}",
             ">Object & Layout",
             "ui:window.panel|Align|{\"panel\": \"align\"}",
+            "ui:window.panel|Flex Layout|{\"panel\": \"flexLayout\"}",
             "ui:window.panel|Pathfinder|{\"panel\": \"pathfinder\"}",
             "<",
             ">Output",
@@ -827,6 +863,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:window.panel|Paragraph|{\"panel\": \"paragraph\"}",
             "ui:window.panel|Table|{\"panel\": \"table\"}",
             "ui:app.tabsPanel",
+            "ui:window.panel|Typography|{\"panel\": \"typography\"}",
             "<",
             ">Utilities",
             "ui:window.panel|Book|{\"panel\": \"book\"}",
@@ -893,6 +930,15 @@ fn toggle_tabs_panel(app: &mut DesignApp) {
 
 /// Run a UI command; `None` if `id` isn't one.
 pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    let was_find = app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange");
+    let result = run_ui_inner(app, id, p);
+    if was_find && app.ui.dialog.as_ref().is_none_or(|d| d.id != "findChange") {
+        app.session.reset_find_scope();
+    }
+    result
+}
+
+fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize") && !app.custom_titlebar {
         return Some(Err("custom window controls are not available in this host".into()));
     }
@@ -1011,6 +1057,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
         }
         "app.exportFixedEpub" => export_bytes(app, p, "epub", "file.exportFixedEpub"),
         "app.exportHtml" => export_bytes(app, p, "html", "file.exportHtml"),
+        "app.exportPptx" => export_bytes(app, p, "pptx", "file.exportPptx"),
         "app.exportXml" => export_bytes(app, p, "xml", "file.exportXml"),
         "app.printBooklet" => export_bytes(app, p, "pdf", "file.printBooklet"),
         "app.menus" => {
@@ -1156,6 +1203,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
         }
         "app.findChange" => {
+            app.session.reset_find_scope();
             app.ui.dialog = Some(crate::dialogs::Dialog::new("findChange", json!({})));
             Ok(Value::Null)
         }
@@ -1408,6 +1456,8 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
         "color.defaultFillStroke" => crate::toolbar::default_fill_stroke(app),
         "color.swapFillStroke" => crate::toolbar::swap_fill_stroke(app),
         "color.toggleFillStroke" => crate::toolbar::toggle_fill_stroke(app),
+        "color.applyColor" => crate::toolbar::apply_color(app),
+        "color.applyGradient" => crate::toolbar::apply_gradient(app),
         "color.applyNone" => crate::toolbar::apply_none(app),
         "view.frameEdges" => flag(&mut app.ui.frame_edges),
         "view.overprintPreview" => {
@@ -1533,6 +1583,17 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
             }
             Ok(Value::Null)
         }
+        "app.characterPanel" | "app.paragraphPanel" | "app.glyphsPanel" | "app.characterStylesPanel" | "app.paragraphStylesPanel" => {
+            let panel = match id {
+                "app.characterPanel" => "character",
+                "app.paragraphPanel" => "paragraph",
+                "app.glyphsPanel" => "glyphs",
+                "app.characterStylesPanel" => "characterStyles",
+                _ => "paragraphStyles",
+            };
+            run_ui(app, "window.panel", &json!({"panel": panel})).unwrap_or(Ok(Value::Null))
+        }
+        "app.insertCurrentPageNumber" => app.run("text.insert", json!({"text": "\u{e000}", "raw": true})),
         "window.panel" => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("properties").to_string();
             // A panel in the workspace's icon groups opens from there (Essentials Classic's Pages).
@@ -2302,6 +2363,14 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
     if waits_for_ime(app, id) {
         return;
     }
+    let was_find = app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange");
+    activate_inner(app, id, params);
+    if was_find && app.ui.dialog.as_ref().is_none_or(|d| d.id != "findChange") {
+        app.session.reset_find_scope();
+    }
+}
+
+fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
     // Object › Effects › Drop Shadow… (and its shortcut): the Effects dialog on that page.
     if params.is_null()
         && let Some(page) = crate::effects_dialog::page_of_command(id)
@@ -2327,6 +2396,14 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
     }
     if params.is_null() && id == "layout.section" {
         crate::section_options::open(app);
+        return;
+    }
+    if params.is_null() && id == "layout.createGuides" {
+        crate::dialogs::open_create_guides(app);
+        return;
+    }
+    if params.is_null() && id == "layout.marginsAndColumns" {
+        crate::dialogs::open_margins_and_columns(app);
         return;
     }
     if params.is_null() && id == "object.textFrameOptions" {
@@ -2363,44 +2440,6 @@ pub fn activate(app: &mut DesignApp, id: &str, params: &Value) {
         return;
     }
     let _ = app.run(id, p);
-}
-
-/// A native menu bar item was chosen (macOS): like [`activate`], except that the menu bar takes
-/// ⌘A, ⌘C, ⌘X, ⌘V, ⌘Z and ⇧⌘Z before the window sees them, so while a text field has keyboard
-/// focus, Select All, Copy, Cut, Paste, Undo and Redo act on that field, as in any Mac app.
-pub fn activate_native(app: &mut DesignApp, ctx: &egui::Context, id: &str, params: &Value) {
-    if !(ctx.text_edit_focused() && params.is_null() && forward_to_text_field(app, ctx, id)) {
-        activate(app, id, params);
-    }
-}
-
-/// Whether a native menu bar item can be chosen: as in the in-window menus, but the editing
-/// commands a focused text field takes are always available to it.
-pub fn native_menu_enabled(app: &DesignApp, ctx: &egui::Context, id: &str) -> bool {
-    (ctx.text_edit_focused() && TEXT_FIELD_COMMANDS.contains(&id)) || menu_enabled(app, id)
-}
-
-/// The editing commands a focused text field takes from the native menu bar.
-const TEXT_FIELD_COMMANDS: [&str; 6] = ["edit.selectAll", "edit.copy", "edit.cut", "edit.paste", "edit.undo", "edit.redo"];
-
-/// Hand a standard editing command to the focused text field as next frame's input; false when
-/// `id` isn't one of them.
-fn forward_to_text_field(app: &mut DesignApp, ctx: &egui::Context, id: &str) -> bool {
-    let key = |key: egui::Key, modifiers: egui::Modifiers| {
-        [true, false].map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers })
-    };
-    match id {
-        "edit.selectAll" => app.synthetic.extend(key(egui::Key::A, egui::Modifiers::COMMAND)),
-        "edit.undo" => app.synthetic.extend(key(egui::Key::Z, egui::Modifiers::COMMAND)),
-        "edit.redo" => app.synthetic.extend(key(egui::Key::Z, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)),
-        "edit.copy" => app.synthetic.push(egui::Event::Copy),
-        "edit.cut" => app.synthetic.push(egui::Event::Cut),
-        // Only the integration reads the system clipboard: it answers with an `Event::Paste`.
-        "edit.paste" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
-        _ => return false,
-    }
-    ctx.request_repaint();
-    true
 }
 
 /// A menu button whose popup stays within the viewport and scrolls when needed.
@@ -2481,6 +2520,50 @@ fn clipped_submenu<'a, R>(
     clipped.interact_rect = response.interact_rect.intersect(clip);
     let inner = button.sub_menu.show(ui, &clipped, contents);
     (response, inner)
+}
+
+/// A native menu bar item was chosen (macOS): like [`activate`], except that the menu bar takes
+/// ⌘A, ⌘C, ⌘X, ⌘V, ⌘Z and ⇧⌘Z before the window sees them, so while a text field has keyboard
+/// focus, Select All, Copy, Cut, Paste, Undo and Redo act on that field, as in any Mac app.
+pub fn activate_native(app: &mut DesignApp, ctx: &egui::Context, id: &str, params: &Value) {
+    if params.is_null() && ctx.text_edit_focused() && forward_to_text_edit(app, ctx, id) {
+        return;
+    }
+    // The canvas text editor is not an egui TextEdit, so its clipboard events must pass through
+    // egui for the desktop integration to read/write the macOS clipboard.
+    if params.is_null() && app.session.wants_text() && matches!(id, "edit.copy" | "edit.cut" | "edit.paste") && forward_to_text_edit(app, ctx, id) {
+        return;
+    }
+    activate(app, id, params);
+}
+
+/// Whether a native menu bar item can be chosen: as in the in-window menus, but the editing
+/// commands a focused text field takes are always available to it.
+pub fn native_menu_enabled(app: &DesignApp, ctx: &egui::Context, id: &str) -> bool {
+    (ctx.text_edit_focused() && TEXT_FIELD_COMMANDS.contains(&id)) || menu_enabled(app, id)
+}
+
+/// The editing commands a focused text field takes from the native menu bar.
+const TEXT_FIELD_COMMANDS: [&str; 6] = ["edit.selectAll", "edit.copy", "edit.cut", "edit.paste", "edit.undo", "edit.redo"];
+
+/// Hand a standard editing command to the focused text field as next frame's input; false when
+/// `id` isn't one of them.
+fn forward_to_text_edit(app: &mut DesignApp, ctx: &egui::Context, id: &str) -> bool {
+    let key = |key: egui::Key, modifiers: egui::Modifiers| {
+        [true, false].map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers })
+    };
+    match id {
+        "edit.selectAll" => app.synthetic.extend(key(egui::Key::A, egui::Modifiers::COMMAND)),
+        "edit.undo" => app.synthetic.extend(key(egui::Key::Z, egui::Modifiers::COMMAND)),
+        "edit.redo" => app.synthetic.extend(key(egui::Key::Z, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)),
+        "edit.copy" => app.synthetic.push(egui::Event::Copy),
+        "edit.cut" => app.synthetic.push(egui::Event::Cut),
+        // Only the integration reads the system clipboard: it answers with an `Event::Paste`.
+        "edit.paste" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+        _ => return false,
+    }
+    ctx.request_repaint();
+    true
 }
 
 /// The menu bar contents (inside the app bar; macOS uses the native menu instead).
@@ -3088,6 +3171,15 @@ mod tests {
         out
     }
 
+    /// A command's menu path names the menu entries that really hold it.
+    #[test]
+    fn define_lists_command_path_matches_the_type_menu() {
+        let spec = designcraft_engine::command_specs().iter().find(|c| c.id == "list.define").expect("list.define is a command");
+        assert_eq!(spec.menu[0], "Type");
+        assert!(submenu_paths("Type").contains(&spec.menu.join("/")), "{:?} is not a Type submenu", spec.menu);
+        assert!(menu_ids("Type").contains(&"list.define"));
+    }
+
     #[test]
     fn screen_mode_shows_the_current_mode_and_view_submenus_are_translated() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -3567,6 +3659,31 @@ mod tests {
                 assert_ne!(crate::i18n::tr("it", title), title, "{title}");
             }
         }
+
+        run_ui(&mut app, "app.language", &json!({"lang": "ka"})).unwrap().unwrap();
+        assert_eq!(app.ui.language, "ka");
+        assert_eq!(checked(&app, "app.language", &json!({"lang": "ka"})), Some(true));
+        // Every menu title, item and submenu is translated into Georgian.
+        let mut untranslated = Vec::new();
+        for (title, entries) in menu_tree() {
+            let mut labels = vec![title.to_string()];
+            let mut stack: Vec<&Item> = entries.iter().collect();
+            while let Some(entry) = stack.pop() {
+                match entry {
+                    Item::Sub(label, children) => {
+                        labels.push(label.clone());
+                        stack.extend(children.iter());
+                    }
+                    Item::Cmd { label, id, .. } if id != "app.language" => labels.push(label.clone()),
+                    _ => {}
+                }
+            }
+            // Labels without letters ("180°") or point sizes ("72 pt") read the same in every language.
+            let size = |l: &str| l.strip_suffix(" pt").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+            untranslated
+                .extend(labels.into_iter().filter(|l| l.chars().any(char::is_alphabetic) && !size(l) && crate::i18n::tr("ka", l) == l.as_str()));
+        }
+        assert!(untranslated.is_empty(), "untranslated Georgian menu labels: {untranslated:?}");
     }
 
     #[test]
@@ -3677,7 +3794,7 @@ mod tests {
         crate::dialogs::confirm(&mut app).unwrap();
         frame(&mut app);
         assert_eq!(app.session.documents().len(), 1);
-        for lang in ["uk", "ru", "zh", "", "ar", "pt-br", "it", "cs", "pl"] {
+        for lang in ["uk", "ru", "zh", "", "ar", "pt-br", "it", "cs", "pl", "ka"] {
             app.run("app.language", json!({"lang": lang})).unwrap();
             frame(&mut app);
         }
@@ -4357,6 +4474,31 @@ mod tests {
     }
 
     #[test]
+    fn native_copy_and_paste_use_the_system_clipboard_for_canvas_text() {
+        let ctx = egui::Context::default();
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        app.session.execute("frame.create", &json!({"rect": [36, 36, 200, 200], "content": "text", "text": "hello"})).unwrap();
+        let story = *app.session.active().unwrap().doc.stories.keys().next().unwrap();
+        app.select_tool("type");
+        app.run("text.select", json!({"story": story.0, "anchor": 0, "focus": 5})).unwrap();
+        for _ in 0..3 {
+            native_frame(&mut app, &ctx, vec![], None);
+        }
+        assert!(app.session.wants_text());
+
+        native_frame(&mut app, &ctx, vec![], Some("edit.copy"));
+        let copied = native_frame(&mut app, &ctx, vec![], None);
+        assert!(copied.platform_output.commands.contains(&egui::OutputCommand::CopyText("hello".into())));
+
+        let paste = native_frame(&mut app, &ctx, vec![], Some("edit.paste"));
+        let commands = &paste.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::RequestPaste), "{commands:?}");
+        native_frame(&mut app, &ctx, vec![egui::Event::Paste("world".into())], None);
+        assert_eq!(app.session.active().unwrap().doc.story(story).unwrap().text, "world");
+    }
+
+    #[test]
     fn native_undo_and_redo_act_on_the_focused_field() {
         let ctx = egui::Context::default();
         let mut app = app_with_focused_field(&ctx, "");
@@ -4486,6 +4628,92 @@ mod tests {
                 assert!(ui_label(id).is_some() || designcraft_engine::find_command(id).is_some(), "context entry {label}: unknown command {id}");
             }
         }
+    }
+
+    #[test]
+    fn the_type_menu_follows_indesigns_order() {
+        // InDesign's Type menu, as Chris Nielsen opens it in "Numbering Page Sections" (2:09).
+        let ty = menu_tree().into_iter().find(|(m, _)| *m == "Type").unwrap().1;
+        let labels: Vec<String> = ty
+            .iter()
+            .map(|i| match i {
+                Item::Sep => "-".to_string(),
+                Item::Sub(n, _) => format!("{n} >"),
+                Item::Cmd { label, .. } => label.clone(),
+            })
+            .collect();
+        let expected = [
+            "Size >",
+            "-",
+            "Character",
+            "Paragraph",
+            "Tabs",
+            "Glyphs",
+            "-",
+            "Character Styles",
+            "Paragraph Styles",
+            "-",
+            "Create Outlines",
+            "Find/Replace Font…",
+            "Change Case >",
+            "-",
+            "Type on a Path >",
+            "-",
+            "Notes >",
+            "Track Changes >",
+            "-",
+            "Insert Footnote",
+            "Document Footnote Options…",
+            "Insert Endnote",
+        ];
+        assert_eq!(&labels[..expected.len()], expected, "{labels:?}");
+        let pos = |l: &str| labels.iter().position(|x| x == l).unwrap_or_else(|| panic!("{l} in {labels:?}"));
+        assert!(pos("Hyperlinks & Cross-References >") < pos("Text Variables >"));
+        assert!(pos("Text Variables >") < pos("Bulleted & Numbered Lists >"));
+        assert!(pos("Bulleted & Numbered Lists >") < pos("Insert Special Character >"));
+        assert!(pos("Insert Special Character >") < pos("Insert White Space >"));
+        assert!(pos("Insert Break Character >") < pos("Fill with Placeholder Text"));
+        assert!(pos("Fill with Placeholder Text") < pos("Show Hidden Characters"));
+        // Alignment, styles and point sizes keep their shortcuts, out of the menu as in InDesign.
+        for gone in ["Align Left", "Bold", "Increase Point Size", "Paragraph Rules…"] {
+            assert!(!labels.iter().any(|l| l == gone), "{gone}");
+        }
+        let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let all = effective_shortcuts(&app);
+        for (id, sc) in [
+            ("type.alignLeft", "Cmd+Shift+L"),
+            ("app.characterPanel", "Cmd+T"),
+            ("app.paragraphPanel", "Cmd+Alt+T"),
+            ("app.insertCurrentPageNumber", "Cmd+Alt+Shift+N"),
+        ] {
+            assert_eq!(all.iter().find(|(i, _)| i == id).map(|(_, s)| s.as_str()), Some(sc), "{id}");
+        }
+        // Markers › Current Page Number carries ⌥⇧⌘N.
+        let markers = ty
+            .iter()
+            .find_map(|i| match i {
+                Item::Sub(n, c) if n == "Insert Special Character" => {
+                    c.iter().find_map(|i| if let Item::Sub(n, c) = i { (n == "Markers").then(|| c.clone()) } else { None })
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(matches!(&markers[0], Item::Cmd { label, shortcut: Some("Cmd+Alt+Shift+N"), .. } if label == "Current Page Number"));
+    }
+
+    #[test]
+    fn type_panel_items_open_their_panels_and_the_marker_shortcut_inserts_a_page_number() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        activate(&mut app, "app.characterPanel", &Value::Null);
+        assert_eq!(app.ui.open_panel.as_deref(), Some("character"));
+        activate(&mut app, "app.paragraphStylesPanel", &Value::Null);
+        assert_eq!(app.ui.open_panel.as_deref(), Some("paragraphStyles"));
+        let story = app.run("frame.create", json!({"rect": [36, 36, 200, 100], "content": "text", "text": "Page "})).unwrap()["story"].clone();
+        app.run("text.select", json!({"story": story, "anchor": 5, "focus": 5})).unwrap();
+        activate(&mut app, "app.insertCurrentPageNumber", &Value::Null);
+        let d = &app.session.doc().unwrap().doc;
+        assert_eq!(d.story(designcraft_doc::StoryId(story.as_u64().unwrap())).unwrap().text, "Page \u{e000}");
     }
 
     #[test]

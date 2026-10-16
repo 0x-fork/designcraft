@@ -107,7 +107,8 @@ fn keep_lines_idml(body_attrs: &str, lines: &[usize]) -> Vec<u8> {
         })
         .collect();
     let frame = |me: &str, x: f64, prev: &str, next: &str| {
-        let pts: String = [(x, 36.0), (x, 276.0), (x + 180.0, 276.0), (x + 180.0, 36.0)]
+        // 236 pt tall: 19 lines of 12 pt leading, whether or not the last line's descent must fit.
+        let pts: String = [(x, 36.0), (x, 272.0), (x + 180.0, 272.0), (x + 180.0, 36.0)]
             .iter()
             .map(|(x, y)| format!(r#"<PathPointType Anchor="{x} {y}" LeftDirection="{x} {y}" RightDirection="{x} {y}"/>"#))
             .collect();
@@ -338,33 +339,6 @@ fn named_lists_round_trip_through_idml() {
     assert_eq!(st.paras[0].para.start_at, Some(Some(5)));
 }
 
-#[test]
-fn type_para_sets_a_drop_cap_that_survives_idml() {
-    let mut s = Session::new();
-    s.execute("file.new", &json!({})).unwrap();
-    s.execute("style.character.create", &json!({"name": "Initial", "chars": {"fontStyle": "Bold"}})).unwrap();
-    let text = "Once upon a time there was a paragraph long enough to run beside its drop cap for a few lines and then some more.";
-    let r = s.execute("frame.create", &json!({"rect": [72, 72, 300, 400], "content": "text", "text": text})).unwrap();
-    let sid = r["story"].as_u64().unwrap();
-    s.execute("text.select", &json!({"story": sid, "anchor": 3, "focus": 3})).unwrap();
-    s.execute("type.para", &json!({"attrs": {"dropCapLines": 3, "dropCapChars": 1, "dropCapStyle": "Initial", "dropCapAlignLeft": false}})).unwrap();
-    let d = s.doc().unwrap().doc.clone();
-    let cs = designcraft_compose::compose_story(&d, designcraft_doc::StoryId(sid), &Default::default());
-    let lines = &cs.frames[0].lines;
-    let dc = &lines[0].glyphs[0];
-    assert_eq!(dc.byte, 0);
-    assert!((lines[0].baseline + dc.y - lines[2].baseline).abs() < 1e-6, "on line 3's baseline");
-    assert!(lines[0].drop_cap.is_some_and(|b| b.end == 1));
-    let p = &d.story(designcraft_doc::StoryId(sid)).unwrap().paras[0].para;
-    assert_eq!((p.drop_cap_lines, p.drop_cap_chars, p.drop_cap_style.as_deref()), (Some(3), Some(1), Some("Initial")));
-    let back = designcraft_idml::import_idml(&designcraft_idml::export_idml(&d)).unwrap();
-    let p = &back.stories.values().find(|st| st.text.starts_with("Once")).unwrap().paras[0].para;
-    assert_eq!((p.drop_cap_lines, p.drop_cap_chars, p.drop_cap_align_left), (Some(3), Some(1), Some(false)));
-    // The drop cap's character style goes through IDML as a leading Dropcap nested style.
-    assert_eq!(p.drop_cap_style.as_deref(), Some("Initial"));
-    assert_eq!(p.nested_styles, Some(vec![designcraft_doc::NestedStyle::drop_cap("Initial")]));
-}
-
 /// IDML says which page of a placed PDF shows and which box its graphic spans, so InDesign opens
 /// it at the same size and position; importing it back gives the same page, crop and geometry.
 #[test]
@@ -501,22 +475,30 @@ fn idml_bounding_box_crop_is_measured_when_drawn_not_on_import() {
 }
 
 #[test]
-fn parent_and_page_margins_round_trip_through_idml() {
+fn type_para_sets_a_drop_cap_that_survives_idml() {
     let mut s = Session::new();
-    s.execute("file.new", &json!({"pages": 3})).unwrap();
-    s.execute("layout.marginsAndColumns", &json!({"parent": "A", "margins": 48, "columns": 2})).unwrap();
-    s.execute("layout.marginsAndColumns", &json!({"pages": [2], "margins": 100})).unwrap();
-    let back = designcraft_idml::import_idml(&designcraft_idml::export_idml(&s.doc().unwrap().doc)).unwrap();
-    let pages: Vec<(f64, u32, bool)> =
-        (0..back.page_count()).filter_map(|i| back.page(i)).map(|p| (p.margins.top, p.columns.count, p.local_margins)).collect();
-    assert_eq!(pages, vec![(48.0, 2, false), (48.0, 2, false), (100.0, 2, true)]);
-    assert!(back.parents[0].pages.iter().all(|p| p.margins.top == 48.0 && p.columns.count == 2));
-    // The imported pages still follow their parent.
-    let mut d = back;
-    std::sync::Arc::make_mut(&mut d.parents[0]).pages[1].margins.top = 60.0;
-    d.sync_parent_margins();
-    assert_eq!(d.page(0).unwrap().margins.top, 60.0);
-    assert_eq!(d.page(2).unwrap().margins.top, 100.0);
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("style.character.create", &json!({"name": "Initial", "chars": {"fontStyle": "Bold"}})).unwrap();
+    let text = "Once upon a time there was a paragraph long enough to run beside its drop cap for a few lines and then some more.";
+    let r = s.execute("frame.create", &json!({"rect": [72, 72, 300, 400], "content": "text", "text": text})).unwrap();
+    let sid = r["story"].as_u64().unwrap();
+    s.execute("text.select", &json!({"story": sid, "anchor": 3, "focus": 3})).unwrap();
+    s.execute("type.para", &json!({"attrs": {"dropCapLines": 3, "dropCapChars": 1, "dropCapStyle": "Initial", "dropCapAlignLeft": false}})).unwrap();
+    let d = s.doc().unwrap().doc.clone();
+    let cs = designcraft_compose::compose_story(&d, designcraft_doc::StoryId(sid), &Default::default());
+    let lines = &cs.frames[0].lines;
+    let dc = &lines[0].glyphs[0];
+    assert_eq!(dc.byte, 0);
+    assert!((lines[0].baseline + dc.y - lines[2].baseline).abs() < 1e-6, "on line 3's baseline");
+    assert!(lines[0].drop_cap.is_some_and(|b| b.end == 1));
+    let p = &d.story(designcraft_doc::StoryId(sid)).unwrap().paras[0].para;
+    assert_eq!((p.drop_cap_lines, p.drop_cap_chars, p.drop_cap_style.as_deref()), (Some(3), Some(1), Some("Initial")));
+    let back = designcraft_idml::import_idml(&designcraft_idml::export_idml(&d)).unwrap();
+    let p = &back.stories.values().find(|st| st.text.starts_with("Once")).unwrap().paras[0].para;
+    assert_eq!((p.drop_cap_lines, p.drop_cap_chars, p.drop_cap_align_left), (Some(3), Some(1), Some(false)));
+    // The drop cap's character style goes through IDML as a leading Dropcap nested style.
+    assert_eq!(p.drop_cap_style.as_deref(), Some("Initial"));
+    assert_eq!(p.nested_styles, Some(vec![designcraft_doc::NestedStyle::drop_cap("Initial")]));
 }
 
 #[test]
@@ -547,4 +529,23 @@ fn table_of_contents_definition_round_trips_through_idml_and_updates() {
     assert_eq!(toc_text(&s), text);
     s.execute("toc.update", &json!({})).unwrap();
     assert_eq!(toc_text(&s), text);
+}
+
+#[test]
+fn parent_and_page_margins_round_trip_through_idml() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"pages": 3})).unwrap();
+    s.execute("layout.marginsAndColumns", &json!({"parent": "A", "margins": 48, "columns": 2})).unwrap();
+    s.execute("layout.marginsAndColumns", &json!({"pages": [2], "margins": 100})).unwrap();
+    let back = designcraft_idml::import_idml(&designcraft_idml::export_idml(&s.doc().unwrap().doc)).unwrap();
+    let pages: Vec<(f64, u32, bool)> =
+        (0..back.page_count()).filter_map(|i| back.page(i)).map(|p| (p.margins.top, p.columns.count, p.local_margins)).collect();
+    assert_eq!(pages, vec![(48.0, 2, false), (48.0, 2, false), (100.0, 2, true)]);
+    assert!(back.parents[0].pages.iter().all(|p| p.margins.top == 48.0 && p.columns.count == 2));
+    // The imported pages still follow their parent.
+    let mut d = back;
+    std::sync::Arc::make_mut(&mut d.parents[0]).pages[1].margins.top = 60.0;
+    d.sync_parent_margins();
+    assert_eq!(d.page(0).unwrap().margins.top, 60.0);
+    assert_eq!(d.page(2).unwrap().margins.top, 100.0);
 }

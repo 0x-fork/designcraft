@@ -250,6 +250,13 @@ impl Digits {
     }
 }
 
+/// Does `c` belong to a script that capitalizes the first letter of sentences, words and headings?
+/// Georgian doesn't: Unicode maps Mkhedruli to Mtavruli capitals, but those are only for all-caps
+/// text, never for a sentence's, a title's or an index heading's first letter.
+pub fn capitalizes(c: char) -> bool {
+    !matches!(c, '\u{10A0}'..='\u{10FF}' | '\u{1C90}'..='\u{1CBF}' | '\u{2D00}'..='\u{2D2F}')
+}
+
 /// The BCP 47 tag of a language name as InDesign and IDML write it ("English: USA", "Chinese:
 /// Simplified", or a locale code such as "de_DE_2006"), for the shaper's localized forms (`locl`)
 /// and everything that depends on the language (quotes, hyphenation and spelling, line breaking,
@@ -332,6 +339,7 @@ pub fn language_tag(language: &str) -> Option<&'static str> {
         "persian" | "farsi" => "fa",
         "urdu" => "ur",
         "hebrew" => "he",
+        "georgian" => "ka",
         _ => return None,
     })
 }
@@ -1529,6 +1537,7 @@ mod tests {
         assert_eq!(language_tag("English: USA"), Some("en-US"));
         assert_eq!(language_tag("English: Australian"), Some("en"));
         assert_eq!(language_tag("Turkish"), Some("tr"));
+        assert_eq!(language_tag("Georgian"), Some("ka"));
         assert_eq!(language_tag("Japanese"), Some("ja"));
         assert_eq!(language_tag("Korean"), Some("ko"));
         assert_eq!(language_tag("Chinese"), Some("zh"));

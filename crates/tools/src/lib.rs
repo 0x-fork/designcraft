@@ -31,7 +31,7 @@ use designcraft_geom::{Affine, BezPath, Point, Rect, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use catalog::{TOOL_GROUPS, ToolInfo, tool_for_shortcut, tool_info};
+pub use catalog::{SPLIT_IN_TWO_COLUMNS, TOOL_GROUPS, ToolInfo, tool_for_shortcut, tool_info};
 pub use layout::CanvasLayout;
 pub use nav::ZoomTool;
 
@@ -407,10 +407,10 @@ pub enum Cursor {
     PenDelete,
     /// The pen over the first anchor of the path it is drawing: a click closes it.
     PenClose,
-    /// Convert Direction Point.
-    PenConvert,
     /// The Pen over an open path's end point: a click continues the path.
     PenContinue,
+    /// Convert Direction Point.
+    PenConvert,
     /// Over a type-on-a-path bracket: dragging it moves where the text starts or ends.
     PathBracket,
     Text,

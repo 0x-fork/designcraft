@@ -545,7 +545,7 @@ fn paint_glyphs(
     weight: f64,
     behind: bool,
 ) {
-    let has_fill = fill.is_some();
+    // A gradient paint runs across `area`; reset its transform after each use.
     let paint_fill = |ctx: &mut RenderContext| {
         let Some((c, overprint)) = &fill else { return };
         overprinting(ctx, *overprint, |ctx| {
@@ -558,23 +558,21 @@ fn paint_glyphs(
         paint_fill(ctx);
         return;
     };
+    let paint_stroke = |ctx: &mut RenderContext, width: f64| {
+        overprinting(ctx, stroke_overprint, |ctx| {
+            sc.set(ctx, doc, area);
+            ctx.set_stroke(kurbo::Stroke::new(width));
+            ctx.stroke_path(bp);
+            ctx.reset_paint_transform();
+        });
+    };
     if !behind {
         paint_fill(ctx);
-        overprinting(ctx, stroke_overprint, |ctx| {
-            sc.set(ctx, doc, area);
-            ctx.set_stroke(kurbo::Stroke::new(weight));
-            ctx.stroke_path(bp);
-            ctx.reset_paint_transform();
-        });
+        paint_stroke(ctx, weight);
         return;
     }
-    if has_fill {
-        overprinting(ctx, stroke_overprint, |ctx| {
-            sc.set(ctx, doc, area);
-            ctx.set_stroke(kurbo::Stroke::new(weight * 2.0));
-            ctx.stroke_path(bp);
-            ctx.reset_paint_transform();
-        });
+    if fill.is_some() {
+        paint_stroke(ctx, weight * 2.0);
         paint_fill(ctx);
     } else {
         overprinting(ctx, stroke_overprint, |ctx| {

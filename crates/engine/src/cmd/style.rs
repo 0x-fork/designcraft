@@ -628,21 +628,42 @@ fn edit_para(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Rename a paragraph or character style everywhere it's used.
 fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &str) {
+    if para {
+        for s in &mut d.styles_mut().paragraph {
+            if s.name == from {
+                s.name = to.to_string();
+            }
+        }
+    } else {
+        for s in &mut d.styles_mut().character {
+            if s.name == from {
+                s.name = to.to_string();
+            }
+        }
+    }
+    redirect_style_refs(d, para, from, to);
+}
+
+/// Point every reference to style `from` at `to`, except the style's own registry entry (its
+/// `name` field) — shared by renaming (which also updates the entry's name) and deletion (which
+/// instead removes the entry, after its former uses point at the replacement).
+fn redirect_style_refs(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &str) {
     let rename = |r: &mut String| {
         if r == from {
             *r = to.to_string();
         }
     };
     let st = d.styles_mut();
+    // A style is never based on itself: when `to` was based on `from`, it takes `from`'s parent.
+    let parent_of = |based_on: Option<&String>| based_on.filter(|b| b.as_str() != to).cloned();
     if para {
+        let from_parent = parent_of(st.paragraph.iter().find(|x| x.name == from).and_then(|x| x.based_on.as_ref()));
         for s in &mut st.paragraph {
-            if s.name == from {
-                s.name = to.to_string();
+            if s.based_on.as_deref() == Some(from) {
+                s.based_on = if s.name == to { from_parent.clone() } else { Some(to.to_string()) };
             }
-            for r in [&mut s.based_on, &mut s.next_style] {
-                if r.as_deref() == Some(from) {
-                    *r = Some(to.to_string());
-                }
+            if s.next_style.as_deref() == Some(from) {
+                s.next_style = Some(to.to_string());
             }
         }
         let objects = st.object.iter_mut().map(|o| &mut o.paragraph_style);
@@ -662,12 +683,10 @@ fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &
             }
         }
     } else {
+        let from_parent = parent_of(st.character.iter().find(|x| x.name == from).and_then(|x| x.based_on.as_ref()));
         for s in &mut st.character {
-            if s.name == from {
-                s.name = to.to_string();
-            }
             if s.based_on.as_deref() == Some(from) {
-                s.based_on = Some(to.to_string());
+                s.based_on = if s.name == to { from_parent.clone() } else { Some(to.to_string()) };
             }
         }
         for s in &mut st.paragraph {
@@ -696,8 +715,8 @@ fn rename_style(d: &mut designcraft_doc::Document, para: bool, from: &str, to: &
     }
 }
 
-/// Point the nested, nested line, GREP and drop cap styles of paragraph attributes at a renamed
-/// character style.
+/// Point the nested, nested line and GREP styles, and the drop cap style, of paragraph
+/// attributes at a renamed (or deleted, pointed at its replacement) character style.
 fn rename_char_refs(p: &mut ParaAttrs, from: &str, to: &str) {
     let names = p.nested_styles.iter_mut().flatten().map(|n| &mut n.style);
     let names = names.chain(p.nested_line_styles.iter_mut().flatten().map(|n| &mut n.style));
@@ -706,6 +725,9 @@ fn rename_char_refs(p: &mut ParaAttrs, from: &str, to: &str) {
         if n == from {
             *n = to.to_string();
         }
+    }
+    if p.drop_cap_style.as_deref() == Some(from) {
+        p.drop_cap_style = Some(to.to_string());
     }
 }
 
@@ -762,7 +784,7 @@ fn delete_style(s: &mut Session, p: &Value, para: bool) -> Result<Value> {
         return Err(bad(id, "built-in styles can't be deleted"));
     }
     if repl == name {
-        return Err(bad(id, "a style can't be replaced with itself"));
+        return Err(bad(id, "`replaceWith` can't be the deleted style"));
     }
     s.edit(|d, _| {
         let st = &d.styles;
@@ -1000,22 +1022,22 @@ pub fn parse_color(v: &Value) -> Option<designcraft_color::Color> {
         Value::String(s) => Color::from_hex(s),
         // `{model, …}` is the colour's own form (as `color.convert` takes it): fractions, never guessed.
         Value::Object(o) if o.contains_key("model") => model_color(v),
-        // One scale per colour, not per component: {c: 0.7, y: 12.2} is C 0.7 %, Y 12.2 %. Only a colour whose
+        // One scale per colour, not per component: [1, 128, 255] is 0..255. Only an RGB array whose
         // components are all within 0..1 is read as fractions (the older form).
         Value::Array(a) if a.len() >= 3 => {
             let v = [a[0].as_f64()?, a[1].as_f64()?, a[2].as_f64()?];
             let scale = if v.iter().any(|&x| x > 1.0) { 255.0 } else { 1.0 };
             Some(Color::rgb((v[0] / scale) as f32, (v[1] / scale) as f32, (v[2] / scale) as f32))
         }
+        // Bare CMYK is always 0..100, as documented: C 1 % is a real tint, so values of 1 or less can't
+        // mean fractions (#910).
         Value::Object(o) => {
             if o.contains_key("gray") {
                 let gray = o.get("gray").and_then(Value::as_f64)?;
                 return Some(Color::gray(if gray > 1.0 { gray / 100.0 } else { gray } as f32));
             }
-            let g = |k: &str| o.get(k).and_then(Value::as_f64);
-            let v = [g("c")?, g("m")?, g("y")?, g("k")?];
-            let scale = if v.iter().any(|&x| x > 1.0) { 100.0 } else { 1.0 };
-            Some(Color::cmyk((v[0] / scale) as f32, (v[1] / scale) as f32, (v[2] / scale) as f32, (v[3] / scale) as f32))
+            let g = |k: &str| o.get(k).and_then(Value::as_f64).map(|x| (x / 100.0) as f32);
+            Some(Color::cmyk(g("c")?, g("m")?, g("y")?, g("k")?))
         }
         _ => None,
     }
@@ -1206,7 +1228,7 @@ fn value_name(color: designcraft_color::Color) -> String {
 fn load_swatches(s: &mut Session, p: &Value) -> Result<Value> {
     let bytes = match (str_param(p, "path"), str_param(p, "base64")) {
         (_, Some(b)) => super::file::base64_decode(b),
-        (Some(path), None) => std::fs::read(path).map_err(|e| bad("swatch.load", format!("{path}: {e}")))?,
+        (Some(path), None) => crate::io::read_file(path).map_err(|e| bad("swatch.load", e))?,
         _ => return Err(bad("swatch.load", "give `path` or `base64`")),
     };
     let incoming = designcraft_color::ase::read(&bytes).map_err(|e| bad("swatch.load", e.to_string()))?;
@@ -1247,11 +1269,7 @@ fn save_swatches(s: &mut Session, p: &Value) -> Result<Value> {
     let bytes = designcraft_color::ase::write(&chosen);
     match str_param(p, "path") {
         Some(path) => {
-            #[cfg(not(target_arch = "wasm32"))]
-            let written = crate::atomic::write_atomic(std::path::Path::new(path), &bytes);
-            #[cfg(target_arch = "wasm32")]
-            let written = std::fs::write(path, &bytes);
-            written.map_err(|e| bad("swatch.save", format!("{path}: {e}")))?;
+            crate::io::write_file(path, &bytes).map_err(|e| bad("swatch.save", e))?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
         None => Ok(json!({"base64": super::file::base64_encode(&bytes)})),
@@ -1930,12 +1948,41 @@ mod color_tests {
         // {"c": 0.7, ..., "y": 12.2} is a pale cream (C 0.7 %, Y 12.2 %), not C 70 %.
         let Some(Color::Cmyk { c, m, y, k }) = parse_color(&json!({"c": 0.7, "m": 0, "y": 12.2, "k": 0})) else { panic!("not CMYK") };
         assert!((c - 0.007).abs() < 1e-6 && m == 0.0 && (y - 0.122).abs() < 1e-6 && k == 0.0, "got {c} {m} {y} {k}");
-        // Fractions (every component within 0..1) keep working.
-        let Some(Color::Cmyk { c, k, .. }) = parse_color(&json!({"c": 0.5, "m": 0, "y": 0, "k": 1})) else { panic!("not CMYK") };
+        // Fractions take the colour's own form, with its model.
+        let Some(Color::Cmyk { c, k, .. }) = parse_color(&json!({"model": "cmyk", "c": 0.5, "m": 0, "y": 0, "k": 1})) else { panic!("not CMYK") };
         assert!((c - 0.5).abs() < 1e-6 && (k - 1.0).abs() < 1e-6);
         // RGB arrays follow the same rule: [1, 128, 255] is 0..255.
         let Some(Color::Rgb { r, g, b }) = parse_color(&json!([1, 128, 255])) else { panic!("not RGB") };
         assert!((r - 1.0 / 255.0).abs() < 1e-6 && (g - 128.0 / 255.0).abs() < 1e-6 && (b - 1.0).abs() < 1e-6);
+    }
+
+    /// #910: `{c: 1, m: 0, y: 0, k: 0}` is a 1 % cyan tint, not solid cyan, though every component is within 0..1.
+    #[test]
+    fn cmyk_percentages_of_one_or_less_stay_percent() {
+        use designcraft_color::Color;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [0, 0, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("swatch.create", &json!({"name": "Tint1", "color": {"c": 1, "m": 0, "y": 0, "k": 0}})).unwrap();
+        s.execute("object.fill", &json!({"ids": [id], "swatch": "Tint1"})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let Some(Color::Cmyk { c, m, y, k }) = d.resolve_color("Tint1", 1.0) else { panic!("not CMYK") };
+        assert!((c - 0.01).abs() < 1e-6 && m == 0.0 && y == 0.0 && k == 0.0, "got {c} {m} {y} {k}");
+        let pdf = designcraft_pdf::export_pdf(d, &s.cache, &designcraft_pdf::PdfOptions { compress: false, ..Default::default() }).unwrap();
+        let text = String::from_utf8_lossy(&pdf);
+        // Operands of every `k` (DeviceCMYK fill), last first: [k, y, m, c]. Inks are written in 1/255 steps (C 1 % is 3/255).
+        let fills: Vec<Vec<f32>> =
+            text.split(" k ").filter_map(|before| before.rsplit(' ').take(4).map(|x| x.parse().ok()).collect::<Option<Vec<f32>>>()).collect();
+        let cyan = |want: f32| fills.iter().any(|f| (f[3] - want).abs() < 0.5 / 255.0 + 1e-6 && f[..3] == [0.0; 3]);
+        assert!(cyan(0.01), "C 1 % in the PDF: {fills:?}");
+        assert!(!cyan(1.0), "no solid cyan: {fills:?}");
+        // A light tint whose components are all 1 or less, through object.color.
+        s.execute("selection.set", &json!({"ids": [id]})).unwrap();
+        s.execute("object.color", &json!({"color": {"c": 0.5, "m": 0.5, "y": 0, "k": 0}})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let fill = &d.item(designcraft_doc::ItemId(id)).unwrap().fill.swatch;
+        let Some(Color::Cmyk { c, m, .. }) = d.resolve_color(fill, 1.0) else { panic!("not CMYK") };
+        assert!((c - 0.005).abs() < 1e-6 && (m - 0.005).abs() < 1e-6, "got {c} {m}");
     }
 
     #[test]
@@ -2894,6 +2941,22 @@ mod radial_gradient_tests {
         let d = p.doc().unwrap().doc.clone();
         let (c, side, top) = sides(&r.render_page(&d, &p.cache, 0, 1.0, false, &Default::default()).unwrap());
         assert!(c < 30 && side > 220 && top > 220, "pdf: centre {c}, side {side}, top {top}");
+    }
+
+    #[test]
+    fn a_box_with_no_height_or_width_has_a_circle_across_its_length() {
+        let f = designcraft_doc::Fill::swatch("g");
+        let line = designcraft_geom::Rect::new(20.0, 60.0, 180.0, 60.0);
+        let (c, rx, ry) = f.radial_ellipse(line);
+        assert_eq!((c.x, c.y, rx, ry), (100.0, 60.0, 80.0, 80.0));
+        let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(10.0, 0.0, 10.0, 50.0));
+        assert_eq!((rx, ry), (25.0, 25.0));
+        // A point: a tiny circle, never a zero radius.
+        let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(5.0, 5.0, 5.0, 5.0));
+        assert!(rx > 0.0 && rx == ry);
+        // A box keeps its ellipse.
+        let (_, rx, ry) = f.radial_ellipse(designcraft_geom::Rect::new(0.0, 0.0, 100.0, 200.0));
+        assert_eq!((rx, ry), (50.0, 100.0));
     }
 }
 

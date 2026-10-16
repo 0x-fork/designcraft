@@ -85,13 +85,13 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.startup.enter();
         self.app.ui(ui);
+        self.startup.leave();
         #[cfg(target_os = "macos")]
         if self.app.take_ime_discard() {
             discard_marked_text();
         }
         #[cfg(target_os = "macos")]
         mac_window::sync_movable(ui.ctx(), &mut self.movable);
-        self.startup.leave();
     }
     fn on_exit(&mut self) {
         // A normal exit before the third frame is not a crash.

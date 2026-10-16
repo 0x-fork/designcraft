@@ -1982,6 +1982,9 @@ mod tests {
         assert_eq!(css_weight_style("Bold"), (700, "normal"));
         assert_eq!(css_weight_style("Extra Bold"), (800, "normal"));
         assert_eq!(css_weight_style("Regular"), (400, "normal"));
+    assert_eq!(css_weight_style("Light"), (300, "normal"));
+    assert_eq!(css_weight_style("Thin Oblique"), (100, "italic"));
+    assert_eq!(css_weight_style("Black"), (900, "normal"));
 
         let mut d = Document::new(&NewDocument::default());
         let lid = d.default_layer();
@@ -2202,5 +2205,23 @@ mod tests {
             p("F2")
         );
         assert!(html.contains(&expected), "{html}");
+    }
+
+    /// Note links stay working across chapter files: a link whose target ended up in another
+    /// file (endnotes end the book) names that file; one in its own file stays as it is.
+    #[test]
+    fn note_links_name_the_chapter_file_of_their_target() {
+        let files: BTreeMap<String, String> =
+            [("enref-1", "content.xhtml"), ("fn-1", "content.xhtml"), ("fnref-1", "content.xhtml"), ("en-1", "content2.xhtml")]
+                .into_iter()
+                .map(|(id, f)| (id.to_string(), f.to_string()))
+                .collect();
+        let first = "<p>First<a id=\"enref-1\" href=\"#en-1\">1</a><a id=\"fnref-1\" href=\"#fn-1\">*</a></p><aside id=\"fn-1\"><a href=\"#fnref-1\">*</a></aside><a href=\"#gone\">x</a>";
+        assert_eq!(
+            link_across_chapters(first, "content.xhtml", &files),
+            "<p>First<a id=\"enref-1\" href=\"content2.xhtml#en-1\">1</a><a id=\"fnref-1\" href=\"#fn-1\">*</a></p><aside id=\"fn-1\"><a href=\"#fnref-1\">*</a></aside><a href=\"#gone\">x</a>"
+        );
+        let last = "<li id=\"en-1\"><a href=\"#enref-1\">1</a> End note</li>";
+        assert_eq!(link_across_chapters(last, "content2.xhtml", &files), "<li id=\"en-1\"><a href=\"content.xhtml#enref-1\">1</a> End note</li>");
     }
 }

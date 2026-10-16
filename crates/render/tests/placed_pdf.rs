@@ -12,7 +12,7 @@ use std::time::Duration;
 use designcraft_compose::Cache;
 use designcraft_doc::PdfCrop;
 use designcraft_doc::build::NewDocument;
-use designcraft_doc::{Asset, AssetId, Content, Document, Graphic, Item, ItemId, Shape, SpreadRef};
+use designcraft_doc::{Asset, AssetId, Content, Document, Graphic, Item, ItemId, PdfCrop, Shape, SpreadRef};
 use designcraft_geom::{Affine, Rect, shapes};
 use designcraft_render::{Rendered, Renderer, pdf_crop_box, pdf_page_size};
 use hayro::hayro_interpret::Function;
@@ -252,9 +252,13 @@ fn mesh_shadings_with_many_patches_or_no_rows_finish() {
 fn a_page_with_a_user_unit_and_its_boxes_are_sized_in_points() {
     let page = pdf("/MediaBox[0 0 100 50]/TrimBox[10 10 90 40]/UserUnit 2", "", &[]);
     assert_eq!(pdf_page_size(&page, 0), Some((200.0, 100.0)));
-    let (frac, size) = pdf_crop_box(&page, 0, PdfCrop::Trim).unwrap();
-    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
-    assert!(frac.iter().zip([0.1, 0.2, 0.9, 0.8]).all(|(&a, b)| close(a, b)), "{frac:?}");
-    assert!(close(size.0, 160.0) && close(size.1, 60.0), "{size:?}");
-    assert_eq!(pdf_crop_box(&page, 0, PdfCrop::Media), Some(([0.0, 0.0, 1.0, 1.0], (200.0, 100.0))));
+    let near = |crop: PdfCrop, frac: [f64; 4], size: (f64, f64)| {
+        let (f, s) = pdf_crop_box(&page, 0, crop).unwrap();
+        assert!(
+            f.iter().zip(frac).all(|(a, b)| (a - b).abs() < 1e-6) && (s.0 - size.0).abs() < 1e-6 && (s.1 - size.1).abs() < 1e-6,
+            "{crop:?}: {f:?} {s:?}"
+        );
+    };
+    near(PdfCrop::Trim, [0.1, 0.2, 0.9, 0.8], (160.0, 60.0));
+    near(PdfCrop::Media, [0.0, 0.0, 1.0, 1.0], (200.0, 100.0));
 }

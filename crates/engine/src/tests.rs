@@ -1260,6 +1260,73 @@ fn alt_arrows_kern_at_the_caret_and_track_a_selection() {
 }
 
 #[test]
+fn character_style_delete_rejects_missing_unknown_and_self_replacement() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+    assert!(s.execute("style.character.delete", &json!({"name": ""})).is_err(), "empty name is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": "No Such Style"})).is_err(), "unknown name is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": name, "replaceWith": "No Such Style"})).is_err(), "unknown replaceWith is rejected");
+    assert!(s.execute("style.character.delete", &json!({"name": name, "replaceWith": name})).is_err(), "replaceWith can't be the deleted style");
+}
+
+#[test]
+fn paragraph_style_delete_rejects_missing_unknown_and_self_replacement() {
+    let mut s = session();
+    let name = s.execute("style.paragraph.create", &json!({"name": "Caption"})).unwrap()["name"].as_str().unwrap().to_string();
+    assert!(s.execute("style.paragraph.delete", &json!({"name": ""})).is_err(), "empty name is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": "No Such Style"})).is_err(), "unknown name is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": name, "replaceWith": "No Such Style"})).is_err(), "unknown replaceWith is rejected");
+    assert!(s.execute("style.paragraph.delete", &json!({"name": name, "replaceWith": name})).is_err(), "replaceWith can't be the deleted style");
+}
+
+#[test]
+fn deleting_a_style_never_leaves_its_replacement_based_on_itself() {
+    let mut s = session();
+    let para = |s: &Session, n: &str| s.doc().unwrap().doc.styles.para(n).unwrap().based_on.clone();
+    s.execute("style.paragraph.create", &json!({"name": "Head"})).unwrap();
+    s.execute("style.paragraph.create", &json!({"name": "Sub", "basedOn": "Head"})).unwrap();
+    s.execute("style.paragraph.create", &json!({"name": "Minor", "basedOn": "Sub"})).unwrap();
+    // Minor is based on Sub; deleting Sub in favour of Minor gives Minor Sub's parent.
+    s.execute("style.paragraph.delete", &json!({"name": "Sub", "replaceWith": "Minor"})).unwrap();
+    assert_eq!(para(&s, "Minor").as_deref(), Some("Head"));
+    s.execute("style.character.create", &json!({"name": "Strong"})).unwrap();
+    s.execute("style.character.create", &json!({"name": "Stronger", "basedOn": "Strong"})).unwrap();
+    s.execute("style.character.delete", &json!({"name": "Strong", "replaceWith": "Stronger"})).unwrap();
+    let based = s.doc().unwrap().doc.styles.character.iter().find(|c| c.name == "Stronger").unwrap().based_on.clone();
+    assert_ne!(based.as_deref(), Some("Stronger"));
+}
+
+#[test]
+fn character_style_delete_reassigns_every_kind_of_reference() {
+    let mut s = session();
+    let name = s.execute("style.character.create", &json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+    let repl = s.execute("style.character.create", &json!({"name": "Emphasis"})).unwrap()["name"].as_str().unwrap().to_string();
+    // Another character style's basedOn.
+    let based = s.execute("style.character.create", &json!({"name": "Strong", "basedOn": name})).unwrap()["name"].as_str().unwrap().to_string();
+    // A paragraph style's nested, nested line, GREP and drop cap styles, and the footnote reference style.
+    s.execute(
+        "style.paragraph.create",
+        &json!({"name": "Body", "para": {
+            "nestedStyles": [{"style": name, "through": true, "count": 1, "until": {"kind": "words"}}],
+            "grepStyles": [{"style": name, "pattern": "x"}],
+            "nestedLineStyles": [{"style": name, "lines": 1}],
+            "dropCapStyle": name}}),
+    )
+    .unwrap();
+    s.execute("footnote.options", &json!({"refCharStyle": name})).unwrap();
+    s.execute("style.character.delete", &json!({"name": name, "replaceWith": repl})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.doc.styles.char_style(&name).is_none(), "deleted style is gone");
+    assert_eq!(st.doc.styles.char_style(&based).unwrap().based_on.as_deref(), Some(repl.as_str()), "basedOn redirected");
+    let body = st.doc.styles.para("Body").unwrap();
+    assert_eq!(body.para.nested_styles.as_ref().unwrap()[0].style, repl, "nested style redirected");
+    assert_eq!(body.para.nested_line_styles.as_ref().unwrap()[0].style, repl, "nested line style redirected");
+    assert_eq!(body.para.grep_styles.as_ref().unwrap()[0].style, repl, "grep style redirected");
+    assert_eq!(body.para.drop_cap_style.as_deref(), Some(repl.as_str()), "drop cap style redirected");
+    assert_eq!(st.doc.footnote_options.ref_char_style, repl, "footnote reference style redirected");
+}
+
+#[test]
 fn page_tool_selects_a_page_and_its_handles_preview_or_resize_it() {
     use designcraft_tools::{CanvasLayout, Mods, PointerEvent, PointerKind};
     let mut s = Session::new();
@@ -1465,4 +1532,59 @@ fn duplicating_a_page_keeps_its_own_size_rule_guides_and_objects() {
     let d = s.doc().unwrap().doc.clone();
     let (si, pi) = d.page_loc(3).unwrap();
     assert_eq!((d.spreads[si].pages[pi].width, d.spreads[si].pages[pi].height), (252.0, 144.0));
+}
+
+#[test]
+fn the_type_tool_draws_a_text_frame_over_a_locked_frame() {
+    // Adobe's "Set up a modern magazine layout" (4:03): with the page frame locked (Cmd+L), the
+    // Type tool draws text frames on top of it; the locked frame stays an empty frame.
+    use designcraft_tools::{PointerEvent, PointerKind, SnapView};
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 612, "height": 792, "facingPages": false})).unwrap();
+    let big = s.execute("frame.create", &json!({"rect": [36, 36, 576, 756], "content": "unassigned"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("object.stroke", &json!({"ids": [big], "swatch": "[Black]", "weight": 6})).unwrap();
+    s.execute("object.lock", &json!({"ids": [big]})).unwrap();
+    s.execute("edit.deselectAll", &json!({})).unwrap();
+    s.set_tool("type");
+    let v = ViewInfo { snap: SnapView::OFF, ..ViewInfo::at_zoom(1.0) };
+    let layout = s.layout();
+    let at = |x: f64, y: f64| layout.to_canvas(designcraft_doc::SpreadRef::Doc(0), designcraft_geom::Point::new(x, y));
+    let (a, b) = (at(100.0, 100.0), at(300.0, 200.0));
+    s.pointer(&PointerEvent::new(PointerKind::Down, a.x, a.y), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 200.0 + a.x - 100.0, a.y + 50.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, b.x, b.y), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, b.x, b.y), v).unwrap();
+    let d = &s.doc().unwrap().doc;
+    let it = d.item(designcraft_doc::ItemId(big)).unwrap();
+    assert!(matches!(it.content, designcraft_doc::Content::Unassigned), "the locked frame stays empty");
+    let frames: Vec<_> = d.spreads[0].items.iter().filter(|i| i.is_text_frame()).collect();
+    assert_eq!(frames.len(), 1, "a new text frame");
+    let r = frames[0].bounds();
+    assert!((r.x0 - 100.0).abs() < 1e-6 && (r.y1 - 200.0).abs() < 1e-6, "{r:?}");
+    // The engine refuses to turn a locked empty frame into a text frame.
+    assert!(s.execute("text.placeCaret", &json!({"frame": big, "point": [300, 400]})).is_err());
+    // Unlocked, a press inside converts it, as before.
+    s.execute("object.unlockAll", &json!({})).unwrap();
+    s.execute("text.placeCaret", &json!({"frame": big, "point": [300, 400]})).unwrap();
+    assert!(s.doc().unwrap().doc.item(designcraft_doc::ItemId(big)).unwrap().is_text_frame());
+}
+
+/// A line is set when its baseline fits in the frame; its descenders may hang below the frame, as
+/// in InDesign. A 103 pt heading in a 78.5 pt frame (Cap Height first baseline) was overset.
+#[test]
+fn a_line_fits_when_its_baseline_does() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({})).unwrap();
+    let overset = |s: &mut Session, height: f64| {
+        let r = s.execute("frame.create", &json!({"rect": [36, 36, 400, 36.0 + height], "content": "text", "text": "Gyp"})).unwrap();
+        s.execute("object.textFrameOptions", &json!({"ids": [r["id"]], "firstBaseline": "capHeight", "inset": 0})).unwrap();
+        s.execute("text.select", &json!({"story": r["story"], "anchor": 0, "focus": 3})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"size": 103}})).unwrap();
+        let st = s.execute("story.get", &json!({"story": r["story"]})).unwrap();
+        !st["overset"].is_null()
+    };
+    // Cap height of the default font at 103 pt is about 70 pt: the baseline fits in 78.5 pt, the
+    // descent (about 25 pt more) doesn't.
+    assert!(!overset(&mut s, 78.5), "the line is set; its descenders hang below the frame");
+    assert!(overset(&mut s, 50.0), "a baseline below the frame still oversets the line");
 }

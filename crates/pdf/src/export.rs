@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use craft_pdf::write::backend as krilla;
+use craft_pdf::write::{self, Metadata, Writer};
 use designcraft_color::swatch::{ColorType, SwatchValue};
 use designcraft_color::{BlendMode as DcBlend, Color, GradientKind};
 use designcraft_compose::Cache;
@@ -10,10 +12,9 @@ use designcraft_doc::{AssetId, Content, Document, Item, PageSide, Spread, Spread
 use designcraft_geom::kurbo::{PathEl, Shape as _};
 use designcraft_geom::{Affine, BezPath, Rect, Vec2, corners};
 use krilla::color::{cmyk, luma, rgb};
-use krilla::configure::{Archival, ConfigurationBuilder, PdfVersion};
+use krilla::configure::{Archival, PdfVersion};
 use krilla::geom::{Path, PathBuilder, Size, Transform};
 use krilla::image::Image;
-use krilla::metadata::Metadata;
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{Fill, FillRule, LinearGradient, RadialGradient, SpreadMethod, Stop, Stroke, StrokeDash};
@@ -86,13 +87,13 @@ fn sheets(doc: &Document, opts: &PdfOptions) -> Result<Vec<Sheet>> {
         return Err(PdfError::NoPages);
     }
     if let Some(bad) = pages.iter().find(|p| **p >= count) {
-        return Err(PdfError::BadPage(bad + 1));
+        return Err(PdfError::BadPage(bad.saturating_add(1)));
     }
     let b = doc.settings.bleed.map(|v| if opts.bleed { v.max(0.0) } else { 0.0 });
     let mut out: Vec<Sheet> = Vec::new();
     let mut seen_spreads: Vec<usize> = Vec::new();
     for abs in pages {
-        let (si, pi) = doc.page_loc(abs).ok_or(PdfError::BadPage(abs + 1))?;
+        let (si, pi) = doc.page_loc(abs).ok_or(PdfError::BadPage(abs.saturating_add(1)))?;
         let sp: &Spread = &doc.spreads[si];
         let (trim, l, r, label) = if opts.spreads {
             if seen_spreads.contains(&si) {
@@ -130,6 +131,10 @@ pub(crate) fn mark_start(opts: &PdfOptions, bleed: [f64; 4]) -> f64 {
 
 /// Like [`export_pdf`], also returning warnings about approximated or dropped features.
 pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) -> Result<ExportReport> {
+    write::guard(|| export_pdf_with_report_inner(doc, cache, opts))
+}
+
+fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions) -> Result<ExportReport> {
     let sheets = sheets(doc, opts)?;
     let warnings = Vec::new();
     let (version, archival) = match opts.standard {
@@ -137,37 +142,20 @@ pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) 
         Standard::PdfX4 => (PdfVersion::Pdf16, None),
         Standard::PdfA2b => (PdfVersion::Pdf17, Some(Archival::A2_B)),
     };
-    let mut cb = ConfigurationBuilder::new().with_version(version);
-    if let Some(a) = archival {
-        cb = cb.with_archival_validator(a);
-    }
-    let configuration = cb.finish().map_err(|e| PdfError::Write(format!("{e:?}")))?;
+    let configuration = write::configuration(version, archival)?;
     let settings = krilla::SerializeSettings { compress_content_streams: opts.compress, configuration, ..Default::default() };
-    let mut pdf = krilla::Document::new_with(settings);
-
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
-    let mut meta = Metadata::new().creator("DesignCraft".into()).producer("DesignCraft".into());
-    if !title.is_empty() {
-        meta = meta.title(title.clone());
-    }
-    if let Some(a) = &opts.author {
-        meta = meta.authors(vec![a.clone()]);
-    }
     let created = opts.created.or_else(now_unix);
-    if let Some(t) = created {
-        let c = civil(t);
-        meta = meta.creation_date(
-            krilla::metadata::DateTime::new(c.0.clamp(0, 9999) as u16)
-                .month(c.1)
-                .day(c.2)
-                .hour(c.3)
-                .minute(c.4)
-                .second(c.5)
-                .utc_offset_hour(0)
-                .utc_offset_minute(0),
-        );
-    }
-    pdf.set_metadata(meta);
+    let metadata = Metadata {
+        creator: "DesignCraft".into(),
+        producer: "DesignCraft".into(),
+        title: Some(title.clone()),
+        authors: opts.author.iter().cloned().collect(),
+        created: created.map(date_time),
+        ..Default::default()
+    };
+    let mut writer = Writer::new(settings, metadata);
+    let pdf = writer.document_mut();
 
     let mut ex = Exporter {
         drawing_items: Vec::new(),
@@ -212,6 +200,8 @@ pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) 
         let settings = PageSettings::new(size).with_trim_box(local(sh.trim)).with_bleed_box(local(sh.bleed));
         let mut page = pdf.start_page_with(settings);
         let mut s = page.surface();
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        unwind_tests::inject(&mut s);
         s.push_transform(&tf(Affine::translate(-sh.media.origin().to_vec2())));
         ex.clip = sh.bleed;
         if let Some(clip) = to_path(&sh.bleed.to_path(0.1)) {
@@ -237,7 +227,7 @@ pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) 
         pdf.set_tag_tree(ex.tag_tree());
     }
     ex.check_placed_versions()?;
-    let mut bytes = pdf.finish().map_err(|e| PdfError::Write(format!("{e:?}")))?;
+    let mut bytes = writer.finish().map_err(PdfError::from)?;
     // Transparency blends in the document's blend space: CMYK for print (and always in PDF/X).
     let mut warnings = ex.warnings;
     if !ex.rgb_only && (doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk || opts.standard == Standard::PdfX4) {
@@ -279,12 +269,13 @@ pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) 
 /// One PDF from several (a book's documents), every page carried over as vectors; each part
 /// comes with its pages' sizes (points).
 pub fn merge_pdfs(parts: &[(Vec<u8>, Vec<(f32, f32)>)], title: Option<&str>) -> Result<Vec<u8>> {
-    let mut pdf = krilla::Document::new_with(krilla::SerializeSettings::default());
-    let mut meta = Metadata::new().creator("DesignCraft".into()).producer("DesignCraft".into());
-    if let Some(t) = title {
-        meta = meta.title(t.to_string());
-    }
-    pdf.set_metadata(meta);
+    write::guard(|| merge_pdfs_inner(parts, title))
+}
+
+fn merge_pdfs_inner(parts: &[(Vec<u8>, Vec<(f32, f32)>)], title: Option<&str>) -> Result<Vec<u8>> {
+    let metadata = Metadata { creator: "DesignCraft".into(), producer: "DesignCraft".into(), title: title.map(str::to_owned), ..Default::default() };
+    let mut writer = Writer::new(krilla::SerializeSettings::default(), metadata);
+    let pdf = writer.document_mut();
     let mut pages = 0;
     for (bytes, sizes) in parts {
         let src = krilla::pdf::Pdf::new(Arc::new(bytes.clone())).map_err(|e| PdfError::Write(format!("{e:?}")))?;
@@ -293,6 +284,8 @@ pub fn merge_pdfs(parts: &[(Vec<u8>, Vec<(f32, f32)>)], title: Option<&str>) -> 
             let size = Size::from_wh(w.max(1.0), h.max(1.0)).ok_or(PdfError::NoPages)?;
             let mut page = pdf.start_page_with(PageSettings::new(size));
             let mut s = page.surface();
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            unwind_tests::inject(&mut s);
             s.draw_pdf_page(&doc, size, i);
             s.finish();
             page.finish();
@@ -302,7 +295,7 @@ pub fn merge_pdfs(parts: &[(Vec<u8>, Vec<(f32, f32)>)], title: Option<&str>) -> 
     if pages == 0 {
         return Err(PdfError::NoPages);
     }
-    pdf.finish().map_err(|e| PdfError::Write(format!("{e:?}")))
+    writer.finish().map_err(PdfError::from)
 }
 
 /// File › Print Booklet: how pages pair up on printer spreads.
@@ -337,19 +330,20 @@ pub fn booklet_pairs(n: usize, kind: BookletKind) -> Vec<(Option<usize>, Option<
 
 /// An imposed PDF: two document pages per sheet, in booklet order.
 pub fn export_booklet(doc: &Document, cache: &Cache, opts: &BookletOptions) -> Result<ExportReport> {
+    write::guard(|| export_booklet_inner(doc, cache, opts))
+}
+
+fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) -> Result<ExportReport> {
     let n = doc.page_count();
     if n == 0 {
         return Err(PdfError::NoPages);
     }
     let pdf_opts = PdfOptions { title: opts.title.clone(), ..PdfOptions::default() };
     let settings = krilla::SerializeSettings { compress_content_streams: true, ..Default::default() };
-    let mut pdf = krilla::Document::new_with(settings);
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
-    let mut meta = Metadata::new().creator("DesignCraft".into()).producer("DesignCraft".into());
-    if !title.is_empty() {
-        meta = meta.title(title);
-    }
-    pdf.set_metadata(meta);
+    let metadata = Metadata { creator: "DesignCraft".into(), producer: "DesignCraft".into(), title: Some(title), ..Default::default() };
+    let mut writer = Writer::new(settings, metadata);
+    let pdf = writer.document_mut();
     let mut ex = Exporter {
         drawing_items: Vec::new(),
         doc,
@@ -390,6 +384,8 @@ pub fn export_booklet(doc: &Document, cache: &Cache, opts: &BookletOptions) -> R
     for (left, right) in &pairs {
         let mut page = pdf.start_page_with(PageSettings::new(size));
         let mut s = page.surface();
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        unwind_tests::inject(&mut s);
         for (slot, abs) in [(0.0, left), (pw + gap, right)] {
             let Some((si, pi)) = abs.and_then(|a| doc.page_loc(a)) else { continue };
             let p = &doc.spreads[si].pages[pi];
@@ -409,7 +405,7 @@ pub fn export_booklet(doc: &Document, cache: &Cache, opts: &BookletOptions) -> R
         page.finish();
     }
     ex.check_placed_versions()?;
-    let mut bytes = pdf.finish().map_err(|e| PdfError::Write(format!("{e:?}")))?;
+    let mut bytes = writer.finish().map_err(PdfError::from)?;
     if doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk {
         crate::pdfx::cmyk_group_spaces(&mut bytes);
     }
@@ -426,6 +422,18 @@ fn now_unix() -> Option<i64> {
 #[cfg(target_arch = "wasm32")]
 fn now_unix() -> Option<i64> {
     None
+}
+
+fn date_time(t: i64) -> krilla::metadata::DateTime {
+    let c = civil(t);
+    krilla::metadata::DateTime::new(c.0.clamp(0, 9999) as u16)
+        .month(c.1)
+        .day(c.2)
+        .hour(c.3)
+        .minute(c.4)
+        .second(c.5)
+        .utc_offset_hour(0)
+        .utc_offset_minute(0)
 }
 
 /// Unix seconds (UTC) → (year, month, day, hour, minute, second), proleptic Gregorian.
@@ -1252,7 +1260,8 @@ impl Exporter<'_> {
     /// A placed PDF as krilla embeds it. krilla refuses a PDF newer than the file it writes (the
     /// export fails at the end with `VersionMismatch(Pdf17)`), and PDF/X-4 is PDF 1.6 while
     /// VectorCraft and most tools write 1.7. PDF 1.7 changed nothing in how a page draws, so a 1.7
-    /// file goes in as 1.6 (its header relabelled, as `qpdf --force-version=1.6` does). A newer
+    /// file goes in as 1.6 (its header and catalog `/Version` relabelled, as
+    /// `qpdf --force-version=1.6` does). A newer
     /// file is left out and the export fails naming it ([`Exporter::check_placed_versions`]).
     /// Returns the document with its page count.
     fn placed_pdf(&mut self, asset: &designcraft_doc::Asset) -> Option<(krilla::pdf::PdfDocument, usize)> {
@@ -1275,8 +1284,8 @@ impl Exporter<'_> {
         }
         if have == V::Pdf17
             && max == V::Pdf16
-            && let Some(bytes) = relabel_pdf_header(&asset.data, b"%PDF-1.7", b"%PDF-1.6")
-            && let Ok(pdf) = krilla::pdf::Pdf::new(Arc::new(bytes))
+            && let bytes = relabel_pdf_header(&asset.data, b"%PDF-1.7", b"%PDF-1.6").unwrap_or_else(|| asset.data.to_vec())
+            && let Ok(pdf) = krilla::pdf::Pdf::new(Arc::new(relabel_catalog_version(bytes)))
             && pdf.version() <= max
         {
             self.warn(format!("{}: a PDF 1.7 placed in a PDF 1.6 file, embedded as PDF 1.6", asset.name));
@@ -1478,6 +1487,30 @@ fn relabel_pdf_header(data: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     let mut out = data.to_vec();
     out.get_mut(at..at + to.len())?.copy_from_slice(to);
     Some(out)
+}
+
+/// `data` with every `/Version /1.7` changed to `/Version /1.6` in place, so the xref offsets
+/// hold. The catalog's `/Version` wins over the header (TCPDF writes both), so relabelling the
+/// header alone leaves the file a PDF 1.7. A catalog inside a compressed object stream is left as
+/// it is, and the version check still names the file.
+fn relabel_catalog_version(mut data: Vec<u8>) -> Vec<u8> {
+    const KEY: &[u8] = b"/Version";
+    let mut from = 0;
+    while let Some(at) = data.get(from..).and_then(|rest| rest.windows(KEY.len()).position(|w| w == KEY)) {
+        let mut i = from + at + KEY.len();
+        while data.get(i).is_some_and(|b| b" \t\r\n\x0c\0".contains(b)) {
+            i += 1;
+        }
+        let ends = data.get(i + 4).is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'.');
+        if data.get(i..i + 4) == Some(b"/1.7".as_slice())
+            && ends
+            && let Some(b) = data.get_mut(i + 3)
+        {
+            *b = b'6';
+        }
+        from = i;
+    }
+    data
 }
 
 /// The sRGB profile (ICC v2.1) that untagged RGB images carry in PDF/X-4.
@@ -1870,5 +1903,56 @@ mod image_content_cache_tests {
         drop(d);
         assert!(payload.upgrade().is_none(), "no converted image or encoded key outlives this exporter");
         assert!(duplicate.upgrade().is_none());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod unwind_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        static FAIL_NEXT_SURFACE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    // Fail with live backend drawing state, so a missing guard or an unpatched destructor
+    // makes the child fail. Thread-local state keeps unrelated export tests independent.
+    #[allow(clippy::panic)] // Test-only fault injection exercises recovery with a live surface.
+    pub(super) fn inject(surface: &mut krilla::surface::Surface<'_>) {
+        if FAIL_NEXT_SURFACE.replace(false) {
+            surface.push_transform(&krilla::geom::Transform::from_translate(2.0, 3.0));
+            panic!("synthetic export drawing failure");
+        }
+    }
+
+    #[test]
+    fn export_entry_points_recover_in_a_subprocess() {
+        const CHILD: &str = "DESIGNCRAFT_PDF_EXPORT_PANIC_PROBE";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "export::unwind_tests::export_entry_points_recover_in_a_subprocess", "--nocapture"])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "export child failed: {:?}\n{}", output.status, String::from_utf8_lossy(&output.stderr));
+            assert!(String::from_utf8_lossy(&output.stdout).contains("all three export entry points recovered"));
+            return;
+        }
+        let doc = Document::new(&designcraft_doc::build::NewDocument { pages: 1, ..Default::default() });
+        let cache = Cache::new();
+        let source = export_pdf(&doc, &cache, &Default::default()).unwrap();
+        let parts = [(source, vec![(612.0, 792.0)])];
+        for entry in ["document", "booklet", "merge"] {
+            let export = || match entry {
+                "document" => export_pdf(&doc, &cache, &Default::default()),
+                "booklet" => export_booklet(&doc, &cache, &Default::default()).map(|report| report.bytes),
+                _ => merge_pdfs(&parts, None),
+            };
+            FAIL_NEXT_SURFACE.set(true);
+            assert!(matches!(export(), Err(PdfError::Write(message)) if message.contains("synthetic export drawing failure")), "{entry}");
+            let fresh = export().unwrap();
+            assert!(!hayro_syntax::Pdf::new(Arc::new(fresh)).unwrap().pages().is_empty(), "fresh {entry} export must still work");
+        }
+        println!("all three export entry points recovered");
     }
 }

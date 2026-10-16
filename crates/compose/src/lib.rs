@@ -1037,9 +1037,19 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             &[],
             (drop_end, &pp.drop_cap_style),
         );
+        // An empty paragraph has no glyphs of its own, so its only addressable character is its
+        // hidden paragraph mark (the `\n` just past `prange.end`). A leading/size override applied
+        // there (e.g. selecting the pilcrow to adjust line height) still needs to set the line's
+        // height, so resolve the mark's own run instead of the paragraph's plain default when present.
+        let mark_chars = prange
+            .is_empty()
+            .then(|| story.runs().find(|(r, _)| r.contains(&prange.end)))
+            .flatten()
+            .map(|(_, fmt)| doc.styles.resolve_char(&base_chars, fmt));
+        let leading_chars = mark_chars.as_ref().unwrap_or(&base_chars);
         // Drop cap: the size and indent come from the text beside it (`base_*` when there's none).
-        let base_leading = match base_chars.leading {
-            designcraft_doc::Leading::Auto => base_chars.size * pp.auto_leading,
+        let base_leading = match leading_chars.leading {
+            designcraft_doc::Leading::Auto => leading_chars.size * pp.auto_leading,
             designcraft_doc::Leading::Points(v) => v,
         };
         let base_cap = {
@@ -1364,6 +1374,11 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     pi = j;
                     continue 'paras;
                 }
+                // An empty last paragraph (the story ends with a return) isn't overset text, as in
+                // InDesign: nothing of it is left to show.
+                if prange.is_empty() && prange.start >= story.text.len() {
+                    break 'paras;
+                }
                 out.overset_at = Some(glyphs.get(g0).map(|g| g.byte).unwrap_or(prange.start));
                 break 'paras;
             }
@@ -1562,7 +1577,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 // Footnotes referenced on this line need room at the bottom of the column too
                 // (a line at the top of a column is set anyway).
                 let line_notes = if notes.active() { notes.refs_in(line_glyphs) } else { Vec::new() };
-                let col_w = cols[cur.fi][cur.col.min(cols[cur.fi].len() - 1)].width();
+                let col_w = notes.area(&cols[cur.fi], cur.col).map_or(0.0, |r| r.width());
                 let reserve = notes.reserve(doc, cur.fi, cur.col, &line_notes, col_w, f, opts);
                 let reserve = if cur.last_baseline.is_none() { notes.reserve(doc, cur.fi, cur.col, &[], col_w, f, opts) } else { reserve };
                 // A horizontal text frame's bottom inset limits the last baseline, not
@@ -1727,8 +1742,21 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     keep_violation: false,
                     drop_cap: drop_box,
                 });
+                let placed_notes = !line_notes.is_empty();
                 for k in line_notes {
                     notes.place(doc, k, cur.fi, cur.col, col_w, f, opts);
+                }
+                // Notes spanning the columns take room from the columns before this one too: re-lay
+                // the frame with that room left.
+                if placed_notes {
+                    let r = notes.reserve(doc, cur.fi, cur.col, &[], col_w, f, opts);
+                    if notes.earlier_columns_collide(&out.frames[cur.fi].lines, cur.fi, cur.col, &cols[cur.fi], r)
+                        && let Some(j) = out.frames[cur.fi].lines.first().map(|l| l.para)
+                    {
+                        rewind(j, &snaps, &note_snaps, &mut notes, &mut out, &mut cur, &mut list_counter, &mut force_col, &mut line_cap);
+                        pi = j;
+                        continue 'paras;
+                    }
                 }
                 if !sub_objects.is_empty() {
                     let ft = &mut out.frames[cur.fi];
@@ -4572,6 +4600,7 @@ mod column_allocation_safety_tests {
             vertical: false,
             exclusions: vec![],
             page_name: None,
+            section_marker: None,
             page: None,
             grid: None,
             left_page: false,

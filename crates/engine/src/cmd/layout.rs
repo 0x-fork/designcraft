@@ -86,6 +86,25 @@ fn dist(r: designcraft_geom::Rect, x: f64) -> f64 {
     }
 }
 
+/// Apply the `margins`, `columns` and `gutter` params of `layout.marginsAndColumns` to one page.
+fn set_margins_columns(pg: &mut designcraft_doc::Page, p: &Value) {
+    match p.get("margins") {
+        Some(Value::Number(n)) => pg.margins = Margins::uniform(n.as_f64().unwrap_or(36.0)),
+        Some(v @ Value::Object(_)) => {
+            if let Ok(m) = serde_json::from_value(v.clone()) {
+                pg.margins = m;
+            }
+        }
+        _ => {}
+    }
+    if let Some(c) = p.get("columns").and_then(Value::as_u64) {
+        pg.columns.count = (c as u32).clamp(1, 216);
+    }
+    if let Some(g) = p.get("gutter").and_then(Value::as_f64) {
+        pg.columns.gutter = g.max(0.0);
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -99,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let count = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 9999) as usize;
                 let st = s.doc()?;
                 let n = st.doc.page_count();
-                let after = p.get("after").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(n - 1);
+                let after = p.get("after").and_then(Value::as_u64).map(|v| usize::try_from(v).unwrap_or(usize::MAX)).unwrap_or(n.saturating_sub(1));
                 let parent = parent_ref("layout.pages.insert", &st.doc, p.get("parent"))?.unwrap_or_else(|| st.doc.parents.first().map(|x| x.id));
                 s.edit(|d, _| {
                     let ids = d.insert_pages(Some(after), count, parent)?;
@@ -157,7 +176,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Duplicate Spread",
             ["Layout", "Pages"],
             None,
-            "{spread, atEnd?: bool (Duplicate Spread at End of Document; the Pages panel's New Page button takes a dropped page there), to?: page index the copied pages move to in the same undo step (the Pages panel's Alt-drag)} → {page: the copy's first page (0-based)} — the spread's pages (size, margins, columns, guides, liquid rule) and items",
+            "{spread, atEnd?: bool (Duplicate Spread at End of Document; the Pages panel's New Page button takes a dropped page there), to?: page index the copied pages move to, in the same undo step (the Pages panel's Alt-drag)} → {page: the copy's first page (0-based)} — the spread's pages (size, margins, columns, guides, liquid rule) and items",
             has_doc,
             |s, p| {
                 let si = p.get("spread").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -545,7 +564,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 st.selection = designcraft_doc::Selection::items(ids);
             }
             st.selection.page = page;
-            st.revision += 1;
+            st.bump_revision();
             Ok(json!({"page": page.map(|p| p + 1)}))
         }
         ),
@@ -766,25 +785,6 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
     ]
-}
-
-/// Apply the `margins`, `columns` and `gutter` params of `layout.marginsAndColumns` to a page.
-fn set_margins_columns(pg: &mut designcraft_doc::Page, p: &Value) {
-    match p.get("margins") {
-        Some(Value::Number(n)) => pg.margins = Margins::uniform(n.as_f64().unwrap_or(36.0)),
-        Some(v @ Value::Object(_)) => {
-            if let Ok(m) = serde_json::from_value(v.clone()) {
-                pg.margins = m;
-            }
-        }
-        _ => {}
-    }
-    if let Some(c) = p.get("columns").and_then(Value::as_u64) {
-        pg.columns.count = (c as u32).clamp(1, 216);
-    }
-    if let Some(g) = p.get("gutter").and_then(Value::as_f64) {
-        pg.columns.gutter = g.max(0.0);
-    }
 }
 
 /// A parent spread named by prefix, label (`A-Parent`) or index.
@@ -1057,6 +1057,8 @@ impl SectionEdit {
         // Page 1 always starts a section.
         if self.remove && start != 0 {
             d.sections.retain(|x| x.start != start);
+            // The pages after it follow the previous section's numbers again.
+            d.repaginate();
             return;
         }
         let mut sec = d.sections.iter().find(|x| x.start == start).cloned().unwrap_or(designcraft_doc::Section {
@@ -1085,6 +1087,8 @@ impl SectionEdit {
         d.sections.retain(|x| x.start != start);
         d.sections.push(sec);
         d.sections.sort_by_key(|x| x.start);
+        // Facing pages take their sides from their numbers: odd on the right.
+        d.repaginate();
     }
 }
 
@@ -1556,10 +1560,33 @@ mod page_numbering_view_tests {
         assert!(s.execute("layout.section", &json!({"page": 2, "style": "symbols"})).is_err());
         assert_eq!(s.doc().unwrap().doc.sections.iter().find(|x| x.start == 1).unwrap().prefix, "§ 1", "a refused prefix changes nothing");
     }
+
+    /// `layout.section` edits one named setting; the others stay as the section was (#717).
+    #[test]
+    fn updating_a_section_keeps_settings_the_command_does_not_name() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 4})).unwrap();
+        s.execute(
+            "layout.section",
+            &json!({"page": 2, "startNumber": 1, "style": "lowerRoman", "prefix": "A-", "includePrefix": true, "marker": "First"}),
+        )
+        .unwrap();
+        assert_eq!(s.page_label(1), "A-i");
+        s.execute("layout.section", &json!({"page": 2, "marker": "Second"})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let sec = d.sections.iter().find(|x| x.start == 1).expect("the page-2 section is still the only one there");
+        assert_eq!(sec.marker, "Second");
+        assert_eq!(sec.start_number, Some(1), "startNumber is kept");
+        assert_eq!(sec.style, designcraft_doc::NumberStyle::LowerRoman, "style is kept");
+        assert_eq!(sec.prefix, "A-", "prefix is kept");
+        assert!(sec.include_prefix, "includePrefix is kept");
+        assert_eq!(s.page_label(1), "A-i");
+    }
 }
 
 #[cfg(test)]
 mod adjust_tests {
+    use designcraft_doc::Margins;
     use serde_json::json;
 
     use crate::Session;
@@ -1580,6 +1607,113 @@ mod adjust_tests {
         s.execute("layout.marginsAndColumns", &json!({"margins": 36})).unwrap();
         let b2 = s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().bounds();
         assert_eq!(b, b2);
+    }
+
+    #[test]
+    fn parent_margins_change_the_parent_and_follow_unoverridden_pages() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 3, "facingPages": false})).unwrap();
+        // Page 3 has its own margins (an override); pages 1 and 2 still follow the parent.
+        s.execute("layout.marginsAndColumns", &json!({"pages": [2], "margins": 100})).unwrap();
+        let parent_before = s.doc().unwrap().doc.parents[0].pages[0].margins;
+        assert_eq!(parent_before, Margins::uniform(36.0));
+        s.execute("layout.marginsAndColumns", &json!({"parent": 0, "margins": 60, "columns": 2})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        // The parent page itself changed (this is what was drawn on screen).
+        assert_eq!(d.parents[0].pages[0].margins, Margins::uniform(60.0));
+        assert_eq!(d.parents[0].pages[0].columns.count, 2);
+        // Pages without their own margins follow; the page given its own keeps them.
+        assert_eq!(d.page(0).unwrap().margins, Margins::uniform(60.0));
+        assert_eq!(d.page(1).unwrap().margins, Margins::uniform(60.0));
+        assert_eq!(d.page(2).unwrap().margins, Margins::uniform(100.0));
+        // An unknown parent is an error, not a silent no-op.
+        assert!(s.execute("layout.marginsAndColumns", &json!({"parent": 9, "margins": 10})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod section_side_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// Each spread's pages as (name, side), side `L`, `R` or `S`.
+    fn spreads(s: &Session) -> Vec<Vec<(String, char)>> {
+        let d = &s.doc().unwrap().doc;
+        let mut abs = 0;
+        d.spreads
+            .iter()
+            .map(|sp| {
+                sp.pages
+                    .iter()
+                    .map(|p| {
+                        let side = match p.side {
+                            designcraft_doc::PageSide::Left => 'L',
+                            designcraft_doc::PageSide::Right => 'R',
+                            designcraft_doc::PageSide::Single => 'S',
+                        };
+                        abs += 1;
+                        (d.page_name(abs - 1), side)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn pages(v: &[&[(&str, char)]]) -> Vec<Vec<(String, char)>> {
+        v.iter().map(|sp| sp.iter().map(|(n, c)| (n.to_string(), *c)).collect()).collect()
+    }
+
+    #[test]
+    fn a_section_starting_at_one_on_a_left_page_moves_it_to_the_right() {
+        // Chris Nielsen's "Numbering Page Sections" (7:03): with the spread 8–9 selected, the
+        // section starts on page 8, which becomes a lone right-hand page 1; the pages after it
+        // shuffle and their objects go with them. Undo puts them back.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 612, "height": 792, "facingPages": true, "pages": 10})).unwrap();
+        let id = s.execute("frame.create", &json!({"spread": 4, "rect": [700, 100, 800, 200], "content": "text", "text": "TOPIC"})).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let page_of = |s: &Session| {
+            let d = &s.doc().unwrap().doc;
+            d.page_of_item(designcraft_doc::ItemId(id)).unwrap()
+        };
+        assert_eq!(page_of(&s), 8, "page 9, the right page of the spread 8–9");
+        let before = spreads(&s);
+        s.execute("layout.section", &json!({"page": 8, "startNumber": 1})).unwrap();
+        assert_eq!(
+            spreads(&s),
+            pages(&[
+                &[("1", 'R')],
+                &[("2", 'L'), ("3", 'R')],
+                &[("4", 'L'), ("5", 'R')],
+                &[("6", 'L'), ("7", 'R')],
+                &[("1", 'R')],
+                &[("2", 'L'), ("3", 'R')],
+            ])
+        );
+        assert_eq!(page_of(&s), 8, "the object stays on its page, now the left page of a spread");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(spreads(&s), before);
+        // On a right page (the video's page 9) nothing moves; an even start on a right page moves
+        // it to the left.
+        s.execute("layout.section", &json!({"page": 9, "startNumber": 1})).unwrap();
+        assert_eq!(spreads(&s)[4], pages(&[&[("8", 'L'), ("1", 'R')]])[0]);
+        s.execute("layout.section", &json!({"page": 9, "startNumber": 2})).unwrap();
+        assert_eq!(spreads(&s)[4..], pages(&[&[("8", 'L')], &[("2", 'L'), ("3", 'R')]]));
+        // Removing the section numbers the pages on from 9 again.
+        s.execute("layout.section", &json!({"page": 9, "remove": true})).unwrap();
+        assert_eq!(spreads(&s), before);
+    }
+
+    #[test]
+    fn single_sided_documents_keep_their_pages() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"facingPages": false, "pages": 4})).unwrap();
+        s.execute("layout.section", &json!({"page": 2, "startNumber": 1})).unwrap();
+        let sp = spreads(&s);
+        assert_eq!(sp.len(), 4);
+        assert!(sp.iter().all(|p| p.len() == 1 && p[0].1 == 'S'), "{sp:?}");
     }
 }
 
@@ -1695,6 +1829,28 @@ mod parent_margin_tests {
         assert_eq!(m[2], (Margins::uniform(50.0), 1, false), "old page 2, now a right page");
         assert_eq!(m[3], (Margins::uniform(100.0), 1, true));
         assert!(s.execute("layout.marginsAndColumns", &json!({"parent": "Z", "margins": 10})).is_err());
+    }
+
+    #[test]
+    fn applying_a_parent_gives_its_margins_and_local_margins_stay_local() {
+        let mut s = Session::new();
+        // Facing: [1] [2 3].
+        s.execute("file.new", &json!({"pages": 3})).unwrap();
+        s.execute("layout.parents.new", &json!({"prefix": "B"})).unwrap();
+        s.execute("layout.marginsAndColumns", &json!({"parent": "B", "margins": 70, "columns": 3})).unwrap();
+        s.execute("layout.pages.applyParent", &json!({"pages": [1], "parent": "B"})).unwrap();
+        let m = margins(&s.doc().unwrap().doc);
+        assert_eq!(m[1], (Margins::uniform(70.0), 3, false), "the page takes B's margins");
+        // Page 3 is given margins equal to A's: they are its own all the same.
+        s.execute("layout.marginsAndColumns", &json!({"pages": [2], "margins": 36})).unwrap();
+        s.execute("layout.marginsAndColumns", &json!({"parent": "A", "margins": 20})).unwrap();
+        let m = margins(&s.doc().unwrap().doc);
+        assert_eq!(m[0], (Margins::uniform(20.0), 1, false));
+        assert_eq!(m[1], (Margins::uniform(70.0), 3, false), "B's page is not A's");
+        assert_eq!(m[2], (Margins::uniform(36.0), 1, true));
+        // Back to A: page 2 follows A again.
+        s.execute("layout.pages.applyParent", &json!({"pages": [1], "parent": "A"})).unwrap();
+        assert_eq!(margins(&s.doc().unwrap().doc)[1], (Margins::uniform(20.0), 1, false));
     }
 
     #[test]

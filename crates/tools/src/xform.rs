@@ -258,8 +258,8 @@ fn image_under(cx: &ToolContext, p: Point) -> Option<(SpreadRef, Point)> {
         }
         let xf = outer * it.xf;
         if let Content::Group { .. } = &it.content {
-            // Only the active state of a multi-state object shows.
-            let shown: Vec<_> = it.shown_children().collect();
+            // Only the shown children count: a multi-state object shows just its active state.
+            let shown: Vec<&Item> = it.shown_children().map(|c| &**c).collect();
             return shown.into_iter().rev().find_map(|c| shows(d, c, xf, at, depth + 1));
         }
         let graphic = matches!(it.content, Content::Graphic(_));

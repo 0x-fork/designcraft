@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod features;
 mod fontdb;
 mod group;
 mod kind;
@@ -16,9 +17,10 @@ mod mac_fonts;
 pub mod testing;
 mod vertical;
 
+pub use features::{FontFeatures, font_features};
 pub use fontdb::{
     DOCUMENT_FONTS_FOLDER, DocumentFonts, FALLBACK_FAMILY, FaceRef, FontDb, FontFace, FontSource, MAX_DOCUMENT_FONT_BYTES, MAX_DOCUMENT_FONT_FILES,
-    MAX_DOCUMENT_FONTS_TOTAL, ScopedFonts, base_style, bundled, system_font_dirs,
+    MAX_DOCUMENT_FONTS_TOTAL, ScopedFonts, base_style, bundled, same_style, system_font_dirs,
 };
 pub use group::{FamilyInfo, FontGroup, sort_for_menu};
 pub use harfrust::Feature;

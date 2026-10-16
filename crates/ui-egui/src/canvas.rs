@@ -206,20 +206,36 @@ pub fn current_page(app: &DesignApp) -> Option<usize> {
     Some(st.doc.first_page_of_spread(si) + pi)
 }
 
-/// While parent spreads are shown: (parent index, page index) under the view centre, or `None`
-/// when the centre is on a document spread.
+/// The spread (document or parent) under the view centre and the page index within it: where
+/// commands that act "on the page I am working on" should go.
+pub fn current_spread_page(app: &DesignApp) -> Option<(SpreadRef, usize)> {
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let i = current_slot(app, &layout)?;
+    let slot = layout.slots.get(i)?;
+    let v = app.view()?;
+    let r = app.canvas_rect?;
+    let c = slot.to_spread(Point::new(v.origin.x + r.width() as f64 / 2.0 / v.zoom, slot.bounds.center().y));
+    let pg = st.doc.spread(slot.spread)?.page_at_x(c.x).unwrap_or(0);
+    Some((slot.spread, pg))
+}
+
+/// While parent spreads are being edited: (parent spread index, page index within it) under the
+/// view centre. `None` when document pages are shown.
 pub fn current_parent_page(app: &DesignApp) -> Option<(usize, usize)> {
     let st = app.session.active()?;
     if !st.editing_parents {
         return None;
     }
     let layout = CanvasLayout::new(&st.doc, true);
-    let slot = layout.slots.get(current_slot(app, &layout)?)?;
+    let i = current_slot(app, &layout)?;
+    let slot = layout.slots.get(i)?;
     let SpreadRef::Parent(pi) = slot.spread else { return None };
     let v = app.view()?;
     let r = app.canvas_rect?;
     let c = slot.to_spread(Point::new(v.origin.x + r.width() as f64 / 2.0 / v.zoom, slot.bounds.center().y));
-    Some((pi, st.doc.parents.get(pi)?.page_at_x(c.x)?))
+    let qi = st.doc.parents.get(pi)?.page_at_x(c.x).unwrap_or(0);
+    Some((pi, qi))
 }
 
 /// Scroll so absolute page `abs` is centred (keeps zoom).
@@ -1232,6 +1248,7 @@ fn draw_text_selection(
 ) {
     let cs = app.session.cache.get(doc, ts.story, None);
     let range = ts.range();
+    let tint = Color32::from_rgba_unmultiplied(80, 140, 255, 110);
     // Selected table cells: tint every selected cell.
     if let Some(sel) = cells.filter(|c| c.story == ts.story) {
         let selected = doc.story(sel.story).and_then(|s| s.tables.get(&sel.table)).map(|t| t.selected_owners(sel.range)).unwrap_or_default();
@@ -1284,7 +1301,7 @@ fn draw_text_selection(
                         let (a, b) = (x0 + (x1 - x0) * k as f64 / n as f64, x0 + (x1 - x0) * (k + 1) as f64 / n as f64);
                         let poly =
                             [Point::new(a, y0), Point::new(b, y0), Point::new(b, y1), Point::new(a, y1)].map(|p| xf.to_screen(m * map.to_path(p)));
-                        painter.add(egui::Shape::convex_polygon(poly.to_vec(), Color32::from_rgba_unmultiplied(80, 140, 255, 110), Stroke::NONE));
+                        painter.add(egui::Shape::convex_polygon(poly.to_vec(), tint, Stroke::NONE));
                     }
                 }
             }
@@ -1328,12 +1345,12 @@ fn draw_text_selection(
         && let (Some((a, _)), Some(it)) = (item_canvas_xf(doc, layout, ft.frame), doc.item(ft.frame))
     {
         let m = a * doc.text_xf(it);
+        // Type on a path: the caret stands across the path where it is along it.
+        let on = |p: Point| compose::PathTextMap::new(it, ft).map_or(p, |map| map.to_path(p));
+        let p0 = xf.to_screen(m * on(Point::new(x, bl - asc)));
+        let p1 = xf.to_screen(m * on(Point::new(x, bl + desc)));
         let blink = (painter.ctx().input(|i| i.time) * 1.6) as i64 % 2 == 0;
         if blink {
-            // Type on a path: the caret stands across the path where it is along it.
-            let on = |p: Point| compose::PathTextMap::new(it, ft).map_or(p, |map| map.to_path(p));
-            let p0 = xf.to_screen(m * on(Point::new(x, bl - asc)));
-            let p1 = xf.to_screen(m * on(Point::new(x, bl + desc)));
             painter.line_segment([p0, p1], Stroke::new(1.0, Color32::BLACK));
         }
         painter.ctx().request_repaint_after(std::time::Duration::from_millis(330));
@@ -1385,12 +1402,10 @@ fn draw_cell_selection(
         }
     {
         let m = a * doc.text_xf(it);
+        let (p0, p1) = (xf.to_screen(m * Point::new(x, bl - asc)), xf.to_screen(m * Point::new(x, bl + desc)));
         let blink = (painter.ctx().input(|i| i.time) * 1.6) as i64 % 2 == 0;
         if blink {
-            painter.line_segment(
-                [xf.to_screen(m * Point::new(x, bl - asc)), xf.to_screen(m * Point::new(x, bl + desc))],
-                Stroke::new(1.0, Color32::BLACK),
-            );
+            painter.line_segment([p0, p1], Stroke::new(1.0, Color32::BLACK));
         }
         painter.ctx().request_repaint_after(std::time::Duration::from_millis(330));
     }
@@ -3771,6 +3786,152 @@ mod tests {
         assert_eq!(spread_items(&h), [a]);
     }
 
+    /// A text frame holding `text`, the Type tool, and a harness stepping at 60 fps (clicks in a
+    /// row must land within the double-click delay).
+    fn typing(text: &str) -> (Harness<'static, DesignApp>, u64) {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let r = app.run("frame.create", json!({"rect": [72, 72, 400, 400], "content": "text", "text": text})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        app.run("tool.select", json!({"tool": "type"})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        (h, id)
+    }
+
+    /// The screen point over the first line of frame `id` where a click puts the caret at a byte
+    /// in `bytes`.
+    fn screen_at(h: &mut Harness<'_, DesignApp>, id: u64, bytes: std::ops::Range<usize>) -> Pos2 {
+        let mut x = 74.0;
+        let p = loop {
+            assert!(x < 400.0, "no point on the first line hits {bytes:?}");
+            h.state_mut().run("text.placeCaret", json!({"frame": id, "point": [x, 80.0]})).unwrap();
+            if h.state().session.doc().unwrap().selection.text.is_some_and(|t| bytes.contains(&t.focus)) {
+                break Point::new(x, 80.0);
+            }
+            x += 1.0;
+        };
+        h.state_mut().run("edit.deselectAll", json!({})).unwrap();
+        let app = h.state();
+        let c = app.session.layout().to_canvas(SpreadRef::Doc(0), p);
+        Xf::new(app.canvas_rect.unwrap(), app.view().unwrap()).to_screen(c)
+    }
+
+    fn click(h: &mut Harness<'_, DesignApp>, p: Pos2) {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+            h.step();
+        }
+    }
+
+    fn selected_range(h: &Harness<'_, DesignApp>) -> std::ops::Range<usize> {
+        h.state().session.doc().unwrap().selection.text.map(|t| t.range()).unwrap_or_default()
+    }
+
+    #[test]
+    fn clicks_in_a_row_select_word_line_paragraph_with_return_and_story() {
+        let text = "One two. Three four! Five six.\nSecond para here.";
+        let (mut h, id) = typing(text);
+        // Inside "Three": double-click selects the word, then line and paragraph with return.
+        let p = screen_at(&mut h, id, 10..14);
+        h.hover_at(p);
+        h.step();
+        let mut got = vec![];
+        for _ in 0..5 {
+            click(&mut h, p);
+            let r = selected_range(&h);
+            got.push(text[r].to_string());
+        }
+        assert_eq!(got[1..], ["Three", "One two. Three four! Five six.", "One two. Three four! Five six.\n", text], "{got:?}");
+        assert!(got[0].is_empty(), "one click places the caret: {got:?}");
+    }
+
+    #[test]
+    fn slow_clicks_do_not_add_up() {
+        let (mut h, id) = typing("One two. Three four!");
+        let p = screen_at(&mut h, id, 10..14);
+        h.hover_at(p);
+        h.step();
+        for _ in 0..3 {
+            click(&mut h, p);
+            h.run_steps(30);
+        }
+        assert!(selected_range(&h).is_empty(), "three clicks half a second apart leave a caret: {:?}", selected_range(&h));
+    }
+
+    /// A viewport wider than the GPU's largest texture: the canvas texture is sampled down, and an
+    /// edit repaints it whole. A region repainted in view pixels would land in the wrong place,
+    /// or outside the texture (a wgpu validation error). A view that fits is still patched.
+    #[test]
+    fn an_edit_repaints_a_canvas_texture_sampled_down_to_the_gpu_limit_whole() {
+        for (width, sampled_down) in [(1440.0, false), (2600.0, true)] {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({})).unwrap();
+            let frame = app.run("frame.create", json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Text"})).unwrap();
+            let mut h = Harness::builder().with_size(vec2(width, 900.0)).build_ui_state(
+                |ui, app: &mut DesignApp| {
+                    let ctx = ui.ctx().clone();
+                    app.logic(&ctx);
+                    app.ui(ui);
+                },
+                app,
+            );
+            h.run_steps(6);
+            let limit = h.ctx.input(|i| i.max_texture_side);
+            let size = h.state().canvas.texture.as_ref().map(|t| t.size()).unwrap();
+            assert!(size[0] <= limit && size[1] <= limit, "{size:?}");
+            let shown = h.state().canvas.shown.unwrap().size;
+            assert_eq!(shown.0 > limit as f32, sampled_down, "view {shown:?}, limit {limit}");
+            let patches = h.state().canvas.patches;
+            // A small edit: one more character in the frame.
+            h.state_mut().run("text.insert", json!({"story": frame["story"], "at": 4, "text": "s"})).unwrap();
+            h.run_steps(6);
+            assert_eq!(h.state().canvas.patches == patches, sampled_down, "width {width}");
+            assert_eq!(h.state().canvas.texture.as_ref().map(|t| t.size()), Some(size));
+        }
+    }
+
+    /// ⌥E then I types "í" on a Mac: the input method composes the dead key's accent, which
+    /// it does only for a window that turned it on. The canvas never did, so ⌥E typed "e".
+    #[test]
+    fn dead_keys_compose_through_the_input_method() {
+        let (mut h, id) = typing("T");
+        h.state_mut().run("text.placeCaret", json!({"frame": id, "point": [390.0, 80.0]})).unwrap();
+        h.run_steps(2);
+        assert!(h.output().platform_output.ime.is_some(), "a text caret turns the input method on");
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit { text: "´".into(), active_range_chars: None }));
+        h.run_steps(2);
+        let text = |h: &Harness<'_, DesignApp>| h.state().session.doc().unwrap().doc.stories.values().map(|s| s.text.clone()).collect::<String>();
+        assert_eq!(text(&h), "T´", "the accent being composed shows in the story");
+        assert!(h.state().session.tool_composing(), "and is marked as composed, not typed");
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit { text: String::new(), active_range_chars: None }));
+        h.event(egui::Event::Ime(egui::ImeEvent::Commit("í".into())));
+        h.run_steps(2);
+        assert_eq!(text(&h), "Tí");
+        assert!(!h.state().session.tool_composing());
+        // Moving the caret mid-composition keeps the accent as typed and tells the input method
+        // to drop its copy.
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit { text: "˜".into(), active_range_chars: None }));
+        h.run_steps(2);
+        h.state_mut().run("text.move", json!({"dir": "left"})).unwrap();
+        h.step();
+        assert_eq!(text(&h), "Tí˜");
+        assert!(!h.state().session.tool_composing());
+        assert!(h.output().platform_output.ime.as_ref().is_some_and(|i| i.should_interrupt_composition));
+        assert!(h.state_mut().take_ime_discard());
+        // Another tool takes no text: the input method is off.
+        h.state_mut().run("tool.select", json!({"tool": "selection"})).unwrap();
+        h.run_steps(2);
+        assert!(h.output().platform_output.ime.is_none());
+    }
+
     #[test]
     fn tools_show_their_own_cursors_over_the_page() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -4075,6 +4236,20 @@ mod tests {
         let typed = story_text(&mut app, &sid);
         assert!(typed.contains("がく") && typed.contains("しょうこ") && !typed.contains('\n'), "{typed:?}");
     }
+
+    #[test]
+    fn baseline_grid_lines_are_the_ones_on_the_page() {
+        // A start far above the page used to be walked line by line, without end.
+        for start in [-1e9, -1e17] {
+            let mut far = baseline_grid_lines(start, 12.0, 792.0);
+            assert_eq!((far.next(), far.count()), (Some(8.0), 65));
+        }
+        let lines = |start, increment, height| baseline_grid_lines(start, increment, height).collect::<Vec<_>>();
+        assert_eq!(lines(36.0, 12.0, 72.0), [36.0, 48.0, 60.0], "the bottom edge is not a line");
+        assert_eq!(lines(-30.0, 12.0, 30.0), [6.0, 18.0], "a start above the page keeps its rhythm");
+        assert_eq!(lines(f64::NAN, 12.0, 792.0), [0.0; 0]);
+        assert_eq!(baseline_grid_lines(0.0, 12.0, f64::INFINITY).count(), MAX_BASELINES);
+    }
 }
 
 #[cfg(test)]
@@ -4268,19 +4443,5 @@ mod scrollbar_tests {
         // Without Alt the same drag selects text and leaves the view alone.
         drag(&mut h, from, from + vec2(60.0, 40.0), Modifiers::NONE);
         assert_eq!(origin(&h), after);
-    }
-
-    #[test]
-    fn baseline_grid_lines_are_the_ones_on_the_page() {
-        // A start far above the page used to be walked line by line, without end.
-        for start in [-1e9, -1e17] {
-            let mut far = baseline_grid_lines(start, 12.0, 792.0);
-            assert_eq!((far.next(), far.count()), (Some(8.0), 65));
-        }
-        let lines = |start, increment, height| baseline_grid_lines(start, increment, height).collect::<Vec<_>>();
-        assert_eq!(lines(36.0, 12.0, 72.0), [36.0, 48.0, 60.0], "the bottom edge is not a line");
-        assert_eq!(lines(-30.0, 12.0, 30.0), [6.0, 18.0], "a start above the page keeps its rhythm");
-        assert_eq!(lines(f64::NAN, 12.0, 792.0), [0.0; 0]);
-        assert_eq!(baseline_grid_lines(0.0, 12.0, f64::INFINITY).count(), MAX_BASELINES);
     }
 }

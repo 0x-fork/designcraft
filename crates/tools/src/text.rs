@@ -166,8 +166,12 @@ fn caret_line(cx: &ToolContext, ts: TextSel, pos: usize) -> Option<(Point, Point
         },
         None => compose::caret(&cs, pos)?,
     };
-    let m = text_canvas_xf(cx, cs.frames.get(fi)?.frame)?;
-    Some((m * Point::new(x, bl - asc), m * Point::new(x, bl + desc)))
+    let ft = cs.frames.get(fi)?;
+    let m = text_canvas_xf(cx, ft.frame)?;
+    // Type on a path: the caret stands across the path where it is along it.
+    let map = cx.doc.item(ft.frame).filter(|_| ts.cell.is_none()).and_then(|it| compose::PathTextMap::new(it, ft));
+    let on = |p: Point| map.as_ref().map_or(p, |map| map.to_path(p));
+    Some((m * on(Point::new(x, bl - asc)), m * on(Point::new(x, bl + desc))))
 }
 
 /// Underlines (start, end in canvas space) under bytes `r` of the selection's text.
@@ -227,9 +231,12 @@ impl Tool for TypeTool {
                     self.border = Some(b);
                     return vec![];
                 }
+                // Text frames take the caret (locked ones too, as in InDesign); an empty frame
+                // becomes one, unless it's locked: then the press draws a new text frame over it.
                 if let Some((_, id)) = cx.hit(ev.pos)
                     && let Some(it) = cx.doc.item(id)
                     && !matches!(it.content, designcraft_doc::Content::Graphic(_) | designcraft_doc::Content::Group { .. })
+                    && (it.is_text_frame() || !it.locked)
                 {
                     let sp = cx.layout.spread_at(ev.pos).map(|(_, p)| p).unwrap_or(ev.pos);
                     let clicks = ev.click_count();

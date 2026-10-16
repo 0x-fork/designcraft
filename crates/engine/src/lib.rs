@@ -12,7 +12,9 @@ pub mod atomic;
 pub mod autosize;
 pub mod cmd;
 pub mod dtd;
+pub mod file_access;
 pub mod guard;
+pub mod io;
 pub mod links;
 pub mod math;
 pub mod recovery;
@@ -328,6 +330,7 @@ pub struct Session {
     pub cache: Arc<Cache>,
     pub(crate) tool: Box<dyn designcraft_tools::Tool>,
     pub journal: Vec<(String, Value)>,
+    pub(crate) find_context: Option<cmd::find::FindContext>,
     pub clipboard: Option<Arc<Document>>,
     /// The x the clipboard's objects are measured from on their spread: its spine, or the left edge of
     /// single-sided pages. Paste keeps their distance from it.
@@ -385,6 +388,7 @@ impl Session {
             cache: Arc::new(Cache::new()),
             tool: designcraft_tools::create("selection"),
             journal: vec![],
+            find_context: None,
             clipboard: None,
             clipboard_origin: 0.0,
             recovery_dir: None,
@@ -447,12 +451,24 @@ impl Session {
     pub fn doc_mut(&mut self) -> Result<&mut DocState> {
         self.active_mut().ok_or(EngineError::NoDocument)
     }
+    /// Release the transient Find/Change domain when its caller starts or closes a search.
+    pub fn reset_find_scope(&mut self) {
+        self.find_context = None;
+    }
+
+    fn discard_stale_find_scope(&mut self) {
+        if self.find_context.as_ref().is_some_and(|c| self.active().is_none_or(|st| !c.is_current(st))) {
+            self.reset_find_scope();
+        }
+    }
+
     pub fn set_active(&mut self, i: usize) {
         if i < self.docs.len() && self.active != Some(i) {
             // The composition belongs to the document it shows in.
             if let Err(e) = self.end_composition() {
                 log::warn!("ending the IME composition: {e}");
             }
+            self.reset_find_scope();
             self.stop_data_preview();
             self.active = Some(i);
         }
@@ -461,6 +477,7 @@ impl Session {
         if let Err(e) = self.end_composition() {
             log::warn!("ending the IME composition: {e}");
         }
+        self.reset_find_scope();
         self.stop_data_preview();
         self.docs.push(d);
         self.active = Some(self.docs.len() - 1);
@@ -484,6 +501,7 @@ impl Session {
             recovery::discard_document(self, i, recovery_dir.as_deref());
         }
         if i < self.docs.len() {
+            self.reset_find_scope();
             self.docs.remove(i);
             self.active = if self.docs.is_empty() { None } else { Some(i.min(self.docs.len() - 1)) };
             if self.docs.is_empty() {
@@ -530,6 +548,8 @@ impl Session {
         if id != "data.preview" && (spec.undoable || spec.journal) {
             self.stop_data_preview();
         }
+        // Preview restoration can replace the document before a Find handler resolves bounds.
+        self.discard_stale_find_scope();
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
         // What an undoable command runs is part of its undo step.
         let nested = self.in_undo_step;
@@ -586,6 +606,7 @@ impl Session {
         if spec.journal {
             self.journal.push((id.to_string(), params.clone()));
         }
+        self.discard_stale_find_scope();
         Ok(r)
     }
 
@@ -681,10 +702,12 @@ impl Session {
         let mut sel = st.selection.clone();
         let r = f(&mut doc, &mut sel)?;
         crate::cmd::sync_placeholders(&mut doc);
+        crate::cmd::flex::sync(&mut doc);
         doc.sync_endnote_story();
         st.doc = Arc::new(doc);
         st.selection = sel;
         st.bump_revision();
+        self.reset_find_scope();
         Ok(r)
     }
 }
@@ -704,10 +727,14 @@ mod tests;
 #[cfg(test)]
 mod tests_autosize;
 #[cfg(test)]
+mod tests_file_guard;
+#[cfg(test)]
 mod tests_idml;
 #[cfg(test)]
 mod tests_ime;
 #[cfg(test)]
 mod tests_params;
+#[cfg(test)]
+mod tests_roots;
 #[cfg(test)]
 mod tests_table;

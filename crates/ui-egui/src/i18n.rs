@@ -10,6 +10,7 @@ mod de;
 mod fr;
 mod it;
 mod ja;
+mod ka;
 mod pl;
 mod pt_br;
 mod ru;
@@ -30,6 +31,7 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("ru", "Русский"),
     ("cs", "Čeština"),
     ("pl", "Polski"),
+    ("ka", "ქართული"),
 ];
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
@@ -91,10 +93,122 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Paste Vector Art",
         ["Vektorgrafik einfügen", "Coller l’illustration vectorielle", "Pegar ilustración vectorial", "ベクトルアートをペースト", "粘贴矢量图稿"],
     ),
+    (
+        "Bulleted & Numbered Lists",
+        [
+            "Aufzählungszeichen und nummerierte Listen",
+            "Listes à puces et numérotées",
+            "Listas con viñetas y numeradas",
+            "箇条書き",
+            "项目符号列表和编号列表",
+        ],
+    ),
+    ("Current Page Number", ["Aktuelle Seitenzahl", "Numéro de page actuelle", "Número de página actual", "現在のページ番号", "当前页码"]),
+    ("Apply Color (,)", ["Farbe anwenden (,)", "Appliquer la couleur (,)", "Aplicar color (,)", "カラーを適用 (,)", "应用颜色 (,)"]),
+    ("Apply Gradient (.)", ["Verlauf anwenden (.)", "Appliquer le dégradé (.)", "Aplicar degradado (.)", "グラデーションを適用 (.)", "应用渐变 (.)"]),
+    ("View Options", ["Ansichtsoptionen", "Options d’affichage", "Opciones de visualización", "表示オプション", "视图选项"]),
+    ("Frame Edges", ["Rahmenkanten", "Bords du bloc", "Bordes del marco", "フレーム枠", "框架边缘"]),
+    ("Rulers", ["Lineale", "Règles", "Reglas", "定規", "标尺"]),
+    ("Hidden Characters", ["Verborgene Zeichen", "Caractères masqués", "Caracteres ocultos", "制御文字", "隐藏字符"]),
+    ("Flex Layout", ["Flex-Layout", "Mise en page flexible", "Diseño flexible", "フレックスレイアウト", "弹性布局"]),
+    (
+        "Create Flex Layout",
+        ["Flex-Layout erstellen", "Créer une mise en page flexible", "Crear diseño flexible", "フレックスレイアウトを作成", "创建弹性布局"],
+    ),
+    (
+        "Add to Flex Layout",
+        [
+            "Zu Flex-Layout hinzufügen",
+            "Ajouter à la mise en page flexible",
+            "Añadir a diseño flexible",
+            "フレックスレイアウトに追加",
+            "添加到弹性布局",
+        ],
+    ),
+    (
+        "Convert to Flex Layout",
+        [
+            "In Flex-Layout umwandeln",
+            "Convertir en mise en page flexible",
+            "Convertir en diseño flexible",
+            "フレックスレイアウトに変換",
+            "转换为弹性布局",
+        ],
+    ),
+    (
+        "Remove Flex Layout",
+        ["Flex-Layout entfernen", "Supprimer la mise en page flexible", "Quitar diseño flexible", "フレックスレイアウトを削除", "移除弹性布局"],
+    ),
+    (
+        "Show Flex Controls",
+        [
+            "Flex-Steuerelemente einblenden",
+            "Afficher les commandes flexibles",
+            "Mostrar controles flexibles",
+            "フレックスコントロールを表示",
+            "显示弹性控件",
+        ],
+    ),
+    (
+        "Flex Layout Options",
+        ["Flex-Layout-Optionen", "Options de mise en page flexible", "Opciones de diseño flexible", "フレックスレイアウトオプション", "弹性布局选项"],
+    ),
+    (
+        "Reorder in Flex Layout",
+        [
+            "Im Flex-Layout umordnen",
+            "Réorganiser dans la mise en page flexible",
+            "Reordenar en diseño flexible",
+            "フレックスレイアウト内で並べ替え",
+            "在弹性布局中重新排序",
+        ],
+    ),
+    ("Flex Start", ["Flex-Anfang", "Début flexible", "Inicio flexible", "フレックス開始", "弹性起点"]),
+    ("Flex End", ["Flex-Ende", "Fin flexible", "Fin flexible", "フレックス終了", "弹性终点"]),
+    ("Space Between", ["Abstand dazwischen", "Espace entre", "Espacio entre", "間隔を均等", "两端对齐"]),
+    ("Space Around", ["Abstand ringsum", "Espace autour", "Espacio alrededor", "周囲に間隔", "周围间距"]),
+    ("Space Evenly", ["Gleichmäßig verteilen", "Espace uniforme", "Espacio uniforme", "均等に配置", "均匀分布"]),
+    ("Row", ["Zeile", "Ligne", "Fila", "行", "行"]),
+    ("Reverse Row", ["Zeile umgekehrt", "Ligne inversée", "Fila invertida", "行（逆方向）", "反向行"]),
+    ("Reverse Column", ["Spalte umgekehrt", "Colonne inversée", "Columna invertida", "列（逆方向）", "反向列"]),
+    ("Wrap Content", ["Inhalt umbrechen", "Renvoyer le contenu à la ligne", "Ajustar contenido", "コンテンツを折り返す", "内容换行"]),
+    ("Spacing", ["Abstände", "Espacement", "Espaciado", "間隔", "间距"]),
+    ("Horizontal Spacing", ["Horizontaler Abstand", "Espacement horizontal", "Espaciado horizontal", "水平方向の間隔", "水平间距"]),
+    ("Vertical Spacing", ["Vertikaler Abstand", "Espacement vertical", "Espaciado vertical", "垂直方向の間隔", "垂直间距"]),
+    ("Constrain proportions", ["Proportionen beibehalten", "Conserver les proportions", "Restringir proporciones", "縦横比を固定", "约束比例"]),
+    ("Auto", ["Automatisch", "Automatique", "Automático", "自動", "自动"]),
+    ("W:", ["B:", "L :", "An.:", "幅:", "宽:"]),
+    ("H:", ["H:", "H :", "Al.:", "高さ:", "高:"]),
+    ("Number:", ["Anzahl:", "Nombre :", "Número:", "数:", "数量："]),
+    ("Gutter:", ["Steg:", "Gouttière :", "Medianil:", "間隔:", "栏间距："]),
+    ("Fit Guides to:", ["Hilfslinien einpassen in:", "Ajuster les repères à :", "Ajustar guías a:", "ガイドの適用先:", "参考线适合："]),
+    ("Top:", ["Oben:", "Haut :", "Superior:", "天:", "上："]),
+    ("Bottom:", ["Unten:", "Bas :", "Inferior:", "地:", "下："]),
+    ("Inside:", ["Innen:", "Intérieur :", "Interior:", "ノド:", "内："]),
+    ("Outside:", ["Außen:", "Extérieur :", "Exterior:", "小口:", "外："]),
+    ("Left:", ["Links:", "Gauche :", "Izquierda:", "左:", "左："]),
+    ("Right:", ["Rechts:", "Droite :", "Derecha:", "右:", "右："]),
+    ("Paths:", ["Pfade:", "Tracés :", "Trazados:", "パス:", "路径："]),
+    ("Pathfinder:", ["Pathfinder:", "Pathfinder :", "Buscatrazos:", "パスファインダー:", "路径查找器："]),
+    ("Convert Shape:", ["Form konvertieren:", "Convertir la forme :", "Convertir forma:", "シェイプを変換:", "转换形状："]),
+    ("Convert Point:", ["Punkt konvertieren:", "Convertir le point :", "Convertir punto:", "ポイントを変換:", "转换点："]),
+    ("Join Path", ["Pfad zusammenfügen", "Joindre le tracé", "Unir trazado", "パスを連結", "连接路径"]),
+    ("Open Path", ["Pfad öffnen", "Ouvrir le tracé", "Abrir trazado", "パスをオープン", "开放路径"]),
+    ("Plain", ["Einfach", "Simple", "Normal", "プレーン", "普通"]),
+    ("Symmetrical", ["Symmetrisch", "Symétrique", "Simétrico", "対称", "对称"]),
+    (
+        "The stroke isn't a gradient.",
+        [
+            "Die Kontur ist kein Verlauf.",
+            "Le contour n’est pas un dégradé.",
+            "El trazo no es un degradado.",
+            "線はグラデーションではありません。",
+            "描边不是渐变。",
+        ],
+    ),
     ("Baseline Options", ["Grundlinienoptionen", "Options de ligne de base", "Opciones de línea de base", "ベースラインオプション", "基线选项"]),
     ("Fixed Number", ["Feste Anzahl", "Nombre fixe", "Número fijo", "固定数", "固定数字"]),
     ("Fixed Width", ["Feste Breite", "Largeur fixe", "Anchura fija", "固定幅", "固定宽度"]),
-    ("Gutter:", ["Spaltenabstand:", "Gouttière :", "Medianil:", "間隔:", "栏间距："]),
     ("Inset Spacing", ["Versatzabstand", "Marge intérieure", "Espaciado de margen interior", "フレーム内マージン", "内边距"]),
     ("Vertical Justification", ["Vertikale Ausrichtung", "Justification verticale", "Justificación vertical", "垂直比率", "垂直对齐"]),
     ("Align:", ["Ausrichten:", "Alignement :", "Alinear:", "整列:", "对齐："]),
@@ -402,7 +516,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     ("Warichu Size:", ["Warichu-Größe:", "Taille warichu:", "Tamaño de warichu:", "割注サイズ:", "割注大小："]),
     ("Line Spacing:", ["Zeilenabstand:", "Interligne:", "Interlineado:", "行の間隔:", "行间距："]),
-    ("Auto", ["Auto", "Auto", "Automático", "自動", "自动"]),
     ("Line Break Options", ["Umbruchoptionen", "Options de saut de ligne", "Opciones de salto de línea", "改行オプション", "换行选项"]),
     (
         "Characters Before Break:",
@@ -3907,10 +4020,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Paragraph Shading", ["Absatzschattierung", "Ombrage de paragraphe", "Sombreado de párrafo", "段落の背景色", "段落底纹"]),
     ("Keep Options", ["Umbruchoptionen", "Options d'enchaînement", "Opciones de separación", "段落分離禁止オプション", "保持选项"]),
     ("Span Columns", ["Spalten überspannen", "Étendre sur les colonnes", "Abarcar columnas", "段抜きと段分割", "跨栏"]),
-    ("Top:", ["Oben:", "Haut :", "Arriba:", "上:", "上："]),
-    ("Left:", ["Links:", "Gauche :", "Izquierda:", "左:", "左："]),
-    ("Bottom:", ["Unten:", "Bas :", "Abajo:", "下:", "下："]),
-    ("Right:", ["Rechts:", "Droite :", "Derecha:", "右:", "右："]),
     ("Keep with Next:", ["Nicht trennen von nächsten:", "Lier aux suivantes:", "Conservar con siguientes:", "次の段落と分離禁止:", "与下一段保持："]),
     ("Keep Lines Together", ["Zeilen nicht trennen", "Lignes solidaires", "Conservar líneas juntas", "行を分離しない", "保持各行同页"]),
     (
@@ -4041,7 +4150,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ["Aufzählungszeichen und Nummerierung…", "Puces et numérotation…", "Viñetas y numeración…", "箇条書き記号と番号付け…", "项目符号和编号…"],
     ),
     ("List:", ["Liste:", "Liste:", "Lista:", "リスト:", "列表："]),
-    ("Number:", ["Zahl:", "Numéro:", "Número:", "番号:", "编号："]),
     ("Mode:", ["Modus:", "Mode:", "Modo:", "モード:", "模式："]),
     (
         "Continue from Previous Number",
@@ -4166,8 +4274,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
             "应用更改；对象跟随新的页面大小和边距",
         ],
     ),
-    ("Inside:", ["Innen:", "Intérieur :", "Interior:", "ノド:", "内："]),
-    ("Outside:", ["Außen:", "Extérieur :", "Exterior:", "小口:", "外："]),
     ("Bleed:", ["Anschnitt:", "Fond perdu :", "Sangrado:", "裁ち落とし:", "出血："]),
     ("Slug:", ["Infobereich:", "Ligne-bloc :", "Indicaciones:", "印刷可能領域:", "辅助信息区："]),
     // Font menu
@@ -4257,6 +4363,7 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     static RUSSIAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static CZECH: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     static FRENCH: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    static GEORGIAN: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     if lang == "ar" {
         return ARABIC.get_or_init(|| ar::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
     }
@@ -4286,6 +4393,9 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     }
     if lang == "pl" {
         return POLISH.get_or_init(|| pl::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
+    }
+    if lang == "ka" {
+        return GEORGIAN.get_or_init(|| ka::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
     }
     if lang == "uk" {
         return UKRAINIAN.get_or_init(|| uk::TABLE.iter().copied().collect()).get(s).copied().unwrap_or(s);
@@ -4323,11 +4433,12 @@ pub(crate) fn russian_catalog() -> Vec<&'static str> {
     ru::TABLE.iter().map(|(_, text)| *text).chain(ru::CONTEXT.iter().map(|(_, _, text)| *text)).collect()
 }
 
-/// Ukrainian, Russian and Polish have several plural forms, so their count captions put the
-/// category before the value ("сторінок: 5", "страниц: 5", "Strony: 5") and every number stays
-/// grammatical; other languages keep the existing value-first caption.
+/// Ukrainian, Russian, Polish and Georgian put the category before the value in count captions
+/// ("сторінок: 5", "страниц: 5", "Strony: 5", "გვერდი: 5"): every number stays grammatical in the
+/// languages with several plural forms, and Georgian nouns stay singular after numerals. Other
+/// languages keep the existing value-first caption.
 pub fn category_first(lang: &str) -> bool {
-    matches!(lang, "uk" | "ru" | "pl")
+    matches!(lang, "uk" | "ru" | "pl" | "ka")
 }
 
 /// Caption for a counted category, e.g. `count_label("ru", "pages", 5)` is "страниц: 5". Czech
@@ -4414,8 +4525,11 @@ mod tests {
         for (key, expected) in pl::TABLE {
             assert_eq!(tr("pl", key), *expected, "pl: {key}");
         }
+        for (key, expected) in ka::TABLE {
+            assert_eq!(tr("ka", key), *expected, "ka: {key}");
+        }
         let unknown = String::from("A user-defined untranslated label");
-        for lang in ["pl", "cs", "uk", "ru", "ar", "pt-br", "it", "zh", "ja", "de", "fr", "es", "", "unknown"] {
+        for lang in ["pl", "cs", "uk", "ru", "ar", "pt-br", "it", "ka", "zh", "ja", "de", "fr", "es", "", "unknown"] {
             assert!(std::ptr::eq(tr(lang, &unknown), unknown.as_str()));
         }
     }
@@ -4533,6 +4647,29 @@ mod tests {
         assert_eq!(style_name("uk", "My layout style"), "My layout style");
         assert_eq!(workspace_name("uk", "Essentials"), "Основне");
         assert_eq!(workspace_name("uk", "My workspace"), "My workspace");
+    }
+
+    #[test]
+    fn georgian_catalog_preserves_placeholders_and_counts() {
+        let catalog: HashMap<_, _> = ka::TABLE.iter().copied().collect();
+        assert_eq!(catalog.len(), ka::TABLE.len(), "duplicate Georgian keys");
+        let placeholders = |s: &str| {
+            s.split('{').skip(1).filter_map(|part| part.split_once('}').map(|(name, _)| name.to_owned())).collect::<std::collections::BTreeSet<_>>()
+        };
+        for (key, translation) in ka::TABLE {
+            assert!(!translation.trim().is_empty(), "empty {key}");
+            assert_eq!(placeholders(key), placeholders(translation), "placeholders: {key}");
+            assert_eq!(key.ends_with('…'), translation.ends_with('…'), "ellipsis: {key}");
+            // Georgian has no capitals in running text: Mtavruli never appears in the interface.
+            assert!(!translation.chars().any(|c| ('\u{1C90}'..='\u{1CBF}').contains(&c)), "Mtavruli: {key}");
+        }
+        assert_eq!(tr("ka", "File"), "ფაილი");
+        assert_eq!(tr("ka", "Save As…"), "შენახვა როგორც…");
+        assert_eq!(tr("ka", "Unknown label"), "Unknown label");
+        assert!(!is_rtl("ka"));
+        for n in [1, 2, 5, 21] {
+            assert_eq!(count_label("ka", "pages", n), format!("გვერდი: {n}"));
+        }
     }
 
     #[test]

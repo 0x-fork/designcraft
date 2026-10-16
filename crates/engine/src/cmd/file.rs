@@ -61,20 +61,21 @@ pub fn specs() -> Vec<CommandSpec> {
             super::datamerge::refresh_relative_paths(&mut copy, std::path::Path::new(&path));
             let bytes = to_bytes_with_preview(&copy, &s.cache)?;
             #[cfg(not(target_arch = "wasm32"))]
-            crate::atomic::write_file(&path, &bytes)?;
+            crate::io::write_file(&path, &bytes).map_err(EngineError::Other)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }),
         cmd!(noundo "file.revert", "Revert", ["File"], None, "{} — back to the last saved version (not undoable)", can_revert, file_revert),
         cmd!(query "file.recovery.list", "Recovery Data", [], None, "{dir?} → [{uid, path, title, saved}] unsaved documents left by a crash (default: the session's recovery folder)", always, |s, p| {
-            let dir = recovery_dir(s, p)?;
+            let dir = recovery_dir(s, p, FolderAccess::Read)?;
             Ok(Value::Array(crate::recovery::list(&dir).into_iter().map(|(uid, mut m)| { m["uid"] = json!(uid); m }).collect()))
         }),
         cmd!(noundo "file.recovery.save", "Save Recovery Data", [], None, "{dir?} — write every unsaved document to the recovery folder (the app does this on a timer)", always, |s, p| {
-            let dir = recovery_dir(s, p)?;
+            let dir = recovery_dir(s, p, FolderAccess::Write)?;
             Ok(json!({"saved": crate::recovery::save_tracked(s, &dir)?}))
         }),
         cmd!(noundo "file.recovery.open", "Recover Documents", [], None, "{dir?} — reopen documents left in the recovery folder (unsaved)", always, |s, p| {
-            let dir = recovery_dir(s, p)?;
+            // Reopening removes the entries it read.
+            let dir = recovery_dir(s, p, FolderAccess::ReadWrite)?;
             Ok(json!({"opened": crate::recovery::open(s, &dir)?}))
         }),
         cmd!(query "file.serialize", "Serialize", [], None, "{} → {base64, bytes} the .designcraft file", has_doc, |s, _| {
@@ -408,8 +409,8 @@ pub struct RecentPreview {
 pub fn recent_preview(path: &str) -> Option<RecentPreview> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let file = std::fs::File::open(path).ok()?;
-        let png = designcraft_format::read_preview(std::io::BufReader::new(file))?;
+        let bytes = crate::io::read(path).ok()?;
+        let png = designcraft_format::read_preview(std::io::Cursor::new(bytes))?;
         let img = designcraft_images::decode_rgba(&png)?;
         let (width, height) = img.dimensions();
         Some(RecentPreview { width, height, rgba: img.into_raw() })
@@ -425,7 +426,7 @@ pub fn recent_preview(path: &str) -> Option<RecentPreview> {
 fn recent_entry(path: &str) -> Value {
     let name = std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |n| n.to_string_lossy().to_string());
     #[cfg(not(target_arch = "wasm32"))]
-    let exists = std::path::Path::new(path).is_file();
+    let exists = crate::io::is_file(path);
     #[cfg(target_arch = "wasm32")]
     let exists = false;
     json!({"path": path, "name": name, "exists": exists})
@@ -441,10 +442,23 @@ fn file_open_recent(s: &mut Session, p: &Value) -> Result<Value> {
         .cloned()
         .ok_or_else(|| bad("file.openRecent", format!("no recent file {index} (the list has {})", s.prefs.recent_files.len())))?;
     #[cfg(not(target_arch = "wasm32"))]
-    if !std::path::Path::new(&path).is_file() {
+    if !crate::io::is_file(&path) {
         return Err(EngineError::Other(format!("{path} can't be found: it was moved, renamed or deleted, or its disk isn't connected")));
     }
     file_open(s, &json!({"path": path}))
+}
+
+/// An InDesign file that DesignCraft can't open yet, with how to bring it over. Decoding one as a
+/// DesignCraft document only reported "not a DesignCraft document: expected value at line 1
+/// column 1" (#21).
+fn foreign_document(name: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+    match ext.as_str() {
+        "indd" | "indt" => Some(
+            "InDesign documents (.indd) and templates (.indt) can't be opened yet. In InDesign, choose File ▸ Export… ▸ InDesign Markup (IDML) and open the .idml in DesignCraft.",
+        ),
+        _ => None,
+    }
 }
 
 /// `file.open`: the document opens and moves to the front of File › Open Recent.
@@ -458,9 +472,12 @@ fn file_open(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
+    if let Some(hint) = foreign_document(path) {
+        return Err(EngineError::Other(format!("{path}: {hint}")));
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let bytes = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
         // The content decides first: a file's extension may be missing or wrong. The extension
         // then routes files whose content isn't recognised to the reader that explains why.
         let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
@@ -497,7 +514,10 @@ pub(crate) fn load_document_fonts(d: &mut Document, path: &str) -> (Option<Arc<c
     {
         use designcraft_fonts::DOCUMENT_FONTS_FOLDER;
         let Some(folder) = std::path::Path::new(path).parent().map(document_fonts_folder) else { return (None, 0, Vec::new()) };
-        let r = designcraft_fonts::FontDb::global().load_document_fonts(&folder);
+        // A document's folder is the agent's to name (a recovery entry or a book lists paths too):
+        // the fonts crate asks the automation roots about the folder and each font file, so fonts
+        // outside the read root stay unloaded.
+        let r = designcraft_fonts::FontDb::global().load_document_fonts(&folder, &|p| crate::file_access::check_read(p));
         d.font_scope = r.scope;
         let scope = (r.scope != 0).then(|| Arc::new(crate::FontScope(r.scope)));
         (scope, r.faces, r.skipped.into_iter().map(|s| format!("{DOCUMENT_FONTS_FOLDER}: {s}")).collect())
@@ -515,18 +535,23 @@ pub(crate) fn load_document_fonts(d: &mut Document, path: &str) -> (Option<Arc<c
 fn document_fonts_folder(dir: &std::path::Path) -> std::path::PathBuf {
     use designcraft_fonts::DOCUMENT_FONTS_FOLDER;
     let exact = dir.join(DOCUMENT_FONTS_FOLDER);
-    if exact.is_dir() {
+    if crate::io::is_dir(&exact) {
         return exact;
     }
-    std::fs::read_dir(dir)
+    crate::io::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
-        .find(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(DOCUMENT_FONTS_FOLDER)) && e.path().is_dir())
+        .find(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(DOCUMENT_FONTS_FOLDER)) && crate::io::is_dir(e.path()))
         .map_or(exact, |e| e.path())
 }
 
 fn file_open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(name) = str_param(p, "name")
+        && let Some(hint) = foreign_document(name)
+    {
+        return Err(EngineError::Other(format!("{name}: {hint}")));
+    }
     let b = base64_decode(str_param(p, "base64").unwrap_or(""));
     // IDML packages are recognised by their stored `mimetype` first entry, INDD files by their
     // signature (or their name).
@@ -549,6 +574,8 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
         .map(with_document_extension)
         .or_else(|| st.path.clone())
         .ok_or_else(|| bad("file.save", "missing `path` (document has never been saved)"))?;
+    // Before anything about the document changes: a refused save leaves it as it was.
+    crate::file_access::check_write(&path).map_err(EngineError::Other)?;
     // Prepare paths for the destination without changing the live document until persistence succeeds.
     let mut saved = (*st.doc).clone();
     super::datamerge::refresh_relative_paths(&mut saved, std::path::Path::new(&path));
@@ -556,7 +583,7 @@ fn file_save(s: &mut Session, p: &Value) -> Result<Value> {
     let saved = if paths_changed { Arc::new(saved) } else { st.doc.clone() };
     let bytes = to_bytes_with_preview(&saved, &s.cache)?;
     #[cfg(not(target_arch = "wasm32"))]
-    crate::atomic::write_file(&path, &bytes)?;
+    crate::io::write_file(&path, &bytes).map_err(EngineError::Other)?;
     let st = s.doc_mut()?;
     if paths_changed {
         st.doc = saved;
@@ -583,7 +610,7 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
     } else if let Some(path) = str_param(p, "path") {
         before = super::datamerge::fingerprint_from_path(path);
         #[cfg(not(target_arch = "wasm32"))]
-        let b = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        let b = crate::io::read_file(path).map_err(EngineError::Other)?;
         #[cfg(target_arch = "wasm32")]
         let b: Vec<u8> = vec![];
         let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.into());
@@ -790,7 +817,7 @@ pub(crate) fn read_source(p: &Value) -> Result<(Vec<u8>, String, Option<String>)
     }
     let path = str_param(p, "path").ok_or_else(|| bad("place", "missing `path` or `base64`"))?;
     #[cfg(not(target_arch = "wasm32"))]
-    let b = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let b = crate::io::read_file(path).map_err(EngineError::Other)?;
     #[cfg(target_arch = "wasm32")]
     let b: Vec<u8> = vec![];
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.into());
@@ -897,7 +924,7 @@ fn snippet_export(s: &mut Session, p: &Value) -> Result<Value> {
     match str_param(p, "path") {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
-            crate::atomic::write_file(path, &bytes)?;
+            crate::io::write_file(path, &bytes).map_err(EngineError::Other)?;
             Ok(json!({"path": path, "bytes": bytes.len(), "items": d.spreads.first().map(|s| s.items.len()).unwrap_or(0)}))
         }
         None => Ok(json!({"base64": base64_encode(&bytes), "bytes": bytes.len()})),
@@ -909,9 +936,7 @@ fn snippet_export(s: &mut Session, p: &Value) -> Result<Value> {
 fn place_layout_page(s: &mut Session, p: &Value, name: &str, bytes: &[u8]) -> Result<Value> {
     const ID: &str = "file.place";
     let src = if name.to_lowercase().ends_with(".idml") {
-        let mut d = designcraft_idml::import_idml(bytes).map_err(|e| bad(ID, e.to_string()))?;
-        super::interchange::resolve_pdf_crops(&mut d);
-        d
+        super::interchange::import_idml_confined(bytes).map_err(|e| bad(ID, e.to_string()))?
     } else {
         from_bytes(bytes)?
     };
@@ -989,17 +1014,36 @@ pub(crate) fn snippet_place(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-fn recovery_dir(s: &Session, p: &Value) -> Result<std::path::PathBuf> {
+/// Which access a recovery command needs to the folder it is given.
+#[derive(Clone, Copy)]
+enum FolderAccess {
+    Read,
+    Write,
+    ReadWrite,
+}
+
+/// The recovery folder: `dir` when the command names one, else the session's own (set by the
+/// host application, so not the automation roots' business). A named folder is checked against
+/// the roots for `access`.
+fn recovery_dir(s: &Session, p: &Value, access: FolderAccess) -> Result<std::path::PathBuf> {
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (s, p);
+        let _ = (s, p, access);
         Err(EngineError::Other("no recovery folder on the web".into()))
     }
     #[cfg(not(target_arch = "wasm32"))]
-    str_param(p, "dir")
-        .map(std::path::PathBuf::from)
-        .or_else(|| s.recovery_dir.clone())
-        .ok_or_else(|| bad("file.recovery", "no recovery folder (give `dir`)"))
+    {
+        let Some(named) = str_param(p, "dir") else {
+            return s.recovery_dir.clone().ok_or_else(|| bad("file.recovery", "no recovery folder (give `dir`)"));
+        };
+        if matches!(access, FolderAccess::Read | FolderAccess::ReadWrite) {
+            crate::file_access::check_read(named).map_err(EngineError::Other)?;
+        }
+        if matches!(access, FolderAccess::Write | FolderAccess::ReadWrite) {
+            crate::file_access::check_write(named).map_err(EngineError::Other)?;
+        }
+        Ok(std::path::PathBuf::from(named))
+    }
 }
 
 fn can_revert(s: &Session) -> std::result::Result<(), String> {
@@ -1016,12 +1060,10 @@ fn file_revert(s: &mut Session, _: &Value) -> Result<Value> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut d = if path.to_ascii_lowercase().ends_with(".idml") {
-            let bytes = std::fs::read(&path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-            let mut d = designcraft_idml::import_idml(&bytes).map_err(|e| EngineError::Other(e.to_string()))?;
-            super::interchange::resolve_pdf_crops(&mut d);
-            d
+            let bytes = crate::io::read_file(&path).map_err(EngineError::Other)?;
+            super::interchange::import_idml_confined(&bytes).map_err(|e| EngineError::Other(e.to_string()))?
         } else {
-            from_bytes(&std::fs::read(&path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?)?
+            from_bytes(&crate::io::read_file(&path).map_err(EngineError::Other)?)?
         };
         // As opened again: the fonts beside it now (unchanged files are shared, not read again).
         let (fonts, _, _) = load_document_fonts(&mut d, &path);
@@ -1031,6 +1073,7 @@ fn file_revert(s: &mut Session, _: &Value) -> Result<Value> {
         let mut fresh = DocState::new(d, Some(path.clone()));
         fresh.fonts = fonts;
         fresh.uid = uid;
+        // A new state has a revision no state had before, so caches don't show the old document.
         crate::recovery::discard_document(s, index, recovery_dir.as_deref());
         *s.doc_mut()? = fresh;
         Ok(json!({"path": path}))
@@ -1693,6 +1736,21 @@ mod document_fonts_tests {
         let r = s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
         assert_eq!(r["documentFonts"], 1, "{r}");
         assert_eq!(font_entry(&mut s, FAMILY)["missing"], false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_indesign_file_says_how_to_bring_it_over() {
+        // The extension decides (any case), not the bytes: no InDesign-made file is needed.
+        let dir = temp_dir("indd");
+        let path = dir.join("Brochure.INDD");
+        std::fs::write(&path, b"not a DesignCraft document").unwrap();
+        let mut s = Session::new();
+        let e = s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap_err().to_string();
+        assert!(e.contains("InDesign Markup (IDML)") && !e.contains("expected value"), "{e}");
+        let e = s.execute("file.openBytes", &json!({"name": "Brochure.indt", "base64": ""})).unwrap_err().to_string();
+        assert!(e.contains("InDesign Markup (IDML)"), "{e}");
+        assert!(s.doc().is_err(), "nothing was opened");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

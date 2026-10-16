@@ -20,6 +20,7 @@ pub mod cjk_settings;
 pub mod datamerge;
 mod edit;
 pub mod endnotes;
+pub mod flex;
 pub mod ids;
 pub mod index;
 pub mod item;
@@ -51,6 +52,7 @@ pub use designcraft_color as color;
 pub use designcraft_geom as geom;
 pub use edit::{ItemLoc, ItemPath, SpreadRef, item_hit as edit_hit};
 pub use endnotes::{ENDNOTE_REF, EditorialNote, EndnoteOptions, NOTE_MARK};
+pub use flex::{FlexAlign, FlexDirection, FlexJustify, FlexLayout, FlexSize};
 pub use ids::*;
 pub use index::{INDEX_MARK, IndexRef};
 pub use item::*;
@@ -356,7 +358,7 @@ pub struct DocSettings {
     pub keyboard_increment: f64,
     /// Kerning/Tracking increment (Alt+Left/Right in text), in 1/1000 em.
     pub kerning_increment: f64,
-    /// Named lists (Type › Bulleted and Numbered Lists › Define Lists).
+    /// Named lists (Type › Bulleted & Numbered Lists › Define Lists).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lists: Vec<NumberedList>,
     /// The story in the primary text frames (Smart Text Reflow adds and removes pages for it).

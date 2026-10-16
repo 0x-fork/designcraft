@@ -1,6 +1,6 @@
 //! Tool cursors drawn in code: black glyphs with a white halo, so they read on any page colour.
 //! The Selection tool's filled arrow, Direct Selection's hollow arrow, the pen nib with a badge for
-//! what a click does (add, delete, close, convert), and a curved double arrow for rotating.
+//! what a click does (add, delete, close, convert, continue), and a curved double arrow for rotating.
 //! Cursors without a glyph stay system cursors.
 //!
 //! Linux and Windows show the glyphs as OS cursors ([`Images`]): the system moves them itself, so
@@ -273,7 +273,7 @@ pub fn system(c: Cursor) -> egui::CursorIcon {
         Cursor::ResizeNwSe => C::ResizeNwSe,
         Cursor::ResizeNeSw => C::ResizeNeSw,
         Cursor::Rotate => C::Alias,
-        Cursor::Pen | Cursor::PenAdd | Cursor::PenDelete | Cursor::PenClose | Cursor::PenConvert | Cursor::PenContinue => C::Crosshair,
+        Cursor::Pen | Cursor::PenAdd | Cursor::PenDelete | Cursor::PenClose | Cursor::PenContinue | Cursor::PenConvert => C::Crosshair,
         Cursor::PathBracket => C::ResizeColumn,
         Cursor::Text => C::Text,
         Cursor::Hand => C::Grab,

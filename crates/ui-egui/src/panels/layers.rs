@@ -18,7 +18,8 @@ const ROW_H: f32 = 24.0;
 /// Width of the eye and lock columns.
 const COL_W: f32 = 22.0;
 
-/// Display name of an item: its own name, the first words of a text frame's story, or the kind.
+/// Display name of an item: its own name, the first words of a text frame's story, the file a
+/// graphic frame shows (as InDesign lists placed images), or the kind.
 pub fn item_label(doc: &Document, it: &Item) -> String {
     if !it.name.is_empty() {
         return it.name.clone();
@@ -45,6 +46,9 @@ pub fn item_label(doc: &Document, it: &Item) -> String {
             let ell = if short.chars().count() < words.chars().count() { "…" } else { "" };
             return format!("<{short}{ell}>");
         }
+    }
+    if let Some(name) = it.graphic().and_then(|g| doc.assets.get(&g.asset)).map(|a| a.name.trim()).filter(|n| !n.is_empty()) {
+        return format!("<{name}>");
     }
     it.default_label().to_string()
 }
@@ -224,6 +228,11 @@ struct Listing<'a> {
     doc: &'a Document,
     language: &'a str,
     selected: &'a [ItemId],
+    /// The top-level objects of the selection (see `show`).
+    shown: &'a [ItemId],
+    /// A new selection: its first row scrolls into view.
+    reveal: bool,
+    scrolled: &'a std::cell::Cell<bool>,
     layer: LayerId,
     layer_index: usize,
     layer_color: Color32,
@@ -246,7 +255,13 @@ fn object_rows(
     for it in items.iter().rev() {
         let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
         let is_sel = ls.selected.contains(&it.id);
-        if resp.hovered() {
+        if is_sel || ls.shown.contains(&it.id) {
+            ui.painter().rect_filled(row, 0.0, t.row_selected);
+            if ls.reveal && !ls.scrolled.get() {
+                resp.scroll_to_me(Some(egui::Align::Center));
+                ls.scrolled.set(true);
+            }
+        } else if resp.hovered() {
             ui.painter().rect_filled(row, 0.0, t.hover);
         }
         let (eye, lock) = eye_lock(ui, ls.language, row, !it.hidden, it.locked, !ls.layer_visible, ("item", it.id.0));
@@ -261,14 +276,28 @@ fn object_rows(
             tri_clicked = ui.interact(tri, ui.id().with(("gtri", it.id.0)), Sense::click()).clicked();
         }
         let name = item_label(ls.doc, it);
-        let clip = Rect::from_min_max(row.min, pos2(row.max.x - 26.0, row.max.y));
-        ui.painter().with_clip_rect(clip).text(
-            row.min + vec2(2.0 * COL_W + 30.0 + indent, ROW_H / 2.0),
-            egui::Align2::LEFT_CENTER,
-            &name,
-            egui::FontId::proportional(11.0),
-            if it.hidden { t.text_dim } else { t.text },
-        );
+        let field = Rect::from_min_max(row.min + vec2(2.0 * COL_W + 28.0 + indent, 3.0), pos2(row.max.x - 28.0, row.max.y - 3.0));
+        let renaming = match rename_field(ui, field, it.id.0) {
+            // An empty name goes back to the automatic label.
+            Some(Some(new)) => {
+                if new != it.name {
+                    cmds.push(("object.rename", json!({"id": it.id.0, "name": new})));
+                }
+                false
+            }
+            Some(None) => false,
+            None => ui.data(|d| d.get_temp::<RenameState>(egui::Id::new(RENAME))).is_some_and(|(k, ..)| k == it.id.0),
+        };
+        if !renaming {
+            let clip = Rect::from_min_max(row.min, pos2(row.max.x - 26.0, row.max.y));
+            ui.painter().with_clip_rect(clip).text(
+                row.min + vec2(2.0 * COL_W + 30.0 + indent, ROW_H / 2.0),
+                egui::Align2::LEFT_CENTER,
+                &name,
+                egui::FontId::proportional(11.0),
+                if it.hidden { t.text_dim } else { t.text },
+            );
+        }
         let sq = selection_square(ui, ls.language, row, ls.layer_color, is_sel, true, ("item", it.id.0)).clicked();
         // Dragging a selected row drags the selected objects that share its parent (top-level
         // rows: those on this layer).
@@ -288,6 +317,10 @@ fn object_rows(
             cmds.push(("object.setFlags", json!({"ids": [it.id.0], "locked": !it.locked})));
         } else if tri_clicked {
             ui.data_mut(|d| d.insert_temp(open_id, !open));
+        } else if resp.double_clicked() {
+            // Its own name, or the label it shows without the brackets.
+            let current = if it.name.is_empty() { name.trim_start_matches('<').trim_end_matches('>').to_string() } else { it.name.clone() };
+            start_rename(ui, it.id.0, &current);
         } else if sq || resp.clicked() {
             let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
             cmds.push(("selection.set", json!({"ids": [it.id.0], "add": add})));
@@ -330,6 +363,15 @@ pub fn show(app: &mut DesignApp, ui: &mut Ui) {
     let selected: Vec<ItemId> = st.selection.items.clone();
     let sel_layers: Vec<_> = selected.iter().filter_map(|i| doc.item(*i).map(|it| it.layer)).collect();
     let language = app.ui.language.clone();
+    // The rows a selection reveals: an object selected inside a closed group shows as its group.
+    let shown: Vec<ItemId> = selected.iter().map(|i| doc.top_level_of(*i).unwrap_or(*i)).collect();
+    // A new selection (made on the canvas or anywhere else) is revealed: its layer opens and its row
+    // scrolls into view, once, so the panel can still be scrolled and closed freely afterwards.
+    let last_id = egui::Id::new("layers_revealed_selection");
+    let now: Vec<u64> = shown.iter().map(|i| i.0).collect();
+    let reveal = !now.is_empty() && ui.data(|d| d.get_temp::<Vec<u64>>(last_id)).as_ref() != Some(&now);
+    ui.data_mut(|d| d.insert_temp(last_id, now));
+    let scrolled = std::cell::Cell::new(false);
     // Objects on the current spread, back to front.
     let cur = crate::canvas::current_page(app).unwrap_or(0);
     let spread_items: Vec<std::sync::Arc<Item>> =
@@ -340,7 +382,11 @@ pub fn show(app: &mut DesignApp, ui: &mut Ui) {
     // `doc.layers` runs top (frontmost) to bottom, as the panel lists them.
     for (li, l) in doc.layers.iter().enumerate() {
         let open_id = egui::Id::new(("layer_open", l.id.0));
-        let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(l.id == active);
+        let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(l.id == active);
+        if reveal && sel_layers.contains(&l.id) && !open {
+            open = true;
+            ui.data_mut(|d| d.insert_temp(open_id, true));
+        }
         let lc = c32(l.color);
         let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &l.name));
@@ -437,6 +483,9 @@ pub fn show(app: &mut DesignApp, ui: &mut Ui) {
             doc: &doc,
             language: &language,
             selected: &selected,
+            shown: &shown,
+            reveal,
+            scrolled: &scrolled,
             layer: l.id,
             layer_index: li,
             layer_color: lc,
@@ -496,6 +545,50 @@ pub fn show(app: &mut DesignApp, ui: &mut Ui) {
             }
         });
     });
+}
+
+/// The object whose row is being renamed.
+type RenameKey = u64;
+/// The row, the field's text, and the text it started with.
+type RenameState = (RenameKey, String, String);
+const RENAME: &str = "layers_rename";
+
+/// The name field of the row being renamed (double-click), in `r`: `Some(Some(name))` when Enter
+/// or a click elsewhere confirms it with a changed text, `Some(None)` when Esc cancels or the text
+/// is the one it started with, `None` while typing or when this row isn't being renamed.
+fn rename_field(ui: &mut Ui, r: Rect, key: RenameKey) -> Option<Option<String>> {
+    let id = egui::Id::new(RENAME);
+    let (k, mut text, start): RenameState = ui.data(|d| d.get_temp(id))?;
+    if k != key {
+        return None;
+    }
+    let edit = ui.put(r, egui::TextEdit::singleline(&mut text).font(egui::FontId::proportional(11.0)).margin(vec2(2.0, 1.0)));
+    if !edit.has_focus() && !edit.lost_focus() {
+        edit.request_focus();
+    }
+    let done = if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        Some(None)
+    } else if edit.lost_focus() {
+        // An unnamed object's field starts with its automatic label; confirming that text
+        // unchanged must not turn the label into a name.
+        let new = text.trim();
+        if new == start.trim() { Some(None) } else { Some(Some(new.to_string())) }
+    } else {
+        None
+    };
+    ui.data_mut(|d| {
+        if done.is_some() {
+            d.remove::<RenameState>(id);
+        } else {
+            d.insert_temp(id, (key, text, start));
+        }
+    });
+    done
+}
+
+/// Start renaming row `key`, its field showing `name`.
+fn start_rename(ui: &Ui, key: RenameKey, name: &str) {
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (key, name.to_string(), name.to_string())));
 }
 
 #[cfg(test)]
@@ -619,5 +712,82 @@ mod tests {
         h.drag_at(p);
         h.drop_at(p);
         h.run_steps(3);
+    }
+
+    #[test]
+    fn selecting_an_object_opens_its_layer_in_the_panel() {
+        use egui_kittest::Harness;
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        let first = app.session.active().unwrap().doc.item(ItemId(id)).unwrap().layer;
+        // A new layer becomes the active one: the first layer's row starts closed.
+        app.run("layer.new", json!({})).unwrap();
+        app.run("selection.set", json!({"ids": []})).unwrap();
+        let mut h = Harness::builder().with_size(egui::vec2(260.0, 400.0)).build_ui_state(|ui, app: &mut DesignApp| show(app, ui), app);
+        h.run_steps(2);
+        let open = |h: &Harness<'_, DesignApp>| h.ctx.data(|d| d.get_temp::<bool>(egui::Id::new(("layer_open", first.0)))).unwrap_or(false);
+        assert!(!open(&h), "closed while nothing on it is selected");
+        h.state_mut().run("selection.set", json!({"ids": [id]})).unwrap();
+        h.run_steps(2);
+        assert!(open(&h), "selecting the object opens its layer");
+        // Closed again by hand, it stays closed while the selection stays the same.
+        h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(("layer_open", first.0)), false));
+        h.run_steps(2);
+        assert!(!open(&h));
+    }
+
+    #[test]
+    fn rows_rename_in_place() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        let mut h = Harness::builder().with_size(egui::vec2(260.0, 400.0)).build_ui_state(|ui, app: &mut DesignApp| show(app, ui), app);
+        h.run_steps(2);
+        let rename = |h: &mut Harness<'_, DesignApp>, key: RenameKey, typed: &str| {
+            // As a double-click starts it (with an emptied field here, so the typing is the name).
+            h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (key, String::new(), String::new())));
+            h.run_steps(2);
+            h.get_by_role(egui::accesskit::Role::TextInput).type_text(typed);
+            h.run_steps(1);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(2);
+        };
+        rename(&mut h, id, "Hero bottle");
+        assert_eq!(h.state().session.active().unwrap().doc.item(ItemId(id)).unwrap().name, "Hero bottle");
+        // Esc leaves the name as it was.
+        h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (id, String::new(), String::new())));
+        h.run_steps(2);
+        h.get_by_role(egui::accesskit::Role::TextInput).type_text("Oops");
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert_eq!(h.state().session.active().unwrap().doc.item(ItemId(id)).unwrap().name, "Hero bottle");
+    }
+
+    #[test]
+    fn confirming_an_unedited_automatic_label_keeps_the_object_unnamed() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [72, 72, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        let mut h = Harness::builder().with_size(egui::vec2(260.0, 400.0)).build_ui_state(|ui, app: &mut DesignApp| show(app, ui), app);
+        h.run_steps(2);
+        let name = |h: &Harness<'_, DesignApp>| h.state().session.active().unwrap().doc.item(ItemId(id)).unwrap().name.clone();
+        // As a double-click on the unnamed row starts it: the field shows the automatic label.
+        let start = |h: &mut Harness<'_, DesignApp>| {
+            h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (id, "Rectangle".to_string(), "Rectangle".to_string())));
+            h.run_steps(2);
+        };
+        start(&mut h);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(2);
+        assert_eq!(name(&h), "", "Enter without editing keeps following the automatic label");
+        start(&mut h);
+        h.get_by_role(egui::accesskit::Role::TextInput).type_text("X");
+        h.run_steps(1);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(2);
+        assert!(name(&h).contains('X'), "an edited text becomes the name");
     }
 }

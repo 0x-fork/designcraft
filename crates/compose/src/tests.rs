@@ -215,6 +215,25 @@ fn a_wrap_object_beside_column_two_leaves_a_narrow_column_one_set() {
     assert!(first >= 4, "{first} lines in column 1");
 }
 
+/// In a frame of narrow columns, a wrap object beside column 2 leaves column 1 alone: only a gap
+/// the object cuts in its own column is held to the minimum width (it was dropped, as the object
+/// overlapped the line's band, and the text went past column 1).
+#[test]
+fn wrap_object_beside_one_narrow_column_leaves_the_other_alone() {
+    // Two 18 pt columns (12 pt gutter): narrower than 1.5 em of the 14 pt paragraph.
+    let (mut d, sid) = tombstone(Rect::new(300.0, 300.0, 348.0, 340.0), Rect::new(336.0, 300.0, 380.0, 340.0));
+    let fid = d.spreads[0].items.iter().find(|i| i.text_frame().is_some_and(|t| t.story == sid)).unwrap().id;
+    d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.columns = 2;
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let f = &cs.frames[0];
+    assert_eq!(f.columns.len(), 2);
+    assert!(f.columns[0].width() < 21.0, "column 1 is narrower than 1.5 em: {}", f.columns[0].width());
+    assert!(!cs.is_overset());
+    let l = &f.lines[0];
+    assert_eq!(l.column, 0, "set in column 1");
+    assert!(l.baseline - f.columns[0].y0 < 20.0, "on its first line: {}", l.baseline);
+}
+
 /// Insert rectangles with wrap, given as (bounds, [top, left, bottom, right] offsets, mode).
 fn add_wrap_objects(d: &mut Document, objects: &[(Rect, [f64; 4], WrapMode)]) {
     let lid = d.default_layer();
@@ -1828,6 +1847,44 @@ fn footnote_line_at_column_top_still_sets() {
     let cs = compose_story(&d, sid, &ComposeOptions::default());
     assert!(!cs.frames[0].lines.is_empty());
     assert_eq!(cs.frames[0].notes.len(), 1);
+}
+
+#[test]
+fn footnotes_span_columns_across_the_frame_bottom() {
+    // Span Footnotes Across Columns: the note area runs under every column of the frame and each
+    // column's text ends above it, also the columns before the one holding the reference.
+    let text = [LOREM; 8].join(" ");
+    let note = "A long footnote, long enough to wrap if it is set one column wide rather than across the frame.";
+    let compose = |at: usize, span: bool| {
+        let (mut d, sid, fid) = doc_with(&text, Rect::new(36.0, 36.0, 436.0, 236.0), ParaAttrs::default());
+        d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.columns = 2;
+        d.footnote_options.span_columns = span;
+        d.story_mut(sid).unwrap().insert_note(at, note, ParaFormat::default());
+        let space_before = d.footnote_options.space_before;
+        (compose_story(&d, sid, &ComposeOptions::default()), space_before)
+    };
+    let plain = compose(10, false).0;
+    // A reference halfway down the second column.
+    let in_col1 = plain.frames[0].lines.iter().filter(|l| l.column == 1).nth(5).unwrap().range.start + 5;
+    for (at, ref_col) in [(10, 0), (in_col1, 1)] {
+        let (cs, space_before) = compose(at, true);
+        let ft = &cs.frames[0];
+        let (c0, c1) = (ft.columns[0], ft.columns[1]);
+        assert_eq!(ft.notes.len(), 1);
+        let n = &ft.notes[0];
+        assert_eq!(n.column, ref_col, "ref at {at}");
+        assert!((n.rect.x0 - c0.x0).abs() < 1e-6 && (n.rect.x1 - c1.x1).abs() < 1e-6, "ref at {at}: note {:?} spans the frame", n.rect);
+        assert!((n.rect.y1 - c0.y1).abs() < 1e-6, "ref at {at}: note ends at the frame bottom");
+        for col in 0..2 {
+            let last = ft.lines.iter().rfind(|l| l.column == col).unwrap();
+            assert!(last.baseline + last.descent <= n.rect.y0 - space_before + 0.01, "ref at {at}: column {col} text clears the note");
+        }
+        assert!(n.text.frames[0].lines.iter().all(|l| l.x1 - l.x0 > c0.width() + 1.0), "ref at {at}: note set at the frame width");
+    }
+    // Off: the note stays in the column holding its reference.
+    let n = &compose(in_col1, false).0.frames[0].notes[0];
+    assert_eq!(n.column, 1);
+    assert!((n.rect.x0 - plain.frames[0].columns[1].x0).abs() < 1e-6 && (n.rect.x1 - plain.frames[0].columns[1].x1).abs() < 1e-6);
 }
 
 #[test]
@@ -4473,7 +4530,7 @@ fn each_document_shapes_words_in_its_own_fonts() {
         let folder = root.join(name);
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("word.ttf"), font_with_glyph(FAMILY, &['a', 'b', ' '], glyph).unwrap()).unwrap();
-        scopes.push((designcraft_fonts::FontDb::global().load_document_fonts(&folder).scope, glyph));
+        scopes.push((designcraft_fonts::FontDb::global().load_document_fonts(&folder, &|_| Ok(())).scope, glyph));
     }
     let text = "ab ab ab ab";
     let mut faces = Vec::new();
@@ -4503,7 +4560,7 @@ fn composite_fonts_draw_from_the_documents_fonts() {
     let folder = std::env::temp_dir().join(format!("dc-compose-composite-docfont-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("digits.ttf"), font_with_glyph(FAMILY, &['1'], 'X').unwrap()).unwrap();
-    let scope = FontDb::global().load_document_fonts(&folder).scope;
+    let scope = FontDb::global().load_document_fonts(&folder, &|_| Ok(())).scope;
     let (mut d, sid, _) = doc_with("A1B", Rect::new(0.0, 0.0, 300.0, 100.0), ParaAttrs::default());
     d.font_scope = scope;
     std::sync::Arc::make_mut(&mut d.styles).composite_fonts.push(CompositeFont {
@@ -4793,7 +4850,7 @@ fn drop_cap_in_a_document_font_aligns_its_left_edge() {
     let folder = std::env::temp_dir().join(format!("dc-compose-dropcap-docfont-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("dropcap.ttf"), designcraft_fonts::testing::font_with_glyph(FAMILY, &chars, 'O').unwrap()).unwrap();
-    let scope = designcraft_fonts::FontDb::global().load_document_fonts(&folder).scope;
+    let scope = designcraft_fonts::FontDb::global().load_document_fonts(&folder, &|_| Ok(())).scope;
     let para = ParaAttrs { left_indent: Some(10.0), ..drop_cap(2, 1) };
     let (mut d, sid, _) = doc_with(&text, Rect::new(0.0, 0.0, 300.0, 1000.0), para);
     d.font_scope = scope;
@@ -7089,4 +7146,20 @@ fn spaces_at_the_end_of_a_paragraph_take_no_room() {
         let first = all_lines(&cs)[0];
         assert_eq!(&text[first.range.clone()].trim_end(), &"2 VOOR", "{text:?}");
     }
+}
+
+/// A story that ends with a return isn't overset when only its empty last paragraph doesn't fit,
+/// as in InDesign (Montilla Design's file: a caption fitted to its three lines, "No errors"). Text
+/// that doesn't fit still is.
+#[test]
+fn an_empty_last_paragraph_isnt_overset() {
+    // 12 pt, 14.4 leading: two lines fit in 35 pt, a third (baseline ~40) doesn't.
+    let (d, sid, _) = doc_with("One\nTwo\n", Rect::new(0.0, 0.0, 200.0, 35.0), ParaAttrs::default());
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    assert_eq!(all_lines(&cs).len(), 2);
+    assert!(!cs.is_overset(), "only the empty paragraph after the last return is left");
+    let (d, sid, _) = doc_with("One\nTwo\nThree", Rect::new(0.0, 0.0, 200.0, 35.0), ParaAttrs::default());
+    assert!(compose_story(&d, sid, &ComposeOptions::default()).is_overset());
+    let (d, sid, _) = doc_with("One\nTwo\n\n", Rect::new(0.0, 0.0, 200.0, 35.0), ParaAttrs::default());
+    assert!(compose_story(&d, sid, &ComposeOptions::default()).is_overset(), "an empty paragraph before the last one is text");
 }

@@ -227,7 +227,8 @@ pub struct UiState {
     pub display_quality: designcraft_render::DisplayQuality,
     /// Preferences › Interface › UI scaling (1 = 100%).
     pub ui_scale: f32,
-    /// Preferences › Appearance of Black: 100% K on screen as rich black.
+    /// Preferences › Appearance of Black: 100% K on screen as rich black (InDesign's default,
+    /// Display All Blacks as Rich Black; off: accurately, as dark grey).
     pub rich_black: bool,
     /// View › Overprint Preview.
     pub overprint_preview: bool,
@@ -322,6 +323,12 @@ pub struct UiState {
     /// Type › Tabs: the selected stop and where the panel sits.
     #[serde(skip)]
     pub tabs_panel: panels::tabs::PanelState,
+    /// The colour and gradient swatches applied last: what Apply Color (,) and Apply Gradient (.)
+    /// apply again.
+    #[serde(skip)]
+    pub last_color: Option<String>,
+    #[serde(skip)]
+    pub last_gradient: Option<String>,
     /// Fill/Stroke proxy (Tools and Color panels): the stroke is in front, so Apply None and the
     /// Color panel act on it (X toggles).
     #[serde(skip)]
@@ -363,7 +370,7 @@ impl Default for UiState {
             ink_limit: None,
             display_quality: designcraft_render::DisplayQuality::High,
             ui_scale: 1.0,
-            rich_black: false,
+            rich_black: true,
             overprint_preview: false,
             shortcuts: Default::default(),
             control_bar: false,
@@ -409,6 +416,8 @@ impl Default for UiState {
             palette: None,
             flyout: None,
             tabs_panel: Default::default(),
+            last_color: None,
+            last_gradient: None,
             stroke_front: false,
         }
     }
@@ -594,14 +603,14 @@ pub struct DesignApp {
     /// The canvas asked for the system IME in the last frame (the web build's text input has the
     /// keyboard then).
     pub(crate) canvas_ime: bool,
-    /// The tool cursor bitmaps handed to the OS.
-    pub cursors: cursors::Images,
     /// Quit was chosen: close the window on the next frame, as its close button does.
     quit_requested: bool,
     /// Close the window without asking about unsaved changes (the control channel's `app.quit`).
     pub(crate) quit_without_asking: bool,
     /// No document is discarded until every unsaved document has an up-to-date approval.
     quitting: Option<QuitState>,
+    /// The tool cursor bitmaps handed to the OS.
+    pub cursors: cursors::Images,
 }
 
 struct QuitState {
@@ -659,10 +668,10 @@ impl DesignApp {
             ime_marked: None,
             ime_discard: false,
             canvas_ime: false,
-            cursors: cursors::Images::default(),
             quit_requested: false,
             quit_without_asking: false,
             quitting: None,
+            cursors: cursors::Images::default(),
         }
     }
 
@@ -869,6 +878,7 @@ impl DesignApp {
     pub fn after_engine(&mut self) {
         let reqs = std::mem::take(&mut self.session.ui_requests);
         for r in reqs {
+            let was_find = self.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange");
             match r {
                 UiRequest::Dialog { id, params } => self.ui.dialog = Some(dialogs::Dialog::new(&id, params)),
                 UiRequest::View { params } => canvas::apply_view_request(self, &params),
@@ -876,6 +886,10 @@ impl DesignApp {
                     let _ = params;
                     let _ = self.pick_and_open(&purpose);
                 }
+            }
+            // Release only when the request actually replaces Find, including a native PDF picker.
+            if was_find && !self.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange") {
+                self.session.reset_find_scope();
             }
         }
         // New documents get a fitted view.
@@ -1342,6 +1356,9 @@ impl DesignApp {
         let r = self.run(cmd, params);
         if let Err(e) = &r {
             let title = if cmd == "file.place" { "Can't Place the File" } else { "Can't Open the File" };
+            if self.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange") {
+                self.session.reset_find_scope();
+            }
             self.ui.dialog = Some(dialogs::Dialog::new("alert", json!({"title": title, "file": file, "message": e})));
         } else if let Ok(result) = &r {
             let warnings: Vec<&str> = result
@@ -1744,6 +1761,17 @@ mod tests {
         let mut raw = egui::RawInput { events: events(), ..Default::default() };
         drop_key_name_text(&mut raw, true);
         assert_eq!(raw.events, events());
+    }
+
+    /// InDesign shows 100% K as pure black on screen unless Appearance of Black says otherwise
+    /// (Display All Blacks as Rich Black is its default); settings saved without the field get it too.
+    #[test]
+    fn black_shows_as_rich_black_by_default() {
+        assert!(UiState::default().rich_black);
+        let saved: UiState = serde_json::from_str("{}").unwrap();
+        assert!(saved.rich_black);
+        let accurate: UiState = serde_json::from_str(r#"{"richBlack": false}"#).unwrap();
+        assert!(!accurate.rich_black, "a saved choice is kept");
     }
 
     /// An app with one document that has an unsaved edit.
@@ -2725,7 +2753,7 @@ mod browser_import_tests {
         result.push_str(&format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1));
         result.into_bytes()
     }
-    fn pdf() -> Vec<u8> {
+    pub(super) fn pdf() -> Vec<u8> {
         pdf_pages(3)
     }
 

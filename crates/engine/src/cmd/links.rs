@@ -132,7 +132,7 @@ pub fn link_missing(a: &designcraft_doc::Asset) -> bool {
     let Some(path) = &a.link else { return false };
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::metadata(path).is_err()
+        !crate::io::exists(path)
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -146,11 +146,11 @@ pub fn status(a: &designcraft_doc::Asset) -> &'static str {
     let Some(path) = &a.link else { return "embedded" };
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match std::fs::metadata(path) {
+        match crate::io::metadata(path) {
             Err(_) => "missing",
             Ok(m) if m.len() as usize != a.data.len() => "modified",
             // Same size: compare the bytes (cheap for the sizes involved, and exact).
-            Ok(_) => match std::fs::read(path) {
+            Ok(_) => match crate::io::read_file(path) {
                 Ok(b) if b == *a.data => "ok",
                 Ok(_) => "modified",
                 Err(_) => "missing",
@@ -200,9 +200,11 @@ pub(crate) type TextChecks = std::collections::HashMap<String, (Fingerprint, Str
 pub(crate) fn text_status(l: &TextFileLink, checks: &mut TextChecks) -> &'static str {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let now = match std::fs::metadata(&l.path) {
+        if !crate::io::is_file(&l.path) {
+            return "missing";
+        }
+        let now = match crate::io::metadata(&l.path) {
             Err(_) => return "missing",
-            Ok(m) if !m.is_file() => return "missing",
             Ok(m) => super::datamerge::fingerprint_from(&m),
         };
         if now.size != l.size {
@@ -281,10 +283,11 @@ fn list(d: &Document, checks: &mut TextChecks) -> Vec<Value> {
 /// A linked text file's bytes, with its size and time from before they were read.
 #[cfg(not(target_arch = "wasm32"))]
 fn read_text(path: &str) -> Result<(Vec<u8>, Fingerprint)> {
-    use std::io::Read;
     let err = |e: std::io::Error| EngineError::Other(format!("{path}: {e}"));
-    let m = std::fs::metadata(path).map_err(err)?;
-    if !m.is_file() {
+    // The roots' own message when they refuse the path.
+    crate::file_access::check_read(path).map_err(EngineError::Other)?;
+    let m = crate::io::metadata(path).map_err(err)?;
+    if !crate::io::is_file(path) {
         return Err(EngineError::Other(format!("{path}: not a file")));
     }
     let too_large = || EngineError::Other(format!("{path}: larger than {} MiB", MAX_TEXT_LINK_BYTES / (1024 * 1024)));
@@ -292,8 +295,7 @@ fn read_text(path: &str) -> Result<(Vec<u8>, Fingerprint)> {
         return Err(too_large());
     }
     // At most one byte over the limit, in case the file grew since.
-    let mut b = Vec::new();
-    std::fs::File::open(path).map_err(err)?.take(MAX_TEXT_LINK_BYTES + 1).read_to_end(&mut b).map_err(err)?;
+    let b = crate::io::read_capped(path, MAX_TEXT_LINK_BYTES).map_err(err)?;
     if b.len() as u64 > MAX_TEXT_LINK_BYTES {
         return Err(too_large());
     }
@@ -317,7 +319,7 @@ fn reimport(d: &mut Document, sid: StoryId, path: &str, bytes: &[u8], before: Fi
 
 #[cfg(not(target_arch = "wasm32"))]
 fn reload(path: &str) -> Result<(Vec<u8>, (u32, u32))> {
-    let b = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let b = crate::io::read_file(path).map_err(EngineError::Other)?;
     let px = designcraft_render::image_size(&b).ok_or_else(|| bad("links", format!("{path}: unsupported or corrupt image")))?;
     Ok((b, px))
 }
@@ -356,6 +358,10 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn relink_folder(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = str_param(p, "dir").map(std::path::PathBuf::from);
+    if let Some(dir) = &dir {
+        // Refused outright: candidates outside the automation read root would only look missing.
+        crate::file_access::check_read(dir).map_err(EngineError::Other)?;
+    }
     let ext = str_param(p, "extension").map(|e| e.trim_start_matches('.').to_string());
     if dir.is_none() && ext.is_none() {
         return Err(bad("links.relinkFolder", "give `dir` and/or `extension`"));
@@ -376,7 +382,7 @@ fn relink_folder(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let folder = dir.clone().or_else(|| old.parent().map(|p| p.to_path_buf())).unwrap_or_default();
         let cand = folder.join(&name);
-        if cand.exists() {
+        if crate::io::exists(&cand) {
             todo.push((a.id, cand));
         } else {
             not_found.push(name.to_string_lossy().to_string());
@@ -646,9 +652,7 @@ mod shared_asset_tests {
                 link: None,
                 data: Arc::new(png(8, 4)),
                 pixels: None,
-                page: 0,
-                pdf_crop: Default::default(),
-                pdf_box: None,
+                ..Default::default()
             }),
         );
         let iid = ItemId(src.alloc());
@@ -945,8 +949,8 @@ mod text_link_tests {
     }
 }
 
-#[cfg(test)]
 #[cfg(unix)]
+#[cfg(test)]
 mod text_link_read_tests {
     use std::time::Duration;
 

@@ -1,6 +1,6 @@
 # Where DesignCraft falls short of InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (.indd and .indt open through indd-utils; gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML; Tabs panel listed as present (#343); book chapter update safety; gap 16: Based on Parent leftovers) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (.indd and .indt open through indd-utils; gap 0 shrunk: text threads by hand; threading gaps added; Optical kerning from outlines (#181); gap 6: macOS lists fonts that font services and managers activate; shared print spooler; image clipping paths from IDML; Tabs panel listed as present (#343); book chapter update safety; gap 16: Based on Parent leftovers; bounded control click/drag input) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every known shortfall against InDesign 2026, one entry each, ranked by how much it stops an
 InDesign professional from doing real work. This is the work list: agents pick from the top.
@@ -108,9 +108,9 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 
 ## High
 
-### 8. Canvas text input has no IME (U, L)
-- **Missing:** composition input for Chinese, Japanese and Korean on the canvas (#322).
-  VectorCraft has an implementation to port.
+### 8. Canvas IME not checked with real input methods (U, L)
+- **Have:** IME composition in the Type tool on macOS, Windows, Linux and the web (#322).
+- **Missing:** a check by hand with a system IME on each platform, and the fixes it finds.
 - **Estimate:** 10–20 h. **Doc:** [localization-parity.md](localization-parity.md)
 
 ### 9. PDF output presets and standards (FF)
@@ -170,7 +170,7 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   Window ▸ Arrange (2-up … 6-up), Trap Presets, Overlays, Edit ▸ Assign Profiles / Convert to
   Profile / Edit Original, File ▸ File Info / Open PDF / Document and Print Presets / User
   Settings, Type ▸ Size presets, Table ▸ Table Options / Cell Options submenus, Paste Before/After,
-  Convert Rows/Columns, Object ▸ Interactive ▸ Convert to (form fields), Flex Layout (new in 2026),
+  Convert Rows/Columns, Object ▸ Interactive ▸ Convert to (form fields),
   View ▸ Extras badges and Story Editor options. Pages panel ▸ Parent Options (Based on Parent is
   the `layout.parents.options` command only); overriding a base parent's items on a parent spread
   itself (overrides work on document pages only).

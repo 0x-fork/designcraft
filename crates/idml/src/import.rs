@@ -9,8 +9,9 @@ use designcraft_color::{Color, ColorType, Gradient, GradientKind, GradientStop, 
 use designcraft_doc::{
     Asset, AssetId, BaselineGrid, CellRange, CharAttrs, CharFormat, CharRun, CharacterStyle, Columns, ColumnsKind, Content, DirectionalFeather,
     DocSettings, Document, DropShadow, Effects, Fill, GradientFeather, GridAlign, GridRelative, Guide, Item, ItemId, Kerning, LAYER_COLORS, Layer,
-    LayerId, ListType, Margins, ObjectStyle, Page, PageId, PageSide, ParaAttrs, ParaFormat, ParagraphStyle, ParentInfo, RowHeightMode, Rule, Section,
-    Shape, SpanColumns, Spread, SpreadId, Story, StoryId, Stroke, Styles, TabStop, Table, TextFrame, TextFrameOptions, TextWrap, story as st,
+    LayerId, ListType, Margins, ObjectStyle, Orientation, Page, PageId, PageSide, ParaAttrs, ParaFormat, ParagraphStyle, ParentInfo, RowHeightMode,
+    Rule, Section, Shape, SpanColumns, Spread, SpreadId, Story, StoryId, Stroke, Styles, TabStop, Table, TextFrame, TextFrameOptions, TextWrap,
+    story as st,
 };
 use designcraft_geom::corners::{Corner, CornerOptions};
 use designcraft_geom::{Affine, Anchor, PathData, Point, Rect, SubPath};
@@ -37,21 +38,11 @@ fn uniform_cell_stroke(edges: &[designcraft_doc::CellStrokeAttrs; 4]) -> Option<
     Some(stroke)
 }
 
-/// Import an IDML package. Linked images are read from disk when available (not on wasm).
+/// Import an IDML package without reading its linked images from disk: this crate never touches
+/// the file system, so a caller that wants the links brings its own reader
+/// ([`import_idml_with`]). The engine passes one that checks the automation roots.
 pub fn import_idml(bytes: &[u8]) -> Result<Document> {
-    import_idml_with(bytes, &default_reader)
-}
-
-fn default_reader(path: &str) -> Option<Vec<u8>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::fs::read(path).ok()
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = path;
-        None
-    }
+    import_idml_with(bytes, &|_| None)
 }
 
 /// Import with a custom reader for linked files (`path` → bytes).
@@ -81,30 +72,14 @@ pub fn import_idml_report_with_previews(
     read_link: &dyn Fn(&str) -> Option<Vec<u8>>,
     previews: &HashMap<String, Arc<Vec<u8>>>,
 ) -> Result<Imported> {
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
-    let mut files: HashMap<String, Vec<u8>> = HashMap::new();
-    // Normalised part name → entry name, first entry wins (zip order, so the choice is stable).
-    let mut lenient: HashMap<String, String> = HashMap::new();
-    for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
-        if f.is_dir() {
-            continue;
-        }
-        let name = f.name().to_string();
-        // The size is what the archive claims: don't reserve more than a sane part up front.
-        let mut buf = Vec::with_capacity((f.size() as usize).min(1 << 24));
-        f.read_to_end(&mut buf).map_err(|e| IdmlError::Part { part: name.clone(), msg: e.to_string() })?;
-        lenient.entry(normalize_part_name(&name)).or_insert_with(|| name.clone());
-        files.insert(name, buf);
-    }
-    let part = |name: &str| files.get(name).or_else(|| lenient.get(&normalize_part_name(name)).and_then(|n| files.get(n)));
-    if let Some(m) = part("mimetype")
-        && String::from_utf8_lossy(m).trim() != MIMETYPE
+    let mut pkg = Package::open(bytes)?;
+    if let Some(m) = pkg.part("mimetype")?
+        && String::from_utf8_lossy(&m).trim() != MIMETYPE
     {
-        return Err(IdmlError::NotIdml(format!("unexpected mimetype `{}`", String::from_utf8_lossy(m).trim())));
+        return Err(IdmlError::NotIdml(format!("unexpected mimetype `{}`", String::from_utf8_lossy(&m).trim())));
     }
-    let dm = part("designmap.xml").ok_or_else(|| IdmlError::NotIdml("missing designmap.xml".into()))?;
-    let root = parse(dm).map_err(|msg| IdmlError::Part { part: "designmap.xml".into(), msg })?;
+    let dm = pkg.part("designmap.xml")?.ok_or_else(|| IdmlError::NotIdml("missing designmap.xml".into()))?;
+    let root = parse(&dm).map_err(|msg| IdmlError::Part { part: "designmap.xml".into(), msg })?;
     if root.local() != "Document" {
         return Err(IdmlError::NotIdml(format!("designmap root is <{}>", root.name)));
     }
@@ -114,19 +89,19 @@ pub fn import_idml_report_with_previews(
     for c in root.elements() {
         if c.name.starts_with("idPkg:") {
             let Some(src) = c.get("src") else { continue };
-            let Some(data) = part(src) else {
+            let Some(data) = pkg.part(src)? else {
                 warnings.push(format!("{src}: listed in designmap.xml but missing from the package; its contents were not imported"));
                 continue;
             };
-            let el = parse(data).map_err(|msg| IdmlError::Part { part: src.into(), msg })?;
+            let el = parse(&data).map_err(|msg| IdmlError::Part { part: src.into(), msg })?;
             top.extend(el.elements().cloned());
         } else {
             top.push(c.clone());
         }
     }
     let mut im = Importer::new(read_link, previews);
-    if let Some(m) = files.get("META-INF/metadata.xml") {
-        let m = String::from_utf8_lossy(m);
+    if let Some(m) = pkg.part("META-INF/metadata.xml")? {
+        let m = String::from_utf8_lossy(&m);
         im.created = xmp_date(&m, "xmp:CreateDate");
         im.modified = xmp_date(&m, "xmp:ModifyDate");
     }
@@ -162,6 +137,68 @@ fn tab_list_repaired(read: &[TabStop], sanitized: &[TabStop]) -> bool {
         })
     };
     read.len() != sanitized.len() || !read.iter().all(kept)
+}
+
+/// Most entries an IDML package may hold.
+const MAX_ENTRIES: usize = 100_000;
+/// Most bytes one package part may expand to.
+const MAX_PART_BYTES: u64 = 512 << 20;
+/// Most bytes all the parts read from one package may expand to together.
+const MAX_TOTAL_BYTES: u64 = 2 << 30;
+
+/// An IDML package whose parts are decompressed only when the import asks for them, within
+/// byte budgets that don't trust the sizes the archive claims.
+struct Package<'a> {
+    zip: zip::ZipArchive<std::io::Cursor<&'a [u8]>>,
+    /// Normalised part name → entry name, first entry wins (zip order, so the choice is stable).
+    lenient: HashMap<String, String>,
+    /// Bytes the parts still to be read may expand to.
+    left: u64,
+}
+
+impl<'a> Package<'a> {
+    fn open(bytes: &'a [u8]) -> Result<Self> {
+        let zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
+        if zip.len() > MAX_ENTRIES {
+            return Err(IdmlError::NotIdml(format!("{} entries (at most {MAX_ENTRIES})", zip.len())));
+        }
+        let mut lenient: HashMap<String, String> = HashMap::new();
+        for i in 0..zip.len() {
+            let Some(name) = zip.name_for_index(i) else { continue };
+            if name.ends_with('/') {
+                continue;
+            }
+            lenient.entry(normalize_part_name(name)).or_insert_with(|| name.to_string());
+        }
+        Ok(Package { zip, lenient, left: MAX_TOTAL_BYTES })
+    }
+
+    /// The bytes of part `name` (matched exactly, then leniently), or `None` if the package has
+    /// no such part.
+    fn part(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+        let exact = self.zip.index_for_name(name).filter(|_| !name.ends_with('/'));
+        let Some(i) = exact.or_else(|| self.lenient.get(&normalize_part_name(name)).and_then(|n| self.zip.index_for_name(n))) else {
+            return Ok(None);
+        };
+        let f = self.zip.by_index(i).map_err(|e| IdmlError::NotIdml(e.to_string()))?;
+        let part = f.name().to_string();
+        let limit = MAX_PART_BYTES.min(self.left);
+        let too_big = || IdmlError::Part {
+            part: part.clone(),
+            msg: format!("larger than the {MAX_PART_BYTES}-byte part limit (or the package is larger than {MAX_TOTAL_BYTES} bytes)"),
+        };
+        if f.size() > limit {
+            return Err(too_big());
+        }
+        let mut buf = Vec::new();
+        f.take(limit.saturating_add(1)).read_to_end(&mut buf).map_err(|e| IdmlError::Part { part: part.clone(), msg: e.to_string() })?;
+        let n = buf.len() as u64;
+        if n > limit {
+            return Err(too_big());
+        }
+        self.left = self.left.saturating_sub(n);
+        Ok(Some(buf))
+    }
 }
 
 /// A package part name in the form the lookup compares: InDesign and other IDML writers differ
@@ -263,8 +300,8 @@ struct Importer<'r> {
     page_index: HashMap<String, usize>,
     item_ids: HashMap<String, ItemId>,
     assets: BTreeMap<AssetId, Arc<Asset>>,
-    /// Assets read from a link path (with the PDF page and crop box shown), so later placements
-    /// of that path reuse them unread.
+    /// Assets read from a link path at a page and crop, so later placements of that path, page
+    /// and crop reuse them unread.
     linked_assets: HashMap<(String, u32, designcraft_doc::PdfCrop), AssetId>,
     ctx: ItemCtx,
     sections: Vec<Section>,
@@ -352,6 +389,44 @@ fn mojikumi_row(e: &El) -> Result<designcraft_doc::cjk::MojikumiAki> {
 
 fn nums(s: &str) -> Vec<f64> {
     s.split_whitespace().filter_map(|v| v.parse().ok()).collect()
+}
+
+/// The viewBox size of an SVG whose root has a viewBox but no width/height (percentages count as
+/// none): InDesign places such a file at one viewBox unit to the point.
+fn svg_viewbox_size(data: &[u8]) -> Option<(f64, f64)> {
+    use quick_xml::events::Event;
+    if data.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'<') {
+        return None;
+    }
+    let mut r = quick_xml::Reader::from_reader(data);
+    let mut buf = Vec::new();
+    let root = loop {
+        match r.read_event_into(&mut buf).ok()? {
+            Event::Start(e) | Event::Empty(e) => break e.into_owned(),
+            Event::Eof => return None,
+            _ => buf.clear(),
+        }
+    };
+    if root.local_name().as_ref() != b"svg" {
+        return None;
+    }
+    let attr = |name: &[u8]| {
+        root.attributes()
+            .with_checks(false)
+            .flatten()
+            .find(|a| a.key.as_ref() == name)
+            .and_then(|a| a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok().map(|v| v.to_string()))
+    };
+    let absolute = |name: &[u8]| attr(name).is_some_and(|v| !v.trim().ends_with('%'));
+    if absolute(b"width") || absolute(b"height") {
+        return None;
+    }
+    let vb: Vec<f64> =
+        attr(b"viewBox")?.split(|c: char| c.is_whitespace() || c == ',').filter(|v| !v.is_empty()).filter_map(|v| v.parse().ok()).collect();
+    match vb[..] {
+        [_, _, w, h] if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 => Some((w, h)),
+        _ => None,
+    }
 }
 
 fn parse_affine(s: Option<&str>) -> Affine {
@@ -2355,6 +2430,33 @@ impl<'r> Importer<'r> {
 
     // ---------- spreads and items ----------
 
+    /// Ruler guides of a `<Page>` (its `<Guide>` children), `page` its rectangle in our spread
+    /// coordinates. A guide's Location is measured from the ruler origin: the spread's top left, the
+    /// page's, or the spine. Fit to Page off: the guide crosses the spread.
+    fn guides_of(&self, p: &El, page: Rect, spine: f64) -> Vec<Guide> {
+        p.find_all("Guide")
+            .filter_map(|g| {
+                let at = g.num("Location").filter(|v| v.is_finite() && v.abs() < 1e7)?;
+                let orientation = if g.get("Orientation") == Some("Horizontal") { Orientation::Horizontal } else { Orientation::Vertical };
+                let position = match (orientation, self.settings.ruler_origin) {
+                    (Orientation::Horizontal, designcraft_doc::RulerOrigin::Page) => page.y0 + at,
+                    (Orientation::Horizontal, _) => at,
+                    (Orientation::Vertical, designcraft_doc::RulerOrigin::Page) => page.x0 + at,
+                    (Orientation::Vertical, designcraft_doc::RulerOrigin::Spine) => spine + at,
+                    (Orientation::Vertical, designcraft_doc::RulerOrigin::Spread) => at,
+                };
+                Some(Guide {
+                    orientation,
+                    position,
+                    spread: g.get("FitToPage") == Some("false"),
+                    locked: g.get("Locked") == Some("true"),
+                    layer: g.get("ItemLayer").and_then(|l| self.layer_ids.get(l)).copied(),
+                    liquid: false,
+                })
+            })
+            .collect()
+    }
+
     fn spread(&mut self, e: &El, id: SpreadId, master: bool) -> Spread {
         let facing = self.settings.facing_pages;
         // Page rectangles in IDML spread coordinates.
@@ -2372,6 +2474,9 @@ impl<'r> Importer<'r> {
         let min_y = pages.iter().map(|(r, _)| r.y0).fold(f64::INFINITY, f64::min);
         let (min_x, min_y) = if min_x.is_finite() { (min_x, min_y) } else { (0.0, 0.0) };
         let shift = Affine::translate((-min_x, -min_y));
+        // The spine: between a left and a right page (else the spread's left edge).
+        let spine = pages.iter().map(|(r, _)| r.x0 - min_x).filter(|x| *x > 1e-6).fold(f64::INFINITY, f64::min);
+        let spine = if spine.is_finite() && facing { spine } else { 0.0 };
         let show = e.get("ShowMasterItems") != Some("false");
         let first_abs: usize = self.spreads.iter().map(|s| s.pages.len()).sum();
         let view_rotation = if master { 0 } else { spread_view_rotation(e.get("ItemTransform")) };
@@ -2418,9 +2523,9 @@ impl<'r> Importer<'r> {
                 parent,
                 side,
                 overridden: vec![],
-                guides: Vec::<Guide>::new(),
+                guides: self.guides_of(p, Rect::new(r.x0 - min_x, r.y0 - min_y, r.x1 - min_x, r.y1 - min_y), spine),
                 show_parent_items: show,
-                liquid: Default::default(),
+                liquid: names::liquid_rule_in(p.get("LayoutRule").unwrap_or("Off")),
                 transition: None,
                 view_rotation: if i == 0 { view_rotation } else { 0 },
                 show_parent_overlay: false,
@@ -2893,10 +2998,7 @@ impl<'r> Importer<'r> {
         let clip = clipping_path(g, Affine::translate((-l, -t)));
         let link = g.find("Link");
         let uri = link.and_then(|k| k.get("LinkResourceURI")).map(uri_to_path);
-        let page = pdf_page_in(g);
-        // Where the box sits on the page needs the PDF parsed: the engine finds it after import.
-        let pdf_crop = g.find("PDFAttribute").and_then(|a| a.get("PDFCrop")).map_or(designcraft_doc::PdfCrop::Crop, names::pdf_crop_in);
-        let graphic = |asset| {
+        let graphic = |asset, size| {
             Content::Graphic(designcraft_doc::Graphic {
                 asset,
                 size,
@@ -2911,22 +3013,31 @@ impl<'r> Importer<'r> {
             })
         };
         let mut data = g.prop_el("Contents").map(|c| base64_decode(&c.text_content())).unwrap_or_default();
+        let page = pdf_page_in(g);
+        // Where the box sits on the page needs the PDF parsed: the engine finds it after import.
+        let pdf_crop = pdf_attribute(g).and_then(|a| a.get("PDFCrop")).map_or(designcraft_doc::PdfCrop::Crop, names::pdf_crop_in);
         let mut read_from = None;
         if data.is_empty()
             && let Some(p) = &uri
         {
-            // Every placement of a linked file shares one asset; read the file once.
-            if let Some(id) = self.linked_assets.get(&(p.clone(), page, pdf_crop)) {
-                return graphic(*id);
+            // Every placement of a linked file with one page and crop shares one asset; read the
+            // file once.
+            let key = (p.clone(), page, pdf_crop);
+            if let Some(id) = self.linked_assets.get(&key) {
+                let size = self.assets.get(id).and_then(|a| svg_viewbox_size(&a.data)).unwrap_or(size);
+                return graphic(*id, size);
             }
             if let Some(d) = (self.read_link)(p) {
                 data = d;
-                read_from = Some(p.clone());
+                read_from = Some(key);
             }
         }
         // A linked file that can't be read shows the document's preview of it, if it has one. The
         // preview only stands in for the file: format and pixel size still describe the link.
         let preview = data.is_empty().then(|| g.get("Self").and_then(|s| self.previews.get(s))).flatten();
+        // InDesign draws a viewBox-only SVG at one unit to the point: its GraphicBounds are the
+        // art's bounds, which can overhang the viewBox, so they must not size the viewBox.
+        let size = svg_viewbox_size(&data).unwrap_or(size);
         let (mime, px) = if preview.is_some() { (None, None) } else { sniff_image(&data) };
         let mime = mime.map(str::to_string).unwrap_or_else(|| match link.and_then(|k| k.get("LinkResourceFormat")).unwrap_or("") {
             f if f.contains("JPEG") => "image/jpeg".into(),
@@ -2957,10 +3068,10 @@ impl<'r> Importer<'r> {
                 ..Default::default()
             },
         );
-        if let Some(p) = read_from {
-            self.linked_assets.insert((p, page, pdf_crop), id);
+        if let Some(key) = read_from {
+            self.linked_assets.insert(key, id);
         }
-        graphic(id)
+        graphic(id, size)
     }
 
     fn link_threads(&mut self) {
@@ -3518,9 +3629,19 @@ fn path_capped(pg: &El, max: usize) -> PathData {
     PathData::new(subs)
 }
 
-/// The page a placed PDF shows (0-based), from its `PDFAttribute` (`PageNumber` is 1-based).
+/// A placed PDF's `PDFAttribute` (Image Import Options), as a child or a property.
+fn pdf_attribute(g: &El) -> Option<&El> {
+    g.find("PDFAttribute").or_else(|| g.prop_el("PDFAttribute"))
+}
+
+/// The page a placed PDF shows (0-based), from `PDFAttribute/@PageNumber` (1-based). A missing or
+/// malformed value means page 1; a page the PDF lacks draws nothing and is left out of PDF export.
 fn pdf_page_in(g: &El) -> u32 {
-    g.find("PDFAttribute").and_then(|a| a.get("PageNumber")).and_then(|v| v.trim().parse::<u32>().ok()).map_or(0, |n| n.saturating_sub(1))
+    pdf_attribute(g)
+        .and_then(|a| a.get("PageNumber"))
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .and_then(|n| u32::try_from(n.saturating_sub(1)).ok())
+        .unwrap_or(0)
 }
 
 /// Anchors a custom text wrap boundary may have.

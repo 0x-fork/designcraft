@@ -122,11 +122,10 @@ fn pointer_counts(p: &Value, drag: bool, pending: usize) -> Result<(u64, u64), S
         None => Ok(default),
         Some(v) => v.as_u64().filter(|n| *n > 0).ok_or_else(|| format!("`{name}` must be a positive integer")),
     };
-    // A click count past 255 means nothing to the tools (`PointerEvent::clicks` is a u8).
-    let count = match p.get("count") {
-        None => 1,
-        Some(v) => v.as_u64().filter(|n| (1..=255).contains(n)).ok_or("`count` must be an integer from 1 through 255")?,
-    };
+    let count = positive("count", 1)?;
+    if count > 255 {
+        return Err("`count` must be an integer from 1 through 255".into());
+    }
     let steps = if drag { positive("steps", 8)? } else { 0 };
     // One initial move, two button events per click, and each drag step. Check the
     // arithmetic too: hostile counts must never overflow into a small budget.
@@ -247,7 +246,7 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
         }
         "ui.click" | "ui.drag" => {
             // Screen-space (egui points) pointer input through egui itself: reaches every widget.
-            let (count, steps) = match pointer_counts(p, req.method == "ui.drag", app.control_synthetic.len()) {
+            let (count, steps) = match pointer_counts(p, req.method == "ui.drag", app.control_synthetic.len().saturating_add(app.synthetic.len())) {
                 Ok(counts) => counts,
                 Err(e) => return err(e),
             };
@@ -369,13 +368,19 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
         "ui.dialog.set" => match app.ui.dialog.as_mut() {
             Some(d) => {
                 let Some(f) = s("field") else { return err("missing `field`") };
-                d.fields.insert(f.to_string(), p.get("value").cloned().unwrap_or(Value::Null));
+                let value = p.get("value").cloned().unwrap_or(Value::Null);
+                if d.set_field(f, value) {
+                    app.session.reset_find_scope();
+                }
                 ok(serde_json::to_value(&*d).unwrap_or_default())
             }
             None => err("no dialog open"),
         },
         "ui.dialog.open" => {
             let Some(id) = s("id") else { return err("missing `id`") };
+            if id == "findChange" || app.ui.dialog.as_ref().is_some_and(|d| d.id == "findChange") {
+                app.session.reset_find_scope();
+            }
             let d = crate::dialogs::Dialog::new(id, p.get("fields").cloned().unwrap_or(Value::Null));
             let v = serde_json::to_value(&d).unwrap_or_default();
             app.ui.dialog = Some(d);
@@ -540,9 +545,12 @@ mod automation_contract_tests {
     fn pointer_gestures_accept_the_exact_event_budget() {
         let mut app = app();
         let ctx = egui::Context::default();
-        for (method, params) in
-            [("ui.click", json!({"count": 255})), ("ui.drag", json!({"steps": 10000})), ("ui.drag", json!({"steps": 9998, "count": 2}))]
-        {
+        for (method, params) in [
+            ("ui.click", json!({"count": 255})),
+            ("ui.drag", json!({"steps": 9492, "count": 255})),
+            ("ui.drag", json!({"steps": 10000})),
+            ("ui.drag", json!({"steps": 9998, "count": 2})),
+        ] {
             // A full click count fits on top of 9,492 pending events.
             let pending = if method == "ui.click" { 10_003 - 511 } else { 0 };
             app.control_synthetic = vec![egui::Event::PointerMoved(egui::pos2(12.0, 34.0)); pending];

@@ -88,7 +88,9 @@ by its own renderer. Try it yourself with `File → New → Sample Document`, or
 - **Fast.** Multithreaded SIMD rendering (vello_cpu), copy-on-write documents with O(1) undo
   snapshots, and cached composition.
 - **Open.** A documented native format, IDML import and export, INDD import (through
-  [indd-utils](https://github.com/storytold/indd-utils)), and PNG, PDF (PDF/X-4, PDF/A-2b) and EPUB export.
+  [indd-utils](https://github.com/storytold/indd-utils)), editable PowerPoint export, and PNG, PDF
+  (PDF/X-4, PDF/A-2b) and EPUB export.
+
   No subscription, no licence server, no telemetry.
 - **Agent-native.** Every menu item, tool gesture, panel control and dialog can be driven over a
   JSON control channel and an **MCP server**, so Claude and other agents can lay out and edit
@@ -281,6 +283,7 @@ Installers and executables are code-signed.
 | Flatpak | `designcraft-<ver>-linux-x86_64.flatpak` | `designcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `designcraft-<ver>-linux-x86_64.deb` | `designcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `designcraft-<ver>-linux-x86_64.rpm` | `designcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux/Manjaro | `designcraft-<ver>-linux-x86_64.pkg.tar.zst` | `designcraft-<ver>-linux-aarch64.pkg.tar.zst` | `sudo pacman -U <file>`; installs as `ai.storyteller.designcraft`, replacing an AUR package |
 | Tarball | `designcraft-<ver>-linux-x86_64.tar.gz` | `designcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
 RISC-V (riscv64): `designcraft-<ver>-linux-riscv64.tar.gz` only, cross-compiled; needs glibc 2.39+ (Ubuntu 24.04 or newer).

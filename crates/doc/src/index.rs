@@ -137,7 +137,12 @@ pub fn build(spec: &IndexSpec, refs: &[Resolved], page_name: &dyn Fn(usize) -> S
     let mut heading: Option<char> = None;
     for (key, n) in &root {
         if spec.section_headings {
-            let c = key.chars().next().map(|c| if c.is_alphabetic() { c.to_uppercase().next().unwrap_or(c) } else { '#' });
+            // Georgian headings stay Mkhedruli (no capitals; Mtavruli is only for all-caps text).
+            let c = key.chars().next().map(|c| match c {
+                c if !c.is_alphabetic() => '#',
+                c if crate::capitalizes(c) => c.to_uppercase().next().unwrap_or(c),
+                c => c,
+            });
             if c != heading {
                 heading = c;
                 if let Some(c) = c {
@@ -260,5 +265,13 @@ mod tests {
         );
         let run_in = build(&IndexSpec { run_in: true, section_headings: false, title: String::new(), ..spec }, &refs[..2], &|p| (p + 1).to_string());
         assert_eq!(run_in, [("Index Level 1".to_string(), "Typography  2\u{2013}4: kerning  5".to_string())]);
+    }
+    #[test]
+    fn georgian_section_heads_stay_mkhedruli() {
+        let refs = vec![r(&["ასო"], IndexRange::CurrentPage, Some((0, 0))), r(&["ბადე"], IndexRange::CurrentPage, Some((1, 1)))];
+        let out = build(&IndexSpec::default(), &refs, &|p| (p + 1).to_string());
+        let heads: Vec<&str> = out.iter().filter(|(s, _)| s == "Index Section Head").map(|(_, t)| t.as_str()).collect();
+        assert_eq!(heads, ["ა", "ბ"]);
+        assert!(crate::capitalizes('a') && !crate::capitalizes('ა') && !crate::capitalizes('Ა'));
     }
 }

@@ -698,6 +698,22 @@ mod text_clipboard_tests {
         assert_eq!(s.doc().unwrap().selection.text.unwrap().range(), 0..st.len());
         st.check().unwrap();
     }
+
+    #[test]
+    fn change_case_leaves_georgian_without_initial_capitals() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = frame(&mut s, "ᲒᲐᲛᲐᲠᲯᲝᲑᲐ ᲛᲡᲝᲤᲚᲘᲝ. ᲐᲮᲐᲚᲘ word");
+        let len = s.doc().unwrap().doc.story(a).unwrap().len();
+        s.execute("text.select", &json!({"story": a.0, "anchor": 0, "focus": len})).unwrap();
+        // Georgian has no title or sentence capitals: Mtavruli is only for all-caps text.
+        s.execute("type.changeCase", &json!({"case": "title"})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.story(a).unwrap().text, "გამარჯობა მსოფლიო. ახალი Word");
+        s.execute("type.changeCase", &json!({"case": "sentence"})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.story(a).unwrap().text, "გამარჯობა მსოფლიო. ახალი word");
+        s.execute("type.changeCase", &json!({"case": "upper"})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.story(a).unwrap().text, "ᲒᲐᲛᲐᲠᲯᲝᲑᲐ ᲛᲡᲝᲤᲚᲘᲝ. ᲐᲮᲐᲚᲘ WORD");
+    }
 }
 
 fn paste_into(s: &mut Session, p: &Value) -> Result<Value> {

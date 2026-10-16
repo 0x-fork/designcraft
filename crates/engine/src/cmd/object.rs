@@ -190,24 +190,25 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fill",
             [],
             None,
-            "{swatch? (a swatch's name, e.g. [Paper]), tint?: 0..1, ids?} — a swatch (tint 100% unless given), or a tint alone that keeps each object's swatch",
+            "{swatch? (a swatch's name, e.g. [Paper]), tint?: 0..1, ids?} — at least one; a tint alone keeps each object's own swatch (the Swatches panel's Tint field)",
             has_selection,
             |s, p| {
                 let sw = str_param(p, "swatch").map(str::to_string);
-                let tint = p.get("tint").and_then(Value::as_f64).filter(|t| t.is_finite()).map(|t| t.clamp(0.0, 1.0) as f32);
-                if sw.is_none() && tint.is_none() {
-                    return Err(bad("object.fill", "missing swatch"));
-                }
-                if let Some(n) = &sw {
-                    known_swatch(&s.doc()?.doc, n, "object.fill", "swatch")?;
+                let tint = match p.get("tint") {
+                    None | Some(Value::Null) => None,
+                    Some(v) => Some(v.as_f64().filter(|t| (0.0..=1.0).contains(t)).ok_or_else(|| bad("object.fill", "`tint` is 0..1"))? as f32),
+                };
+                match &sw {
+                    Some(sw) => known_swatch(&s.doc()?.doc, sw, "object.fill", "swatch")?,
+                    None if tint.is_none() => return Err(bad("object.fill", "missing swatch")),
+                    None => {}
                 }
                 set_flag(
                     s,
                     p,
-                    move |i| {
-                        let swatch = sw.clone().unwrap_or_else(|| i.fill.swatch.clone());
-                        let tint = tint.unwrap_or(if sw.is_some() { 1.0 } else { i.fill.tint });
-                        i.fill = Fill { swatch, tint, ..i.fill.clone() };
+                    move |i| match &sw {
+                        Some(sw) => i.fill = Fill { swatch: sw.clone(), tint: tint.unwrap_or(1.0), ..i.fill.clone() },
+                        None => i.fill.tint = tint.unwrap_or(i.fill.tint),
                     },
                     false,
                 )
@@ -245,8 +246,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                 }
                 let p2 = p.clone();
-                // A tint alone changes no stroke into one (it would become the default 1 pt black).
-                let tint_only = p.as_object().is_some_and(|o| o.keys().all(|k| k == "tint" || k == "ids"));
+                // A tint alone (the Swatches panel's Tint field) recolours strokes, it doesn't add one.
+                let tint_only = p.as_object().is_some_and(|o| o.contains_key("tint") && o.keys().all(|k| k == "tint" || k == "ids"));
                 set_flag(
                     s,
                     p,
@@ -1068,6 +1069,12 @@ fn transform_move(s: &mut Session, p: &Value) -> Result<Value> {
             }
             it.xf = Affine::translate(v) * it.xf;
         }
+        // An object dragged inside a Flex Layout takes the place it was dropped on.
+        if !copy {
+            for id in &ids {
+                super::flex::drop_in_container(d, *id);
+            }
+        }
         Ok(json!({"moved": ids.len(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
     })
 }
@@ -1141,6 +1148,8 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
                 it.xf = Affine::translate(m * c - c) * it.xf;
             } else if scale_content {
                 scale_item(it, m, (sx * sy).abs().sqrt(), strokes);
+            } else if it.flex.is_some() {
+                resize_container(it, m);
             } else if matches!(it.content, Content::Group { .. }) {
                 it.xf = m * it.xf;
             } else {
@@ -1158,6 +1167,23 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(json!({"resized": ids.len()}))
     })
+}
+
+/// A Flex Layout container takes the new box (its objects keep their size; the layout places them),
+/// and a side whose length changes becomes Fixed, as dragging a container's handle does in InDesign.
+fn resize_container(it: &mut Item, m: Affine) {
+    let before = it.inner_bounds();
+    let inner = it.xf.inverse() * m * it.xf;
+    bake(it, inner);
+    let after = it.inner_bounds();
+    if let Some(f) = it.flex.as_mut() {
+        if (after.width() - before.width()).abs() > 1e-6 {
+            f.width = designcraft_doc::FlexSize::Fixed;
+        }
+        if (after.height() - before.height()).abs() > 1e-6 {
+            f.height = designcraft_doc::FlexSize::Fixed;
+        }
+    }
 }
 
 fn union_bounds(d: &Document, ids: &[ItemId]) -> Rect {
@@ -1421,7 +1447,9 @@ fn transform_set(s: &mut Session, p: &Value) -> Result<Value> {
             * Affine::translate((-geom.x0, -geom.y0));
         for id in &ids {
             if let Some(it) = d.item_mut(*id) {
-                if matches!(it.content, Content::Group { .. }) {
+                if it.flex.is_some() {
+                    resize_container(it, m);
+                } else if matches!(it.content, Content::Group { .. }) {
                     it.xf = m * it.xf;
                 } else {
                     let inner = it.xf.inverse() * m * it.xf;
@@ -4904,6 +4932,8 @@ mod path_edit_tests {
             ("path.erase", json!({"id": id, "points": [[120, 100], [180, 100]]})),
             ("path.smooth", json!({"id": id, "points": [[120, 100], [180, 100]]})),
             ("path.split", json!({"id": id, "at": [150, 100]})),
+            ("path.join", json!({"ids": [id]})),
+            ("path.convertPoints", json!({"ids": [id], "kind": "corner"})),
         ]
     }
 
@@ -4922,6 +4952,24 @@ mod path_edit_tests {
         let layer = s.doc().unwrap().doc.item(ItemId(id)).unwrap().layer;
         s.execute("layer.set", &json!({"id": layer.0, "locked": true})).unwrap();
         assert_no_path_edit(&mut s, id, "on a locked layer");
+    }
+
+    #[test]
+    fn joining_two_paths_with_one_on_a_locked_layer_changes_neither() {
+        let (mut s, a) = session_with_path();
+        let b = s.execute("path.create", &json!({"anchors": [{"p": [300, 200]}, {"p": [400, 300]}]})).unwrap()["id"].as_u64().unwrap();
+        let layer = s.execute("layer.new", &json!({"name": "Art"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.setLayer", &json!({"ids": [b], "layer": layer})).unwrap();
+        let a_layer = s.doc().unwrap().doc.item(ItemId(a)).unwrap().layer;
+        s.execute("layer.set", &json!({"id": a_layer.0, "locked": true})).unwrap();
+        let (before_a, before_b) = (anchors(&s, a), anchors(&s, b));
+        for ids in [[a, b], [b, a]] {
+            assert!(s.execute("path.join", &json!({"ids": ids})).is_err(), "{ids:?}");
+        }
+        assert_eq!((anchors(&s, a), anchors(&s, b)), (before_a, before_b));
+        for id in [a, b] {
+            assert!(!s.doc().unwrap().doc.item(ItemId(id)).unwrap().path.subpaths[0].closed, "{id} stays open");
+        }
     }
 
     #[test]
@@ -5058,5 +5106,38 @@ mod glow_feather_options_tests {
         let d = designcraft_doc::Effects::default();
         assert_eq!((d.inner_glow.mode, d.inner_glow.technique), (designcraft_color::BlendMode::Screen, designcraft_doc::GlowTechnique::Softer));
         assert_eq!((d.feather_options.choke, d.feather_options.corners), (0.0, designcraft_doc::FeatherCorners::Diffused));
+    }
+}
+
+#[cfg(test)]
+mod fill_tint_tests {
+    use super::*;
+
+    #[test]
+    fn a_tint_alone_keeps_each_objects_own_swatch() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = s.execute("frame.create", &json!({"rect": [36, 36, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("frame.create", &json!({"rect": [136, 36, 200, 100]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.fill", &json!({"ids": [a], "swatch": "C=100 M=0 Y=0 K=0"})).unwrap();
+        s.execute("object.fill", &json!({"ids": [b], "swatch": "C=0 M=100 Y=0 K=0"})).unwrap();
+        s.execute("object.fill", &json!({"ids": [a, b], "tint": 0.4})).unwrap();
+        let fill_of = |s: &Session, id: u64| s.doc().unwrap().doc.item(ItemId(id)).unwrap().fill.clone();
+        assert_eq!((fill_of(&s, a).swatch.as_str(), fill_of(&s, a).tint), ("C=100 M=0 Y=0 K=0", 0.4));
+        assert_eq!((fill_of(&s, b).swatch.as_str(), fill_of(&s, b).tint), ("C=0 M=100 Y=0 K=0", 0.4));
+        // A swatch without a tint is at 100 %, as before.
+        s.execute("object.fill", &json!({"ids": [a], "swatch": "[Black]"})).unwrap();
+        assert_eq!(fill_of(&s, a).tint, 1.0);
+        // Neither, or a tint out of range: refused.
+        assert!(s.execute("object.fill", &json!({"ids": [a]})).is_err());
+        assert!(s.execute("object.fill", &json!({"ids": [a], "tint": 2})).is_err());
+        assert!(s.execute("object.fill", &json!({"ids": [a], "tint": "x"})).is_err());
+        // A stroke tint alone: stroked objects take it, an object without a stroke keeps none.
+        s.execute("object.stroke", &json!({"ids": [a], "swatch": "C=100 M=0 Y=0 K=0", "weight": 2})).unwrap();
+        s.execute("object.stroke", &json!({"ids": [b], "swatch": "[None]"})).unwrap();
+        s.execute("object.stroke", &json!({"ids": [a, b], "tint": 0.5})).unwrap();
+        let stroke_of = |s: &Session, id: u64| s.doc().unwrap().doc.item(ItemId(id)).unwrap().stroke.clone();
+        assert_eq!((stroke_of(&s, a).swatch.as_str(), stroke_of(&s, a).tint, stroke_of(&s, a).weight), ("C=100 M=0 Y=0 K=0", 0.5, 2.0));
+        assert!(stroke_of(&s, b).is_none());
     }
 }
