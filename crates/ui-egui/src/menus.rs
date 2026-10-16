@@ -974,7 +974,7 @@ pub fn run_ui(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, 
 }
 
 fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
-    if matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize") && !app.custom_titlebar {
+    if is_window_control(id) && !window_control_available(app, id) {
         return Some(Err("custom window controls are not available in this host".into()));
     }
     if let Some(result) = crate::panel_docking::command(app, id, p) {
@@ -2092,13 +2092,24 @@ pub(crate) fn waits_for_ime(app: &DesignApp, id: &str) -> bool {
         ) || id.starts_with("edit.paste"))
 }
 
+/// The commands that act on the desktop window itself.
+fn is_window_control(id: &str) -> bool {
+    matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize")
+}
+
+/// Whether the host can run a window command: all of them with our own title bar, and Minimize
+/// with the macOS menu bar (Window › Minimize, ⌘M).
+fn window_control_available(app: &DesignApp, id: &str) -> bool {
+    app.custom_titlebar || (app.native_menu && id == "window.minimize")
+}
+
 /// Is a command enabled (for menu greying)?
 pub fn enabled(app: &DesignApp, id: &str) -> bool {
     if waits_for_ime(app, id) {
         return false;
     }
-    if matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize") {
-        return app.custom_titlebar;
+    if is_window_control(id) {
+        return window_control_available(app, id);
     }
     match designcraft_engine::find_command(id) {
         Some(c) => (c.enabled)(&app.session).is_ok(),
@@ -2298,12 +2309,17 @@ pub const MAC_APP_MENU: &[AppMenuItem] = &[
 ];
 
 /// The menu tree for the macOS menu bar: `menu_tree` without the commands `MAC_APP_MENU` holds,
-/// so each command (and its shortcut) appears once.
+/// so each command (and its shortcut) appears once, and with the standard Window › Minimize (⌘M)
+/// at the top of the Window menu.
 pub fn native_menu_tree() -> Vec<(&'static str, Vec<Item>)> {
     let in_app_menu = |id: &str| MAC_APP_MENU.iter().any(|m| matches!(m, AppMenuItem::Cmd { command, .. } if *command == id));
     let mut tree = menu_tree();
-    for (_, entries) in &mut tree {
+    for (title, entries) in &mut tree {
         without_commands(entries, &in_app_menu);
+        if *title == "Window" {
+            let minimize = Item::Cmd { label: "Minimize".into(), id: "window.minimize".into(), params: Value::Null, shortcut: Some("Cmd+M") };
+            entries.splice(0..0, [minimize, Item::Sep]);
+        }
     }
     tree
 }
@@ -2407,8 +2423,8 @@ pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
     if waits_for_ime(app, id) {
         return false;
     }
-    if matches!(id, "window.minimize" | "window.maximize" | "window.close" | "window.drag" | "window.resize") {
-        return app.custom_titlebar;
+    if is_window_control(id) {
+        return window_control_available(app, id);
     }
     if id == "app.justificationDialog" {
         return enabled(app, "type.para");
@@ -5500,6 +5516,19 @@ mod tests {
         assert!(open, "hovering the visible portion still opens the submenu");
         let (_, Some((_, _, open))) = frame(500.0, vec![]) else { panic!("test menu remains open") };
         assert!(!open, "an open submenu closes when its row becomes fully clipped");
+    }
+
+    #[test]
+    fn the_mac_window_menu_minimizes_with_cmd_m() {
+        let window = native_menu_tree().into_iter().find(|(t, _)| *t == "Window").map(|(_, e)| e).unwrap_or_default();
+        assert!(matches!(window.first(), Some(Item::Cmd { id, shortcut: Some("Cmd+M"), .. }) if id == "window.minimize"), "{:?}", window.first());
+        assert!(matches!(window.get(1), Some(Item::Sep)));
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        assert!(run_ui(&mut app, "window.minimize", &Value::Null).is_some_and(|r| r.is_err()), "no host window controls");
+        app.native_menu = true;
+        assert!(menu_enabled(&app, "window.minimize") && !menu_enabled(&app, "window.maximize"));
+        run_ui(&mut app, "window.minimize", &Value::Null).unwrap().unwrap();
+        assert_eq!(app.pending_window_commands, [egui::ViewportCommand::Minimized(true)]);
     }
 
     #[test]
