@@ -1346,7 +1346,9 @@ fn scale_text_frame(d: &mut Document, id: ItemId, m: Affine, k: f64, strokes: bo
         return false;
     }
     let Some(st) = d.story(story) else { return false };
-    if st.frames.len() != 1 || st.vertical {
+    // Tables, anchored objects and footnotes keep their own sizes, so a frame holding any of them
+    // scales as a whole.
+    if st.frames.len() != 1 || st.vertical || !st.tables.is_empty() || !st.objects.is_empty() || !st.notes.is_empty() {
         return false;
     }
     // The resolved attributes of every run, split at paragraph ends (a run's size can come from its
@@ -3859,6 +3861,13 @@ mod scale_tests {
         s.execute("transform.scale", &json!({"ids": [c.0], "sx": -1.0, "sy": 1.0})).unwrap();
         assert_eq!(props_at(&s, story, 0).1.size, 12.0);
         assert!(s.doc().unwrap().doc.item(c).unwrap().xf.as_coeffs()[0] < 0.0);
+        // A frame holding a table: the table would keep its size while the text grew.
+        let (t, story) = text_frame(&mut s, [300.0, 300.0, 500.0, 500.0], "Grid");
+        s.execute("text.select", &json!({"story": story.0, "anchor": 4, "focus": 4})).unwrap();
+        s.execute("table.insert", &json!({"rows": 2, "cols": 2})).unwrap();
+        s.execute("transform.scale", &json!({"ids": [t.0], "sx": 2.0})).unwrap();
+        assert_eq!(props_at(&s, story, 0).1.size, 12.0);
+        assert!((s.doc().unwrap().doc.item(t).unwrap().xf.as_coeffs()[0] - 2.0).abs() < 1e-9);
     }
 }
 
