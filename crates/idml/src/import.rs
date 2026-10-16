@@ -2451,7 +2451,7 @@ impl<'r> Importer<'r> {
                     spread: g.get("FitToPage") == Some("false"),
                     locked: g.get("Locked") == Some("true"),
                     layer: g.get("ItemLayer").and_then(|l| self.layer_ids.get(l)).copied(),
-                    liquid: false,
+                    liquid: g.get("GuideType") == Some("Liquid"),
                 })
             })
             .collect()

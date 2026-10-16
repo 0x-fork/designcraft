@@ -11,6 +11,7 @@ mod assets;
 mod clipping;
 mod decorations;
 mod index_sort;
+mod liquid_guides;
 mod object_styles;
 mod rtl_binding;
 mod spread_rotation;
