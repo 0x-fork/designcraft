@@ -2448,7 +2448,7 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     // Keyboard for the active tool. A field focused when the frame began keeps this frame's keys.
     let field_id = field_focused_id(ui.ctx());
     let field = ui.ctx().text_edit_focused() || ui.data(|d| d.get_temp::<bool>(field_id)).unwrap_or(false);
-    if menu_open || (field && !resp.has_focus()) || !keyboard_pane(app) {
+    if menu_open || modal_open(app) || (field && !resp.has_focus()) || !keyboard_pane(app) {
         return;
     }
     // Keys of a frame that began composing are the IME's too (a Backspace that empties the marked
@@ -2517,6 +2517,12 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
         }
     }
     let _ = DVec2::ZERO;
+}
+
+/// A dialog or Quick Apply has the keyboard. The canvas keeps egui's focus behind a modal, and it
+/// runs before the modal draws, so it must not also act on the Esc or Return that closes it.
+fn modal_open(app: &DesignApp) -> bool {
+    app.ui.dialog.is_some() || app.ui.palette.is_some()
 }
 
 /// Does the current pane take the keyboard? Both panes (split, or the second window) see the same
@@ -2588,7 +2594,7 @@ fn ime_output(app: &mut DesignApp, ctx: &egui::Context, xf: &Xf) {
         return;
     }
     // A text field, dialog or Quick Apply has the keyboard: egui's own text editing serves the IME.
-    let ours = app.session.wants_text() && !ctx.text_edit_focused() && app.ui.dialog.is_none() && app.ui.palette.is_none();
+    let ours = app.session.wants_text() && !ctx.text_edit_focused() && !modal_open(app);
     let caret = if ours { app.session.tool_ime_caret(app.view_info()) } else { None };
     let Some((a, b)) = caret else {
         // The IME goes away with its marked text: keep that text as typed, like a click away.
@@ -4187,6 +4193,33 @@ mod tests {
         }
         assert_eq!(got[1..], ["Three", "One two. Three four! Five six.", "One two. Three four! Five six.\n", text], "{got:?}");
         assert!(got[0].is_empty(), "one click places the caret: {got:?}");
+    }
+
+    #[test]
+    fn esc_that_closes_a_dialog_keeps_the_type_tool_and_its_text_selection() {
+        let (mut h, id) = typing("One two three");
+        // A click in the text gives the canvas the keyboard focus, as when typing.
+        let p = screen_at(&mut h, id, 5..6);
+        h.hover_at(p);
+        h.step();
+        for _ in 0..2 {
+            click(&mut h, p);
+        }
+        h.run_steps(4);
+        let words = selected_range(&h);
+        assert_eq!(words, 4..7, "the double-click selects \"two\"");
+        let app = h.state_mut();
+        let name = app.run("style.character.create", json!({"name": "Key Term"})).unwrap()["name"].as_str().unwrap().to_string();
+        app.ui.dialog = Some(crate::dialogs::Dialog::new("characterStyleOptions", json!({"name": name})));
+        h.run_steps(3);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(3);
+        assert!(h.state().ui.dialog.is_none(), "Esc closes the dialog");
+        assert_eq!((h.state().session.tool_id(), selected_range(&h)), ("type", words));
+        // With no dialog open, Esc in the text still leaves it for the Selection tool.
+        h.key_press(egui::Key::Escape);
+        h.run_steps(3);
+        assert_eq!(h.state().session.tool_id(), "selection");
     }
 
     #[test]
