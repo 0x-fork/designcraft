@@ -699,7 +699,7 @@ mod tests {
         ] {
             assert!(texts.iter().any(|x| x.trim() == t), "{t}: {texts:?}");
         }
-        assert!(texts.iter().any(|x| x.contains("0.097 in")), "distance in inches: {texts:?}");
+        assert!(texts.iter().any(|x| x.contains("0.0972 in")), "distance in inches: {texts:?}");
         // Preview: the shadow is on the page while the dialog is open, without an undo step.
         frame(&mut app, &ctx);
         assert!(fx(&app).inner_shadow.on);
