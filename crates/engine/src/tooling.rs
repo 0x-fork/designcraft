@@ -65,6 +65,10 @@ impl Session {
             log::warn!("ending the IME composition: {e}");
         }
         self.tool = designcraft_tools::create(id);
+        self.temp_tool = None;
+        if matches!(self.tool.id(), "selection" | "directSelection") {
+            self.last_selection_tool = self.tool.id();
+        }
         // Any other tool unloads the place cursor.
         if id != "placeGun" {
             self.loaded = None;
@@ -108,14 +112,47 @@ impl Session {
         Some(f(self, &cx))
     }
 
+    /// The tool pointer, key, overlay and cursor events go to: the selection tool a Cmd-held press
+    /// borrowed, for the rest of that gesture, or else the chosen tool.
+    fn gesture_tool(&mut self) -> &mut dyn designcraft_tools::Tool {
+        match self.temp_tool.as_deref_mut() {
+            Some(t) => t,
+            None => self.tool.as_mut(),
+        }
+    }
+
+    /// Which selection tool a Cmd-held press borrows while another tool is chosen: whichever of
+    /// Selection and Direct Selection was chosen last. None for the selection tools themselves,
+    /// Hand, Zoom and a loaded place cursor, where Cmd means something else or nothing.
+    fn borrowed_selection_tool(&self) -> Option<&'static str> {
+        match self.tool.id() {
+            "selection" | "directSelection" | "hand" | "zoom" | "placeGun" => None,
+            _ => Some(self.last_selection_tool),
+        }
+    }
+
     pub fn pointer(&mut self, ev: &PointerEvent, view: ViewInfo) -> Result<()> {
         // A press ends a composition, keeping its marked text as typed (like clicking away from
         // one in a native text view); the UI tells the system IME to drop it.
         if matches!(ev.kind, PointerKind::Down | PointerKind::DoubleClick) {
             self.end_composition()?;
         }
-        let actions = self.with_ctx(view, |s, cx| s.tool.pointer(cx, ev)).unwrap_or_default();
-        self.run_actions(actions)
+        // Cmd held at a press: the gesture (press, drags, release) goes to the selection tool the
+        // chosen tool borrows, which selects, moves or resizes without a tool change (#919).
+        if matches!(ev.kind, PointerKind::Down | PointerKind::DoubleClick)
+            && ev.mods.cmd
+            && self.temp_tool.is_none()
+            && !self.tool.busy()
+            && let Some(id) = self.borrowed_selection_tool()
+        {
+            self.temp_tool = Some(designcraft_tools::create(id));
+        }
+        let actions = self.with_ctx(view, |s, cx| s.gesture_tool().pointer(cx, ev)).unwrap_or_default();
+        let r = self.run_actions(actions);
+        if ev.kind == PointerKind::Up && self.temp_tool.as_ref().is_some_and(|t| !t.busy()) {
+            self.temp_tool = None;
+        }
+        r
     }
 
     /// Dispatch a temporary view tool without replacing the active tool or its state.
@@ -130,18 +167,27 @@ impl Session {
         if self.tool.composing() {
             return Ok(true);
         }
-        let actions = self.with_ctx(view, |s, cx| s.tool.key(cx, key, mods)).unwrap_or_default();
+        let actions = self.with_ctx(view, |s, cx| s.gesture_tool().key(cx, key, mods)).unwrap_or_default();
         let handled = !actions.is_empty();
         self.run_actions(actions)?;
         Ok(handled)
     }
 
     pub fn overlays(&mut self, view: ViewInfo) -> Vec<Overlay> {
-        self.with_ctx(view, |s, cx| s.tool.overlays(cx)).unwrap_or_default()
+        self.with_ctx(view, |s, cx| s.gesture_tool().overlays(cx)).unwrap_or_default()
     }
 
     pub fn cursor(&mut self, p: designcraft_geom::Point, mods: Mods, view: ViewInfo) -> Cursor {
-        self.with_ctx(view, |s, cx| s.tool.cursor(cx, p, mods)).unwrap_or_default()
+        // Cmd held over the canvas shows the selection tool a press would borrow.
+        if mods.cmd
+            && self.temp_tool.is_none()
+            && !self.tool.busy()
+            && let Some(id) = self.borrowed_selection_tool()
+        {
+            let borrowed = designcraft_tools::create(id);
+            return self.with_ctx(view, |_, cx| borrowed.cursor(cx, p, mods)).unwrap_or_default();
+        }
+        self.with_ctx(view, |s, cx| s.gesture_tool().cursor(cx, p, mods)).unwrap_or_default()
     }
 
     /// Canvas centres of the content grabbers the Selection tool shows: the selected frame's and
@@ -158,7 +204,7 @@ impl Session {
     }
 
     pub fn wants_text(&mut self) -> bool {
-        self.with_ctx(ViewInfo::at_zoom(1.0), |s, cx| s.tool.wants_text(cx)).unwrap_or(false)
+        self.with_ctx(ViewInfo::at_zoom(1.0), |s, cx| s.gesture_tool().wants_text(cx)).unwrap_or(false)
     }
 
     /// IME marked text at the text caret (see `Tool::ime_preedit`; `active_chars` counts

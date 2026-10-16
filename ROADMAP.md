@@ -215,6 +215,7 @@ same references), and from the app's JSON control channel. See [docs/agents.md](
 | # | Milestone | State |
 **Stage: pre-alpha** · next: alpha, ~0% and ~15–25 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
 
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (A0, A1 and A2 poster presets) · **Target:** Adobe InDesign 2026
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes) · **Target:** Adobe InDesign 2026
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (parent canvas refresh) · **Target:** Adobe InDesign 2026
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (bounded control click/drag input) · **Target:** Adobe InDesign 2026
@@ -361,6 +362,22 @@ Newest first.
   paragraph settings relative to the Based On style.
 - **2026-10-15** · Typography uses named panel groups with the Control panel and restores that
   arrangement on Reset Workspace, leaving the page clear until a panel is opened. No readiness percentage change.
+- **2026-10-16** · Threading: the loaded text cursor threads into a text frame inside a group (it hit the group and showed it could not thread); a plain click still selects the group (#1075). Gap 27 closed. No readiness percentage change.
+
+- **2026-10-15** · Character panel: dragging a variable font axis slider previews on the page and is one undo step when let go (with several axes it piled up an undo step per frame); each axis takes a typed value, and narrow axes (Skia's 0.48–3.2) step by hundredths instead of jumping to whole numbers. The fields line up in two columns, auto leading shows in parentheses, and an axis-set style shows its axes. New `edit.preview` / `edit.commitPreview` / `edit.cancelPreview` commands give panels, the control channel and MCP live previews. No readiness percentage change.
+
+- **2026-10-15** · Selection tool: once a frame's content is selected (double-click, or the content grabber), the pointer is a hand over it and a drag anywhere on it moves the content inside the frame (Shift keeps one axis), as in InDesign; it moved the frame unless the press was on the grabber. No readiness percentage change.
+
+- **2026-10-15** · Scaling a text frame (Cmd+Shift-dragging a handle, the Scale tool, Transform panel scale fields) sets its text larger or smaller and leaves the frame at 100%, as InDesign's default When Scaling: Apply to Content does; it used to keep the text's size with the scale on the frame. No readiness percentage change.
+
+- **2026-10-15** · With nothing selected, the Tools panel's fill and stroke (the Color Picker, swatches, Apply None, Swap, Default) set the colours new shapes are drawn with, as InDesign's document defaults; the proxy shows them. They were refused ("nothing selected").
+
+- **2026-10-15** · The Eyedropper with text selected picks up the formatting of the text it clicks (character style and overrides, paragraph style and overrides) and applies it to the selection, as InDesign's does; it copied the clicked frame's fill and stroke instead. No readiness percentage change.
+
+- **2026-10-15** · A0, A1 and A2 poster presets are available in New Document, Document Setup, Properties, the Page tool and the Pages panel's size menu, as well as `file.new` and `layout.pageSize`. No readiness percentage change.
+
+- **2026-10-14** · Objects snap to the bleed guide's four sides while moving, resizing or drawing; snapping and the canvas share one bleed rectangle (`Spread::bleed_rect`). No readiness percentage change.
+
 - **2026-10-14** · Threading keeps generated and linked stories, text that refers to a story, local IDs and locked frames intact; a colour chosen at a caret waits for the typing, Swap Fill and Stroke on text keeps each run's colours, control-channel input never reads or writes the system clipboard, and IDML frame preferences given as properties import with bounded column counts (#84). No readiness percentage change.
 - **2026-10-14** · The Liquid Layout panel follows InDesign's: Liquid Page Rule with the page number, Content › Auto-Fit, and Object Constraints › Resize with Page and Pin for the selected object on an object-based page; Create Alternate Layout moved to the Layout menu. No readiness percentage change.
 - **2026-10-14** · On an object-based page the Page tool shows a selected object's liquid pins and resize locks as InDesign does: a click pins a side to the page edge or locks the width or height, with InDesign's tooltips. No readiness percentage change.

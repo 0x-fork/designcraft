@@ -1166,7 +1166,15 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         let mut label_aligned = 0usize;
         let mut label_tab = false;
         if let Some(label) = &list_label {
-            let chars = label_chars(doc, &pp, &base_chars);
+            let mut chars = label_chars(doc, &pp, &base_chars);
+            // The number is drawn in the Digits of the paragraph's first run, so Persian text
+            // gets Persian numbers whether Digits is set on the paragraph style or on the text
+            // (unless the number's character style sets its own).
+            if chars.digits == base_chars.digits
+                && let Some((_, fmt)) = story.runs().find(|(rr, _)| rr.end > prange.start && rr.start < prange.end)
+            {
+                chars.digits = doc.styles.resolve_char(&base_chars, fmt).digits;
+            }
             let n = prepend_label(db, &mut sp.glyphs, label, prange.start, &chars, label_env, &mut table);
             for g in sp.glyphs.iter_mut().take(n) {
                 g.list_label = true;
@@ -1566,7 +1574,10 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 // paragraph from here, starting with this line's segments as they are. A pass
                 // re-breaks at its first line only for a new line, whose segments it carries, so
                 // every re-break makes progress; their number is capped too.
-                if (k > 0 || !continues) && rebreaks < 256 && slots.get(k).is_some_and(|&(a, b)| ((b - a) - (x1 - x0)).abs() > 0.5) {
+                // Past the estimated slots the breaker assumes the whole column. Check that
+                // fallback too: narrow wrap segments may need more lines than the estimate.
+                let (estimated_x0, estimated_x1) = slots.get(k).copied().unwrap_or((col.x0, col.x1));
+                if (k > 0 || !continues) && rebreaks < 256 && ((estimated_x1 - estimated_x0) - (x1 - x0)).abs() > 0.5 {
                     rebreaks += 1;
                     carry.insert(0, (x0, x1));
                     g0 = s;

@@ -50,7 +50,7 @@ pub use datamerge::{
 };
 pub use designcraft_color as color;
 pub use designcraft_geom as geom;
-pub use edit::{ItemLoc, ItemPath, SpreadRef, item_hit as edit_hit};
+pub use edit::{ItemLoc, ItemPath, SpreadRef, hit_descendant, item_hit as edit_hit};
 pub use endnotes::{ENDNOTE_REF, EditorialNote, EndnoteOptions, NOTE_MARK};
 pub use flex::{FlexAlign, FlexDirection, FlexJustify, FlexLayout, FlexSize};
 pub use ids::*;
@@ -398,10 +398,30 @@ pub struct DocSettings {
     /// Lock Zero Point: dragging from the ruler corner leaves it where it is.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub zero_point_locked: bool,
+    /// The fill and stroke new shapes are drawn with: what the Tools panel's proxy shows and sets
+    /// with nothing selected (InDesign's document defaults).
+    pub new_object: NewObjectColors,
 }
 
 fn is_origin(p: &[f64; 2]) -> bool {
     p[0] == 0.0 && p[1] == 0.0
+}
+
+/// The colours of new shapes (see [`DocSettings::new_object`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NewObjectColors {
+    pub fill: String,
+    pub fill_tint: f32,
+    pub stroke: String,
+    pub stroke_tint: f32,
+}
+
+impl Default for NewObjectColors {
+    /// No fill and a black stroke, as new documents have.
+    fn default() -> Self {
+        NewObjectColors { fill: "[None]".into(), fill_tint: 1.0, stroke: "[Black]".into(), stroke_tint: 1.0 }
+    }
 }
 
 impl Default for DocSettings {
@@ -440,6 +460,7 @@ impl Default for DocSettings {
             ruler_origin: RulerOrigin::Spread,
             zero_point: [0.0, 0.0],
             zero_point_locked: false,
+            new_object: NewObjectColors::default(),
         }
     }
 }

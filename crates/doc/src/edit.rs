@@ -431,7 +431,20 @@ impl Document {
                         && second.is_some_and(|incoming| !incoming.text.is_empty() || st.link.is_some_and(|(parent, _)| parent == incoming.id))
                 })
         };
-        if incompatible {
+        // Removing any ancestor of the survivor would redirect a link back into its own chain.
+        let (removed, survivor) = if keep_to { (fs, second) } else { (ts, first) };
+        let mut parent = survivor.and_then(|st| st.link);
+        let mut absorbs_ancestor = false;
+        // Bound the walk even when an existing document already contains a link cycle.
+        for _ in 0..self.stories.len() {
+            let Some((id, _)) = parent else { break };
+            if Some(id) == removed {
+                absorbs_ancestor = true;
+                break;
+            }
+            parent = self.story(id).and_then(|st| st.link);
+        }
+        if incompatible || absorbs_ancestor {
             return Err(DocError::Invalid("unlink the linked story before merging its text".into()));
         }
         Ok(())
@@ -734,6 +747,30 @@ pub fn item_hit(it: &Item, p: Point, tol: f64) -> bool {
     // Type on a path: the letters stand over the path, so a click on them hits it too.
     let reach = if it.text_frame().is_some_and(|t| t.options.path.is_some()) { PATH_TYPE_REACH } else { 0.0 };
     designcraft_geom::hit::stroke_contains(&bp, it.stroke.weight.max(1.0), tol + reach, inner)
+}
+
+/// The frontmost descendant of `it` under `p` that `want` accepts, looking inside nested groups;
+/// `it` itself when nothing inside it matches and `want` accepts it. `p` is in the space `it`
+/// sits in, as [`item_hit`] takes it.
+///
+/// Children are tried front to back and a hidden one is skipped, so of several that `want`
+/// accepts the answer is the one in front. Objects `want` rejects do not hide the ones behind
+/// them: a text frame under a rectangle in the same group is still found.
+pub fn hit_descendant(it: &Item, p: Point, tol: f64, want: &dyn Fn(&Item) -> bool) -> Option<ItemId> {
+    if !item_hit(it, p, tol) {
+        return None;
+    }
+    let inner = it.xf.inverse() * p;
+    let children: Vec<&Arc<Item>> = it.shown_children().collect();
+    for c in children.into_iter().rev() {
+        if c.hidden {
+            continue;
+        }
+        if let Some(id) = hit_descendant(c, inner, tol, want) {
+            return Some(id);
+        }
+    }
+    want(it).then_some(it.id)
 }
 
 /// How far from its path type on a path is hit (points): about a cap height of 12–18 pt type,

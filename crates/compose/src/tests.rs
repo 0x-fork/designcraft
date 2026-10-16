@@ -4,6 +4,34 @@ use designcraft_geom::Rect;
 
 use super::*;
 
+#[test]
+fn long_wrapped_paragraph_rechecks_width_after_estimated_slots_end() {
+    let text="Distinctive shapes and warm colours set the rhythm of the page. The story flows around the illustration while the frame keeps its original dimensions. ".repeat(14);
+    let (mut d, sid, _) = doc_with(&text, Rect::new(36.0, 36.0, 576.0, 756.0), ParaAttrs::default());
+    d.story_mut(sid).unwrap().format_chars(0..text.len(), |f| {
+        f.over.font_family = Some("Source Serif 4".into());
+        f.over.size = Some(13.0);
+        f.over.leading = Some(designcraft_doc::Leading::Points(17.0));
+    });
+    add_wrap_objects(&mut d, &[(Rect::new(180.0, 135.0, 440.0, 568.3333333333334), [13.5; 4], WrapMode::Contour)]);
+    let composed = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = &composed.frames[0].lines;
+    assert!(lines.iter().any(|l| l.baseline > 450.0 && l.baseline < 560.0));
+    for line in lines {
+        for glyph in line.glyphs.iter().filter(|g| g.visible && text.as_bytes().get(g.byte).is_some_and(|b| !b.is_ascii_whitespace())) {
+            assert!(
+                glyph.x + glyph.adv <= line.x1 + 0.5,
+                "glyph {} ends at {} outside the segment {}..{} on baseline {}",
+                glyph.byte,
+                glyph.x + glyph.adv,
+                line.x0,
+                line.x1,
+                line.baseline
+            );
+        }
+    }
+}
+
 const LOREM: &str = "Typography is the art and technique of arranging type to make written language legible, readable and appealing when displayed. \
 The arrangement of type involves selecting typefaces, point sizes, line lengths, line spacing, and letter spacing, and adjusting the space between pairs of letters.";
 
@@ -2061,6 +2089,24 @@ fn page_numbers_take_the_digits_option() {
         cs.frames[0].lines[0].glyphs.iter().find(|g| g.byte == 4).map(|g| g.gid).unwrap()
     };
     assert_eq!(fourth(&format!("No. {}", story::PAGE_NUMBER)), fourth("No. \u{661}"));
+}
+
+#[test]
+fn digits_option_draws_page_numbers_and_list_numbers_in_that_script() {
+    use designcraft_doc::{Digits, ListType};
+    let gids = |text: &str, list: Option<ListType>, digits: Option<Digits>| {
+        let (mut d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, 300.0, 100.0), ParaAttrs { list_type: list, ..Default::default() });
+        if let Some(dg) = digits {
+            let n = text.len();
+            d.story_mut(sid).unwrap().format_chars(0..n, |f| f.over.digits = Some(dg));
+        }
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        all_lines(&cs)[0].glyphs.iter().map(|g| g.gid).collect::<Vec<_>>()
+    };
+    let pn = story::PAGE_NUMBER.to_string();
+    assert_ne!(gids(&pn, None, None), gids(&pn, None, Some(Digits::Farsi)), "page number marker");
+    // Digits set on the text (not on the paragraph style) reach the list number too.
+    assert_ne!(gids("Item", Some(ListType::Numbers), None), gids("Item", Some(ListType::Numbers), Some(Digits::Farsi)), "list number");
 }
 
 #[test]
@@ -7165,4 +7211,34 @@ fn an_empty_last_paragraph_isnt_overset() {
     assert!(compose_story(&d, sid, &ComposeOptions::default()).is_overset());
     let (d, sid, _) = doc_with("One\nTwo\n\n", Rect::new(0.0, 0.0, 200.0, 35.0), ParaAttrs::default());
     assert!(compose_story(&d, sid, &ComposeOptions::default()).is_overset(), "an empty paragraph before the last one is text");
+}
+
+#[test]
+fn greek_text_gets_greek_hyphenation() {
+    // Greek had no hyphenation at all: `hypher`'s Greek patterns were not among the features
+    // the crate asks for, so `Lang::for_language` found nothing and Greek text set unhyphenated
+    // however narrow the column (#1008).
+    let text = "δημοκρατια ανθρωπος πολιτισμος δημοκρατια ανθρωπος πολιτισμος";
+    let (mut d, sid, _) = doc_with(text, Rect::new(36.0, 36.0, 76.0, 700.0), ParaAttrs::default());
+    let st = d.story_mut(sid).unwrap();
+    let n = st.len();
+    st.format_chars(0..n, |f| f.over.language = Some("Greek".into()));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let breaks: Vec<&str> = all_lines(&cs).into_iter().filter(|l| l.hyphenated).map(|l| text[l.range.clone()].trim_end()).collect();
+    assert!(!breaks.is_empty(), "Greek text is hyphenated");
+    // Every break the composer took is a break the patterns give for that word.
+    for b in breaks {
+        let tail = b.rsplit(' ').next().unwrap_or(b);
+        let whole = text[text.find(b).unwrap() + b.len() - tail.len()..].split(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+        let el = hyphen::Lang::for_language("Greek").unwrap();
+        let pts = hyphen::hyphen_points_in(whole, &hyphen::Limits::default(), el);
+        assert!(pts.contains(&tail.chars().count()), "break {tail}- in {whole} is a hyph-el point");
+    }
+    // The language is reached by name and by tag, as the other languages are.
+    for name in ["Greek", "Greek: Greece", "el", "el-GR"] {
+        assert!(hyphen::Lang::for_language(name).is_some(), "{name} has hyphenation");
+    }
+    // αν-θρω-πος, the syllables hyph-el gives.
+    let el = hyphen::Lang::for_language("Greek").unwrap();
+    assert_eq!(hyphen::hyphen_points_in("ανθρωπος", &hyphen::Limits::default(), el), vec![2, 5]);
 }

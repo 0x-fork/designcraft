@@ -77,9 +77,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let c = union_bounds(d, &ids).center();
                 let m = Affine::translate(c.to_vec2()) * Affine::scale_non_uniform(sx, sy) * Affine::translate(-c.to_vec2());
                 for id in &ids {
-                    if let Some(it) = d.item_mut(*id) {
-                        scale_item(it, m, (sx * sy).abs().sqrt(), strokes);
-                    }
+                    scale_object(d, *id, m, (sx * sy).abs().sqrt(), strokes);
                 }
                 ok()
             })
@@ -190,8 +188,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fill",
             [],
             None,
-            "{swatch? (a swatch's name, e.g. [Paper]), tint?: 0..1, ids?} — at least one; a tint alone keeps each object's own swatch (the Swatches panel's Tint field)",
-            has_selection,
+            "{swatch? (a swatch's name, e.g. [Paper]), tint?: 0..1, ids?} — at least one; a tint alone keeps each object's own swatch (the Swatches panel's Tint field). With nothing selected: the fill of new shapes",
+            has_doc,
             |s, p| {
                 let sw = str_param(p, "swatch").map(str::to_string);
                 let tint = match p.get("tint") {
@@ -202,6 +200,15 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(sw) => known_swatch(&s.doc()?.doc, sw, "object.fill", "swatch")?,
                     None if tint.is_none() => return Err(bad("object.fill", "missing swatch")),
                     None => {}
+                }
+                if nothing_targeted(s, p)? {
+                    return set_new_object(s, |c| {
+                        if let Some(sw) = &sw {
+                            c.fill = sw.clone();
+                            c.fill_tint = 1.0;
+                        }
+                        c.fill_tint = tint.unwrap_or(c.fill_tint);
+                    });
                 }
                 set_flag(
                     s,
@@ -219,18 +226,33 @@ pub fn specs() -> Vec<CommandSpec> {
             "Swap Fill and Stroke",
             [],
             None,
-            "{ids?} — each object's fill and stroke colours (and tints) trade places; locked objects stay as they are",
-            has_editable_selection,
-            |s, p| edit_unlocked(s, p, swap_fill_stroke)
+            "{ids?} — each object's fill and stroke colours (and tints) trade places; locked objects stay as they are. With nothing selected: those of new shapes",
+            has_doc,
+            |s, p| {
+                if nothing_targeted(s, p)? {
+                    return set_new_object(s, |c| {
+                        std::mem::swap(&mut c.fill, &mut c.stroke);
+                        std::mem::swap(&mut c.fill_tint, &mut c.stroke_tint);
+                    });
+                }
+                has_editable_selection(s).map_err(|e| bad("object.swapFillStroke", e))?;
+                edit_unlocked(s, p, swap_fill_stroke)
+            }
         ),
         cmd!(
             "object.defaultFillStroke",
             "Default Fill and Stroke",
             [],
             None,
-            "{ids?} — no fill and a black stroke; locked objects stay as they are",
-            has_editable_selection,
-            |s, p| edit_unlocked(s, p, default_fill_stroke)
+            "{ids?} — no fill and a black stroke; locked objects stay as they are. With nothing selected: for new shapes",
+            has_doc,
+            |s, p| {
+                if nothing_targeted(s, p)? {
+                    return set_new_object(s, |c| *c = designcraft_doc::NewObjectColors::default());
+                }
+                has_editable_selection(s).map_err(|e| bad("object.defaultFillStroke", e))?;
+                edit_unlocked(s, p, default_fill_stroke)
+            }
         ),
         cmd!(
             "object.stroke",
@@ -238,12 +260,27 @@ pub fn specs() -> Vec<CommandSpec> {
             [],
             None,
             "{swatch?, tint?, weight?, align?: center|inside|outside, type?: {kind:…}, cap?: butt|round|projecting, join?: miter|round|bevel, miterLimit?, start?, end?: none|simple|simpleWide|triangle|triangleWide|barbed|curved|circle|circleSolid|square|squareSolid|bar, gapSwatch?, gapTint?, gapOverprint?: bool, ids?}",
-            has_selection,
+            has_doc,
             |s, p| {
                 for key in ["swatch", "gapSwatch"] {
                     if let Some(name) = p.get(key).and_then(Value::as_str) {
                         known_swatch(&s.doc()?.doc, name, "object.stroke", key)?;
                     }
+                }
+                // With nothing selected, the swatch and tint are those of new shapes.
+                if nothing_targeted(s, p)? {
+                    let sw = str_param(p, "swatch").map(str::to_string);
+                    let tint = p.get("tint").and_then(Value::as_f64).map(|t| t.clamp(0.0, 1.0) as f32);
+                    if sw.is_none() && tint.is_none() {
+                        return Err(bad("object.stroke", super::NOTHING_SELECTED));
+                    }
+                    return set_new_object(s, |c| {
+                        if let Some(sw) = &sw {
+                            c.stroke = sw.clone();
+                            c.stroke_tint = 1.0;
+                        }
+                        c.stroke_tint = tint.unwrap_or(c.stroke_tint);
+                    });
                 }
                 let p2 = p.clone();
                 // A tint alone (the Swatches panel's Tint field) recolours strokes, it doesn't add one.
@@ -872,6 +909,39 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// No objects named and none selected (and no text): fill and stroke go to new shapes.
+pub(crate) fn nothing_targeted(s: &Session, p: &Value) -> Result<bool> {
+    let st = s.doc()?;
+    Ok(p.get("ids").is_none()
+        && p.get("id").is_none()
+        && st.selection.items.is_empty()
+        && st.selection.text.is_none()
+        && st.selection.cells.is_none())
+}
+
+/// Change the colours new shapes are drawn with (one undo step).
+pub(crate) fn set_new_object(s: &mut Session, f: impl FnOnce(&mut designcraft_doc::NewObjectColors)) -> Result<Value> {
+    s.edit(|d, _| {
+        f(&mut d.settings.new_object);
+        let c = &d.settings.new_object;
+        Ok(json!({"newObject": {"fill": c.fill, "fillTint": c.fill_tint, "stroke": c.stroke, "strokeTint": c.stroke_tint}}))
+    })
+}
+
+/// A new shape's fill and stroke: the document's colours for new objects (a swatch deleted
+/// since leaves the shape's own).
+fn new_object_colors(d: &designcraft_doc::Document, it: &mut Item) {
+    let c = &d.settings.new_object;
+    let known = |sw: &str| sw == designcraft_color::swatch::NONE || d.swatches.iter().any(|w| w.name == sw);
+    if known(&c.fill) {
+        it.fill = Fill { swatch: c.fill.clone(), tint: c.fill_tint, ..it.fill.clone() };
+    }
+    if known(&c.stroke) {
+        it.stroke.swatch = c.stroke.clone();
+        it.stroke.tint = c.stroke_tint;
+    }
+}
+
 fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
     let rect = rect_param(p, "rect").ok_or_else(|| bad("frame.create", "missing rect"))?;
     let shape = str_param(p, "shape").unwrap_or("rectangle");
@@ -915,8 +985,10 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
                 it.effects = e.clone();
             }
         } else {
-            // Shapes drawn with Rectangle/Ellipse/Polygon get the default 1 pt black stroke.
+            // Shapes drawn with Rectangle/Ellipse/Polygon get a 1 pt stroke in the document's
+            // colours for new objects (no fill and black at first).
             it.stroke = Stroke::default();
+            new_object_colors(d, &mut it);
         }
         d.insert_item(sr, it, None)?;
         *sel = Selection::items(vec![id]);
@@ -948,6 +1020,7 @@ fn line_create(s: &mut Session, p: &Value) -> Result<Value> {
         let id = ItemId(d.alloc());
         let mut it = Item::new(id, lid, Shape::GraphicLine, shapes::line(a, b));
         it.stroke = Stroke::default();
+        new_object_colors(d, &mut it);
         d.insert_item(sr, it, None)?;
         *sel = Selection::items(vec![id]);
         Ok(json!({"id": id.0}))
@@ -1147,7 +1220,7 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
                 let c = it.bounds().center();
                 it.xf = Affine::translate(m * c - c) * it.xf;
             } else if scale_content {
-                scale_item(it, m, (sx * sy).abs().sqrt(), strokes);
+                scale_object(d, *id, m, (sx * sy).abs().sqrt(), strokes);
             } else if it.flex.is_some() {
                 resize_container(it, m);
             } else if matches!(it.content, Content::Group { .. }) {
@@ -1243,6 +1316,110 @@ pub(crate) fn scale_item(it: &mut Item, m: Affine, k: f64, strokes: bool) {
             }
         }
     }
+}
+
+/// Scale the object `id` and its content by `m` (see [`scale_item`]); a text frame's text takes the
+/// scale as [`scale_text_frame`] sets it.
+fn scale_object(d: &mut Document, id: ItemId, m: Affine, k: f64, strokes: bool) {
+    if scale_text_frame(d, id, m, k, strokes) {
+        return;
+    }
+    if let Some(it) = d.item_mut(id) {
+        scale_item(it, m, k, strokes);
+    }
+}
+
+/// Scale a text frame as InDesign's default "When Scaling: Apply to Content" does: the frame's
+/// path takes the scale, so it shows 100%, and the text is set larger or smaller. The point size,
+/// leading, baseline shift, text stroke and underline weights follow the vertical scale, the
+/// horizontal scale takes the difference between the two axes, and the indents and paragraph
+/// spacing follow their own axes. False (the frame is then transformed as a whole) for a story that
+/// runs through other frames, vertical text, and a scale that flips or isn't along the frame's own
+/// axes.
+fn scale_text_frame(d: &mut Document, id: ItemId, m: Affine, k: f64, strokes: bool) -> bool {
+    let Some(it) = d.item(id) else { return false };
+    let Content::Text(tf) = &it.content else { return false };
+    let story = tf.story;
+    let inner = it.xf.inverse() * m * it.xf;
+    let [sx, b, c, sy, _, _] = inner.as_coeffs();
+    if b.abs() > 1e-9 || c.abs() > 1e-9 || !(sx > 1e-6 && sy > 1e-6) || !sx.is_finite() || !sy.is_finite() {
+        return false;
+    }
+    let Some(st) = d.story(story) else { return false };
+    // Tables, anchored objects and footnotes keep their own sizes, so a frame holding any of them
+    // scales as a whole.
+    if st.frames.len() != 1 || st.vertical || !st.tables.is_empty() || !st.objects.is_empty() || !st.notes.is_empty() {
+        return false;
+    }
+    // The resolved attributes of every run, split at paragraph ends (a run's size can come from its
+    // paragraph's style). Each paragraph keeps its mark.
+    let mut runs = Vec::new();
+    let mut paras = Vec::new();
+    for (i, pr) in st.para_ranges().into_iter().enumerate() {
+        let Some(pf) = st.paras.get(i) else { break };
+        let (pp, base) = d.styles.resolve_para(pf);
+        let end = pr.end.saturating_add(1).min(st.text.len());
+        for (r, f) in st.runs() {
+            let (a, z) = (r.start.max(pr.start), r.end.min(end));
+            if a < z {
+                runs.push((a..z, d.styles.resolve_char(&base, f)));
+            }
+        }
+        paras.push((pr.start, pp));
+    }
+    let h = sx / sy;
+    let Some(st) = d.story_mut(story) else { return false };
+    for (r, cp) in runs {
+        st.format_chars(r, |f| {
+            let o = &mut f.over;
+            o.size = Some(cp.size * sy);
+            if let designcraft_doc::Leading::Points(v) = cp.leading {
+                o.leading = Some(designcraft_doc::Leading::Points(v * sy));
+            }
+            if cp.baseline_shift != 0.0 {
+                o.baseline_shift = Some(cp.baseline_shift * sy);
+            }
+            if (h - 1.0).abs() > 1e-9 {
+                o.h_scale = Some(cp.h_scale * h);
+            }
+            if cp.stroke != "[None]" {
+                o.stroke_weight = Some(cp.stroke_weight * sy);
+            }
+            for (v, w) in [
+                (&mut o.underline_weight, cp.underline_weight),
+                (&mut o.underline_offset, cp.underline_offset),
+                (&mut o.strikethrough_weight, cp.strikethrough_weight),
+                (&mut o.strikethrough_offset, cp.strikethrough_offset),
+            ] {
+                if let Some(w) = w {
+                    *v = Some(Some(w * sy));
+                }
+            }
+        });
+    }
+    for (at, pp) in paras {
+        st.format_paras(at..at, |p| {
+            let a = &mut p.para;
+            for (v, w, s) in [
+                (&mut a.left_indent, pp.left_indent, sx),
+                (&mut a.right_indent, pp.right_indent, sx),
+                (&mut a.first_line_indent, pp.first_line_indent, sx),
+                (&mut a.last_line_indent, pp.last_line_indent, sx),
+                (&mut a.space_before, pp.space_before, sy),
+                (&mut a.space_after, pp.space_after, sy),
+            ] {
+                if w != 0.0 {
+                    *v = Some(w * s);
+                }
+            }
+        });
+    }
+    let Some(it) = d.item_mut(id) else { return false };
+    bake(it, inner);
+    if strokes {
+        it.stroke.weight *= k;
+    }
+    true
 }
 
 fn transform_again(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1391,7 +1568,7 @@ fn transform_values(s: &mut Session, p: &Value, ids: &[ItemId], rf: usize) -> Re
                 let (fx, fy) = (sx.map_or(1.0, |x| x / 100.0 / v.scale_x), sy.map_or(1.0, |y| y / 100.0 / v.scale_y));
                 let m = Affine::translate(a.to_vec2()) * Affine::scale_non_uniform(fx, fy) * Affine::translate(-a.to_vec2());
                 let m = parent.inverse() * m * parent;
-                scale_item(it, m, (fx * fy).abs().sqrt(), strokes);
+                scale_object(d, *id, m, (fx * fy).abs().sqrt(), strokes);
             }
         }
         ok()
@@ -2986,6 +3163,7 @@ fn path_create(s: &mut Session, p: &Value) -> Result<Value> {
         let shape = if anchors.len() == 2 && !closed { Shape::GraphicLine } else { Shape::Path };
         let mut it = Item::new(id, lid, shape, designcraft_geom::PathData::single(designcraft_geom::SubPath::new(anchors, closed)));
         it.stroke = Stroke::default();
+        new_object_colors(d, &mut it);
         d.insert_item(sr, it, None)?;
         *sel = Selection::items(vec![id]);
         Ok(json!({"id": id.0}))
@@ -3445,6 +3623,60 @@ mod arrange_tests {
 mod step_repeat_tests {
     use super::*;
 
+    /// With nothing selected, fill and stroke set the colours new shapes are drawn with, as
+    /// InDesign's document defaults; frames for graphics and text keep theirs.
+    #[test]
+    fn with_nothing_selected_fill_and_stroke_are_for_new_shapes() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let colors = |s: &Session, id: u64| {
+            let it = s.doc().unwrap().doc.item(ItemId(id)).unwrap();
+            (it.fill.swatch.clone(), it.stroke.swatch.clone(), it.stroke.weight)
+        };
+        let rect = |s: &mut Session| {
+            let id = s.execute("frame.create", &json!({"rect": [72, 72, 144, 144], "content": "unassigned"})).unwrap()["id"].as_u64().unwrap();
+            s.execute("selection.set", &json!({"ids": []})).unwrap();
+            id
+        };
+        // New documents: no fill and a 1 pt black stroke.
+        let a = rect(&mut s);
+        assert_eq!(colors(&s, a), ("[None]".into(), "[Black]".into(), 1.0));
+        // A picked colour and Apply None, with nothing selected.
+        let r = s.execute("object.color", &json!({"color": "#7c1315"})).unwrap();
+        let red = r["swatch"].as_str().unwrap().to_string();
+        s.execute("object.stroke", &json!({"swatch": "[None]"})).unwrap();
+        let b = rect(&mut s);
+        assert_eq!(colors(&s, b), (red.clone(), "[None]".into(), 1.0), "the next shape has them");
+        assert_eq!(colors(&s, a).0, "[None]", "shapes drawn before keep theirs");
+        let line = s.execute("line.create", &json!({"a": [0, 0], "b": [100, 0]})).unwrap()["id"].as_u64().unwrap();
+        assert_eq!(colors(&s, line).1, "[None]");
+        // Pen and Pencil paths too.
+        let anchors = json!([{"p": [0, 200]}, {"p": [100, 250]}, {"p": [50, 300]}]);
+        let path = s.execute("path.create", &json!({"anchors": anchors, "closed": true})).unwrap()["id"].as_u64().unwrap();
+        assert_eq!(colors(&s, path), (red.clone(), "[None]".into(), 1.0));
+        s.execute("selection.set", &json!({"ids": []})).unwrap();
+        // A graphics frame keeps its object style's.
+        let g = s.execute("frame.create", &json!({"rect": [200, 72, 300, 144]})).unwrap()["id"].as_u64().unwrap();
+        assert_ne!(colors(&s, g).0, red);
+        s.execute("selection.set", &json!({"ids": []})).unwrap();
+        // Swap and Default.
+        s.execute("object.swapFillStroke", &json!({})).unwrap();
+        let c = &s.doc().unwrap().doc.settings.new_object;
+        assert_eq!((c.fill.as_str(), c.stroke.as_str()), ("[None]", red.as_str()));
+        s.execute("object.fill", &json!({"swatch": "[Paper]"})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.settings.new_object.fill, "[Paper]");
+        s.execute("object.defaultFillStroke", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.settings.new_object, designcraft_doc::NewObjectColors::default());
+        // One undo step each.
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.settings.new_object.fill, "[Paper]");
+        // With a selection, they still colour it and leave the defaults.
+        s.execute("selection.set", &json!({"ids": [a]})).unwrap();
+        s.execute("object.fill", &json!({"swatch": "[Black]"})).unwrap();
+        assert_eq!(colors(&s, a).0, "[Black]");
+        assert_eq!(s.doc().unwrap().doc.settings.new_object.fill, "[Paper]");
+    }
+
     #[test]
     fn swap_and_default_fill_stroke_are_one_undo_step_per_object() {
         let mut s = Session::new();
@@ -3563,6 +3795,80 @@ mod scale_tests {
         s.execute("prefs.set", &json!({"dimensionsIncludeStroke": false})).unwrap();
         s.execute("transform.set", &json!({"width": 120})).unwrap();
         assert!((bounds(&s).width() - 120.0).abs() < 1e-9);
+    }
+
+    fn text_frame(s: &mut Session, rect: [f64; 4], text: &str) -> (ItemId, StoryId) {
+        let r = s.execute("frame.create", &json!({"rect": rect, "content": "text", "text": text})).unwrap();
+        (ItemId(r["id"].as_u64().unwrap()), StoryId(r["story"].as_u64().unwrap()))
+    }
+
+    fn props_at(s: &Session, story: StoryId, pos: usize) -> (designcraft_doc::ParaProps, designcraft_doc::CharProps) {
+        let d = &s.doc().unwrap().doc;
+        let st = d.story(story).unwrap();
+        let (pp, base) = d.styles.resolve_para(&st.paras[st.para_at(pos)]);
+        (pp, d.styles.resolve_char(&base, st.char_format_at(pos)))
+    }
+
+    /// InDesign's default When Scaling: Apply to Content: Cmd+Shift-dragging a text frame's handle
+    /// sets the text larger and leaves the frame at 100% (Dansky's Exclude Overlap tutorial, 2:16).
+    #[test]
+    fn scaling_a_text_frame_scales_its_text() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let (f, story) = text_frame(&mut s, [100.0, 100.0, 300.0, 200.0], "Learn\nmore");
+        s.execute("text.select", &json!({"story": story.0, "anchor": 0, "focus": 5})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"size": 20, "leading": {"kind": "points", "value": 24}, "baselineShift": 2, "tracking": -50}}))
+            .unwrap();
+        s.execute("type.para", &json!({"attrs": {"leftIndent": 4, "spaceAfter": 6}})).unwrap();
+        s.execute("edit.deselectAll", &json!({})).unwrap();
+        // The handle drag: from the top-left, twice as wide and high.
+        s.execute("transform.resize", &json!({"ids": [f.0], "from": [100, 100, 300, 200], "to": [100, 100, 500, 300], "content": true})).unwrap();
+        let (pp, cp) = props_at(&s, story, 0);
+        assert_eq!(
+            (cp.size, cp.leading, cp.baseline_shift, cp.tracking, cp.h_scale),
+            (40.0, designcraft_doc::Leading::Points(48.0), 4.0, -50.0, 1.0)
+        );
+        assert_eq!((pp.left_indent, pp.space_after), (8.0, 12.0));
+        // The second paragraph's size came from the paragraph style: it is set too.
+        assert_eq!(props_at(&s, story, 7).1.size, 24.0);
+        let it = s.doc().unwrap().doc.item(f).unwrap().clone();
+        assert_eq!(it.bounds(), Rect::new(100.0, 100.0, 500.0, 300.0));
+        let scale = s.execute("transform.info", &json!({"ids": [f.0]})).unwrap();
+        assert_eq!((scale["scaleX"].as_f64(), scale["scaleY"].as_f64()), (Some(100.0), Some(100.0)), "{scale}");
+        // Wider than high: the horizontal scale takes the difference.
+        s.execute("transform.scale", &json!({"ids": [f.0], "sx": 1.0, "sy": 0.5})).unwrap();
+        let (_, cp) = props_at(&s, story, 0);
+        assert_eq!((cp.size, cp.h_scale), (20.0, 2.0));
+        // The Transform panel's scale fields do the same, and show 100% afterwards.
+        s.execute("transform.set", &json!({"ids": [f.0], "scaleX": 50, "scaleY": 50})).unwrap();
+        assert_eq!(props_at(&s, story, 0).1.size, 10.0);
+        // One undo step.
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(props_at(&s, story, 0).1.size, 20.0);
+    }
+
+    /// A threaded story, a rotated scale and a flip keep the old behaviour: the frame is
+    /// transformed as a whole and the text keeps its size.
+    #[test]
+    fn threaded_and_flipped_text_frames_scale_as_a_whole() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let (a, story) = text_frame(&mut s, [100.0, 100.0, 200.0, 140.0], "Some threaded text");
+        let (b, _) = text_frame(&mut s, [100.0, 200.0, 200.0, 240.0], "");
+        s.execute("text.thread", &json!({"from": a.0, "to": b.0})).unwrap();
+        s.execute("transform.scale", &json!({"ids": [a.0], "sx": 2.0})).unwrap();
+        assert_eq!(props_at(&s, story, 0).1.size, 12.0);
+        let (c, story) = text_frame(&mut s, [300.0, 100.0, 400.0, 140.0], "Flip");
+        s.execute("transform.scale", &json!({"ids": [c.0], "sx": -1.0, "sy": 1.0})).unwrap();
+        assert_eq!(props_at(&s, story, 0).1.size, 12.0);
+        assert!(s.doc().unwrap().doc.item(c).unwrap().xf.as_coeffs()[0] < 0.0);
+        // A frame holding a table: the table would keep its size while the text grew.
+        let (t, story) = text_frame(&mut s, [300.0, 300.0, 500.0, 500.0], "Grid");
+        s.execute("text.select", &json!({"story": story.0, "anchor": 4, "focus": 4})).unwrap();
+        s.execute("table.insert", &json!({"rows": 2, "cols": 2})).unwrap();
+        s.execute("transform.scale", &json!({"ids": [t.0], "sx": 2.0})).unwrap();
+        assert_eq!(props_at(&s, story, 0).1.size, 12.0);
+        assert!((s.doc().unwrap().doc.item(t).unwrap().xf.as_coeffs()[0] - 2.0).abs() < 1e-9);
     }
 }
 

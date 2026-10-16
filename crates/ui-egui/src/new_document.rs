@@ -949,6 +949,17 @@ mod tests {
         let ctx = context();
         app.ui.dialog.as_mut().unwrap().fields.insert("tab".into(), json!("print"));
         let texts = settle(&mut app, &ctx);
+        // A4 sits below the poster sizes: scroll the presets to it.
+        let over = card_at(&texts, "Letter");
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(over)]);
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut app, &ctx, vec![wheel]);
+        let texts = settle(&mut app, &ctx);
         click(&mut app, &ctx, card_at(&texts, "A4"), 1);
         let d = app.ui.dialog.as_ref().unwrap();
         assert_eq!((d.s("preset"), d.s("width"), d.s("height"), units(d)), ("A4".into(), "210 mm".into(), "297 mm".into(), Unit::Millimeters));

@@ -55,6 +55,68 @@ fn smart_quotes_and_formatting() {
     assert_eq!(s.execute("type.selectionAttrs", &json!({})).unwrap()["para"]["align"], "center");
 }
 
+/// Issue #919: with Cmd held, a press with the Type (or any drawing) tool selects and drags like
+/// the Selection tool, and the chosen tool stays.
+#[test]
+fn cmd_held_press_borrows_the_selection_tool_for_one_gesture() {
+    use designcraft_tools::{Mods, PointerEvent, PointerKind};
+    let mut s = session();
+    let v = ViewInfo::at_zoom(1.0);
+    let r = s.execute("frame.create", &json!({"rect": [100, 100, 300, 200], "content": "text", "text": "Hello"})).unwrap();
+    let fid = r["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"ids": []})).unwrap();
+    s.set_tool("type");
+    let cmd = Mods { cmd: true, ..Mods::default() };
+    // Cmd-press on the frame selects it as an object (no caret) and a Cmd-drag moves it.
+    s.pointer(&PointerEvent::new(PointerKind::Down, 150.0, 150.0).with_mods(cmd), v).unwrap();
+    assert_eq!(s.doc().unwrap().selection.items, vec![designcraft_doc::ItemId(fid)]);
+    assert!(s.doc().unwrap().selection.text.is_none(), "no caret: the Selection tool was borrowed");
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 170.0, 150.0).with_mods(cmd), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 200.0, 150.0).with_mods(cmd), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, 200.0, 150.0).with_mods(cmd), v).unwrap();
+    assert_eq!(s.doc().unwrap().doc.item(designcraft_doc::ItemId(fid)).unwrap().bounds().x0, 150.0, "moved by the drag");
+    assert_eq!(s.tool_id(), "type", "the chosen tool stays");
+    assert!(s.temp_tool.is_none(), "the borrowed tool is gone on release");
+    // The next plain press is the Type tool's again: a caret in the frame.
+    s.pointer(&PointerEvent::new(PointerKind::Down, 200.0, 150.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, 200.0, 150.0), v).unwrap();
+    assert!(s.doc().unwrap().selection.text.is_some(), "a plain press places the caret");
+    // Cmd with the Selection tool itself borrows nothing (Cmd-click selects through, as before).
+    s.set_tool("selection");
+    s.pointer(&PointerEvent::new(PointerKind::Down, 200.0, 150.0).with_mods(cmd), v).unwrap();
+    assert!(s.temp_tool.is_none());
+    s.pointer(&PointerEvent::new(PointerKind::Up, 200.0, 150.0).with_mods(cmd), v).unwrap();
+    s.set_tool("pen");
+    s.pointer(&PointerEvent::new(PointerKind::Down, 200.0, 150.0).with_mods(cmd), v).unwrap();
+    assert_eq!(s.temp_tool.as_ref().map(|t| t.id()), Some("selection"));
+    s.pointer(&PointerEvent::new(PointerKind::Up, 200.0, 150.0).with_mods(cmd), v).unwrap();
+    assert_eq!(s.tool_id(), "pen");
+}
+
+/// Cmd borrows whichever selection tool was chosen last, whatever the chosen tool is.
+#[test]
+fn cmd_borrows_the_last_used_selection_tool() {
+    use designcraft_tools::{Mods, PointerEvent, PointerKind};
+    let mut s = session();
+    let v = ViewInfo::at_zoom(1.0);
+    let cmd = Mods { cmd: true, ..Mods::default() };
+    let borrowed = |s: &mut Session| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, 400.0, 400.0).with_mods(cmd), v).unwrap();
+        let id = s.temp_tool.as_ref().map(|t| t.id());
+        s.pointer(&PointerEvent::new(PointerKind::Up, 400.0, 400.0).with_mods(cmd), v).unwrap();
+        id
+    };
+    s.set_tool("directSelection");
+    s.set_tool("rectangle");
+    assert_eq!(borrowed(&mut s), Some("directSelection"));
+    s.set_tool("selection");
+    s.set_tool("rectangle");
+    assert_eq!(borrowed(&mut s), Some("selection"));
+    s.set_tool("directSelection");
+    s.set_tool("pen");
+    assert_eq!(borrowed(&mut s), Some("directSelection"));
+}
+
 #[test]
 fn tool_gesture_creates_one_undo_step() {
     let mut s = session();

@@ -21,7 +21,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             release
         ),
-        cmd!(noundo "text.extendTo", "Extend Text Selection", [], None, "{frame, point}", has_doc, |s, p| place(s, p, true)),
+        cmd!(
+            noundo "text.extendTo",
+            "Extend Text Selection",
+            [],
+            None,
+            "{frame, point, unit?: word|line|paragraph|story} — moves the selection's focus to the point; with `unit`, after a text.selectAt, the selection grows by whole units from the unit first selected (a drag after a double, triple or quadruple click)",
+            has_doc,
+            |s, p| place(s, p, true)
+        ),
         cmd!(noundo "text.selectWord", "Select Word", [], None, "{frame, point} — the word (or run of spaces) under the point", has_doc, |s, p| {
             select_at(s, p, "word")
         }),
@@ -33,6 +41,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{frame, point, unit: word|line|paragraph|story} — what a double, triple, quadruple or quintuple click selects: the word (or run of spaces) under the point, its line, its paragraph with the paragraph return, or the whole story",
             has_doc,
             |s, p| select_at(s, p, str_param(p, "unit").unwrap_or("word"))
+        ),
+        cmd!(
+            "type.pickUpFormat",
+            "Apply Text Attributes (Eyedropper)",
+            [],
+            None,
+            "{frame, point} — the Eyedropper with text selected: the character and paragraph formatting (styles and overrides) of the text under the point go to the selected text",
+            has_text,
+            pick_up_format
         ),
         cmd!(noundo "text.selectSentence", "Select Sentence", [], None, "{frame, point} — the sentence under the point", has_doc, |s, p| {
             select_around(s, p, "text.selectSentence", sentence_bounds)
@@ -411,17 +428,64 @@ fn hit_byte_with(
     Some((sid, b, None))
 }
 
+/// The Eyedropper with text selected: the formatting of the text under `point` in `frame` goes to
+/// the selection, as InDesign's does (character style and overrides on the selected characters,
+/// paragraph style and overrides on their paragraphs).
+fn pick_up_format(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "type.pickUpFormat";
+    let frame = id_param(p, "frame").ok_or_else(|| bad(ID, "missing frame"))?;
+    let pt = point_param(p, "point").ok_or_else(|| bad(ID, "missing point"))?;
+    let (sid, b, cell) = hit_byte_with(s, frame, pt, compose::hit_char).ok_or_else(|| bad(ID, "not a text frame"))?;
+    let st = s.doc()?;
+    let sel = st.selection.text.ok_or_else(|| bad(ID, "select the text to format"))?;
+    let src = st.doc.text_story(sid, cell).ok_or(designcraft_doc::DocError::NoStory(sid))?;
+    let b = floor_char_boundary(&src.text, b);
+    // The character under the pointer (at the end of a line, the one before it).
+    let at = if b >= src.text.len() || src.text[b..].starts_with('\n') { b.saturating_sub(1) } else { b };
+    let at = floor_char_boundary(&src.text, at);
+    let chars = src.char_format_at(at).clone();
+    let para = src.paras.get(src.para_at(at)).cloned().ok_or(designcraft_doc::DocError::NoStory(sid))?;
+    let (a, e) = (sel.anchor.min(sel.focus), sel.anchor.max(sel.focus));
+    s.typing_format = None;
+    s.edit(|d, _| {
+        let story = d.text_story_mut(sel.story, sel.cell).ok_or(designcraft_doc::DocError::NoStory(sel.story))?;
+        if e > a {
+            story.format_chars(a..e, |f| *f = chars.clone());
+        }
+        story.format_paras(a..e, |f| {
+            f.style = para.style.clone();
+            f.para = para.para.clone();
+        });
+        Ok(json!({"style": chars.style, "paragraphStyle": para.style}))
+    })
+}
+
 /// Select the word, line, paragraph or story at `point` in `frame` (multiple clicks).
 fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
     const ID: &str = "text.selectAt";
     let frame = id_param(p, "frame").ok_or_else(|| bad(ID, "missing frame"))?;
     let pt = point_param(p, "point").ok_or_else(|| bad(ID, "missing point"))?;
     let (sid, b, cell) = hit_byte_with(s, frame, pt, compose::hit_char).ok_or_else(|| bad(ID, "not a text frame"))?;
+    let (a, e) = unit_at(s, sid, cell, b, unit, ID)?;
+    s.text_drag = false;
+    s.typing_format = None;
+    let sel = TextSel { story: sid, anchor: a, focus: e, frame: Some(frame), cell };
+    s.text_unit = Some(sel);
+    let st = s.doc_mut()?;
+    st.selection = Selection::text(sel);
+    // Explicit reselection invalidates the Find scope even when the range is unchanged.
+    st.bump_revision();
+    Ok(json!({"story": sid.0, "anchor": a, "focus": e}))
+}
+
+/// The `unit` (word, line, paragraph or story) around byte `b` of story `sid` (a cell's story
+/// with `cell`), as the multiple clicks select it.
+fn unit_at(s: &Session, sid: StoryId, cell: Option<CellAddr>, b: usize, unit: &str, cmd: &str) -> Result<(usize, usize)> {
     let st = s.doc()?;
     let story = st.doc.text_story(sid, cell).ok_or(designcraft_doc::DocError::NoStory(sid))?;
     let text = story.text.as_str();
     let b = floor_char_boundary(text, b);
-    let (a, e) = match unit {
+    Ok(match unit {
         "word" => word_or_spaces_at(text, b),
         "line" => {
             let cs = s.cache.get(&st.doc, sid, None);
@@ -430,15 +494,8 @@ fn select_at(s: &mut Session, p: &Value, unit: &str) -> Result<Value> {
         // The paragraph with its return (the last paragraph has none).
         "paragraph" => story.para_ranges().get(story.para_at(b)).map_or((b, b), |r| (r.start, (r.end + 1).min(text.len()))),
         "story" => (0, text.len()),
-        other => return Err(bad(ID, format!("unknown unit `{other}` (word, line, paragraph or story)"))),
-    };
-    s.text_drag = false;
-    s.typing_format = None;
-    let st = s.doc_mut()?;
-    st.selection = Selection::text(TextSel { story: sid, anchor: a, focus: e, frame: Some(frame), cell });
-    // Explicit reselection invalidates the Find scope even when the range is unchanged.
-    st.bump_revision();
-    Ok(json!({"story": sid.0, "anchor": a, "focus": e}))
+        other => return Err(bad(cmd, format!("unknown unit `{other}` (word, line, paragraph or story)"))),
+    })
 }
 
 /// The word at byte `i`; on spaces the run of spaces; on anything else that one character
@@ -502,6 +559,22 @@ fn place(s: &mut Session, p: &Value, extend: bool) -> Result<Value> {
         s.execute("object.content", &json!({"ids": [frame.0], "type": "text"}))?;
     }
     let (sid, b, cell) = hit_byte(s, frame, pt).ok_or_else(|| bad("text.placeCaret", "not a text frame"))?;
+    // A drag after several clicks: whole units from the one first selected, in either direction.
+    if extend
+        && let Some(unit) = str_param(p, "unit")
+        && let Some(u) = s.text_unit.filter(|u| u.story == sid && u.cell == cell)
+    {
+        // The remembered unit may predate edits that shortened the text.
+        let text = s.doc()?.doc.text_story(sid, cell).map_or("", |t| t.text.as_str());
+        let (ua, ue) = (floor_char_boundary(text, u.anchor.min(u.focus)), floor_char_boundary(text, u.anchor.max(u.focus)));
+        let (na, ne) = unit_at(s, sid, cell, b, unit, "text.extendTo")?;
+        let (anchor, focus) = if na < ua { (ue, na) } else { (ua, ne.max(ue)) };
+        s.typing_format = None;
+        let st = s.doc_mut()?;
+        st.selection = Selection::text(TextSel { story: sid, anchor, focus, frame: Some(frame), cell });
+        st.bump_revision();
+        return Ok(json!({"story": sid.0, "anchor": anchor, "focus": focus}));
+    }
     // Drag and drop: a press inside the selected text keeps it (to be dragged).
     if !extend {
         s.text_drag = s.doc()?.selection.text.is_some_and(|t| t.story == sid && t.cell == cell && !t.range().is_empty() && t.range().contains(&b));
@@ -2507,6 +2580,51 @@ mod multi_click_tests {
         assert_eq!(word("a\n\nb", 2), (2, 2));
     }
 
+    /// Issue #981: holding the button after a double, triple or quadruple click and moving extends
+    /// the selection a word, line or paragraph at a time, from the unit first selected, either way.
+    #[test]
+    fn a_drag_after_several_clicks_extends_the_selection_by_units() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let text = "Hello  brave world.\nSecond paragraph here.";
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 500, 200], "content": "text", "text": text})).unwrap();
+        let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
+        let at = |s: &Session, b: usize| {
+            let d = &s.doc().unwrap().doc;
+            let cs = designcraft_compose::compose_story(d, designcraft_doc::StoryId(sid), &Default::default());
+            let (l, g) = cs.frames[0].lines.iter().find_map(|l| l.glyphs.iter().find(|g| g.byte == b && g.len > 0).map(|g| (l, g))).unwrap();
+            json!([g.x + g.adv * 0.75, l.baseline - 3.0])
+        };
+        let sel = |s: &Session| s.doc().unwrap().selection.text.map(|t| (t.anchor, t.focus)).unwrap();
+        let extend = |s: &mut Session, b: usize, unit: &str| {
+            let p = at(s, b);
+            s.execute("text.extendTo", &json!({"frame": fid, "point": p, "unit": unit})).unwrap();
+            sel(s)
+        };
+        // Double-click "brave", drag into "world.": whole words, anchored at the start of "brave".
+        s.execute("text.selectAt", &json!({"frame": fid, "point": at(&s, 8), "unit": "word"})).unwrap();
+        assert_eq!(sel(&s), (7, 12));
+        assert_eq!(extend(&mut s, 14, "word"), (7, 18), "forward: through \"world\"");
+        assert_eq!(extend(&mut s, 9, "word"), (7, 12), "back inside the word: just the word");
+        assert_eq!(extend(&mut s, 1, "word"), (12, 0), "backward: from \"Hello\" to the end of \"brave\"");
+        assert_eq!(&text[0..12], "Hello  brave");
+        // Triple-click the first line, drag into the second: both lines.
+        s.execute("text.selectAt", &json!({"frame": fid, "point": at(&s, 8), "unit": "line"})).unwrap();
+        assert_eq!(sel(&s), (0, 19));
+        assert_eq!(extend(&mut s, 22, "line"), (0, text.len()));
+        // Without `unit` a drag still moves the focus a character at a time.
+        s.execute("text.selectAt", &json!({"frame": fid, "point": at(&s, 8), "unit": "word"})).unwrap();
+        s.execute("text.extendTo", &json!({"frame": fid, "point": at(&s, 14)})).unwrap();
+        assert_eq!(sel(&s).0, 7);
+        assert!(sel(&s).1 > 12 && sel(&s).1 < 18, "{:?}", sel(&s));
+        assert!(s.execute("text.extendTo", &json!({"frame": fid, "point": at(&s, 14), "unit": "sentence"})).is_err());
+        // A unit remembered before the text was deleted stays inside what is left.
+        s.execute("text.selectAt", &json!({"frame": fid, "point": at(&s, 14), "unit": "word"})).unwrap();
+        s.execute("story.setText", &json!({"story": sid, "text": ""})).unwrap();
+        s.execute("text.extendTo", &json!({"frame": fid, "point": [100, 90], "unit": "word"})).unwrap();
+        assert_eq!(sel(&s), (0, 0));
+    }
+
     #[test]
     fn clicks_select_words_spaces_lines_paragraphs_and_the_story() {
         let mut s = Session::new();
@@ -3739,5 +3857,44 @@ mod kern_pair_tests {
             assert_eq!(s.doc().unwrap().history.undo.len(), steps, "no pair at {caret}: nothing is edited");
             assert_eq!((kern_at(&s, sid, 1), kern_at(&s, sid, 4)), (None, None), "caret {caret}");
         }
+    }
+}
+
+#[cfg(test)]
+mod pick_up_format_tests {
+    use designcraft_doc::ItemId;
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// Typefool's video (12:04): select body text, Eyedropper, click the third header: the body
+    /// text takes the header's font, size and paragraph settings. DesignCraft copied the frame's
+    /// fill and stroke instead.
+    #[test]
+    fn the_eyedropper_copies_text_formatting_to_selected_text() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let head = s.execute("frame.create", &json!({"rect": [36, 36, 400, 100], "content": "text", "text": "Innovative Design"})).unwrap();
+        s.execute("text.select", &json!({"story": head["story"], "anchor": 0, "focus": 17})).unwrap();
+        s.execute("type.char", &json!({"attrs": {"fontStyle": "Bold", "size": 18, "tracking": 20}})).unwrap();
+        s.execute("type.para", &json!({"attrs": {"align": "center", "spaceAfter": 6}})).unwrap();
+        let body = s.execute("frame.create", &json!({"rect": [36, 200, 400, 300], "content": "text", "text": "Body copy here.\nSecond."})).unwrap();
+        s.execute("text.select", &json!({"story": body["story"], "anchor": 0, "focus": 4})).unwrap();
+        // Click the header's middle (the frame's text starts at its top left).
+        let r = s.execute("type.pickUpFormat", &json!({"frame": head["id"], "point": [100, 50]})).unwrap();
+        assert!(r.is_object(), "{r}");
+        s.execute("text.select", &json!({"story": body["story"], "anchor": 0, "focus": 4})).unwrap();
+        let a = s.execute("type.selectionAttrs", &json!({})).unwrap();
+        assert_eq!((&a["chars"]["fontStyle"], &a["chars"]["size"], &a["chars"]["tracking"]), (&json!("Bold"), &json!(18.0), &json!(20.0)), "{a}");
+        assert_eq!((&a["para"]["align"], &a["para"]["spaceAfter"]), (&json!("center"), &json!(6.0)));
+        // Only the selected characters change; the second paragraph keeps its own.
+        s.execute("text.select", &json!({"story": body["story"], "anchor": 6, "focus": 10})).unwrap();
+        assert_eq!(s.execute("type.selectionAttrs", &json!({})).unwrap()["chars"]["size"], json!(12.0));
+        s.execute("text.select", &json!({"story": body["story"], "anchor": 17, "focus": 20})).unwrap();
+        assert_eq!(s.execute("type.selectionAttrs", &json!({})).unwrap()["para"]["align"], json!("left"));
+        // Not a text frame, or nothing selected: refused.
+        let rect = s.execute("frame.create", &json!({"rect": [500, 500, 520, 520]})).unwrap()["id"].as_u64().unwrap();
+        assert!(s.execute("type.pickUpFormat", &json!({"frame": rect, "point": [510, 510]})).is_err());
+        let _ = ItemId(rect);
     }
 }

@@ -3,8 +3,8 @@
 //! single-purpose panels (Stroke, Character, Paragraph, Text Wrap, Align, Links, Info).
 
 use designcraft_doc::{Align, Arrowhead, Cap, Join, StrokeAlign, StrokeType};
-use designcraft_geom::Unit;
 use designcraft_geom::corners::CornerShape;
+use designcraft_geom::{Unit, units};
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -187,6 +187,9 @@ pub(crate) const PAGE_PRESETS: &[(&str, f64, f64)] = &[
     ("Tabloid", 792.0, 1224.0),
     ("Letter - Half", 396.0, 612.0),
     ("Legal - Half", 504.0, 612.0),
+    ("A0", 841.0 * units::PT_PER_MM, 1189.0 * units::PT_PER_MM),
+    ("A1", 594.0 * units::PT_PER_MM, 841.0 * units::PT_PER_MM),
+    ("A2", 420.0 * units::PT_PER_MM, 594.0 * units::PT_PER_MM),
     ("A3", 841.89, 1190.55),
     ("A4", 595.276, 841.89),
     ("A5", 419.528, 595.276),
@@ -1515,7 +1518,6 @@ pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     let c = a["chars"].clone();
     let fam = c["fontFamily"].as_str().unwrap_or("").to_string();
     let sty = c["fontStyle"].as_str().unwrap_or("").to_string();
-    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Character")).strong());
     super::font_family_picker(app, ui, &fam, 220.0);
     super::font_style_picker(app, ui, &fam, &sty, 220.0);
     variable_font_axes(app, ui, &fam, &sty);
@@ -1528,49 +1530,48 @@ pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             .width(170.0)
             .show_ui(ui, |ui| language_menu(app, ui, &lang));
     });
-    // Digits (World-Ready): shown for right-to-left paragraphs or once set.
+    // Digits (World-Ready): how the figures 0-9 are drawn (Arabic 0123, Hindi ٠١٢٣, Farsi ۰۱۲۳).
     let digits = c["digits"].as_str().unwrap_or("default").to_string();
-    if digits != "default" || a["para"]["direction"].as_str() == Some("rightToLeft") {
-        ui.horizontal(|ui| {
-            caption(ui, crate::i18n::tr(&app.ui.language, "Digits"));
-            let opts = [("default", "Default"), ("arabic", "Arabic"), ("hindi", "Hindi"), ("farsi", "Farsi"), ("native", "Native")];
-            let cur = opts.iter().find(|o| o.0 == digits).map_or("Default", |o| o.1);
-            egui::ComboBox::from_id_salt("char_digits")
-                .selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, cur)))
-                .width(120.0)
-                .show_ui(ui, |ui| {
-                    for (k, l) in opts {
-                        if ui.selectable_label(k == digits, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, l))).clicked() {
-                            let _ = app.run("type.char", json!({"attrs": {"digits": k}}));
-                        }
-                    }
-                });
+    ui.horizontal(|ui| {
+        caption(ui, crate::i18n::tr(&app.ui.language, "Digits"));
+        let cur = DIGIT_OPTIONS
+            .iter()
+            .find(|o| o.0 == digits)
+            .map_or_else(|| digit_label(&app.ui.language, DIGIT_OPTIONS[0]), |o| digit_label(&app.ui.language, *o));
+        egui::ComboBox::from_id_salt("char_digits").selected_text(crate::rtl::widget(ui, cur)).width(150.0).show_ui(ui, |ui| {
+            for o in DIGIT_OPTIONS {
+                if ui.selectable_label(o.0 == digits, crate::rtl::widget(ui, digit_label(&app.ui.language, o))).clicked() {
+                    let _ = app.run("type.char", json!({"attrs": {"digits": o.0}}));
+                }
+            }
         });
-    }
-    egui::Grid::new("chargrid").num_columns(4).spacing(vec2(6.0, 4.0)).show(ui, |ui| {
-        caption(ui, crate::i18n::tr(&app.ui.language, "Size"));
-        if let Some(v) = number(ui, "pcs", c["size"].as_f64(), " pt", 60.0, 2) {
+    });
+    // Two columns: Size, Kerning and Baseline on the left, Leading and Tracking on the right. A
+    // column's captions share the width of its widest one and each field takes the rest of the
+    // column, so they line up.
+    let auto = c["leading"]["kind"].as_str() != Some("points");
+    let lv = if auto { c["size"].as_f64().map(|s| s * a["para"]["autoLeading"].as_f64().unwrap_or(1.2)) } else { c["leading"]["value"].as_f64() };
+    let (left_w, right_w) = (caption_width(app, ui, &["Size", "Kerning", "Baseline"]), caption_width(app, ui, &["Leading", "Tracking"]));
+    ui.columns(2, |cols| {
+        let [left, right] = cols else { return };
+        if let Some(v) = char_field(app, left, "Size", left_w, NumField::number("pcs", c["size"].as_f64(), " pt", 2)) {
             let _ = app.run("type.char", json!({"attrs": {"size": v}}));
         }
-        caption(ui, crate::i18n::tr(&app.ui.language, "Leading"));
-        let auto = c["leading"]["kind"].as_str() != Some("points");
-        let lv = if auto { c["size"].as_f64().map(|s| s * a["para"]["autoLeading"].as_f64().unwrap_or(1.2)) } else { c["leading"]["value"].as_f64() };
-        if let Some(v) = number(ui, "pcl", lv, if auto { crate::i18n::tr(&app.ui.language, " (auto)") } else { " pt" }, 70.0, 2) {
-            let _ = app.run("type.char", json!({"attrs": {"leading": {"kind": "points", "value": v}}}));
-        }
-        ui.end_row();
-        caption(ui, crate::i18n::tr(&app.ui.language, "Kerning"));
-        kerning_control(app, ui, "pck", &c["kerning"], 60.0);
-        caption(ui, crate::i18n::tr(&app.ui.language, "Tracking"));
-        if let Some(v) = number(ui, "pct", c["tracking"].as_f64(), "", 70.0, 0) {
-            let _ = app.run("type.char", json!({"attrs": {"tracking": v}}));
-        }
-        ui.end_row();
-        caption(ui, crate::i18n::tr(&app.ui.language, "Baseline"));
-        if let Some(v) = number(ui, "pcb", c["baselineShift"].as_f64(), " pt", 70.0, 2) {
+        left.horizontal(|ui| {
+            caption_cell(ui, crate::i18n::tr(&app.ui.language, "Kerning"), left_w);
+            let width = (ui.available_width() - ui.spacing().item_spacing.x).max(40.0);
+            kerning_control(app, ui, "pck", &c["kerning"], width);
+        });
+        if let Some(v) = char_field(app, left, "Baseline", left_w, NumField::number("pcb", c["baselineShift"].as_f64(), " pt", 2)) {
             let _ = app.run("type.char", json!({"attrs": {"baselineShift": v}}));
         }
-        ui.end_row();
+        // Auto leading is shown in parentheses, as the Paragraph panel shows it.
+        if let Some(v) = char_field(app, right, "Leading", right_w, NumField::number("pcl", lv, " pt", 2).parens(auto)) {
+            let _ = app.run("type.char", json!({"attrs": {"leading": {"kind": "points", "value": v}}}));
+        }
+        if let Some(v) = char_field(app, right, "Tracking", right_w, NumField::number("pct", c["tracking"].as_f64(), "", 0)) {
+            let _ = app.run("type.char", json!({"attrs": {"tracking": v}}));
+        }
     });
     ui.horizontal(|ui| {
         caption(ui, crate::i18n::tr(&app.ui.language, "Color"));
@@ -2702,13 +2703,15 @@ pub fn attributes_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
 }
 
-/// Variable Font sliders: one per axis; the style becomes `Named {tag:value,…}`.
+/// Variable Font sliders: one per axis, each with a field for a typed value; the style becomes
+/// `Named {tag:value,…}`. Dragging a slider previews on the page and is one undo step once let go;
+/// a click, an arrow key or a typed value applies at once.
 fn variable_font_axes(app: &mut DesignApp, ui: &mut egui::Ui, family: &str, style: &str) {
     if family.is_empty() {
         return;
     }
     let db = super::fonts(app);
-    let axes = db.axes(family, style);
+    let axes = usable_axes(db.axes(family, style));
     if axes.is_empty() {
         return;
     }
@@ -2716,21 +2719,103 @@ fn variable_font_axes(app: &mut DesignApp, ui: &mut egui::Ui, family: &str, styl
     let face = db.face(family, style);
     let cur = |tag: &str, default: f32| face.coords.iter().find(|(t, _)| t == tag.as_bytes()).map_or(default, |c| c.1);
     let mut values: Vec<(String, f32)> = axes.iter().map(|a| (a.0.clone(), cur(&a.0, a.3))).collect();
-    let mut changed = false;
     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Variable Font")).size(11.0));
-    egui::Grid::new("vf_axes").num_columns(2).spacing(vec2(6.0, 2.0)).show(ui, |ui| {
-        for (i, (_, name, min, _, max)) in axes.iter().enumerate() {
-            caption(ui, name);
-            if ui.add(egui::Slider::new(&mut values[i].1, *min..=*max).step_by(1.0)).drag_stopped() {
-                changed = true;
+    // What the sliders did this frame, gathered over every axis before anything is run.
+    let (mut held, mut dragged, mut applied) = (false, false, false);
+    let names: Vec<&str> = axes.iter().map(|a| a.1.as_str()).collect();
+    let label_w = caption_width(app, ui, &names);
+    for ((tag, name, min, _, max), value) in axes.iter().zip(values.iter_mut()) {
+        // Caption, a slider filling the middle, then the value field: every slider is as long.
+        ui.horizontal(|ui| {
+            caption_cell(ui, name, label_w);
+            ui.spacing_mut().slider_width = (ui.available_width() - PANEL_FIELD_W - ui.spacing().item_spacing.x * 2.0).max(40.0);
+            let (step, decimals) = axis_step(*min, *max);
+            // The field beside the slider takes typed values, so the slider's own is hidden.
+            let slider = ui.add(egui::Slider::new(&mut value.1, *min..=*max).step_by(f64::from(step)).show_value(false));
+            // Only the user's own change counts: the slider also reports one when it snaps a value
+            // that is off its steps, which it would then do on every frame.
+            let pressed = slider.is_pointer_button_down_on() || slider.dragged();
+            let changed = slider.changed() && (pressed || slider.has_focus());
+            held |= pressed;
+            dragged |= changed && pressed;
+            applied |= changed && !pressed;
+            if let Some(v) = number(ui, &format!("vf{tag}"), Some(f64::from(value.1)), "", PANEL_FIELD_W, decimals).filter(|v| v.is_finite()) {
+                value.1 = (v as f32).clamp(*min, *max);
+                applied = true;
             }
-            ui.end_row();
-        }
-    });
-    if changed {
-        let spec = values.iter().map(|(t, v)| format!("{t}:{}", v.round())).collect::<Vec<_>>().join(",");
-        let _ = app.run("type.char", json!({"attrs": {"fontStyle": format!("{base} {{{spec}}}")}}));
+        });
     }
+    let attrs = json!({"attrs": {"fontStyle": variable_font_style(&base, &values)}});
+    if applied {
+        app.end_live_preview();
+        let _ = app.run("type.char", attrs);
+    } else if dragged {
+        app.live_preview("Variable Font", "type.char", attrs);
+    } else if held {
+        app.hold_live_preview();
+    }
+    // Let go, the preview is committed at the start of the next frame (DesignApp::ui).
+}
+
+/// The slider step and the field's decimals for an axis: whole units, or hundredths for an axis
+/// whose whole range is a few units (Skia's weight runs 0.48–3.2).
+/// The axes a slider can show: a malformed font's axis whose minimum lies above its maximum (or
+/// isn't a number) is left out, since no value fits its range.
+fn usable_axes(axes: Vec<(String, String, f32, f32, f32)>) -> Vec<(String, String, f32, f32, f32)> {
+    axes.into_iter().filter(|a| a.2 <= a.4).collect()
+}
+
+fn axis_step(min: f32, max: f32) -> (f32, usize) {
+    if max - min >= 10.0 { (1.0, 0) } else { (0.01, 2) }
+}
+
+/// The style for the axis values: `base {tag:value,…}`, each value to at most two decimals.
+fn variable_font_style(base: &str, values: &[(String, f32)]) -> String {
+    let spec = values
+        .iter()
+        .map(|(t, v)| {
+            let v = format!("{v:.2}");
+            format!("{t}:{}", v.trim_end_matches('0').trim_end_matches('.'))
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{base} {{{spec}}}")
+}
+
+/// The width of the axis sliders' value fields, so the sliders end at the same place.
+const PANEL_FIELD_W: f32 = 52.0;
+
+/// The caption font of the Character panel's rows.
+fn caption_font() -> egui::FontId {
+    egui::FontId::proportional(11.5)
+}
+
+/// The width of the widest of `labels` in the interface language: a column's caption cells.
+fn caption_width(app: &DesignApp, ui: &Ui, labels: &[&str]) -> f32 {
+    let t = Tokens::get(ui.ctx());
+    labels
+        .iter()
+        .map(|l| ui.painter().layout_no_wrap(crate::i18n::tr(&app.ui.language, l).to_string(), caption_font(), t.text).size().x)
+        .fold(0.0, f32::max)
+        .ceil()
+}
+
+/// A Character panel column row: a caption cell `label_w` wide, then the number field filling the
+/// rest of the column. Returns the value committed.
+fn char_field(app: &DesignApp, ui: &mut Ui, label: &str, label_w: f32, field: NumField<'_>) -> Option<f64> {
+    ui.horizontal(|ui| {
+        caption_cell(ui, crate::i18n::tr(&app.ui.language, label), label_w);
+        let width = (ui.available_width() - ui.spacing().item_spacing.x).max(40.0);
+        field.width(width).show(ui)
+    })
+    .inner
+}
+
+/// A left-aligned caption in a cell of fixed width, so the field after it lines up.
+fn caption_cell(ui: &mut Ui, text: &str, width: f32) {
+    let t = Tokens::get(ui.ctx());
+    let (r, _) = ui.allocate_exact_size(vec2(width, crate::widgets::FIELD_H), Sense::hover());
+    crate::rtl::paint(ui.painter(), pos2(r.min.x, r.center().y), egui::Align2::LEFT_CENTER, text, caption_font(), t.text);
 }
 
 /// Whether `composer` (a paragraph's `composer` attribute) is a single-line composer, and the
@@ -2739,6 +2824,18 @@ pub(crate) fn composer_choice(composer: Option<&str>) -> (bool, [&'static str; 2
     let single = matches!(composer, Some("singleLine" | "japaneseSingleLine"));
     let kind = if composer.is_some_and(|c| c.starts_with("japanese")) { ["japanese", "japaneseSingleLine"] } else { ["paragraph", "singleLine"] };
     (single, kind)
+}
+
+/// The Digits choices: (value, caption, sample of 0–3). The values are the file format's:
+/// `arabic` is 0123, `hindi` the Arabic-Indic ٠١٢٣ and `farsi` the Persian/Urdu ۰۱۲۳; the captions
+/// name them by the script's users.
+pub const DIGIT_OPTIONS: [(&str, &str, &str); 5] =
+    [("default", "Default", ""), ("arabic", "Arabic", "0123"), ("hindi", "Hindi", "٠١٢٣"), ("farsi", "Farsi", "۰۱۲۳"), ("native", "Native", "")];
+
+/// A Digits choice as shown: its translated caption and a sample of the figures.
+pub fn digit_label(lang: &str, o: (&str, &str, &str)) -> String {
+    let name = crate::i18n::tr(lang, o.1);
+    if o.2.is_empty() { name.to_string() } else { format!("{name}  {}", o.2) }
 }
 
 #[cfg(test)]
@@ -2951,6 +3048,125 @@ mod tests {
         h.get_by_label("0").click();
         h.run_steps(2);
         assert_eq!(kerning(h.state_mut())["kind"], "none");
+    }
+
+    fn undo_steps(app: &DesignApp) -> usize {
+        app.session.active().unwrap().history.undo.len()
+    }
+
+    fn font_style(app: &mut DesignApp) -> String {
+        text_attrs(app).unwrap()["chars"]["fontStyle"].as_str().unwrap().to_string()
+    }
+
+    /// The Digits menu uses the reference names (documented as Arabic, Hindi and Farsi), which
+    /// are translated, with a sample of each script's figures.
+    #[test]
+    fn digits_choices_use_the_reference_names() {
+        let shown: Vec<String> = DIGIT_OPTIONS.iter().map(|o| digit_label("fr", *o)).collect();
+        assert_eq!(shown, ["Par défaut", "Arabe  0123", "Hindi  ٠١٢٣", "Persan  ۰۱۲۳", "Natif"].map(String::from));
+    }
+
+    #[test]
+    fn axes_with_an_inverted_or_missing_range_get_no_slider() {
+        let axis = |tag: &str, min: f32, max: f32| (tag.to_string(), tag.to_string(), min, min, max);
+        let kept = usable_axes(vec![axis("wght", 100.0, 900.0), axis("wdth", 125.0, 75.0), axis("opsz", f32::NAN, 72.0), axis("slnt", 0.0, 0.0)]);
+        let tags: Vec<&str> = kept.iter().map(|a| a.0.as_str()).collect();
+        assert_eq!(tags, ["wght", "slnt"]);
+    }
+
+    #[test]
+    fn variable_font_style_keeps_two_decimals_at_most() {
+        let values = [("wght".to_string(), 512.0_f32), ("wdth".to_string(), 1.25), ("opsz".to_string(), 0.4801)];
+        assert_eq!(variable_font_style("Regular", &values), "Regular {wght:512,wdth:1.25,opsz:0.48}");
+        assert_eq!(axis_step(100.0, 900.0), (1.0, 0));
+        assert_eq!(axis_step(0.48, 3.2), (0.01, 2));
+    }
+
+    #[test]
+    fn a_live_preview_held_over_many_frames_is_one_undo_step_once_let_go() {
+        let mut app = text_app();
+        let steps = undo_steps(&app);
+        let size = |app: &mut DesignApp| text_attrs(app).unwrap()["chars"]["size"].as_f64().unwrap();
+        // A drag: a preview on most frames, held without moving on others.
+        for v in [20.0, 24.0, 30.0] {
+            app.settle_live_preview();
+            app.live_preview("Size", "type.char", json!({"attrs": {"size": v}}));
+            app.settle_live_preview();
+            app.hold_live_preview();
+        }
+        assert_eq!(size(&mut app), 30.0, "the page shows the last preview");
+        assert_eq!(undo_steps(&app), steps, "nothing is undoable while held");
+        // Let go: a frame without a hold, then the frame after it commits the preview.
+        app.settle_live_preview();
+        assert_eq!(undo_steps(&app), steps, "the last held frame keeps it open");
+        app.settle_live_preview();
+        assert_eq!(undo_steps(&app), steps + 1);
+        assert!(app.session.active().unwrap().interaction.is_none());
+        app.settle_live_preview();
+        assert_eq!(undo_steps(&app), steps + 1, "committed once");
+        // Later edits get their own undo steps.
+        app.run("type.char", json!({"attrs": {"tracking": 50}})).unwrap();
+        assert_eq!(undo_steps(&app), steps + 2);
+    }
+
+    /// A system variable font with two or more axes (macOS ships some), loaded into the shared fonts.
+    fn system_variable_font() -> Option<&'static str> {
+        let candidates = [("/System/Library/Fonts/Supplemental/Skia.ttf", "Skia"), ("/System/Library/Fonts/NewYork.ttf", "New York")];
+        candidates.into_iter().find_map(|(path, family)| {
+            let bytes = std::fs::read(path).ok()?;
+            let db = designcraft_fonts::FontDb::global();
+            db.add_font(bytes);
+            let style = db.styles(family).first().cloned()?;
+            (db.axes(family, &style).len() >= 2).then_some(family)
+        })
+    }
+
+    #[test]
+    fn dragging_one_of_several_axis_sliders_is_one_undo_step() {
+        let Some(family) = system_variable_font() else {
+            eprintln!("skipped: no variable font with two axes on this system");
+            return;
+        };
+        let mut app = text_app();
+        super::super::apply_font(&mut app, &super::super::FontPick { family: family.into(), style: None });
+        let before = font_style(&mut app);
+        let steps = undo_steps(&app);
+        // The app commits a preview no panel held at the start of each frame (DesignApp::ui).
+        let mut h = Harness::builder().with_size(vec2(320.0, 1400.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let id = egui::Id::new("test_fonts");
+                if ui.data(|d| d.get_temp::<bool>(id)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(id, true));
+                    return;
+                }
+                app.settle_live_preview();
+                character_panel(app, ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        let sliders = h.get_all_by_role(egui::accesskit::Role::Slider).map(|n| n.rect()).collect::<Vec<_>>();
+        assert!(sliders.len() >= 2, "one slider per axis: {sliders:?}");
+        let track = sliders[0];
+        let y = track.center().y;
+        h.hover_at(egui::pos2(track.left() + 2.0, y));
+        h.run_steps(1);
+        h.drag_at(egui::pos2(track.left() + 2.0, y));
+        h.run_steps(1);
+        for k in 1..=10 {
+            h.hover_at(egui::pos2(track.left() + track.width() * k as f32 / 10.0, y));
+            h.run_steps(1);
+            assert_eq!(undo_steps(h.state()), steps, "no undo step while dragging (frame {k})");
+        }
+        let previewed = font_style(h.state_mut());
+        assert_ne!(previewed, before, "the drag previews on the page");
+        h.drop_at(egui::pos2(track.right(), y));
+        h.run_steps(3);
+        assert_eq!(undo_steps(h.state()), steps + 1, "the whole drag is one undo step");
+        assert_eq!(font_style(h.state_mut()), previewed);
+        h.state_mut().run("edit.undo", json!({})).unwrap();
+        assert_eq!(font_style(h.state_mut()), before);
     }
 
     #[test]

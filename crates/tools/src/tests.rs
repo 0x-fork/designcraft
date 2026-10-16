@@ -1089,8 +1089,18 @@ fn clicks_in_a_row_edit_and_select_text() {
     }
     // A double click sent as such (control channel) selects a word too.
     assert_eq!(unit(t.pointer(&cx, &PointerEvent::new(PointerKind::DoubleClick, x, y))).as_deref(), Some("word"));
-    // Moving a little while pressed keeps the unit selected.
-    assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, x + 2.0, y)).is_empty());
+    // Moving while pressed extends the selection by the unit the clicks chose (#981).
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, x + 40.0, y));
+    assert!(matches!(&a[..], [Action::Exec(id, p)] if id == "text.extendTo" && p["unit"] == "word" && p["frame"] == fid.0), "{a:?}");
+    t.pointer(&cx, &PointerEvent::new(PointerKind::Up, x + 40.0, y));
+    t.pointer(&cx, &press(3));
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, x + 40.0, y));
+    assert!(matches!(&a[..], [Action::Exec(id, p)] if id == "text.extendTo" && p["unit"] == "line"), "{a:?}");
+    // One click, then a drag: a character at a time, as before.
+    t.pointer(&cx, &PointerEvent::new(PointerKind::Up, x + 40.0, y));
+    t.pointer(&cx, &press(1));
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, x + 40.0, y));
+    assert!(matches!(&a[..], [Action::Exec(id, p)] if id == "text.extendTo" && p.get("unit").is_none()), "{a:?}");
 }
 
 /// A 100×100 frame at (100, 100) holding a 200×100 graphic that overhangs it.
@@ -1117,6 +1127,23 @@ fn preview_params(a: &[Action]) -> serde_json::Value {
         Some(Action::Preview(cmd, p)) if cmd == "transform.move" => p.clone(),
         other => panic!("{other:?}"),
     }
+}
+
+/// With text selected, the Eyedropper on a text frame picks up its text formatting instead of
+/// copying the frame's fill and stroke onto the selection (InDesign's Eyedropper).
+#[test]
+fn eyedropper_with_text_selected_picks_up_text_formatting() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let (head, _) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(100.0, 100.0, 300.0, 140.0), lid, "Header", ParaFormat::default()).unwrap();
+    let (_, body) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(100.0, 200.0, 300.0, 300.0), lid, "Body", ParaFormat::default()).unwrap();
+    let s = Selection::text(designcraft_doc::TextSel { story: body, anchor: 0, focus: 4, frame: None, cell: None });
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let off = l.xf(SpreadRef::Doc(0)).translation();
+    let cx = ctx(&d, &s, &c, &l);
+    let mut t = create("eyedropper");
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0 + off.x, 120.0 + off.y));
+    assert_eq!(a, vec![Action::Exec("type.pickUpFormat".into(), serde_json::json!({"frame": head.0, "point": [150.0, 120.0]}))]);
 }
 
 #[test]
@@ -1148,7 +1175,7 @@ fn direct_selection_drags_content_inside_its_frame() {
 }
 
 #[test]
-fn selection_tool_grabber_moves_content_elsewhere_moves_the_frame() {
+fn selection_tool_moves_selected_content_and_the_frame_otherwise() {
     let mut d = Document::new(&NewDocument::default());
     let f = graphic_frame(&mut d);
     let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
@@ -1167,15 +1194,28 @@ fn selection_tool_grabber_moves_content_elsewhere_moves_the_frame() {
     let p = preview_params(&a);
     assert_eq!((p["dx"].as_f64(), p["dy"].as_f64(), &p["content"]), (Some(-20.0), Some(10.0), &serde_json::json!(true)));
     assert_eq!(t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Up, centre.x - 20.0, centre.y + 10.0)), vec![Action::Commit]);
-    // A press elsewhere in the frame keeps the content selection; dragging selects and moves the frame.
+    // With the content selected (the grabber, or a double-click), the pointer is a hand over it and
+    // a drag anywhere on it moves it, as in InDesign (Dansky's Exclude Overlap tutorial, 7:13).
     let edge = spread_pt(&l, 115.0, 185.0);
+    assert_eq!(t.cursor(&ctx(&d, &content, &c, &l), edge, Mods::default()), Cursor::Hand);
     assert!(t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Down, edge.x, edge.y)).is_empty());
     let a = t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Drag, edge.x + 30.0, edge.y));
-    assert_eq!(a[0], Action::Exec("selection.set".into(), serde_json::json!({"ids": [f.0]})));
-    assert_eq!(a[1], Action::Begin("Move".into()));
+    assert_eq!(a[0], Action::Begin("Move Content".into()));
     let p = preview_params(&a);
-    assert_eq!((p["dx"].as_f64(), p.get("content"), p.get("ids")), (Some(30.0), None, None));
-    t.pointer(&ctx(&d, &frame, &c, &l), &PointerEvent::new(PointerKind::Up, edge.x + 30.0, edge.y));
+    assert_eq!((p["dx"].as_f64(), &p["content"]), (Some(30.0), &serde_json::json!(true)));
+    t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Up, edge.x + 30.0, edge.y));
+    // Shift keeps it on one axis; the content stays selected.
+    let shift = Mods { shift: true, ..Default::default() };
+    t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Down, edge.x, edge.y).with_mods(shift));
+    let a = t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Drag, edge.x + 30.0, edge.y + 4.0).with_mods(shift));
+    let p = preview_params(&a);
+    assert_eq!((p["dx"].as_f64(), p["dy"].as_f64(), &p["content"]), (Some(30.0), Some(0.0), &serde_json::json!(true)));
+    assert_eq!(
+        t.pointer(&ctx(&d, &content, &c, &l), &PointerEvent::new(PointerKind::Up, edge.x + 30.0, edge.y).with_mods(shift)),
+        vec![Action::Commit]
+    );
+    // Off the content (the graphic overhangs the frame's sides only), a press selects as before.
+    assert_eq!(t.cursor(&ctx(&d, &content, &c, &l), spread_pt(&l, 150.0, 250.0), Mods::default()), Cursor::Arrow);
     // With the frame selected, a drag away from the grabber moves the frame.
     t.pointer(&ctx(&d, &frame, &c, &l), &PointerEvent::new(PointerKind::Down, edge.x, edge.y));
     let a = t.pointer(&ctx(&d, &frame, &c, &l), &PointerEvent::new(PointerKind::Drag, edge.x, edge.y + 30.0));
@@ -1846,4 +1886,53 @@ fn eyedropper_ignores_inactive_states_of_a_multi_state_object() {
         let a = create("eyedropper").pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0 + off.x, 130.0 + off.y));
         assert_eq!(samples_image(&a), samples, "active state {active}: {a:?}");
     }
+}
+
+#[test]
+fn loaded_text_cursor_threads_into_a_frame_inside_a_group() {
+    // `hit` stops at the group, so the loaded cursor showed NotAllowed over a text frame inside
+    // one and a click did nothing. InDesign threads into it (gaps 27).
+    let mut td = thread_doc();
+    let lid = td.d.default_layer();
+    let rect = Rect::new(600.0, 100.0, 700.0, 200.0);
+    // The frame, then the same frame moved inside a group. Both transforms are the identity, so
+    // the child's coordinates stay the spread's.
+    let (inner, _) = td.d.add_text_frame(SpreadRef::Doc(0), rect, lid, "", ParaFormat::default()).unwrap();
+    let frame_item = td.d.item(inner).cloned().unwrap();
+    td.d.remove_item(inner).unwrap();
+    let gid = ItemId(td.d.alloc());
+    let mut group = Item::new(gid, lid, Shape::Group, shapes::rectangle(rect));
+    group.content = designcraft_doc::item::Content::Group { items: vec![std::sync::Arc::new(frame_item)] };
+    td.d.insert_item(SpreadRef::Doc(0), group, None).unwrap();
+    td.l = CanvasLayout::new(&td.d, false);
+
+    let mut t = create("selection");
+    let cx = td.cx();
+    click(&mut t, &cx, td.port(td.a, true), Mods::default());
+    let p = td.at(650.0, 150.0);
+
+    // Selection still reaches the group, which is what a plain click there should pick.
+    assert_eq!(cx.hit(p).map(|(_, i)| i), Some(gid));
+    // The loaded text cursor reaches the frame inside it.
+    assert_eq!(cx.hit_text_frame(p).map(|(_, i)| i), Some(inner), "the frame in the group");
+    assert_eq!(t.cursor(&cx, p, Mods::default()), Cursor::ThreadLink);
+    // And the click threads to that frame, not to the group.
+    assert_eq!(click(&mut t, &cx, p, Mods::default()), thread_exec(serde_json::json!({"from": td.a.0, "to": inner.0})));
+
+    // A group with nothing threadable in it still says no.
+    let mut td2 = thread_doc();
+    let r2 = Rect::new(600.0, 300.0, 700.0, 400.0);
+    let plain = ItemId(td2.d.alloc());
+    let child = Item::new(plain, lid, Shape::Rectangle, shapes::rectangle(r2));
+    let g2 = ItemId(td2.d.alloc());
+    let mut group2 = Item::new(g2, lid, Shape::Group, shapes::rectangle(r2));
+    group2.content = designcraft_doc::item::Content::Group { items: vec![std::sync::Arc::new(child)] };
+    td2.d.insert_item(SpreadRef::Doc(0), group2, None).unwrap();
+    td2.l = CanvasLayout::new(&td2.d, false);
+    let cx2 = td2.cx();
+    let mut t2 = create("selection");
+    click(&mut t2, &cx2, td2.port(td2.a, true), Mods::default());
+    let q = td2.at(650.0, 350.0);
+    assert_eq!(cx2.hit_text_frame(q).map(|(_, i)| i), None, "no text frame in that group");
+    assert_eq!(t2.cursor(&cx2, q, Mods::default()), Cursor::NotAllowed);
 }

@@ -31,6 +31,9 @@ pub const PRESETS: &[Preset] = &[
     Preset { name: "Legal", intent: Intent::Print, width: 612.0, height: 1008.0, units: Unit::Picas },
     Preset { name: "Tabloid", intent: Intent::Print, width: 792.0, height: 1224.0, units: Unit::Picas },
     Preset { name: "Letter - Half", intent: Intent::Print, width: 396.0, height: 612.0, units: Unit::Picas },
+    Preset { name: "A0", intent: Intent::Print, width: 841.0 * MM, height: 1189.0 * MM, units: Unit::Millimeters },
+    Preset { name: "A1", intent: Intent::Print, width: 594.0 * MM, height: 841.0 * MM, units: Unit::Millimeters },
+    Preset { name: "A2", intent: Intent::Print, width: 420.0 * MM, height: 594.0 * MM, units: Unit::Millimeters },
     Preset { name: "A3", intent: Intent::Print, width: 297.0 * MM, height: 420.0 * MM, units: Unit::Millimeters },
     Preset { name: "A4", intent: Intent::Print, width: 210.0 * MM, height: 297.0 * MM, units: Unit::Millimeters },
     Preset { name: "A5", intent: Intent::Print, width: 148.0 * MM, height: 210.0 * MM, units: Unit::Millimeters },
@@ -849,6 +852,8 @@ mod tests {
     fn presets_and_parents() {
         let nd = NewDocument::from_preset("A4").unwrap();
         assert!((nd.width - 595.2756).abs() < 1e-3);
+        let a0 = NewDocument::from_preset("A0").unwrap();
+        assert_eq!((a0.width.round(), a0.height.round()), (2384.0, 3370.0));
         let mut d = Document::new(&nd);
         assert_eq!(d.next_parent_prefix(), "B");
         let b = d.add_parent("B", "Parent", 2, 12.0, Margins::uniform(36.0));

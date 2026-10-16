@@ -301,6 +301,22 @@ impl Spread {
     pub fn bounds(&self) -> Rect {
         self.pages.iter().map(Page::bounds).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO)
     }
+    /// The bleed guide: one rectangle around the spread. `bleed` is the document's top, bottom,
+    /// inside, outside; the inside value applies only at an outer edge on the spine side (a lone
+    /// left page's right edge). The outer edges are the leftmost and rightmost pages, whichever
+    /// binding ordered the list. None without pages or without any bleed.
+    pub fn bleed_rect(&self, bleed: [f64; 4]) -> Option<Rect> {
+        let (l, r) = self.outer_page_indices()?;
+        let (first, last) = (self.pages.get(l)?, self.pages.get(r)?);
+        if !bleed.iter().any(|v| *v > 0.0) {
+            return None;
+        }
+        let [top, bottom, inside, outside] = bleed;
+        let l = if first.side == PageSide::Left { outside } else { inside };
+        let r = if matches!(last.side, PageSide::Right | PageSide::Single) { outside } else { inside };
+        let b = self.bounds();
+        Some(Rect::new(b.x0 - l, b.y0 - top, b.x1 + r, b.y1 + bottom))
+    }
     /// x of the spine (between left and right pages) or the page centre for single pages.
     pub fn spine_x(&self) -> f64 {
         match self.pages.iter().position(|p| p.side == PageSide::Right) {
@@ -437,6 +453,20 @@ mod tests {
         assert_eq!(s.page_at_x(700.0), Some(1));
         assert_eq!(s.page_at_x(-50.0), Some(0));
         assert_eq!(s.page_at_x(5000.0), Some(1));
+    }
+
+    /// The outside bleed goes on the leftmost and rightmost pages, also when right-to-left
+    /// binding lists the right page first.
+    #[test]
+    fn bleed_rect_uses_the_outer_pages() {
+        let bleed = [1.0, 2.0, 3.0, 4.0];
+        for pages in [vec![page(PageSide::Left, 0.0), page(PageSide::Right, 612.0)], vec![page(PageSide::Right, 612.0), page(PageSide::Left, 0.0)]] {
+            let s = Spread { id: SpreadId(1), pages, items: vec![], parent: None, allow_shuffle: true };
+            assert_eq!(s.bleed_rect(bleed), Some(Rect::new(-4.0, -1.0, 1228.0, 794.0)));
+            assert_eq!(s.bleed_rect([0.0; 4]), None);
+        }
+        let lone_left = Spread { id: SpreadId(1), pages: vec![page(PageSide::Left, 0.0)], items: vec![], parent: None, allow_shuffle: true };
+        assert_eq!(lone_left.bleed_rect(bleed), Some(Rect::new(-4.0, -1.0, 615.0, 794.0)));
     }
 }
 
