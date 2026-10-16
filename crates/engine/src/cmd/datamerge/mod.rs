@@ -779,13 +779,13 @@ fn read_path(path: &str) -> std::result::Result<Vec<u8>, String> {
 /// `cap`, so a device or a file that grows while it is read can't exhaust memory.
 pub(crate) fn read_path_capped(path: &str, cap: u64) -> std::result::Result<Vec<u8>, String> {
     let too_big = || format!("{path}: the file is larger than {} MiB", cap / (1024 * 1024));
+    // The roots' own message when they refuse the path, missing or not.
+    crate::file_access::check_read(path)?;
     match crate::io::metadata(path) {
         Ok(m) if m.len() > cap => return Err(too_big()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(format!("{path}: the file is missing")),
         _ => {}
     }
-    // The roots' own message when they refuse the path.
-    crate::file_access::check_read(path)?;
     let b = match crate::io::read_capped(path, cap) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(format!("{path}: the file is missing")),
