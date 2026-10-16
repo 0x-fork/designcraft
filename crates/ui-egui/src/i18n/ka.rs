@@ -1831,4 +1831,9 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Remove Flex Layout", "მოქნილი განლაგების წაშლა"),
     ("Show Flex Controls", "მოქნილი მართვის ელემენტების ჩვენება"),
     ("Export PowerPoint…", "PowerPoint-ად ექსპორტი…"),
+    ("Open Recent", "ბოლო ფაილების გახსნა"),
+    ("Clear Recent Files", "ბოლო ფაილების სიის გასუფთავება"),
+    ("Transparency…", "გამჭვირვალობა…"),
+    ("Strokes and Fills…", "კონტურები და შევსებები…"),
+    ("Show/Hide Document Grid", "დოკუმენტის ბადის ჩვენება/დამალვა"),
 ];
