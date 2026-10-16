@@ -345,6 +345,10 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 ## Progress log
 
+- **2026-10-13** · Switching between document and parent pages refreshes the canvas immediately, preventing black parent pages and stale document objects when the zoom stays the same. Ordinary edits retain partial repainting. No readiness percentage change.
+
+Newest first.
+
 - **2026-10-15** · Applying text styles removes matching local formatting so capture sources
   inherit later edits; real overrides and named character styles remain.
 - **2026-10-15** · Redefine paragraph and character styles from local formatting, including the
@@ -356,12 +360,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 - **2026-10-15** · Paragraph Style Options summarizes captured and pending color, size and
   paragraph settings relative to the Based On style.
 - **2026-10-15** · Typography uses named panel groups with the Control panel and restores that
-  arrangement on Reset Workspace, leaving the page clear until a panel is opened.
-
-- **2026-10-13** · Switching between document and parent pages refreshes the canvas immediately, preventing black parent pages and stale document objects when the zoom stays the same. Ordinary edits retain partial repainting. No readiness percentage change.
-
-Newest first.
-
+  arrangement on Reset Workspace, leaving the page clear until a panel is opened. No readiness percentage change.
 - **2026-10-14** · Threading keeps generated and linked stories, text that refers to a story, local IDs and locked frames intact; a colour chosen at a caret waits for the typing, Swap Fill and Stroke on text keeps each run's colours, control-channel input never reads or writes the system clipboard, and IDML frame preferences given as properties import with bounded column counts (#84). No readiness percentage change.
 - **2026-10-14** · The Liquid Layout panel follows InDesign's: Liquid Page Rule with the page number, Content › Auto-Fit, and Object Constraints › Resize with Page and Pin for the selected object on an object-based page; Create Alternate Layout moved to the Layout menu. No readiness percentage change.
 - **2026-10-14** · On an object-based page the Page tool shows a selected object's liquid pins and resize locks as InDesign does: a click pins a side to the page edge or locks the width or height, with InDesign's tooltips. No readiness percentage change.
