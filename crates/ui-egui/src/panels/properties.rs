@@ -1420,7 +1420,7 @@ pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             .width(170.0)
             .show_ui(ui, |ui| language_menu(app, ui, &lang));
     });
-    // Digits (World-Ready): how the figures 0-9 are drawn (English 0123, Arabic ٠١٢٣, Persian ۰۱۲۳).
+    // Digits (World-Ready): how the figures 0-9 are drawn (Arabic 0123, Hindi ٠١٢٣, Farsi ۰۱۲۳).
     let digits = c["digits"].as_str().unwrap_or("default").to_string();
     ui.horizontal(|ui| {
         caption(ui, crate::i18n::tr(&app.ui.language, "Digits"));
@@ -2720,7 +2720,7 @@ pub(crate) fn composer_choice(composer: Option<&str>) -> (bool, [&'static str; 2
 /// `arabic` is 0123, `hindi` the Arabic-Indic ٠١٢٣ and `farsi` the Persian/Urdu ۰۱۲۳; the captions
 /// name them by the script's users.
 pub const DIGIT_OPTIONS: [(&str, &str, &str); 5] =
-    [("default", "Default", ""), ("arabic", "English", "0123"), ("hindi", "Arabic", "٠١٢٣"), ("farsi", "Persian", "۰۱۲۳"), ("native", "Native", "")];
+    [("default", "Default", ""), ("arabic", "Arabic", "0123"), ("hindi", "Hindi", "٠١٢٣"), ("farsi", "Farsi", "۰۱۲۳"), ("native", "Native", "")];
 
 /// A Digits choice as shown: its translated caption and a sample of the figures.
 pub fn digit_label(lang: &str, o: (&str, &str, &str)) -> String {
@@ -2915,6 +2915,14 @@ mod tests {
 
     fn font_style(app: &mut DesignApp) -> String {
         text_attrs(app).unwrap()["chars"]["fontStyle"].as_str().unwrap().to_string()
+    }
+
+    /// The Digits menu uses the reference names (documented as Arabic, Hindi and Farsi), which
+    /// are translated, with a sample of each script's figures.
+    #[test]
+    fn digits_choices_use_the_reference_names() {
+        let shown: Vec<String> = DIGIT_OPTIONS.iter().map(|o| digit_label("fr", *o)).collect();
+        assert_eq!(shown, ["Par défaut", "Arabe  0123", "Hindi  ٠١٢٣", "Persan  ۰۱۲۳", "Natif"].map(String::from));
     }
 
     #[test]
