@@ -735,6 +735,16 @@ pub fn doc_tabs(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Show the Preflight panel. `window.panel` toggles a panel that is already open, so it runs
+/// only when Preflight isn't showing.
+fn show_preflight(app: &mut DesignApp) {
+    if app.ui.open_panel.as_deref() != Some("preflight")
+        && let Err(e) = app.run("window.panel", json!({"panel": "preflight"}))
+    {
+        app.status(e);
+    }
+}
+
 pub fn status_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let resp = egui::Panel::bottom("status_bar")
@@ -810,7 +820,7 @@ pub fn status_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                 // As in InDesign, the count opens a menu that leads to the Preflight panel.
                 crate::menus::menu_button(ui, egui::RichText::new(count).font(small.clone()), |ui| {
                     if ui.button(crate::i18n::tr(&app.ui.language, "Preflight Panel…")).clicked() {
-                        let _ = app.run("window.panel", json!({"panel": "preflight"}));
+                        show_preflight(app);
                         ui.close();
                     }
                 });
@@ -1234,6 +1244,12 @@ mod tests {
         // Preflight is not a dock tab: `window.panel` shows it as its own panel.
         assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
         h.get_by_label("Preflight");
+        // With the panel already showing, the entry keeps it open.
+        h.get_by_label("No errors ▾").click();
+        h.run_steps(3);
+        h.get_by_label("Preflight Panel…").click();
+        h.run_steps(3);
+        assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
     }
 
     /// A very long document name made its tab grow past the window, hiding the close button

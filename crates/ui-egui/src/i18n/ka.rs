@@ -1738,6 +1738,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Paragraph Symbol", "აბზაცის სიმბოლო"),
     ("Picas", "პიკები"),
     ("Preflight", "ბეჭდვისწინა შემოწმება"),
+    ("Preflight Panel…", "ბეჭდვისწინა შემოწმების პანელი…"),
     ("Previous Page Number", "წინა გვერდის ნომერი"),
     ("Punctuation Space", "პუნქტუაციის შორისი"),
     ("Quarter Space", "მეოთხედი შორისი"),

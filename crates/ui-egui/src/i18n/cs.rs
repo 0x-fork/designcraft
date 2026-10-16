@@ -1710,6 +1710,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Paragraph Symbol", "Symbol odstavce"),
     ("Picas", "Piky"),
     ("Preflight", "Předtisková kontrola"),
+    ("Preflight Panel…", "Panel předtiskové kontroly…"),
     ("Previous Page Number", "Číslo předchozí stránky"),
     ("Punctuation Space", "Mezera šířky interpunkce"),
     ("Quarter Space", "Čtvrtina čtverčíku"),

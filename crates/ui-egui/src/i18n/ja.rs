@@ -1926,6 +1926,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Paragraph Symbol", "段落記号"),
     ("Picas", "パイカ"),
     ("Preflight", "プリフライト"),
+    ("Preflight Panel…", "プリフライトパネル…"),
     ("Previous Page Number", "前のページ番号"),
     ("Punctuation Space", "句読点幅スペース"),
     ("Quarter Space", "四分スペース"),

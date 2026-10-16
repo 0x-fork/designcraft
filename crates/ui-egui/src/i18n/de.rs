@@ -1728,6 +1728,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Paragraph Symbol", "Absatzzeichen"),
     ("Picas", "Pica"),
     ("Preflight", "Preflight"),
+    ("Preflight Panel…", "Preflight-Bedienfeld …"),
     ("Previous Page Number", "Vorherige Seitenzahl"),
     ("Punctuation Space", "Interpunktionsleerzeichen"),
     ("Quarter Space", "Viertelgeviert"),

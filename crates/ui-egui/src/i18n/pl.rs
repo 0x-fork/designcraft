@@ -1682,6 +1682,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Paragraph Symbol", "Symbol akapitu"),
     ("Picas", "Pica"),
     ("Preflight", "Inspekcja wstępna"),
+    ("Preflight Panel…", "Panel inspekcji wstępnej…"),
     ("Previous Page Number", "Numer poprzedniej strony"),
     ("Punctuation Space", "Spacja interpunkcyjna"),
     ("Quarter Space", "Ćwierćfiret"),

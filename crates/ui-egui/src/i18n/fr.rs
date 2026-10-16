@@ -146,6 +146,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Picas", "Picas"),
     ("Place with Import Options", "Importer avec les options d'importation"),
     ("Preflight", "Contrôle en amont"),
+    ("Preflight Panel…", "Panneau Contrôle en amont…"),
     ("Previous Page", "Page précédente"),
     ("Previous Page Number", "Numéro de la page précédente"),
     ("Print Booklet", "Imprimer le cahier"),

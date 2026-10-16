@@ -1692,6 +1692,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Paragraph Symbol", "Знак абзаца"),
     ("Picas", "Пики"),
     ("Preflight", "Предпечатная проверка"),
+    ("Preflight Panel…", "Панель предпечатной проверки…"),
     ("Previous Page Number", "Номер предыдущей страницы"),
     ("Punctuation Space", "Пунктуационный пробел"),
     ("Quarter Space", "Четверть шпации"),

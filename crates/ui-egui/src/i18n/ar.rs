@@ -1916,6 +1916,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Picas", "بيكا"),
     ("Place with Import Options", "وضع مع خيارات الاستيراد"),
     ("Preflight", "الفحص المسبق"),
+    ("Preflight Panel…", "لوحة الفحص المسبق…"),
     ("Previous", "السابق"),
     ("Previous Page Number", "رقم الصفحة السابقة"),
     ("Print Booklet", "طباعة كتيّب"),
