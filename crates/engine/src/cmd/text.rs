@@ -861,6 +861,9 @@ fn select_around(s: &mut Session, p: &Value, id: &str, bounds: fn(&str, usize) -
     let st = s.doc_mut()?;
     let text = st.doc.text_story(sid, cell).map(|x| x.text.clone()).unwrap_or_default();
     let (anchor, focus) = bounds(&text, floor_char_boundary(&text, b));
+    s.text_drag = false;
+    s.typing_format = None;
+    let st = s.doc_mut()?;
     st.selection = Selection::text(TextSel { story: sid, anchor, focus, frame: Some(frame), cell });
     st.bump_revision();
     Ok(json!({"story": sid.0, "anchor": anchor, "focus": focus}))
@@ -2463,6 +2466,13 @@ mod multi_click_tests {
         pending(&mut s);
         s.execute("text.insert", &json!({"text": "x"})).unwrap();
         assert_eq!(size_at(&s, 6), Some(30.0));
+        // Selecting a sentence or paragraph around a point drops it too.
+        for id in ["text.selectSentence", "text.selectParagraph"] {
+            pending(&mut s);
+            assert!(s.typing_format.is_some());
+            s.execute(id, &json!({"frame": fid, "point": [80, 80]})).unwrap();
+            assert!(s.typing_format.is_none(), "{id}");
+        }
     }
 
     #[test]
@@ -3361,6 +3371,47 @@ mod story_query_contract_tests {
         // The story still composes with every setting at its limit.
         let cs = designcraft_compose::compose_story(&s.doc().unwrap().doc, sid, &Default::default());
         assert!(!cs.frames.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod sentence_selection_tests {
+    use super::{para_bounds, sentence_bounds};
+
+    fn sentence(s: &str, at: &str) -> String {
+        let i = s.find(at).unwrap();
+        let (a, b) = sentence_bounds(s, i);
+        s[a..b].to_string()
+    }
+
+    #[test]
+    fn sentences_end_at_a_stop_before_a_space_or_the_paragraph_end() {
+        let s = "It costs 3.5 euros. \u{201C}Really?\u{201D} (Twice!) Yes\u{2026} fine.\nNext one. Last";
+        assert_eq!(sentence(s, "costs"), "It costs 3.5 euros. ");
+        assert_eq!(sentence(s, "Really"), "\u{201C}Really?\u{201D} ");
+        assert_eq!(sentence(s, "Twice"), "(Twice!) ");
+        assert_eq!(sentence(s, "Yes"), "Yes\u{2026} ");
+        assert_eq!(sentence(s, "fine"), "fine.");
+        assert_eq!(sentence(s, "one"), "Next one. ");
+        assert_eq!(sentence(s, "Last"), "Last");
+        // The caret at the very end of a paragraph is in its last sentence.
+        let end = s.find('\n').unwrap();
+        assert_eq!(sentence_bounds(s, end), (s.find("fine").unwrap(), end));
+    }
+
+    #[test]
+    fn cjk_full_stops_end_sentences_without_a_space() {
+        let s = "これは文です。次の文！最後";
+        assert_eq!(sentence(s, "次"), "次の文！");
+        assert_eq!(sentence(s, "最後"), "最後");
+    }
+
+    #[test]
+    fn paragraphs_stop_at_returns() {
+        let s = "One.\nTwo two.\n";
+        assert_eq!(para_bounds(s, 6), (5, 13));
+        assert_eq!(para_bounds(s, 0), (0, 4));
+        assert_eq!(para_bounds(s, s.len()), (s.len(), s.len()));
     }
 }
 
