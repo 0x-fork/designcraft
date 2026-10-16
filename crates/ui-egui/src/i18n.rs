@@ -121,6 +121,10 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     ("Capture", ["Erfassen", "Capturer", "Capturar", "取り込み", "捕捉"]),
     ("Panel Locations", ["Bedienfeldpositionen", "Emplacements des panneaux", "Ubicaciones de paneles", "パネルの位置", "面板位置"]),
+    ("First Page", ["Erste Seite", "Première page", "Primera página", "最初のページ", "第一页"]),
+    ("Previous Page", ["Vorherige Seite", "Page précédente", "Página anterior", "前のページ", "上一页"]),
+    ("Next Page", ["Nächste Seite", "Page suivante", "Página siguiente", "次のページ", "下一页"]),
+    ("Last Page", ["Letzte Seite", "Dernière page", "Última página", "最後のページ", "最后一页"]),
     (
         "Bulleted & Numbered Lists",
         [
