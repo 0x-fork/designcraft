@@ -735,7 +735,7 @@ mod tests {
         assert_eq!(copy_font(&root, &face, &fonts, &mut copied, &mut taken, &mut files), "");
         assert_eq!(files, [fonts.join("12345.ttf")]);
         let db = designcraft_fonts::FontDb::global();
-        let loaded = db.load_document_fonts(&fonts);
+        let loaded = db.load_document_fonts(&fonts, &|_| Ok(()));
         assert_eq!((loaded.faces, loaded.skipped.len()), (1, 0), "{:?}", loaded.skipped);
         db.close_scope(loaded.scope);
         // The first four bytes name the kind; a font extension or an unknown kind stays.

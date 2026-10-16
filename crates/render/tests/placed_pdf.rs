@@ -10,7 +10,6 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use designcraft_compose::Cache;
-use designcraft_doc::PdfCrop;
 use designcraft_doc::build::NewDocument;
 use designcraft_doc::{Asset, AssetId, Content, Document, Graphic, Item, ItemId, PdfCrop, Shape, SpreadRef};
 use designcraft_geom::{Affine, Rect, shapes};

@@ -124,8 +124,8 @@ fn scoped_font_jobs_and_owned_layouts_survive_close_and_same_story_reopen() {
     std::fs::write(old_folder.join("font.ttf"), font_with_glyph(FAMILY, &['x'], 'X').unwrap()).unwrap();
     std::fs::write(new_folder.join("font.ttf"), font_with_glyph(FAMILY, &['x'], 'O').unwrap()).unwrap();
     let db = FontDb::global();
-    let old_fonts = db.load_document_fonts(&old_folder);
-    let new_fonts = db.load_document_fonts(&new_folder);
+    let old_fonts = db.load_document_fonts(&old_folder, &|_| Ok(()));
+    let new_fonts = db.load_document_fonts(&new_folder, &|_| Ok(()));
     assert_eq!((old_fonts.faces, new_fonts.faces), (1, 1));
     assert_ne!(old_fonts.scope, new_fonts.scope);
 

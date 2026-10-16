@@ -4606,7 +4606,6 @@ mod column_allocation_safety_tests {
             left_page: false,
             page_rect: None,
             outline: None,
-            section_marker: None,
         }
     }
     fn check(kind: designcraft_doc::ColumnsKind) {

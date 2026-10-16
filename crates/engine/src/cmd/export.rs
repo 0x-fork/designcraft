@@ -92,7 +92,7 @@ fn export_pptx(s: &mut Session, p: &Value) -> Result<Value> {
     // Object Export Options › Rasterize, and what PowerPoint has no objects for (a threaded frame
     // stays text: a picture of it would drop the rest of its story).
     let auto = p.get("rasterize").and_then(Value::as_bool).unwrap_or(true);
-    let (raster, rasterized) = rasterize_where(&st.doc, &s.cache, 300.0, |it| {
+    let (raster, rasterized) = rasterize_where(&st.doc, &s.cache, 300.0, true, |it| {
         !threaded(&st.doc, it) && (it.export_options.rasterize || (auto && designcraft_pptx::needs_raster(&st.doc, it)))
     });
     let doc: &designcraft_doc::Document = raster.as_ref().unwrap_or(&st.doc);
