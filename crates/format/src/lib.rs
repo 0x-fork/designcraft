@@ -114,16 +114,18 @@ pub const PREVIEW: &str = "preview.png";
 /// entry. None for files without one (saved before previews, or legacy JSON) or that aren't ours.
 pub fn read_preview<R: Read + std::io::Seek>(file: R) -> Option<Vec<u8>> {
     let mut z = zip::ZipArchive::new(file).ok()?;
-    let mut f = z.by_name(PREVIEW).ok()?;
+    let f = z.by_name(PREVIEW).ok()?;
     // A preview is small; a huge entry is not one we wrote.
     if f.size() > MAX_PREVIEW_BYTES {
         return None;
     }
+    // The declared size can lie: bound what the entry inflates to as well.
     let mut v = Vec::new();
-    f.read_to_end(&mut v).ok()?;
-    Some(v)
+    f.take(MAX_PREVIEW_BYTES + 1).read_to_end(&mut v).ok()?;
+    (u64::try_from(v.len()).ok()? <= MAX_PREVIEW_BYTES).then_some(v)
 }
 
+/// The largest preview read back (a first-page PNG is far smaller).
 const MAX_PREVIEW_BYTES: u64 = 4 << 20;
 
 /// Read `.designcraft` bytes (zip, or the legacy single JSON file).
@@ -730,6 +732,24 @@ mod tests {
         assert_eq!(read_preview(Cursor::new(save(&d).unwrap())), None);
         assert_eq!(read_preview(Cursor::new(b"{}".to_vec())), None);
         assert_eq!(read_preview(Cursor::new(Vec::new())), None);
+    }
+
+    #[test]
+    fn a_preview_that_inflates_past_its_declared_size_is_refused() {
+        use std::io::Write;
+        let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        z.start_file(PREVIEW, opts).unwrap();
+        z.write_all(&vec![0u8; usize::try_from(MAX_PREVIEW_BYTES).unwrap() + 4096]).unwrap();
+        let mut bytes = z.finish().unwrap().into_inner();
+        // Declare the entry tiny in the local header and the central directory.
+        let patch = |bytes: &mut Vec<u8>, sig: &[u8], at: usize| {
+            let start = bytes.windows(4).position(|w| w == sig).unwrap();
+            bytes[start + at..start + at + 4].copy_from_slice(&16u32.to_le_bytes());
+        };
+        patch(&mut bytes, b"PK\x03\x04", 22);
+        patch(&mut bytes, b"PK\x01\x02", 24);
+        assert_eq!(read_preview(Cursor::new(&bytes)), None);
     }
 
     #[test]
