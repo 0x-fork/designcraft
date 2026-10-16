@@ -52,6 +52,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Don't show again", "Більше не показувати"),
     ("The affected page contains objects. Delete the page anyway?", "Сторінка містить об’єкти. Усе одно видалити сторінку?"),
     ("The affected pages contain objects. Delete the pages anyway?", "Сторінки містять об’єкти. Усе одно видалити сторінки?"),
+    ("Capture", "Зберегти"),
+    ("Panel Locations", "Розташування панелей"),
     ("Bulleted & Numbered Lists", "Марковані й нумеровані списки"),
     ("Current Page Number", "Номер поточної сторінки"),
     ("Apply Color (,)", "Застосувати колір (,)"),

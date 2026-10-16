@@ -37,6 +37,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Don't show again", "აღარ აჩვენო"),
     ("The affected page contains objects. Delete the page anyway?", "გვერდი შეიცავს ობიექტებს. მაინც წავშალო გვერდი?"),
     ("The affected pages contain objects. Delete the pages anyway?", "გვერდები შეიცავს ობიექტებს. მაინც წავშალო გვერდები?"),
+    ("Capture", "შენახვა"),
+    ("Panel Locations", "პანელების მდებარეობა"),
     ("Reverse Path", "ტრაექტორიის შებრუნება"),
     ("Set Anchor", "საყრდენი წერტილის დაყენება"),
     ("Clear", "გასუფთავება"),

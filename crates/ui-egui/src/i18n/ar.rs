@@ -52,6 +52,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Don't show again", "عدم الإظهار مرة أخرى"),
     ("The affected page contains objects. Delete the page anyway?", "تحتوي الصفحة المعنية على كائنات. هل تريد حذف الصفحة على أي حال؟"),
     ("The affected pages contain objects. Delete the pages anyway?", "تحتوي الصفحات المعنية على كائنات. هل تريد حذف الصفحات على أي حال؟"),
+    ("Capture", "التقاط"),
+    ("Panel Locations", "مواضع اللوحات"),
     ("Bulleted & Numbered Lists", "القوائم ذات التعداد النقطي والرقمي"),
     ("Current Page Number", "رقم الصفحة الحالية"),
     ("Apply Color (,)", "تطبيق اللون (,)"),

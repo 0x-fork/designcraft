@@ -37,6 +37,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Don't show again", "Nicht mehr anzeigen"),
     ("The affected page contains objects. Delete the page anyway?", "Die betroffene Seite enthält Objekte. Seite trotzdem löschen?"),
     ("The affected pages contain objects. Delete the pages anyway?", "Die betroffenen Seiten enthalten Objekte. Seiten trotzdem löschen?"),
+    ("Capture", "Erfassen"),
+    ("Panel Locations", "Bedienfeldpositionen"),
     ("Clear", "Löschen"),
     ("Duplicate", "Duplizieren"),
     ("Select All", "Alles auswählen"),

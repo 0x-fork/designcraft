@@ -54,6 +54,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Don't show again", "Não mostrar novamente"),
     ("The affected page contains objects. Delete the page anyway?", "A página afetada contém objetos. Excluir a página mesmo assim?"),
     ("The affected pages contain objects. Delete the pages anyway?", "As páginas afetadas contêm objetos. Excluir as páginas mesmo assim?"),
+    ("Capture", "Capturar"),
+    ("Panel Locations", "Locais dos painéis"),
     ("Bulleted & Numbered Lists", "Listas com marcadores e numeradas"),
     ("Show Hidden Characters", "Mostrar caracteres ocultos"),
     ("Current Page Number", "Número da página atual"),

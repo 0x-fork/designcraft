@@ -119,6 +119,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
             "受影响的页面包含对象。仍要删除这些页面吗？",
         ],
     ),
+    ("Capture", ["Erfassen", "Capturer", "Capturar", "取り込み", "捕捉"]),
+    ("Panel Locations", ["Bedienfeldpositionen", "Emplacements des panneaux", "Ubicaciones de paneles", "パネルの位置", "面板位置"]),
     (
         "Bulleted & Numbered Lists",
         [

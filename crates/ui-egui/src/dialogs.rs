@@ -2036,7 +2036,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let available = (ctx.content_rect().size() - frame_margin - egui::vec2(16.0, 16.0)).max(egui::Vec2::splat(1.0));
         let preferred_width: f32 = match d.id.as_str() {
             "alert" => 440.0,
-            "closeDocument" | "updateLink" | "deletePages" => 380.0,
+            "closeDocument" | "updateLink" | "deletePages" | "newWorkspace" => 380.0,
             "newDocument" => 960.0,
             "numberingSection" => 560.0,
             crate::effects_dialog::ID => 720.0,
@@ -2534,10 +2534,10 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                             crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Name:"));
                             text_field(ui, &mut d, "name", 220.0);
                         });
-                        crate::rtl::label(
-                            ui,
-                            egui::RichText::new(crate::i18n::tr(&app.ui.language, "Saves which bars show and where the panels are.")).size(10.5),
-                        );
+                        ui.add_space(6.0);
+                        crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Capture")).font(semibold(12.0)));
+                        check(ui, &mut d, "panelLocations", crate::i18n::tr(&app.ui.language, "Panel Locations"));
+                        check(ui, &mut d, "menuCustomization", crate::i18n::tr(&app.ui.language, "Menu Customization"));
                     }
                     "fittingOptions" => {
                         check(ui, &mut d, "autoFit", crate::i18n::tr(&app.ui.language, "Auto-Fit"));
@@ -3327,7 +3327,10 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             doc["glyphFallback"] = json!(d.b("glyphFallback"));
             app.run("document.preferences", doc)
         }
-        "newWorkspace" => app.run("window.newWorkspace", json!({"name": d.s("name")})),
+        "newWorkspace" => app.run(
+            "window.newWorkspace",
+            json!({"name": d.s("name"), "panelLocations": d.b("panelLocations"), "menuCustomization": d.b("menuCustomization")}),
+        ),
         "deletePages" => {
             if d.b("dontShowAgain") {
                 app.ui.skip_delete_pages_warning = true;

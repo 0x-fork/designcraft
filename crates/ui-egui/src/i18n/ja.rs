@@ -54,6 +54,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Don't show again", "今後表示しない"),
     ("The affected page contains objects. Delete the page anyway?", "対象のページにはオブジェクトが含まれています。ページを削除しますか？"),
     ("The affected pages contain objects. Delete the pages anyway?", "対象のページにはオブジェクトが含まれています。ページを削除しますか？"),
+    ("Capture", "取り込み"),
+    ("Panel Locations", "パネルの位置"),
     ("Bulleted & Numbered Lists", "箇条書き"),
     ("Apply Color (,)", "カラーを適用 (,)"),
     ("Apply Gradient (.)", "グラデーションを適用 (.)"),
