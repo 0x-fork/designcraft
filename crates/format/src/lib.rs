@@ -839,6 +839,11 @@ mod tests {
             chars: if local_clear { clear_chars } else { CharAttrs::default() },
             table: None,
         };
+        // Pin legacy paragraph defaults so both formats isolate nullable overrides.
+        for style in &mut d.styles_mut().paragraph {
+            style.para.keep_all_lines = Some(true);
+            style.para.drop_cap_align_left = Some(false);
+        }
         let layer = d.default_layer();
         d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 400.0), layer, "clear", format).unwrap();
         d
