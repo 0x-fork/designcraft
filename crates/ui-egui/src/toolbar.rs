@@ -182,13 +182,14 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                 app.select_tool(id);
             }
             // As InDesign's, an open flyout closes on Esc and on a click anywhere outside it (a
-            // panel, a swatch, the canvas), not only on the canvas.
+            // panel, a swatch, the canvas), not only on the canvas. A new press counts, not a
+            // click: the release that ends the hold which opened it is one.
             if let Some(gi) = app.ui.flyout
                 && chosen.is_none()
                 && !opened_now
             {
                 let area = ui.ctx().memory(|m| m.area_rect(egui::Id::new(("flyout", gi))));
-                let outside = ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|p| area.is_none_or(|a| !a.contains(p))));
+                let outside = ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| area.is_none_or(|a| !a.contains(p))));
                 let esc = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
                 if outside || esc {
                     app.ui.flyout = None;
@@ -662,6 +663,30 @@ mod tests {
         h.get_by_label("Ellipse Frame Tool").click();
         h.run_steps(3);
         assert_eq!((h.state().app.session.tool_id(), h.state().app.ui.flyout), ("ellipseFrame", None));
+    }
+
+    /// A flyout opened by holding the group button stays open after the release, and Esc closes
+    /// it without switching the active tool.
+    #[test]
+    fn a_tool_flyout_opened_by_holding_stays_open_and_esc_keeps_the_tool() {
+        use egui::{Event, Modifiers, PointerButton};
+        use egui_kittest::kittest::Queryable;
+        let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let mut h = crate::test_window::open_stepped(app, vec2(1400.0, 900.0), 1.0, 1.0 / 60.0);
+        h.state_mut().app.select_tool("rectangleFrame");
+        h.run_steps(2);
+        let at = h.get_by_label("Rectangle Frame Tool (F)").rect().center();
+        h.input_mut().events.push(Event::PointerMoved(at));
+        h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        // Held for half a second: shorter than egui's longest click.
+        h.run_steps(30);
+        assert!(h.state().app.ui.flyout.is_some(), "holding opens the flyout");
+        h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(3);
+        assert!(h.state().app.ui.flyout.is_some(), "the release keeps it open");
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert_eq!((h.state().app.session.tool_id(), h.state().app.ui.flyout), ("rectangleFrame", None));
     }
 
     #[test]
