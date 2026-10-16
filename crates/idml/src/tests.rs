@@ -4024,7 +4024,7 @@ fn unusable_cjk_metrics_do_not_refuse_the_whole_file() {
     let spread = r#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
           <Spread Self="s"><Page Self="p" GeometricBounds="0 0 100 100" ItemTransform="1 0 0 1 0 0"/></Spread>
         </idPkg:Spread>"#;
-    let d = import_idml(&zip_files(&[("designmap.xml", &designmap), ("Spreads/Spread_s.xml", &spread)])).unwrap();
+    let d = import_idml(&zip_files(&[("designmap.xml", designmap), ("Spreads/Spread_s.xml", spread)])).unwrap();
     let entries = &d.styles.composite_fonts[0].entries;
     assert_eq!(entries[0].relative_size, 1.0, "an unusable relative size falls back to full size");
     assert_eq!(entries[1].baseline_shift, 0.0, "an unusable shift falls back to none");
