@@ -564,7 +564,9 @@ fn place(s: &mut Session, p: &Value, extend: bool) -> Result<Value> {
         && let Some(unit) = str_param(p, "unit")
         && let Some(u) = s.text_unit.filter(|u| u.story == sid && u.cell == cell)
     {
-        let (ua, ue) = (u.anchor.min(u.focus), u.anchor.max(u.focus));
+        // The remembered unit may predate edits that shortened the text.
+        let text = s.doc()?.doc.text_story(sid, cell).map_or("", |t| t.text.as_str());
+        let (ua, ue) = (floor_char_boundary(text, u.anchor.min(u.focus)), floor_char_boundary(text, u.anchor.max(u.focus)));
         let (na, ne) = unit_at(s, sid, cell, b, unit, "text.extendTo")?;
         let (anchor, focus) = if na < ua { (ue, na) } else { (ua, ne.max(ue)) };
         s.typing_format = None;
@@ -2597,6 +2599,11 @@ mod multi_click_tests {
         assert_eq!(sel(&s).0, 7);
         assert!(sel(&s).1 > 12 && sel(&s).1 < 18, "{:?}", sel(&s));
         assert!(s.execute("text.extendTo", &json!({"frame": fid, "point": at(&s, 14), "unit": "sentence"})).is_err());
+        // A unit remembered before the text was deleted stays inside what is left.
+        s.execute("text.selectAt", &json!({"frame": fid, "point": at(&s, 14), "unit": "word"})).unwrap();
+        s.execute("story.setText", &json!({"story": sid, "text": ""})).unwrap();
+        s.execute("text.extendTo", &json!({"frame": fid, "point": [100, 90], "unit": "word"})).unwrap();
+        assert_eq!(sel(&s), (0, 0));
     }
 
     #[test]
