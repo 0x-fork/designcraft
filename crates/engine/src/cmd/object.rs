@@ -3060,6 +3060,7 @@ fn path_create(s: &mut Session, p: &Value) -> Result<Value> {
         let shape = if anchors.len() == 2 && !closed { Shape::GraphicLine } else { Shape::Path };
         let mut it = Item::new(id, lid, shape, designcraft_geom::PathData::single(designcraft_geom::SubPath::new(anchors, closed)));
         it.stroke = Stroke::default();
+        new_object_colors(d, &mut it);
         d.insert_item(sr, it, None)?;
         *sel = Selection::items(vec![id]);
         Ok(json!({"id": id.0}))
@@ -3546,6 +3547,10 @@ mod step_repeat_tests {
         assert_eq!(colors(&s, a).0, "[None]", "shapes drawn before keep theirs");
         let line = s.execute("line.create", &json!({"a": [0, 0], "b": [100, 0]})).unwrap()["id"].as_u64().unwrap();
         assert_eq!(colors(&s, line).1, "[None]");
+        // Pen and Pencil paths too.
+        let anchors = json!([{"p": [0, 200]}, {"p": [100, 250]}, {"p": [50, 300]}]);
+        let path = s.execute("path.create", &json!({"anchors": anchors, "closed": true})).unwrap()["id"].as_u64().unwrap();
+        assert_eq!(colors(&s, path), (red.clone(), "[None]".into(), 1.0));
         s.execute("selection.set", &json!({"ids": []})).unwrap();
         // A graphics frame keeps its object style's.
         let g = s.execute("frame.create", &json!({"rect": [200, 72, 300, 144]})).unwrap()["id"].as_u64().unwrap();
