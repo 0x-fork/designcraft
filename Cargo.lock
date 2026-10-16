@@ -987,6 +987,7 @@ dependencies = [
  "log",
  "quick-xml 0.38.4",
  "regex",
+ "same-file",
  "serde",
  "serde_json",
  "tempfile",
