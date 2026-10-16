@@ -1954,10 +1954,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Your Recent Items", "最近使用した項目"),
     ("Saved Presets", "保存済みプリセット"),
     ("Blank Document Presets", "空のドキュメントプリセット"),
-    (
-        "No saved presets yet. Set the details, then click Save Document Preset.",
-        "保存済みのプリセットはありません。詳細を設定してから「ドキュメントプリセットを保存」をクリックしてください。",
-    ),
     ("Delete Preset", "プリセットを削除"),
     ("Preset Details", "プリセットの詳細"),
     ("Document Name", "ドキュメント名"),

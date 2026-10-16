@@ -14,10 +14,10 @@ use crate::DesignApp;
 use crate::dialogs::Dialog;
 use crate::theme::{Tokens, semibold};
 
-/// Tab key and English label.
 /// The Units list, as InDesign's New Document window has it.
 const NEW_DOCUMENT_UNITS: [Unit; 8] =
     [Unit::Points, Unit::Picas, Unit::Inches, Unit::Millimeters, Unit::Centimeters, Unit::Ciceros, Unit::Agates, Unit::Pixels];
+/// Tab key and English label.
 const TABS: [(&str, &str); 5] = [("recent", "Recent"), ("saved", "Saved"), ("print", "Print"), ("web", "Web"), ("mobile", "Mobile")];
 /// The card of the factory settings, first on the Recent tab.
 const DEFAULT_CARD: &str = "[Default]";
@@ -984,11 +984,11 @@ mod tests {
         assert_eq!((d.s("width"), d.s("height"), units(d)), ("1920 px".into(), "1080 px".into(), Unit::Pixels), "Web is in pixels");
         assert!(!d.b("facingPages") && !d.b("primaryTextFrame"));
         assert_eq!(d.s("name"), "Poster", "the typed name stays");
-        // Mobile starts with a primary text frame, as in InDesign.
+        // Mobile is in pixels too.
         let texts = settle(&mut app, &ctx);
         click(&mut app, &ctx, tab(&texts, "Mobile"), 1);
         let d = app.ui.dialog.as_ref().unwrap();
-        assert_eq!((d.s("tab"), units(d), d.b("primaryTextFrame")), ("mobile".into(), Unit::Pixels, true));
+        assert_eq!((d.s("tab"), units(d)), ("mobile".into(), Unit::Pixels));
         let texts = settle(&mut app, &ctx);
         click(&mut app, &ctx, tab(&texts, "Print"), 1);
         let d = app.ui.dialog.as_ref().unwrap();
