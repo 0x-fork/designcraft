@@ -577,3 +577,103 @@ fn unknown_params_are_invalid_params() {
     // The right keys still run.
     ok(&mut s, "execute", json!({"command": "text.select", "params": {"story": f["story"], "anchor": 0, "focus": 5}}));
 }
+
+/// A backend that answers every call with `{}` and keeps what each call forwarded.
+struct Recorder(Vec<(String, Value)>);
+
+impl Backend for Recorder {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.0.push((method.to_string(), params));
+        Ok(json!({}))
+    }
+    fn has_ui(&self) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "recorder".into()
+    }
+}
+
+/// The server refuses arguments a tool's schema doesn't list, so every key a tool forwards to a
+/// command or UI method has to be in its schema. Tools that pass their arguments on whole
+/// (`new_document`, `ui_set`) list every key their target reads.
+#[test]
+fn every_forwarded_key_is_in_the_tool_schema() {
+    let defs = tool_definitions();
+    let props = |t: &Value| t["inputSchema"]["properties"].as_object().cloned().unwrap_or_default();
+    // Every key any tool or command names, typed as the first schema that lists it.
+    let mut every: serde_json::Map<String, Value> = serde_json::Map::new();
+    for t in &defs {
+        for (k, p) in props(t) {
+            let v = match p["type"].as_str() {
+                Some("string") => p["enum"].get(0).cloned().unwrap_or(json!("a")),
+                Some("boolean") => json!(true),
+                Some("object") => json!({}),
+                Some("array") => json!([]),
+                _ => json!(1),
+            };
+            every.entry(k).or_insert(v);
+        }
+    }
+    for spec in designcraft_engine::command_specs() {
+        for k in designcraft_engine::cmd::params::doc_keys(spec.params).map(|d| d.keys).unwrap_or_default() {
+            every.entry(k.to_string()).or_insert(json!(1));
+        }
+    }
+    let whole = ["new_document", "ui_set"];
+    // Tools that run commands named in their arguments forward whatever those take.
+    let generic = ["execute", "batch"];
+    let mut missing = Vec::new();
+    for t in &defs {
+        let name = t["name"].as_str().unwrap();
+        if whole.contains(&name) || generic.contains(&name) {
+            continue;
+        }
+        let own = props(t);
+        let mut args = every.clone();
+        args.extend(own.iter().filter_map(|(k, _)| every.get(k).map(|v| (k.clone(), v.clone()))));
+        let mut rec = Recorder(Vec::new());
+        let _ = crate::tools::call_tool(&mut rec, name, &Value::Object(args));
+        for (method, params) in &rec.0 {
+            let forwarded = if method == "engine.execute" { &params["params"] } else { params };
+            for k in forwarded.as_object().into_iter().flatten().map(|(k, _)| k) {
+                if !own.contains_key(k) {
+                    missing.push(format!("{name} forwards `{k}` to {method}"));
+                }
+            }
+        }
+    }
+
+    let new_document = defs.iter().find(|t| t["name"] == "new_document").map(props).unwrap();
+    let spec = designcraft_engine::find_command("file.new").unwrap();
+    for k in designcraft_engine::cmd::params::doc_keys(spec.params).unwrap().keys {
+        if !new_document.contains_key(k) {
+            missing.push(format!("new_document: file.new takes `{k}`"));
+        }
+    }
+
+    // `ui.set` lives in the UI crate, which this one doesn't depend on: read its keys from the source.
+    let control = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui-egui/src/control.rs")).unwrap();
+    let start = control.find("\"ui.set\" => {").unwrap();
+    let arm = &control[start..start + control[start..].find("\"ui.dialog.set\"").unwrap()];
+    let mut read = Vec::new();
+    for pat in ["s(\"", "p.get(\"", "(\""] {
+        for (i, _) in arm.match_indices(pat) {
+            let rest = &arm[i + pat.len()..];
+            let key = &rest[..rest.find('"').unwrap()];
+            if !key.contains('.') && !key.is_empty() {
+                read.push(key);
+            }
+        }
+    }
+    read.sort_unstable();
+    read.dedup();
+    assert!(read.contains(&"zoom") && read.contains(&"rulers"), "{read:?}");
+    let ui_set = defs.iter().find(|t| t["name"] == "ui_set").map(props).unwrap();
+    for k in read {
+        if !ui_set.contains_key(k) {
+            missing.push(format!("ui_set: ui.set reads `{k}`"));
+        }
+    }
+    assert!(missing.is_empty(), "keys missing from tool schemas: {missing:#?}");
+}
