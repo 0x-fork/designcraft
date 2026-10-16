@@ -92,7 +92,17 @@ Overrides through the existing command, retaining named character styles. Select
 counts compare effective values with their style definitions, so equal local values and named
 character styles alone do not report overrides. This covers the color-override/clear workflow
 at 4:25–5:20 in [Jessica Garrity's styles tutorial](https://www.youtube.com/watch?v=pG9JkAPLgs8).
-Style-dialog Preview remains a separate gap.
+
+Style Preview rejects conflicting scalar/nested automation fields without a panic. Replacing a
+previewing dialog through the control channel cancels its transaction, restoring the original
+document and normal undo recording before the replacement opens.
+
+Paragraph and Character Style Options now preview edits to existing styles. Preview updates
+every use, remains outside undo history, and restores the starting document when disabled or
+cancelled. OK applies the final edit once. The color-preview step at about 4:00 in
+[Jessica Garrity's styles tutorial](https://www.youtube.com/watch?v=pG9JkAPLgs8) is reproducible
+offscreen. New-style creation, renaming and export tagging are committed on OK; they are not
+included in the visual preview.
 
 | Work | Opus 5.5 h |
 |---|---|
