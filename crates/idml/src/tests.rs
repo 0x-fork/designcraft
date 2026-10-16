@@ -3838,11 +3838,15 @@ fn ruler_guides_import_and_round_trip() {
     assert_eq!(guides(&d)[0].1, 40.0);
     assert_eq!(d.parents[0].pages[0].guides.len(), 1, "a parent page's guide");
     assert_eq!(d.parents[0].pages[0].guides[0].position, 84.0);
-    // Round trip: written under each page, read back where they were.
-    let d = import_idml(&guides_package("PageOrigin")).unwrap();
-    let back = import_idml(&export_idml(&d)).unwrap();
-    assert_eq!(guides(&back), guides(&d));
-    assert_eq!(back.parents[0].pages[0].guides.len(), 1);
+    // Round trip: written under each page from the document's ruler origin, read back where
+    // they were.
+    for origin in ["PageOrigin", "SpineOrigin", "SpreadOrigin"] {
+        let d = import_idml(&guides_package(origin)).unwrap();
+        let back = import_idml(&export_idml(&d)).unwrap();
+        assert_eq!(guides(&back), guides(&d), "{origin}");
+        assert_eq!(back.parents[0].pages[0].guides.len(), 1);
+        assert_eq!(back.parents[0].pages[0].guides[0].position, d.parents[0].pages[0].guides[0].position, "{origin}");
+    }
 }
 
 /// A package entry nothing in `designmap.xml` refers to is never decompressed: a damaged one

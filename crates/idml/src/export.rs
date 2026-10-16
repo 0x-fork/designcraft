@@ -1819,15 +1819,23 @@ impl<'a> Ex<'a> {
                 .attr("ItemTransform", format!("1 0 0 1 {} {}", num(pg.x - ox), num(-oy)))
                 .child(margin_el(pg));
             let mut pe = pe;
-            // Ruler guides, measured from the spread's top left (RulerOrigin is SpreadOrigin).
+            // Ruler guides, measured from the ruler origin written in the preferences: the
+            // spread's top left, the page's, or the spine (the import reads them the same way).
             let left = sp.pages.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
             let left = if left.is_finite() { left } else { 0.0 };
+            let spine = sp.pages.iter().map(|p| p.x - left).filter(|x| *x > 1e-6).fold(f64::INFINITY, f64::min);
+            let spine = if spine.is_finite() && facing { spine } else { 0.0 };
+            let origin_x = match d.settings.ruler_origin {
+                designcraft_doc::RulerOrigin::Spread => left,
+                designcraft_doc::RulerOrigin::Page => pg.x,
+                designcraft_doc::RulerOrigin::Spine => left + spine,
+            };
             for g in &pg.guides {
                 let vertical = g.orientation == designcraft_doc::Orientation::Vertical;
                 let mut ge = El::new("Guide")
                     .attr("Self", format!("{}g{}", uid(pg.id.0), pe.elements().count()))
                     .attr("Orientation", if vertical { "Vertical" } else { "Horizontal" })
-                    .attr("Location", num(if vertical { g.position - left } else { g.position }))
+                    .attr("Location", num(if vertical { g.position - origin_x } else { g.position }))
                     .attr("FitToPage", bool_s(!g.spread))
                     .attr("ViewThreshold", "5")
                     .attr("Locked", bool_s(g.locked))
