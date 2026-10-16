@@ -827,7 +827,7 @@ pub fn status_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                 // Double-clicking the light or the count shows the panel straight away (the
                 // second click has closed the menu the first one opened).
                 if dot.double_clicked() || menu.response.double_clicked() {
-                    let _ = app.run("window.panel", json!({"panel": "preflight"}));
+                    show_preflight(app);
                 }
                 ui.add_space(12.0);
                 ui.label(egui::RichText::new(&app.ui.status).font(small).color(t.text_dim));
@@ -1271,6 +1271,12 @@ mod tests {
         assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
         h.get_by_label("Preflight");
         assert!(h.query_by_label("Preflight Panel…").is_none(), "the menu isn't left open");
+        // A double-click with the panel already showing keeps it open.
+        let count = h.get_by_label("No errors ▾");
+        count.click();
+        count.click();
+        h.run_steps(3);
+        assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
     }
 
     /// A very long document name made its tab grow past the window, hiding the close button
