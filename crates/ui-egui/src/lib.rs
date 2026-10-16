@@ -215,6 +215,11 @@ pub struct UiState {
     pub hidden_panels: u8,
     /// "Don't show again" in the warning before deleting pages that contain objects.
     pub skip_delete_pages_warning: bool,
+    /// The Pages panel's parents part as its divider was last dragged, and the height the two
+    /// parts shared then (None: a few rows).
+    pub pages_parents_height: Option<[f32; 2]>,
+    /// The Pages panel's Panel Options.
+    pub pages_panel: panels::pages::PanelOptions,
     /// Edit › Color Settings (re-applied at start).
     pub color_settings: Option<designcraft_color::cms::ColorSettings>,
     /// View › Proof Colors and View › Proof Setup.
@@ -373,6 +378,8 @@ impl Default for UiState {
             flattener_preview: false,
             hidden_panels: 0,
             skip_delete_pages_warning: false,
+            pages_parents_height: None,
+            pages_panel: Default::default(),
             color_settings: None,
             proof_colors: false,
             proof_setup: Default::default(),
