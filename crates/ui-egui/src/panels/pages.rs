@@ -312,7 +312,9 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     };
     let space = (total - FOOTER_H - DIVIDER_H).max(2.0 * ROW_H);
     let parents_max = (space - 2.0 * ROW_H).max(ROW_H);
-    let parents_min = row_h.min(natural);
+    // A row taller than the room left (large icons in a short panel) gets that room.
+    // A row taller than the room left (large icons in a short panel) gets that room.
+    let parents_min = row_h.min(natural).min(parents_max);
     // The divider's place as last dragged, and how a change of the panel's height is shared.
     let parents_h = match app.ui.pages_parents_height {
         None => natural.min(PARENTS_DEFAULT_ROWS * ROW_H),
@@ -814,7 +816,11 @@ mod tests {
     }
 
     fn harness(app: DesignApp) -> Harness<'static, DesignApp> {
-        let mut h = Harness::builder().with_size(vec2(280.0, 520.0)).build_ui_state(
+        sized_harness(app, vec2(280.0, 520.0))
+    }
+
+    fn sized_harness(app: DesignApp, size: egui::Vec2) -> Harness<'static, DesignApp> {
+        let mut h = Harness::builder().with_size(size).build_ui_state(
             |ui, app: &mut DesignApp| {
                 let key = egui::Id::new("test_fonts");
                 if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
@@ -1022,6 +1028,30 @@ mod tests {
 
     /// Panel Options' parent size sets the height of the parents' rendered thumbnails (cached per
     /// parent and size), and Show Thumbnails off leaves them blank.
+    /// Parent rows taller than the room left for the parents (Extra Large or Jumbo in a short
+    /// panel) draw and drag without a panic.
+    #[test]
+    fn large_parent_rows_in_a_short_panel_do_not_panic() {
+        use egui::{Event, Modifiers, PointerButton};
+        for size in [IconSize::ExtraLarge, IconSize::Jumbo] {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({"pages": 4})).unwrap();
+            app.ui.pages_panel.parent_size = size;
+            let mut h = sized_harness(app, vec2(260.0, 160.0));
+            let a = h.get_by_label("Parents and pages divider").rect().center();
+            h.input_mut().events.push(Event::PointerMoved(a));
+            h.input_mut().events.push(Event::PointerButton { pos: a, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+            h.step();
+            for dy in [20.0, 40.0, -60.0] {
+                h.input_mut().events.push(Event::PointerMoved(a + vec2(0.0, dy)));
+                h.step();
+            }
+            h.input_mut().events.push(Event::PointerButton { pos: a, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+            h.run_steps(2);
+            assert!(h.state().ui.pages_parents_height.is_some(), "{size:?}: the divider was dragged");
+        }
+    }
+
     #[test]
     fn parent_thumbnails_follow_panel_options() {
         let parent_thumb_heights = |thumbnails: bool| {
