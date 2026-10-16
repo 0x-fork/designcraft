@@ -1065,6 +1065,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("[None] — choose a colour on the ramp.", "[Немає] — виберіть колір на шкалі."),
     ("discord.gg/artcraft — help, feedback and show-and-tell", "discord.gg/artcraft — допомога, відгуки та обмін роботами"),
     ("⌥-click clears overrides", "⌥-клацання скидає перевизначення"),
+    ("Alt-click clears overrides", "Alt-клацання скидає перевизначення"),
+    ("Apply \"{name}\", Clear Overrides", "Застосувати «{name}», скинути перевизначення"),
     ("⚠ out of date", "⚠ застаріле"),
     ("General", "Загальні"),
     ("Basic Character Formats", "Основне форматування символів"),

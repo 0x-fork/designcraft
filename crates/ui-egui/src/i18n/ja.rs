@@ -1184,6 +1184,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("[None] — choose a colour on the ramp.", "[なし] — カラーバーでカラーを選択してください。"),
     ("discord.gg/artcraft — help, feedback and show-and-tell", "discord.gg/artcraft — サポート・ご意見・作品紹介"),
     ("⌥-click clears overrides", "⌥ を押しながらクリックするとオーバーライドを消去します"),
+    ("Alt-click clears overrides", "Alt を押しながらクリックするとオーバーライドを消去します"),
+    ("Apply \"{name}\", Clear Overrides", "\"{name}\" を適用、オーバーライドを消去"),
     ("⚠ out of date", "⚠ 要更新"),
     ("General", "一般"),
     ("Basic Character Formats", "文字の基本書式"),

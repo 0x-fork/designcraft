@@ -1185,6 +1185,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("[No Group]", "[Sem grupo]"),
     ("[None] — choose a colour on the ramp.", "[Nenhum] — escolha uma cor na rampa."),
     ("⌥-click clears overrides", "⌥-clique limpa substituições"),
+    ("Alt-click clears overrides", "Alt-clique limpa substituições"),
+    ("Apply \"{name}\", Clear Overrides", "Aplicar \"{name}\", limpar substituições"),
     ("⚠ out of date", "⚠ desatualizado"),
     ("Interface", "Interface"),
     ("Advanced Type", "Tipo avançado"),

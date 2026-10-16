@@ -2806,6 +2806,14 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "⌥-click clears overrides",
         ["⌥-click clears overrides", "⌥-clic efface les remplacements", "⌥-click clears overrides", "⌥-click clears overrides", "⌥-单击清除覆盖"],
     ),
+    (
+        "Alt-click clears overrides",
+        ["Alt-Klick entfernt Abweichungen", "Alt-clic efface les remplacements", "Alt-clic borra las modificaciones", "Alt を押しながらクリックするとオーバーライドを消去します", "Alt-单击清除覆盖"],
+    ),
+    (
+        "Apply \"{name}\", Clear Overrides",
+        ["„{name}“ anwenden, Abweichungen löschen", "Appliquer « {name} », effacer les remplacements", "Aplicar \"{name}\", borrar modificaciones", "\"{name}\" を適用、オーバーライドを消去", "应用\"{name}\"，清除覆盖"],
+    ),
     ("⚠ out of date", ["⚠ out of date", "⚠ obsolète", "⚠ out of date", "⚠ out of date", "⚠ 已过期"]),
     ("General", ["General", "Général", "General", "General", "常规"]),
     (
@@ -5015,9 +5023,11 @@ mod tests {
     }
 
     #[test]
-    fn redefine_style_is_translated_in_every_language() {
+    fn style_row_menu_strings_are_translated_in_every_language() {
         for (code, _) in LANGUAGES.iter().filter(|(c, _)| !c.is_empty()) {
-            assert_ne!(tr(code, "Redefine Style"), "Redefine Style", "{code}");
+            for key in ["Redefine Style", "Alt-click clears overrides", "Apply \"{name}\", Clear Overrides"] {
+                assert_ne!(tr(code, key), key, "{code}: {key}");
+            }
         }
     }
 }

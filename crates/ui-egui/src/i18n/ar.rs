@@ -1177,6 +1177,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("[No Group]", "[بلا مجموعة]"),
     ("[None] — choose a colour on the ramp.", "[بلا] — اختر لونًا على شريط التدرج."),
     ("⌥-click clears overrides", "النقر مع ⌥ يمسح التجاوزات"),
+    ("Alt-click clears overrides", "النقر مع Alt يمسح التجاوزات"),
+    ("Apply \"{name}\", Clear Overrides", "تطبيق \"{name}\" ومسح التجاوزات"),
     ("⚠ out of date", "⚠ غير محدّث"),
     ("Interface", "الواجهة"),
     ("Advanced Type", "كتابة متقدمة"),
