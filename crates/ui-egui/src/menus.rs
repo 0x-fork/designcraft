@@ -2383,6 +2383,10 @@ fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
         crate::effects_dialog::open(app, page);
         return;
     }
+    if params.is_null() && id == "swatch.addColorTheme" {
+        crate::dialogs::open_color_theme(app, json!({}));
+        return;
+    }
     if params.is_null() && id == "file.close" {
         close_document(app, None);
         return;

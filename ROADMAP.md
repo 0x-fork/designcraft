@@ -347,6 +347,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-15** · Color Theme: the toolbar tool previews up to five colours from a placed raster and adds them as one undoable swatch group. Local deterministic extraction; transparent padding is ignored. No readiness percentage change.
 - **2026-10-14** · Threading keeps generated and linked stories, text that refers to a story, local IDs and locked frames intact; a colour chosen at a caret waits for the typing, Swap Fill and Stroke on text keeps each run's colours, control-channel input never reads or writes the system clipboard, and IDML frame preferences given as properties import with bounded column counts (#84). No readiness percentage change.
 - **2026-10-14** · The Liquid Layout panel follows InDesign's: Liquid Page Rule with the page number, Content › Auto-Fit, and Object Constraints › Resize with Page and Pin for the selected object on an object-based page; Create Alternate Layout moved to the Layout menu. No readiness percentage change.
 - **2026-10-14** · On an object-based page the Page tool shows a selected object's liquid pins and resize locks as InDesign does: a click pins a side to the page edge or locks the width or height, with InDesign's tooltips. No readiness percentage change.
