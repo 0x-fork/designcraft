@@ -846,7 +846,11 @@ mod tests {
         h.run_steps(3);
         let app = h.state_mut();
         assert_eq!(app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some("colorPicker"));
-        app.ui.dialog.as_mut().unwrap().fields.insert("hex".into(), json!("#7c1315"));
+        let d = app.ui.dialog.as_mut().unwrap();
+        // What the picker's fields hold after #7c1315 is typed.
+        for (k, v) in [("hex", json!("#7c1315")), ("rgb", json!([0x7c, 0x13, 0x15])), ("model", json!("rgb")), ("edited", json!(true))] {
+            d.fields.insert(k.into(), v);
+        }
         crate::dialogs::confirm(app).unwrap();
         // Apply None with the stroke in front.
         app.ui.stroke_front = true;
