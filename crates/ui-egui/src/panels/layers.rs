@@ -566,7 +566,7 @@ type RenameKey = u64;
 type RenameState = (RenameKey, String, String);
 const RENAME: &str = "layers_rename";
 
-/// The name field of the row being renamed (double-click), in `r`: `Some(Some(name))` when Enter
+/// The name field of the row being renamed (a layer's double-click, an object's slow one), in `r`: `Some(Some(name))` when Enter
 /// or a click elsewhere confirms it with a changed text, `Some(None)` when Esc cancels or the text
 /// is the one it started with, `None` while typing or when this row isn't being renamed.
 fn rename_field(ui: &mut Ui, r: Rect, key: RenameKey) -> Option<Option<String>> {
@@ -798,7 +798,7 @@ mod tests {
         let mut h = Harness::builder().with_size(egui::vec2(260.0, 400.0)).build_ui_state(|ui, app: &mut DesignApp| show(app, ui), app);
         h.run_steps(2);
         let rename = |h: &mut Harness<'_, DesignApp>, key: RenameKey, typed: &str| {
-            // As a double-click starts it (with an emptied field here, so the typing is the name).
+            // As a slow double-click starts it (with an emptied field here, so the typing is the name).
             h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (key, String::new(), String::new())));
             h.run_steps(2);
             h.get_by_role(egui::accesskit::Role::TextInput).type_text(typed);
@@ -826,7 +826,7 @@ mod tests {
         let mut h = Harness::builder().with_size(egui::vec2(260.0, 400.0)).build_ui_state(|ui, app: &mut DesignApp| show(app, ui), app);
         h.run_steps(2);
         let name = |h: &Harness<'_, DesignApp>| h.state().session.active().unwrap().doc.item(ItemId(id)).unwrap().name.clone();
-        // As a double-click on the unnamed row starts it: the field shows the automatic label.
+        // As a slow double-click on the unnamed row starts it: the field shows the automatic label.
         let start = |h: &mut Harness<'_, DesignApp>| {
             h.ctx.data_mut(|d| d.insert_temp(egui::Id::new(RENAME), (id, "Rectangle".to_string(), "Rectangle".to_string())));
             h.run_steps(2);
