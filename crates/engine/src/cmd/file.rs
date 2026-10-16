@@ -409,8 +409,8 @@ pub struct RecentPreview {
 pub fn recent_preview(path: &str) -> Option<RecentPreview> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let bytes = crate::io::read(path).ok()?;
-        let png = designcraft_format::read_preview(std::io::Cursor::new(bytes))?;
+        // Only the zip directory and the preview entry are read, not the whole document.
+        let png = designcraft_format::read_preview(std::io::BufReader::new(crate::io::open(path).ok()?))?;
         let img = designcraft_images::decode_rgba(&png)?;
         let (width, height) = img.dimensions();
         Some(RecentPreview { width, height, rgba: img.into_raw() })
