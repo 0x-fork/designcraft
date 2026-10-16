@@ -84,7 +84,7 @@ fn dialog_color(f: &Map<String, Value>) -> Option<Color> {
 /// A colour as `swatch.options` takes it (fractions, so 1% isn't read as 100%).
 fn color_json(c: Color) -> Value {
     match c {
-        Color::Cmyk { c, m, y, k } => json!({"c": c, "m": m, "y": y, "k": k}),
+        Color::Cmyk { c, m, y, k } => json!({"model": "cmyk", "c": c, "m": m, "y": y, "k": k}),
         Color::Rgb { r, g, b } => json!([r, g, b]),
         Color::Gray { k } => json!({"gray": k}),
     }

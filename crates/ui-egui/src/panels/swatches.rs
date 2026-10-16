@@ -575,8 +575,8 @@ pub struct SwatchDrag(pub String);
 fn color_json(c: &designcraft_color::Color) -> serde_json::Value {
     use designcraft_color::Color;
     match *c {
-        // Fractions: every component is within 0–1, so they're read back as fractions.
-        Color::Cmyk { c, m, y, k } => json!({"c": c, "m": m, "y": y, "k": k}),
+        // The model form takes fractions; bare CMYK would be read as 0..100.
+        Color::Cmyk { c, m, y, k } => json!({"model": "cmyk", "c": c, "m": m, "y": y, "k": k}),
         Color::Gray { k } => json!({"model": "gray", "k": k}),
         Color::Rgb { .. } => json!(c.to_hex()),
     }
