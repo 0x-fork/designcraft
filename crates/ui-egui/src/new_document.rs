@@ -984,11 +984,11 @@ mod tests {
         assert_eq!((d.s("width"), d.s("height"), units(d)), ("1920 px".into(), "1080 px".into(), Unit::Pixels), "Web is in pixels");
         assert!(!d.b("facingPages") && !d.b("primaryTextFrame"));
         assert_eq!(d.s("name"), "Poster", "the typed name stays");
-        // Mobile is in pixels too.
+        // Mobile is in pixels too, without a primary text frame (its autoflow is an open gap).
         let texts = settle(&mut app, &ctx);
         click(&mut app, &ctx, tab(&texts, "Mobile"), 1);
         let d = app.ui.dialog.as_ref().unwrap();
-        assert_eq!((d.s("tab"), units(d)), ("mobile".into(), Unit::Pixels));
+        assert_eq!((d.s("tab"), units(d), d.b("primaryTextFrame")), ("mobile".into(), Unit::Pixels, false));
         let texts = settle(&mut app, &ctx);
         click(&mut app, &ctx, tab(&texts, "Print"), 1);
         let d = app.ui.dialog.as_ref().unwrap();
