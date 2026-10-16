@@ -126,6 +126,12 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Next Page", ["Nächste Seite", "Page suivante", "Página siguiente", "次のページ", "下一页"]),
     ("Last Page", ["Letzte Seite", "Dernière page", "Última página", "最後のページ", "最后一页"]),
     (
+        "Close Tab Group",
+        ["Registerkartengruppe schließen", "Fermer le groupe d'onglets", "Cerrar grupo de fichas", "タブグループを閉じる", "关闭选项卡组"],
+    ),
+    ("Minimize", ["Minimieren", "Réduire", "Minimizar", "最小化", "最小化"]),
+    ("Collapse to Icons", ["Auf Symbole minimieren", "Réduire en icônes", "Contraer a iconos", "アイコンパネルに折りたたむ", "折叠为图标"]),
+    (
         "Bulleted & Numbered Lists",
         [
             "Aufzählungszeichen und nummerierte Listen",
