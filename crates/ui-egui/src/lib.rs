@@ -1298,7 +1298,7 @@ impl DesignApp {
             return self.run("swatch.load", json!({"path": path}));
         }
         let document = opens_as_document(path)
-            || (std::path::Path::new(path).extension().is_none() && std::fs::read(path).is_ok_and(|b| designcraft_engine::cmd::is_document(&b)));
+            || (std::path::Path::new(path).extension().is_none() && designcraft_engine::io::read(path).is_ok_and(|b| designcraft_engine::cmd::is_document(&b)));
         if document {
             return self.open_file("file.open", json!({"path": path}));
         }

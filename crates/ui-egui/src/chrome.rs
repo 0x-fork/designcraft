@@ -1005,7 +1005,7 @@ fn recent_file_stat_at(ctx: &egui::Context, path: &str, now: f64) -> RecentStat 
     {
         return st;
     }
-    let meta = std::fs::metadata(path).ok().filter(std::fs::Metadata::is_file);
+    let meta = designcraft_engine::io::metadata(path).ok().filter(designcraft_engine::io::Metadata::is_file);
     let st = RecentStat { exists: meta.is_some(), modified: meta.and_then(|m| m.modified().ok()), checked: now };
     ctx.data_mut(|d| d.insert_temp(key, st.clone()));
     st

@@ -82,7 +82,7 @@ impl Kind {
 fn source(p: &Value, id: &str) -> Result<Document> {
     let (bytes, name) = match (str_param(p, "path"), str_param(p, "base64")) {
         (_, Some(b)) => (super::file::base64_decode(b), str_param(p, "name").unwrap_or("").to_string()),
-        (Some(path), None) => (std::fs::read(path).map_err(|e| bad(id, format!("{path}: {e}")))?, path.to_string()),
+        (Some(path), None) => (crate::io::read_file(path).map_err(|e| bad(id, e))?, path.to_string()),
         _ => return Err(bad(id, "give `path` or `base64`")),
     };
     if name.to_lowercase().ends_with(".idml") {
