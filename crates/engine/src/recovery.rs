@@ -133,8 +133,9 @@ fn new_lock(dir: &Path) -> std::io::Result<std::fs::File> {
         new.mode(0o600);
     }
     let mut file = new.open(dir.join(LOCK))?;
-    // A marker distinguishes the held handle from a replacement at the same pathname on
-    // platforms without portable file-identity metadata. Empty older-version locks remain valid.
+    // A marker supplements Unix inode validation and identifies locks on other platforms.
+    // Windows uses live handle identity because its exclusive lock prevents separate-handle reads.
+    // Empty older-version locks remain valid.
     static NEXT_LOCK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other)?.as_nanos();
     let marker = format!("{}:{}:{now}", std::process::id(), NEXT_LOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
@@ -165,6 +166,18 @@ fn validate_lock(dir: &Path, lock: &std::fs::File) -> Result<()> {
     }
     #[cfg(not(unix))]
     let _ = (held, current);
+    // Windows locks prevent reads through separately opened handles, even in this process.
+    // Compare the held and named file identities without releasing the recovery lock.
+    #[cfg(windows)]
+    let held_identity = {
+        let held = same_file::Handle::from_file(lock.try_clone().map_err(|_| fail())?).map_err(|_| fail())?;
+        let current = same_file::Handle::from_file(named.try_clone().map_err(|_| fail())?).map_err(|_| fail())?;
+        if held != current {
+            return Err(fail());
+        }
+        held
+    };
+    #[cfg(not(windows))]
     if lock_marker(lock).map_err(|_| fail())? != lock_marker(&named).map_err(|_| fail())? {
         return Err(fail());
     }
@@ -179,10 +192,18 @@ fn validate_lock(dir: &Path, lock: &std::fs::File) -> Result<()> {
             return Err(fail());
         }
     }
+    #[cfg(windows)]
+    {
+        let after_named = std::fs::File::open(&path).map_err(|_| fail())?;
+        let after_identity = same_file::Handle::from_file(after_named).map_err(|_| fail())?;
+        if held_identity != after_identity {
+            return Err(fail());
+        }
+    }
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
 fn lock_marker(file: &std::fs::File) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek};
     let mut file = file.try_clone()?;
@@ -1322,6 +1343,50 @@ mod tests {
         replacement.try_lock().unwrap();
         assert!(save(&dirty_session(), &own).is_err());
         assert!(list(&own).is_empty(), "another owner's folder must not receive our recovery data");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_exclusively_locked_windows_recovery_file_validates() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = new_lock(root.path()).unwrap();
+        lock.try_lock().unwrap();
+        validate_lock(root.path(), &lock).unwrap();
+        let named = std::fs::File::open(root.path().join(LOCK)).unwrap();
+        assert!(matches!(named.try_lock(), Err(std::fs::TryLockError::WouldBlock)), "validation must retain the exclusive lock");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_recovery_rejects_a_replacement_with_the_same_marker() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = new_lock(root.path()).unwrap();
+        let marker = std::fs::read(root.path().join(LOCK)).unwrap();
+        lock.try_lock().unwrap();
+        let moved = root.path().join("original-lock");
+        std::fs::rename(root.path().join(LOCK), &moved).unwrap();
+        std::fs::write(root.path().join(LOCK), marker).unwrap();
+        assert!(validate_lock(root.path(), &lock).is_err(), "matching marker bytes do not make another file our lock");
+        std::fs::remove_file(root.path().join(LOCK)).unwrap();
+        assert!(validate_lock(root.path(), &lock).is_err(), "a missing lock must not validate");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_recovery_does_not_write_or_discard_a_replacement_runs_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let own = run_dir(root.path()).unwrap();
+        std::fs::rename(own.join(LOCK), own.join("original-lock")).unwrap();
+        let replacement = new_lock(&own).unwrap();
+        replacement.try_lock().unwrap();
+        let session = dirty_session();
+        let (doc, meta) = files(&own, session.docs[0].uid);
+        std::fs::write(&doc, b"another owner's document").unwrap();
+        std::fs::write(&meta, b"{}").unwrap();
+        assert!(save(&session, &own).is_err());
+        discard(&own, session.docs[0].uid);
+        assert_eq!(std::fs::read(&doc).unwrap(), b"another owner's document");
+        assert_eq!(std::fs::read(&meta).unwrap(), b"{}");
     }
 
     /// A blocked attempt to recreate a run's lock must stop the save before it writes documents.
