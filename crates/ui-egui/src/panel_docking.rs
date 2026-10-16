@@ -310,6 +310,10 @@ fn open_floating_group(app: &mut DesignApp, params: &Value) -> Option<Result<Val
     if app.ui.icon_groups.as_ref().is_some_and(|g| g.iter().flatten().any(|p| group.contains(&p.as_str()))) {
         return None;
     }
+    // A panel closed from a place in the dock comes back there.
+    if group.iter().any(|p| app.ui.docking_hidden.get(*p).is_some_and(|l| l.floating.is_none())) {
+        return None;
+    }
     let layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
     if group.iter().any(|p| layout.contains(&p.to_string())) {
         return None;

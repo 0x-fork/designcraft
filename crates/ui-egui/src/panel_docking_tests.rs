@@ -729,3 +729,20 @@ fn paragraph_styles_open_floating_with_character_styles() {
     assert_eq!(group.panels[group.active], "characterStyles");
     assert_eq!(layout.panels().iter().filter(|p| p.as_str() == "characterStyles").count(), 1);
 }
+
+/// Style panels the user docked and then closed come back in the dock, not floating.
+#[test]
+fn paragraph_styles_closed_from_the_dock_reopen_there() {
+    let mut app = app();
+    app.run("window.panel", json!({"panel":"paragraphStyles"})).unwrap();
+    for panel in ["characterStyles", "paragraphStyles"] {
+        app.run("window.panel.move", json!({"panel": panel, "anchor": "properties"})).unwrap();
+    }
+    for panel in ["characterStyles", "paragraphStyles"] {
+        app.run("window.panel.close", json!({"panel": panel})).unwrap();
+    }
+    app.run("window.panel", json!({"panel":"paragraphStyles"})).unwrap();
+    let layout = app.ui.docking.clone().unwrap();
+    assert!(layout.contains(&"paragraphStyles".to_string()));
+    assert!(layout.floating.iter().all(|g| !g.panels.iter().any(|p| p == "paragraphStyles")), "{:?}", layout.floating);
+}
