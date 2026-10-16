@@ -45,6 +45,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Corners:", "Кути:"),
     ("Sharp", "Гострі"),
     ("Diffused", "Розсіяні"),
+    ("Inches Decimal", "Дюйми (десяткові)"),
     ("Bulleted & Numbered Lists", "Марковані й нумеровані списки"),
     ("Current Page Number", "Номер поточної сторінки"),
     ("Apply Color (,)", "Застосувати колір (,)"),

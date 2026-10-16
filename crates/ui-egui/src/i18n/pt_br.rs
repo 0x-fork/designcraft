@@ -47,6 +47,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Corners:", "Cantos:"),
     ("Sharp", "Nítidos"),
     ("Diffused", "Difusos"),
+    ("Inches Decimal", "Polegadas decimais"),
     ("Bulleted & Numbered Lists", "Listas com marcadores e numeradas"),
     ("Show Hidden Characters", "Mostrar caracteres ocultos"),
     ("Current Page Number", "Número da página atual"),

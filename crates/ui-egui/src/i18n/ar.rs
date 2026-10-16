@@ -46,6 +46,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Corners:", "الزوايا:"),
     ("Sharp", "حادة"),
     ("Diffused", "منتشرة"),
+    ("Inches Decimal", "بوصات عشرية"),
     ("Bulleted & Numbered Lists", "القوائم ذات التعداد النقطي والرقمي"),
     ("Current Page Number", "رقم الصفحة الحالية"),
     ("Apply Color (,)", "تطبيق اللون (,)"),

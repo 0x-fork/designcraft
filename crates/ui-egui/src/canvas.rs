@@ -1854,49 +1854,87 @@ fn ruler_rects(full: Rect, rect: Rect) -> (Rect, Rect) {
     )
 }
 
-/// Right-clicking a ruler opens a menu of units for that ruler; right-clicking the corner, one
-/// to lock the zero point.
+/// Right-clicking a ruler opens its menu, as InDesign's: units for that ruler, Hide Rulers and
+/// (the horizontal ruler) Delete All Guides on Spread. Right-clicking the corner where they meet
+/// opens Lock Zero Point and the units for both rulers at once.
 fn ruler_units_menus(app: &mut DesignApp, resp: &egui::Response, full: Rect, rect: Rect, doc: &Document) {
     let (top, left) = ruler_rects(full, rect);
-    let at = resp.interact_pointer_pos();
     let corner = Rect::from_min_max(full.min, rect.min);
-    let open = if resp.secondary_clicked() {
-        Some(egui::SetOpenCommand::Bool(at.is_some_and(|p| corner.contains(p))))
-    } else if resp.clicked() {
-        Some(egui::SetOpenCommand::Bool(false))
-    } else {
-        None
-    };
+    let at = resp.interact_pointer_pos();
+    let (h, v) = (doc.settings.horizontal_units, doc.settings.vertical_units);
     let locked = doc.settings.zero_point_locked;
-    egui::Popup::context_menu(resp).id(resp.id.with("ruler_corner")).open_memory(open).show(|ui| {
-        let label = crate::i18n::tr(&app.ui.language, if locked { "Unlock Zero Point" } else { "Lock Zero Point" });
-        if ui.button(crate::rtl::widget(ui, label)).clicked() {
-            let _ = app.run("view.lockZeroPoint", json!({"on": !locked}));
-            ui.close();
-        }
-    });
-    for (ruler, key, cur) in [(top, "horizontalUnits", doc.settings.horizontal_units), (left, "verticalUnits", doc.settings.vertical_units)] {
+    // (where, which units it sets, the unit checked)
+    let menus = [(top, RulerMenu::Horizontal, Some(h)), (left, RulerMenu::Vertical, Some(v)), (corner, RulerMenu::Both, (h == v).then_some(h))];
+    for (area, which, cur) in menus {
         let open = if resp.secondary_clicked() {
-            Some(egui::SetOpenCommand::Bool(at.is_some_and(|p| ruler.contains(p))))
+            Some(egui::SetOpenCommand::Bool(at.is_some_and(|p| area.contains(p))))
         } else if resp.clicked() {
             Some(egui::SetOpenCommand::Bool(false))
         } else {
             None
         };
-        egui::Popup::context_menu(resp).id(resp.id.with(("ruler_units", key))).open_memory(open).show(|ui| ruler_units_menu(app, ui, key, cur));
+        egui::Popup::context_menu(resp)
+            .id(resp.id.with(("ruler_units", which as u8)))
+            .open_memory(open)
+            .show(|ui| ruler_units_menu(app, ui, which, cur, locked));
     }
 }
 
-/// Every unit, the current one checked; picking one sets `key` (`horizontalUnits` or
-/// `verticalUnits`) through `document.preferences`.
-fn ruler_units_menu(app: &mut DesignApp, ui: &mut egui::Ui, key: &str, cur: designcraft_geom::Unit) {
-    for u in designcraft_geom::Unit::ALL {
-        let label = crate::i18n::tr(&app.ui.language, u.label());
-        let text = if u == cur { format!("✓ {label}") } else { format!("   {label}") };
-        if ui.button(crate::rtl::widget(ui, text)).clicked() {
-            let _ = app.run("document.preferences", json!({ key: u }));
+#[derive(Clone, Copy, PartialEq)]
+enum RulerMenu {
+    Horizontal,
+    Vertical,
+    Both,
+}
+
+/// The units a ruler's menu offers, in InDesign's order.
+const RULER_UNITS: [designcraft_geom::Unit; 9] = {
+    use designcraft_geom::Unit::*;
+    [Points, Picas, Inches, InchesDecimal, Millimeters, Centimeters, Ciceros, Agates, Pixels]
+};
+
+/// A ruler's menu: the units (the current one checked), then Hide Rulers and, on the horizontal
+/// ruler, Delete All Guides on Spread. The corner's menu (`Both`) starts with Lock Zero Point
+/// (`locked` = the zero point is locked). Picking a unit sets `horizontalUnits`,
+/// `verticalUnits` or both through `document.preferences`.
+fn ruler_units_menu(app: &mut DesignApp, ui: &mut egui::Ui, which: RulerMenu, cur: Option<designcraft_geom::Unit>, locked: bool) {
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
+    if which == RulerMenu::Both {
+        let label = tr(if locked { "Unlock Zero Point" } else { "Lock Zero Point" });
+        if ui.button(crate::rtl::widget(ui, format!("   {label}"))).clicked() {
+            let _ = app.run("view.lockZeroPoint", json!({"on": !locked}));
             ui.close();
         }
+        ui.separator();
+    }
+    // A document in Q or Ha keeps its unit on the list.
+    let extra = cur.filter(|u| !RULER_UNITS.contains(u));
+    for u in RULER_UNITS.into_iter().chain(extra) {
+        let label = tr(u.label());
+        let text = if Some(u) == cur { format!("✓ {label}") } else { format!("   {label}") };
+        if ui.button(crate::rtl::widget(ui, text)).clicked() {
+            let p = match which {
+                RulerMenu::Horizontal => json!({"horizontalUnits": u}),
+                RulerMenu::Vertical => json!({"verticalUnits": u}),
+                RulerMenu::Both => json!({"horizontalUnits": u, "verticalUnits": u}),
+            };
+            let _ = app.run("document.preferences", p);
+            ui.close();
+        }
+    }
+    ui.separator();
+    let hide = format!("   {}", tr("Hide Rulers"));
+    if ui
+        .add(egui::Button::new(crate::rtl::widget(ui, hide)).shortcut_text(crate::menus::shortcut_of(app, "view.rulers").unwrap_or_default()))
+        .clicked()
+    {
+        let _ = app.run("view.rulers", json!({}));
+        ui.close();
+    }
+    if which == RulerMenu::Horizontal && ui.button(crate::rtl::widget(ui, format!("   {}", tr("Delete All Guides on Spread")))).clicked() {
+        crate::menus::activate(app, "app.deleteAllGuides", &Value::Null);
+        ui.close();
     }
 }
 
@@ -3373,11 +3411,31 @@ mod tests {
         h.get_by_label("   Inches").click();
         h.run_steps(3);
         assert_eq!(units(&h), (Unit::Inches, Unit::Millimeters));
-        // The page and the ruler corner open no units menu.
-        for p in [rect.center(), rect.min - vec2(RULER / 2.0, RULER / 2.0)] {
-            right_click(&mut h, p);
-            assert!(h.query_by_label("   Points").is_none());
-        }
+        // The corner where the rulers meet sets both, as InDesign's: nothing is checked while
+        // they differ.
+        let corner = rect.min - vec2(RULER / 2.0, RULER / 2.0);
+        right_click(&mut h, corner);
+        assert!(h.query_by_label("✓ Inches").is_none() && h.query_by_label("✓ Millimeters").is_none());
+        let _ = h.get_by_label_contains("Hide Rulers");
+        let _ = h.get_by_label("   Lock Zero Point");
+        assert!(h.query_by_label("   Delete All Guides on Spread").is_none(), "only on the horizontal ruler");
+        h.get_by_label("   Points").click();
+        h.run_steps(3);
+        assert_eq!(units(&h), (Unit::Points, Unit::Points));
+        // InDesign's list: no Q or Ha.
+        right_click(&mut h, corner);
+        h.get_by_label("✓ Points");
+        assert!(h.query_by_label("   Q").is_none() && h.query_by_label("   Ha").is_none());
+        let _ = h.get_by_label("   Inches Decimal");
+        // The horizontal ruler's menu also deletes the spread's guides; Hide Rulers hides them.
+        right_click(&mut h, pos2(rect.center().x, rect.min.y - RULER / 2.0));
+        let _ = h.get_by_label("   Delete All Guides on Spread");
+        h.get_by_label_contains("Hide Rulers").click();
+        h.run_steps(3);
+        assert!(!h.state().ui.rulers);
+        // The page opens no units menu.
+        right_click(&mut h, rect.center());
+        assert!(h.query_by_label("   Points").is_none());
     }
 
     /// The live-corner widget draws on a selected rectangle frame; clicking it draws the diamonds.
@@ -3517,14 +3575,14 @@ mod tests {
         assert_eq!(zero_point(&h), [0.0, 0.0]);
         // Locked from the corner's context menu, the corner ignores drags and double-clicks.
         right_click(&mut h, corner);
-        h.get_by_label("Lock Zero Point").click();
+        h.get_by_label("   Lock Zero Point").click();
         h.run_steps(3);
         assert!(h.state().session.doc().unwrap().doc.settings.zero_point_locked);
         corner_drag(&mut h, corner, dest);
         assert_eq!(zero_point(&h), [0.0, 0.0]);
         // Unlocked again from the same menu.
         right_click(&mut h, corner);
-        h.get_by_label("Unlock Zero Point").click();
+        h.get_by_label("   Unlock Zero Point").click();
         h.run_steps(3);
         corner_drag(&mut h, corner, dest);
         assert_ne!(zero_point(&h), [0.0, 0.0]);
