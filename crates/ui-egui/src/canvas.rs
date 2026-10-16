@@ -3754,11 +3754,14 @@ mod tests {
     }
 
     /// A menu row: a button that isn't a toggle, named by its label, then its shortcut if it has
-    /// one. Toggle buttons with the same name (the Task Bar's icons) don't match.
+    /// one. Toggle buttons with the same name (the Task Bar's icons) don't match, nor do buttons
+    /// right of the canvas (the Properties panel's Arrange).
     fn menu_row<'h>(h: &'h Harness<'_, DesignApp>, label: &'h str) -> Option<egui_kittest::Node<'h>> {
+        let right = f64::from(h.state().canvas_rect.map_or(f32::INFINITY, |r| r.max.x));
         h.query_by(move |n| {
             n.role() == egui::accesskit::Role::Button
                 && n.toggled().is_none()
+                && n.bounding_box().is_none_or(|b| b.x0 < right)
                 && n.label().is_some_and(|l| l == label || l.strip_prefix(label).and_then(|r| r.strip_prefix(' ')).is_some_and(|r| !r.contains(' ')))
         })
     }
