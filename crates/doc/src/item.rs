@@ -1612,6 +1612,19 @@ impl Item {
         }
     }
 
+    /// Whether the item's own geometry (path, transform, a placed graphic's size and transform)
+    /// is finite. JSON has no infinity or NaN, so a document holding one can't be saved.
+    pub fn geometry_is_finite(&self) -> bool {
+        let pt = |p: Point| p.x.is_finite() && p.y.is_finite();
+        let affine = |a: &Affine| a.as_coeffs().iter().all(|c| c.is_finite());
+        let path = self.path.subpaths.iter().flat_map(|s| &s.anchors).all(|a| pt(a.p) && pt(a.h_in) && pt(a.h_out));
+        let graphic = match &self.content {
+            Content::Graphic(g) => g.size.0.is_finite() && g.size.1.is_finite() && affine(&g.xf),
+            _ => true,
+        };
+        path && affine(&self.xf) && graphic
+    }
+
     /// Visit this item and descendants (pre-order).
     pub fn walk<'a>(&'a self, f: &mut impl FnMut(&'a Item)) {
         f(self);

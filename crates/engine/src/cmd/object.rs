@@ -2406,7 +2406,8 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
                 && ["columnsKind", "columnWidth", "columns", "gutter", "inset"].iter().any(|k| p.get(*k).is_some())
                 && let Some(r) = d.item(*id).map(Item::inner_bounds)
             {
-                crate::autosize::resize(d, *id, Rect::new(r.x0, r.y0, r.x0 + width, r.y1));
+                let r = super::finite_rect("object.textFrameOptions", Rect::new(r.x0, r.y0, r.x0 + width, r.y1))?;
+                crate::autosize::resize(d, *id, r);
             }
         }
         // Story direction belongs to the story: every frame of the thread turns.

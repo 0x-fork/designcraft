@@ -49,7 +49,8 @@ pub(crate) fn place_media(s: &mut Session, p: &Value, name: String, mime: &str, 
                 let pr = d.spread(spread).and_then(|sp| sp.pages.first()).map(|pg| pg.margin_rect()).unwrap_or(Rect::new(36.0, 36.0, 300.0, 300.0));
                 let (x, y) = (px.unwrap_or(pr.x0), py.unwrap_or(pr.y0));
                 let id = ItemId(d.alloc());
-                let mut it = Item::new(id, lid, Shape::Rectangle, shapes::rectangle(Rect::new(x, y, x + w, y + h)));
+                let r = super::finite_rect("file.place", Rect::new(x, y, x + w, y + h))?;
+                let mut it = Item::new(id, lid, Shape::Rectangle, shapes::rectangle(r));
                 it.content = Content::Graphic(Graphic {
                     asset: aid,
                     size: (w, h),
