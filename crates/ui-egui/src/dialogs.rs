@@ -3514,13 +3514,18 @@ fn grep_error(p: &str) -> Option<String> {
     designcraft_compose::grep::Grep::new(p, Default::default()).err().map(|e| e.to_string())
 }
 
-fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Value, String> {
-    let name = d.s("name");
-    // What the Justification section showed: the style's own values, or a new style's Based On.
-    let shown = if d.b("new") { d.s("basedOn") } else { name.clone() };
+/// The Justification spacing check of Paragraph Style Options, against what the section showed:
+/// the style's own values, or a new style's Based On.
+fn check_paragraph_style_justification(app: &DesignApp, d: &Dialog) -> Result<(), String> {
+    let shown = if d.b("new") { d.s("basedOn") } else { d.s("name") };
     let base =
         app.session.active().map(|st| serde_json::to_value(st.doc.styles.resolve_para_style(&shown).0).unwrap_or_default()).unwrap_or_default();
-    if let Err(e) = check_justification(d, "p.", &base) {
+    check_justification(d, "p.", &base)
+}
+
+fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Value, String> {
+    let name = d.s("name");
+    if let Err(e) = check_paragraph_style_justification(app, d) {
         // The caller shows the reason in the dialog's status line.
         d.fields.insert("section".into(), json!("justify"));
         return Err(e);
@@ -3593,6 +3598,16 @@ fn style_options_preview(app: &mut DesignApp, d: &mut Dialog) {
         return;
     }
     let paragraph = d.id == "paragraphStyleOptions";
+    // Values OK would refuse don't reach the page either: the page goes back and the status
+    // line says why.
+    if paragraph && let Err(e) = check_paragraph_style_justification(app, d) {
+        if shown.is_some() {
+            app.session.cancel_interaction();
+            d.fields.remove(PREVIEWED);
+        }
+        d.fields.insert("status".into(), json!(e));
+        return;
+    }
     let mut params = json!({"name": d.s("name"), "chars": {}});
     if paragraph {
         params["para"] = json!({});
@@ -7541,6 +7556,25 @@ mod tests {
             h.state_mut().run("edit.undo", json!({})).unwrap();
             assert_eq!(h.state().session.doc().unwrap().doc, before);
         }
+    }
+
+    #[test]
+    fn style_preview_refuses_justification_spacing_ok_would_refuse() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let before = app.session.doc().unwrap().doc.clone();
+        let mut d = Dialog::new(
+            "paragraphStyleOptions",
+            json!({"name": designcraft_doc::BASIC_PARAGRAPH, "preview": true, "p.wordSpaceDesired": 1.1}),
+        );
+        style_options_preview(&mut app, &mut d);
+        assert_ne!(app.session.doc().unwrap().doc, before, "a valid value previews");
+        // Minimum above Desired: the page goes back and the dialog says why.
+        d.fields.insert("p.wordSpaceMin".into(), json!(1.5));
+        style_options_preview(&mut app, &mut d);
+        assert_eq!(app.session.doc().unwrap().doc, before);
+        assert!(d.s("status").contains("Word Spacing"), "{:?}", d.fields.get("status"));
+        assert!(app.session.doc().unwrap().interaction.is_none());
     }
 
     #[test]
