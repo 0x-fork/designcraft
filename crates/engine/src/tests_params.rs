@@ -104,3 +104,12 @@ fn journal_entries_pass_the_check() {
         assert!(check_params(id, params).is_ok(), "{id} {params}");
     }
 }
+
+/// Convert Rows acts on the shared table target, so a call that names its table and cells isn't refused.
+#[test]
+fn convert_rows_takes_the_table_target() {
+    for id in ["table.convertRowsToHeader", "table.convertRowsToBody", "table.convertRowsToFooter"] {
+        check_params(id, &json!({"story": 1, "table": 0, "rows": [0, 1], "cols": [0, 0]})).unwrap();
+        check_params(id, &json!({"row": 0, "col": 0})).unwrap();
+    }
+}

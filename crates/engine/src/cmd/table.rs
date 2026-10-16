@@ -369,7 +369,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "To Header",
             ["Table", "Convert Rows"],
             None,
-            "{rows?: [a,b]} — the target rows, at the top of the table or right after its header rows",
+            "{story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — the target rows, at the top of the table or right after its header rows",
             |s| can_convert_rows(s, RowKind::Header),
             |s, p| convert_rows(s, p, RowKind::Header)
         ),
@@ -378,7 +378,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "To Body",
             ["Table", "Convert Rows"],
             None,
-            "{rows?: [a,b]} — the target header rows next to the body, footer rows next to it, or both",
+            "{story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — the target header rows next to the body, footer rows next to it, or both",
             |s| can_convert_rows(s, RowKind::Body),
             |s, p| convert_rows(s, p, RowKind::Body)
         ),
@@ -387,7 +387,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "To Footer",
             ["Table", "Convert Rows"],
             None,
-            "{rows?: [a,b]} — the target rows, at the bottom of the table or right before its footer rows",
+            "{story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — the target rows, at the bottom of the table or right before its footer rows",
             |s| can_convert_rows(s, RowKind::Footer),
             |s, p| convert_rows(s, p, RowKind::Footer)
         ),
