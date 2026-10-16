@@ -4017,6 +4017,7 @@ fn unusable_cjk_metrics_do_not_refuse_the_whole_file() {
           <CompositeFont Self="cf" Name="Rubies">
             <CompositeFontEntry Self="e1" Name="Dot" AppliedFont="Myriad Pro" RelativeSize="0"/>
             <CompositeFontEntry Self="e2" Name="Bar" AppliedFont="Myriad Pro" BaselineShift="NaN"/>
+            <CompositeFontEntry Self="e3" Name="Tiny" AppliedFont="Myriad Pro" RelativeSize="5e-324" HorizontalScale="5e-324" VerticalScale="5e-324"/>
           </CompositeFont>
           <idPkg:Spread src="Spreads/Spread_s.xml"/>
         </Document>"#;
@@ -4027,6 +4028,8 @@ fn unusable_cjk_metrics_do_not_refuse_the_whole_file() {
     let entries = &d.styles.composite_fonts[0].entries;
     assert_eq!(entries[0].relative_size, 1.0, "an unusable relative size falls back to full size");
     assert_eq!(entries[1].baseline_shift, 0.0, "an unusable shift falls back to none");
+    // Positive in the file but zero once read as a fraction.
+    assert_eq!((entries[2].relative_size, entries[2].horizontal_scale, entries[2].vertical_scale), (1.0, 1.0, 1.0));
 }
 
 mod liquid_page_rules {
