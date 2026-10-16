@@ -542,7 +542,7 @@ fn general(lang: &str, ui: &mut egui::Ui, d: &mut Dialog) {
         crate::rtl::label(ui, tr("Columns:"));
         translated_combo(lang, ui, d, "columnsKind", &[("fixedNumber", "Fixed Number"), ("fixedWidth", "Fixed Width")]);
         ui.end_row();
-        crate::rtl::label(ui, tr("Number:"));
+        crate::rtl::label(ui, crate::i18n::tr_context(lang, "Number:", "count"));
         text_field(ui, d, "columns", 70.0);
         // Fixed Number: the width follows from the frame; Fixed Width: it's set here.
         crate::rtl::label(ui, tr("Width:"));
@@ -943,7 +943,7 @@ fn margins_and_columns_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Di
             ui.add_space(8.0);
             group_box(ui, &tr("Columns"), |ui| {
                 ui.horizontal(|ui| {
-                    caption_right(ui, &tr("Number:"), 72.0);
+                    caption_right(ui, crate::i18n::tr_context(&lang, "Number:", "count"), 72.0);
                     text_field(ui, d, "columns", 76.0);
                     ui.add_space(28.0);
                     caption_right(ui, &tr("Gutter:"), 72.0);
@@ -995,7 +995,7 @@ fn create_guides_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) 
                 for (title, n, g, id) in [("Rows", "rows", "rowGutter", "cg_rows"), ("Columns", "columns", "columnGutter", "cg_cols")] {
                     group_box(ui, &tr(title), |ui| {
                         egui::Grid::new(id).num_columns(2).spacing([6.0, 6.0]).show(ui, |ui| {
-                            caption_right(ui, &tr("Number:"), 72.0);
+                            caption_right(ui, crate::i18n::tr_context(&lang, "Number:", "count"), 72.0);
                             text_field(ui, d, n, 70.0);
                             ui.end_row();
                             caption_right(ui, &tr("Gutter:"), 72.0);

@@ -179,7 +179,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Auto", ["Automatisch", "Automatique", "Automático", "自動", "自动"]),
     ("W:", ["B:", "L :", "An.:", "幅:", "宽:"]),
     ("H:", ["H:", "H :", "Al.:", "高さ:", "高:"]),
-    ("Number:", ["Anzahl:", "Nombre :", "Número:", "数:", "数量："]),
+    ("Number:", ["Zahl:", "Numéro:", "Número:", "番号:", "编号："]),
     ("Gutter:", ["Steg:", "Gouttière :", "Medianil:", "間隔:", "栏间距："]),
     ("Fit Guides to:", ["Hilfslinien einpassen in:", "Ajuster les repères à :", "Ajustar guías a:", "ガイドの適用先:", "参考线适合："]),
     ("Top:", ["Oben:", "Haut :", "Superior:", "天:", "上："]),
@@ -4400,6 +4400,12 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
     TRANSLATIONS.get_or_init(|| TABLE.iter().copied().collect()).get(s).and_then(|row| row.get(c)).copied().unwrap_or(s)
 }
 
+/// Context-sensitive captions in the shared table's languages (columns as in [`TABLE`]).
+const CONTEXT: &[(&str, &str, [&str; 5])] = &[
+    // A count of columns or rows, unlike the numbering field's "Number:".
+    ("Number:", "count", ["Anzahl:", "Nombre :", "Número:", "数:", "数量："]),
+];
+
 /// Context-sensitive UI captions; unsupported contexts keep the shared translation.
 pub fn tr_context<'a>(lang: &str, s: &'a str, context: &str) -> &'a str {
     let contexts = match lang {
@@ -4408,9 +4414,18 @@ pub fn tr_context<'a>(lang: &str, s: &'a str, context: &str) -> &'a str {
         "cs" => cs::CONTEXT,
         "pl" => pl::CONTEXT,
         "ja" => ja::CONTEXT,
-        _ => return tr(lang, s),
+        "ar" => ar::CONTEXT,
+        _ => &[],
     };
-    contexts.iter().find(|(key, scope, _)| *key == s && *scope == context).map_or_else(|| tr(lang, s), |(_, _, text)| text)
+    if let Some((_, _, text)) = contexts.iter().find(|(key, scope, _)| *key == s && *scope == context) {
+        return text;
+    }
+    if let Some(c) = column(lang)
+        && let Some(text) = CONTEXT.iter().find(|(key, scope, _)| *key == s && *scope == context).and_then(|(_, _, row)| row.get(c))
+    {
+        return text;
+    }
+    tr(lang, s)
 }
 
 #[cfg(test)]
@@ -4561,6 +4576,36 @@ mod tests {
             assert!(TABLE[..i].iter().all(|(e, _)| e != en), "duplicate {en}");
             assert!(t.iter().all(|x| !x.is_empty()), "{en}");
         }
+    }
+
+    #[test]
+    fn a_column_count_and_a_list_number_read_differently() {
+        for (lang, count, numeral) in [
+            ("de", "Anzahl:", "Zahl:"),
+            ("ja", "数:", "番号:"),
+            ("uk", "Кількість:", "Номер:"),
+            ("ar", "العدد:", "الرقم:"),
+            ("fr", "Nombre :", "Numéro:"),
+            ("zh", "数量：", "编号："),
+        ] {
+            assert_eq!((tr_context(lang, "Number:", "count"), tr(lang, "Number:")), (count, numeral), "{lang}");
+        }
+        assert_eq!(tr_context("en", "Number:", "count"), "Number:");
+        assert_eq!(tr("de", "Gutter:"), "Spaltenabstand:");
+        // The Pages panel menu.
+        for key in [
+            "Insert Pages…",
+            "Move Pages…",
+            "New Parent…",
+            "Override All Parent Page Items",
+            "Remove All Local Overrides",
+            "Detach All Objects from Parent",
+            "Create Alternate Layout…",
+            "Allow Selected Spread to Shuffle",
+        ] {
+            assert_ne!(tr("pt-br", key), key);
+        }
+        assert_ne!(tr("ar", "Apply Parent to Pages"), "Apply Parent to Pages");
     }
 
     #[test]

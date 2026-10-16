@@ -1273,6 +1273,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Apply Attributes (Eyedropper)", "تطبيق السمات (القطارة)"),
     ("Apply Cell Style", "تطبيق نمط الخلية"),
     ("Apply Condition", "تطبيق شرط"),
+    ("Apply Parent to Pages", "تطبيق الأصل على الصفحات"),
     ("Apply Parent to Pages…", "تطبيق الصفحة الأصلية على الصفحات…"),
     ("ArtCraft App Page…", "صفحة تطبيق ArtCraft…"),
     ("ArtCraft Website…", "موقع ArtCraft…"),
@@ -1987,3 +1988,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("i, ii, iii, iv...", "أ، ب، ج، د..."),
     ("lowercase", "صغير"),
 ];
+
+/// Contexts whose Arabic caption differs from the shared label.
+pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Number:", "count", "العدد:")];

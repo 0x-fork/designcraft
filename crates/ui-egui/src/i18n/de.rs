@@ -1800,6 +1800,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("List Type:", "Listentyp:"),
     ("List:", "Liste:"),
     ("Mode:", "Modus:"),
+    ("Gutter:", "Spaltenabstand:"),
     ("Number:", "Zahl:"),
     ("Numbers", "Nummerierung"),
     ("On Next Even Page", "Auf nächster gerader Seite"),
