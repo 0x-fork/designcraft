@@ -144,7 +144,11 @@ pub fn choose(candidates: &[Backend], previous: &Record, version: &str, skipped:
     {
         failed.push(b);
     }
-    failed.retain(|b| candidates.contains(b));
+    // A stale entry for a backend this platform cannot use is dropped, but one that can still
+    // be reached stays: OpenGL is the in-process fallback off Windows (`instance_backends`)
+    // without being a candidate there, so forgetting it would offer it again after it failed
+    // to present — on macOS, where Metal is the only candidate, it never got left out at all.
+    failed.retain(|b| candidates.contains(b) || (!cfg!(windows) && *b == Backend::Gl));
     let pick = |failed: &[Backend]| candidates.iter().copied().find(|b| !failed.contains(b) && !skipped.contains(b));
     let backend = match pick(&failed) {
         Some(b) => b,
