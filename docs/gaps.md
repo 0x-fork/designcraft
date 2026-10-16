@@ -32,6 +32,8 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   open (#238, #187, #160, #312); double-click word selection in fields
   (#189); character formatting set at a caret is discarded (#289).
 - **Evidence:** 16 issues from 2026-10-05 to 2026-10-10, mostly against the 0.4/0.5 release builds.
+- **Safety:** control-channel clicks and drags reject invalid or over-budget counts before
+  queuing input (#732), including combined drag steps, repeated clicks and already pending events.
 - **Impact:** a layout artist can't finish the simplest job. This dominates the
   ready-for-real-work number.
 - **Estimate:** 30–50 h (reproduce per platform through the control channel, regression tests).
