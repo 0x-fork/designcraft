@@ -3,8 +3,8 @@
 //! single-purpose panels (Stroke, Character, Paragraph, Text Wrap, Align, Links, Info).
 
 use designcraft_doc::{Align, Arrowhead, Cap, Join, StrokeAlign, StrokeType};
-use designcraft_geom::Unit;
 use designcraft_geom::corners::CornerShape;
+use designcraft_geom::{Unit, units};
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -177,6 +177,9 @@ pub(crate) const PAGE_PRESETS: &[(&str, f64, f64)] = &[
     ("Tabloid", 792.0, 1224.0),
     ("Letter - Half", 396.0, 612.0),
     ("Legal - Half", 504.0, 612.0),
+    ("A0", 841.0 * units::PT_PER_MM, 1189.0 * units::PT_PER_MM),
+    ("A1", 594.0 * units::PT_PER_MM, 841.0 * units::PT_PER_MM),
+    ("A2", 420.0 * units::PT_PER_MM, 594.0 * units::PT_PER_MM),
     ("A3", 841.89, 1190.55),
     ("A4", 595.276, 841.89),
     ("A5", 419.528, 595.276),
