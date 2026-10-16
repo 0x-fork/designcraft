@@ -3601,6 +3601,43 @@ mod tests {
         assert_eq!(out.len(), 1);
     }
 
+    /// A selected group paints both ports of the overset text frame inside it, on top of the
+    /// group's own selection marks.
+    #[test]
+    fn a_selected_group_paints_both_ports_of_its_text_frame() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let s = &mut app.session;
+        let text = "far too much text for a frame this small, over and over again ".repeat(8);
+        let a = s.execute("frame.create", &json!({"rect": [100, 100, 200, 140], "content": "text", "text": text})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("frame.create", &json!({"rect": [100, 200, 200, 260]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("selection.set", &json!({"ids": [a, b]})).unwrap();
+        let g = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+        s.execute("transform.rotate", &json!({"angle": 30, "ids": [g]})).unwrap();
+        s.execute("selection.set", &json!({"ids": [g]})).unwrap();
+        let doc = app.session.doc().unwrap().doc.clone();
+        let layout = CanvasLayout::new(&doc, false);
+        let xf = Xf { min: pos2(0.0, 0.0), origin: Point::new(0.0, 0.0), zoom: 1.0, rot: 0, pivot: pos2(0.0, 0.0) };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            draw_selection(&app, ui.painter(), &xf, &doc, &layout);
+        });
+        output.textures_delta.clear();
+        let white: Vec<Rect> = output
+            .shapes
+            .into_iter()
+            .filter_map(|s| match s.shape {
+                egui::Shape::Rect(r) if r.fill == Color32::WHITE => Some(r.rect),
+                _ => None,
+            })
+            .collect();
+        for out in [false, true] {
+            let c = xf.to_screen(designcraft_tools::thread::port_center(&doc, &layout, designcraft_doc::ItemId(a), out, xf.zoom).unwrap());
+            let port = white.iter().position(|r| (r.center() - c).length() < 0.01).unwrap_or_else(|| panic!("port (out: {out}) at {c:?}"));
+            assert!(!white[port + 1..].iter().any(|r| r.contains(c)), "nothing painted later covers the port (out: {out})");
+        }
+    }
+
     fn out_frame(doc: &Document, id: u64) -> &Item {
         doc.item(designcraft_doc::ItemId(id)).unwrap()
     }
