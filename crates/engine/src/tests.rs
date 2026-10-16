@@ -128,19 +128,19 @@ fn a_command_that_runs_another_is_one_undo_step() {
     one_step(&mut s, "script.run", json!({"text": script}), "Run Script");
 }
 
-/// What a command did before it failed is an undo step too: a script that stopped at a bad
-/// step left its earlier steps in the document with nothing to undo.
+/// A command that fails partway strands no edits without an undo step: a script that stops at
+/// a bad step rolls its earlier steps back (#709). A command that leaves its partial edit in the
+/// document records an undo step for it (next test).
 #[test]
-fn a_command_that_fails_partway_can_be_undone() {
+fn a_command_that_fails_partway_strands_no_edits() {
     let mut s = session();
     let before = s.doc().unwrap().doc.clone();
     let script = "frame.create {\"rect\": [36, 36, 136, 136]}\nnope.command";
     assert!(s.execute("script.run", &json!({"text": script})).is_err());
     let st = s.doc().unwrap();
-    assert_eq!(st.doc.spreads[0].items.len(), 1, "the first step ran");
-    assert_eq!(st.history.undo.len(), 1);
-    s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.doc().unwrap().doc, before);
+    assert_eq!(st.doc, before, "the first step was rolled back");
+    assert!(st.history.undo.is_empty());
+    assert!(s.execute("edit.undo", &json!({})).is_err(), "nothing was left to undo");
     // The next command records its step as usual.
     s.execute("frame.create", &json!({"rect": [36, 36, 136, 136]})).unwrap();
     assert_eq!(s.doc().unwrap().history.undo.len(), 1);
