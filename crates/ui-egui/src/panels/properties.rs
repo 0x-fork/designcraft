@@ -3152,9 +3152,10 @@ mod wrap_panel_tests {
         app.run("object.textWrap", json!({"mode": "boundingBox", "offset": [1, 2, 3, 4]})).unwrap();
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx, "en");
-        // Top and Left, then Bottom and Right, each with its own value (picas here: 0p1 = 1 pt).
+        // Top and Left, then Bottom and Right, each with its own value (picas here: 0p1 = 1 pt),
+        // then the Wrap To side.
         let t: Vec<String> = frame(&mut app, &ctx, vec![]).into_iter().map(|(t, _)| t).filter(|t| !t.is_empty()).collect();
-        assert_eq!(t, ["Invert", "Top", "0p1", "Left", "0p2", "Bottom", "0p3", "Right", "0p4"]);
+        assert_eq!(t, ["Invert", "Top", "0p1", "Left", "0p2", "Bottom", "0p3", "Right", "0p4", "Wrap To", "Both Right & Left Sides"]);
         // Invert, next to the wrap buttons.
         let pos = frame(&mut app, &ctx, vec![]).into_iter().find(|(t, _)| t == "Invert").unwrap().1.center();
         for pressed in [true, false] {
