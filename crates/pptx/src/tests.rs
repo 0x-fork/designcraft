@@ -218,6 +218,7 @@ fn pictures_are_cropped_to_their_frames() {
             auto_fit: designcraft_doc::Fitting::None,
             fit_align: 0,
             crop: [0.0; 4],
+            fill: Default::default(),
         });
     });
     let mut z = export(&d, &PptxOptions::default());

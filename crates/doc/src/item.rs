@@ -520,6 +520,10 @@ pub struct Graphic {
     /// Frame Fitting Options › Crop Amount: top, left, bottom, right (negative adds space).
     #[serde(default)]
     pub crop: [f64; 4],
+    /// The swatch applied to the image itself: InDesign colours a greyscale or bitmap image with
+    /// it, colour images ignore it. `None` (the default, like InDesign's Black) leaves it as is.
+    #[serde(default, skip_serializing_if = "Fill::is_none")]
+    pub fill: Fill,
 }
 
 fn center_ref() -> u8 {

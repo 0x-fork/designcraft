@@ -24,6 +24,7 @@ use vello_cpu::{Pixmap, RenderContext, Resources};
 pub use vello_cpu;
 
 mod blendspace;
+mod colorize;
 pub mod damage;
 mod fx;
 
@@ -818,9 +819,11 @@ impl Renderer {
         let hidden = HIDDEN_LAYERS.with(|h| h.borrow().clone());
         let data = if !hidden.is_empty() && is_pdf(&asset.data) { pdf_layers::layered(&asset.data, &hidden) } else { asset.data.clone() };
         let Some(pm) = images::mip(&data, asset.page, g.size.0, on_screen) else { return };
-        let pm = match PLATE.with(|p| p.get()) {
-            Some(plate) => plate_pixmap(&pm, plate),
-            None => pm,
+        // A coloured image is already in the plate's inks (its colours come from `color_of`).
+        let pm = match (colorize::colorized(f.doc, &g.fill, &asset.data, &pm), PLATE.with(|p| p.get())) {
+            (Some(coloured), _) => coloured,
+            (None, Some(plate)) => plate_pixmap(&pm, plate),
+            (None, None) => pm,
         };
         let rect = Rect::new(0.0, 0.0, g.size.0, g.size.1);
         ctx.set_transform(f.view * xf * g.xf);
@@ -1660,6 +1663,7 @@ mod tests {
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [0.0; 4],
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         let cache = Cache::new();

@@ -36,6 +36,7 @@ fn place_named(d: &mut Document, data: Vec<u8>, x: f64, name: &str, mime: &str, 
         auto_fit: Default::default(),
         fit_align: 4,
         crop: [0.0; 4],
+        fill: Default::default(),
     });
     d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
 }

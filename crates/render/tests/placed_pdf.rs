@@ -78,8 +78,15 @@ fn placed(size: f64, pdf: Vec<u8>) -> Rendered {
             d.add_asset(Asset { id, name: "art.pdf".into(), mime: "application/pdf".into(), link: None, data: Arc::new(pdf), pixels: None, page: 0 });
         let id = ItemId(d.alloc());
         let mut item = Item::new(id, d.default_layer(), Shape::Rectangle, shapes::rectangle(Rect::new(0.0, 0.0, size, size)));
-        item.content =
-            Content::Graphic(Graphic { asset, size: (size, size), xf: Affine::IDENTITY, auto_fit: Default::default(), fit_align: 4, crop: [0.0; 4] });
+        item.content = Content::Graphic(Graphic {
+            asset,
+            size: (size, size),
+            xf: Affine::IDENTITY,
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [0.0; 4],
+            fill: Default::default(),
+        });
         d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
         let mut renderer = Renderer::new();
         renderer.threads = 0;

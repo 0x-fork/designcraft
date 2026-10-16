@@ -1152,6 +1152,7 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
         auto_fit: Default::default(),
         fit_align: 4,
         crop: [0.0; 4],
+        fill: Default::default(),
     });
     d.assets.insert(
         designcraft_doc::AssetId(1),
@@ -1241,6 +1242,7 @@ fn eyedropper_ignores_inactive_states_of_a_multi_state_object() {
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [0.0; 4],
+            fill: Default::default(),
         });
         it
     };

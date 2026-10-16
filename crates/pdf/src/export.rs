@@ -1372,11 +1372,91 @@ impl Exporter<'_> {
             }
             return;
         }
+        if self.colorized(s, g) {
+            return;
+        }
         let Some(img) = self.load_image(g.asset) else { return };
         let Some(size) = Size::from_wh(g.size.0.max(1e-3) as f32, g.size.1.max(1e-3) as f32) else { return };
         s.push_transform(&tf(g.xf));
         s.draw_image(img, size);
         s.pop();
+    }
+
+    /// A greyscale or bitmap image coloured by the swatch applied to it (#1094): the swatch is
+    /// painted through the image's ink coverage (its darkness), over 0% ink for a greyscale
+    /// image, whose white is opaque. `false`, drawing nothing, when the image keeps its own
+    /// colours: no swatch, one that no longer exists, a colour image.
+    fn colorized(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic) -> bool {
+        if g.fill.is_none() {
+            return false;
+        }
+        let Some(asset) = self.doc.assets.get(&g.asset) else { return false };
+        let Some(tone) = designcraft_images::tone(&asset.data) else { return false };
+        let Some(paint) = self.swatch_color(&g.fill.swatch, g.fill.tint) else { return false };
+        let Some(coverage) = designcraft_images::decode_rgba(&asset.data).and_then(|img| CoverageImage::new(&img)) else { return false };
+        let interpolate = RasterMode::for_standard(self.opts.standard).interpolate && self.interpolate;
+        let Ok(mask) = Image::from_custom(coverage, interpolate) else { return false };
+        let size = Size::from_wh(g.size.0.max(1e-3) as f32, g.size.1.max(1e-3) as f32);
+        let (Some(size), Some(rect)) = (size, to_path(&Rect::new(0.0, 0.0, g.size.0, g.size.1).to_path(0.1))) else { return false };
+        s.push_transform(&tf(g.xf));
+        if tone == designcraft_images::Tone::Gray {
+            let blank =
+                self.swatch_color(designcraft_color::swatch::PAPER, 1.0).unwrap_or_else(|| device(&Color::cmyk(0.0, 0.0, 0.0, 0.0), self.rgb_only));
+            s.set_fill(Some(Fill { paint: blank.into(), ..Default::default() }));
+            s.draw_path(&rect);
+        }
+        let mut sb = s.stream_builder();
+        let mut ms = sb.surface();
+        ms.draw_image(mask, size);
+        ms.finish();
+        let stream = sb.finish();
+        s.push_mask(krilla::mask::Mask::new(stream, krilla::mask::MaskType::Luminosity));
+        s.set_fill(Some(Fill { paint: paint.into(), ..Default::default() }));
+        s.draw_path(&rect);
+        s.pop();
+        s.set_fill(None);
+        s.pop();
+        true
+    }
+}
+
+/// The ink coverage of a greyscale or bitmap image (255 = black, 0 = white or transparent) as a
+/// DeviceGray image, painted into a luminosity mask.
+#[derive(Clone, Hash)]
+struct CoverageImage {
+    grey: Arc<Vec<u8>>,
+    size: (u32, u32),
+}
+
+impl CoverageImage {
+    fn new(rgba: &image::RgbaImage) -> Option<Self> {
+        let size = rgba.dimensions();
+        if size.0 == 0 || size.1 == 0 {
+            return None;
+        }
+        let grey = rgba.pixels().map(|p| ((u16::from(255 - p[0]) * u16::from(p[3]) + 127) / 255) as u8).collect();
+        Some(Self { grey: Arc::new(grey), size })
+    }
+}
+
+impl krilla::image::CustomImage for CoverageImage {
+    fn color_channel(&self) -> &[u8] {
+        &self.grey
+    }
+    fn alpha_channel(&self) -> Option<&[u8]> {
+        None
+    }
+    fn bits_per_component(&self) -> krilla::image::BitsPerComponent {
+        krilla::image::BitsPerComponent::Eight
+    }
+    fn size(&self) -> (u32, u32) {
+        self.size
+    }
+    fn icc_profile(&self) -> Option<&[u8]> {
+        None
+    }
+    fn color_space(&self) -> krilla::image::ImageColorspace {
+        krilla::image::ImageColorspace::Luma
     }
 }
 

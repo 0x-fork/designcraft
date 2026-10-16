@@ -481,6 +481,7 @@ mod tests {
             auto_fit: Fitting::FillProportionally,
             fit_align: 4,
             crop: [0.0; 4],
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
     }

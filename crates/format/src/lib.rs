@@ -336,6 +336,7 @@ mod tests {
             auto_fit: Default::default(),
             fit_align: 4,
             crop: [crop; 4],
+            fill: Default::default(),
         });
         d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
         id
