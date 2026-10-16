@@ -32,6 +32,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Copy", "Kopieren"),
     ("Paste", "Einfügen"),
     ("Inches Decimal", "Zoll dezimal"),
+    ("Back", "Zurück"),
     ("Clear", "Löschen"),
     ("Duplicate", "Duplizieren"),
     ("Select All", "Alles auswählen"),

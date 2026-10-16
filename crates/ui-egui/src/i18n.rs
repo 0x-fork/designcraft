@@ -95,6 +95,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Paste Vector Art",
         ["Vektorgrafik einfügen", "Coller l’illustration vectorielle", "Pegar ilustración vectorial", "ベクトルアートをペースト", "粘贴矢量图稿"],
     ),
+    ("Back", ["Zurück", "Retour", "Atrás", "戻る", "返回"]),
+    ("Margins and Columns", ["Ränder und Spalten", "Marges et colonnes", "Márgenes y columnas", "マージン・段組", "边距和分栏"]),
     (
         "Bulleted & Numbered Lists",
         [

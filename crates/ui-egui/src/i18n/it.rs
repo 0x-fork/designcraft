@@ -45,6 +45,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Sharp", "Netti"),
     ("Diffused", "Diffusi"),
     ("Inches Decimal", "Pollici decimali"),
+    ("Back", "Indietro"),
+    ("Margins and Columns", "Margini e colonne"),
     ("Bulleted & Numbered Lists", "Elenchi puntati e numerati"),
     ("Current Page Number", "Numero di pagina corrente"),
     ("Apply Color (,)", "Applica colore (,)"),

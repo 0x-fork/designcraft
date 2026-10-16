@@ -49,6 +49,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Sharp", "シャープ"),
     ("Diffused", "拡散"),
     ("Inches Decimal", "インチ（10 進）"),
+    ("Back", "戻る"),
     ("Bulleted & Numbered Lists", "箇条書き"),
     ("Apply Color (,)", "カラーを適用 (,)"),
     ("Apply Gradient (.)", "グラデーションを適用 (.)"),

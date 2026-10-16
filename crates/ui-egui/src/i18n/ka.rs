@@ -32,6 +32,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Copy", "კოპირება"),
     ("Paste", "ჩასმა"),
     ("Inches Decimal", "ინჩები (ათობითი)"),
+    ("Back", "უკან"),
     ("Reverse Path", "ტრაექტორიის შებრუნება"),
     ("Set Anchor", "საყრდენი წერტილის დაყენება"),
     ("Clear", "გასუფთავება"),
