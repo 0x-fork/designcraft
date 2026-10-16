@@ -15,6 +15,9 @@ use crate::dialogs::Dialog;
 use crate::theme::{Tokens, semibold};
 
 /// Tab key and English label.
+/// The Units list, as InDesign's New Document window has it.
+const NEW_DOCUMENT_UNITS: [Unit; 8] =
+    [Unit::Points, Unit::Picas, Unit::Inches, Unit::Millimeters, Unit::Centimeters, Unit::Ciceros, Unit::Agates, Unit::Pixels];
 const TABS: [(&str, &str); 5] = [("recent", "Recent"), ("saved", "Saved"), ("print", "Print"), ("web", "Web"), ("mobile", "Mobile")];
 /// The card of the factory settings, first on the Recent tab.
 const DEFAULT_CARD: &str = "[Default]";
@@ -321,20 +324,19 @@ fn cards(app: &DesignApp, tab: &str) -> Vec<Card> {
         };
         Card { key, label, nd, custom }
     };
+    // Recent and Saved both start with the factory settings, as in InDesign.
+    let default = Card { key: DEFAULT_CARD.into(), label: crate::i18n::tr(lang, DEFAULT_CARD).into(), nd: NewDocument::default(), custom: false };
     match tab {
-        "recent" => {
-            let default =
-                Card { key: DEFAULT_CARD.into(), label: crate::i18n::tr(lang, DEFAULT_CARD).into(), nd: NewDocument::default(), custom: false };
-            std::iter::once(default)
-                .chain(app.ui.recent_new_documents.iter().enumerate().map(|(i, nd)| named(format!("recent:{i}"), nd.clone())))
-                .collect()
-        }
-        "saved" => app
-            .session
-            .prefs
-            .document_presets
-            .iter()
-            .map(|nd| Card { key: format!("saved:{}", nd.title), label: nd.title.clone(), nd: nd.clone(), custom: preset_name(nd).is_none() })
+        "recent" => std::iter::once(default)
+            .chain(app.ui.recent_new_documents.iter().enumerate().map(|(i, nd)| named(format!("recent:{i}"), nd.clone())))
+            .collect(),
+        "saved" => std::iter::once(default)
+            .chain(app.session.prefs.document_presets.iter().map(|nd| Card {
+                key: format!("saved:{}", nd.title),
+                label: nd.title.clone(),
+                nd: nd.clone(),
+                custom: preset_name(nd).is_none(),
+            }))
             .collect(),
         tab => {
             let intent = match tab {
@@ -447,8 +449,12 @@ fn tabs(app: &DesignApp, ui: &mut Ui, d: &mut Dialog) {
                     t.text_strong,
                 );
             }
-            if resp.clicked() {
+            if resp.clicked() && !on {
                 d.fields.insert("tab".into(), json!(key));
+                // As in InDesign, a tab shows its first preset's details (Web and Mobile in pixels).
+                if let Some(c) = cards(app, key).into_iter().next() {
+                    select(d, &c);
+                }
             }
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, text));
         }
@@ -456,6 +462,14 @@ fn tabs(app: &DesignApp, ui: &mut Ui, d: &mut Dialog) {
     });
     let y = strip.bottom();
     ui.painter().line_segment([pos2(ui.min_rect().left(), y), pos2(ui.max_rect().right(), y)], Stroke::new(1.0, t.divider));
+}
+
+/// Fill the details from card `c`, keeping the typed document name.
+fn select(d: &mut Dialog, c: &Card) {
+    let name = d.s("name");
+    d.fields.extend(fields_for(&c.nd));
+    d.fields.insert("name".into(), json!(name));
+    d.fields.insert("preset".into(), json!(c.key));
 }
 
 /// The cards of the current tab; true when one was double-clicked (create at once).
@@ -479,13 +493,6 @@ fn presets(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         );
     });
     ui.add_space(10.0);
-    if list.is_empty() {
-        crate::rtl::label(
-            ui,
-            egui::RichText::new(crate::i18n::tr(&lang, "No saved presets yet. Set the details, then click Save Document Preset.")).color(t.text_dim),
-        );
-        return false;
-    }
     let current = d.s("preset");
     let mut create = false;
     let mut delete = None;
@@ -495,15 +502,12 @@ fn presets(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         for c in &list {
             let resp = card(ui, c, current == c.key);
             if resp.clicked() || resp.double_clicked() {
-                let name = d.s("name");
-                d.fields.extend(fields_for(&c.nd));
-                d.fields.insert("name".into(), json!(name));
-                d.fields.insert("preset".into(), json!(c.key));
+                select(d, c);
             }
             if resp.double_clicked() {
                 create = true;
             }
-            if tab == "saved" {
+            if tab == "saved" && c.key != DEFAULT_CARD {
                 resp.context_menu(|ui| {
                     if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&lang, "Delete Preset"))).clicked() {
                         delete = Some(c.nd.title.clone());
@@ -767,7 +771,8 @@ fn details(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
         cell(ui, rtl, tr("Width"), |ui| spin(ui, d, "width", COLUMN_W - 8.0, Step::Measure(1.0)));
         cell(ui, rtl, tr("Units"), |ui| {
             egui::ComboBox::from_id_salt("nd_units").selected_text(crate::rtl::widget(ui, tr(u.label()))).width(COLUMN_W - 8.0).show_ui(ui, |ui| {
-                for v in Unit::ALL {
+                // InDesign's eight; a preset in another unit keeps it on the list.
+                for v in NEW_DOCUMENT_UNITS.into_iter().chain((!NEW_DOCUMENT_UNITS.contains(&u)).then_some(u)) {
                     if ui.selectable_label(v == u, crate::rtl::widget(ui, tr(v.label()))).clicked() && v != u {
                         set_units(d, v);
                     }
@@ -966,6 +971,43 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_shows_its_first_preset_as_indesign_does() {
+        let mut app = app();
+        let ctx = context();
+        // A tab's name, a little above its painted text's box (which reaches below the strip).
+        let tab = |texts: &[(String, Rect)], name: &str| texts.iter().find(|(t, _)| t == name).map(|(_, r)| r.center() - vec2(0.0, 12.0)).unwrap();
+        let texts = settle(&mut app, &ctx);
+        app.ui.dialog.as_mut().unwrap().fields.insert("name".into(), json!("Poster"));
+        click(&mut app, &ctx, tab(&texts, "Web"), 1);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!((d.s("tab"), d.s("preset")), ("web".into(), "Web 1920 \u{d7} 1080".into()));
+        assert_eq!((d.s("width"), d.s("height"), units(d)), ("1920 px".into(), "1080 px".into(), Unit::Pixels), "Web is in pixels");
+        assert!(!d.b("facingPages") && !d.b("primaryTextFrame"));
+        assert_eq!(d.s("name"), "Poster", "the typed name stays");
+        // Mobile starts with a primary text frame, as in InDesign.
+        let texts = settle(&mut app, &ctx);
+        click(&mut app, &ctx, tab(&texts, "Mobile"), 1);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!((d.s("tab"), units(d), d.b("primaryTextFrame")), ("mobile".into(), Unit::Pixels, true));
+        let texts = settle(&mut app, &ctx);
+        click(&mut app, &ctx, tab(&texts, "Print"), 1);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!((d.s("preset"), units(d)), ("Letter".into(), Unit::Picas));
+        // Clicking the open tab again keeps what was picked on it.
+        let texts = settle(&mut app, &ctx);
+        click(&mut app, &ctx, card_at(&texts, "A4"), 1);
+        click(&mut app, &ctx, tab(&texts, "Print"), 1);
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("preset"), "A4");
+        // Saved starts with [Default], as in InDesign, and selects it.
+        let texts = settle(&mut app, &ctx);
+        click(&mut app, &ctx, tab(&texts, "Saved"), 1);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert_eq!((d.s("preset"), d.s("width")), (DEFAULT_CARD.into(), "51p0".into()));
+        let texts = settle(&mut app, &ctx);
+        assert!(texts.iter().any(|(t, _)| t == "SAVED PRESETS (1)"));
+    }
+
+    #[test]
     fn double_clicking_a_card_creates_the_document() {
         let mut app = app();
         let ctx = context();
@@ -980,6 +1022,8 @@ mod tests {
 
     #[test]
     fn units_reformat_the_measures_and_linked_edges_follow() {
+        // InDesign's Units list.
+        assert_eq!(NEW_DOCUMENT_UNITS.map(|u| u.label()), ["Points", "Picas", "Inches", "Millimeters", "Centimeters", "Ciceros", "Agates", "Pixels"]);
         let mut d = Dialog::new("newDocument", json!({}));
         set_units(&mut d, Unit::Millimeters);
         assert_eq!((d.s("width"), d.s("marginTop")), ("215.9 mm".into(), "12.7 mm".into()));
@@ -1209,7 +1253,9 @@ mod tests {
         assert!(save_preset(&mut app, &mut d, "Letter").is_err(), "a built-in name is refused");
         assert_eq!((d.s("tab"), d.s("preset")), ("saved".into(), "saved:Newsletter".into()));
         let saved = cards(&app, "saved");
-        assert_eq!((saved.len(), saved[0].label.as_str(), saved[0].nd.pages), (1, "Newsletter", 8));
+        assert_eq!(saved.len(), 2);
+        assert_eq!((saved[0].key.as_str(), saved[0].nd.pages), (DEFAULT_CARD, 1), "[Default] comes first, as in InDesign");
+        assert_eq!((saved[1].label.as_str(), saved[1].nd.pages), ("Newsletter", 8));
         let p = params(&d);
         remember(&mut app, &p);
         remember(&mut app, &p);
