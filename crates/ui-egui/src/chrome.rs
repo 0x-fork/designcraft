@@ -814,7 +814,11 @@ pub fn status_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                 } else {
                     format!(
                         "{} ▾",
-                        crate::i18n::count_label(&app.ui.language, if errors == 1 && !crate::i18n::category_first(&app.ui.language) { "error" } else { "errors" }, errors)
+                        crate::i18n::count_label(
+                            &app.ui.language,
+                            if errors == 1 && !crate::i18n::category_first(&app.ui.language) { "error" } else { "errors" },
+                            errors
+                        )
                     )
                 };
                 // As in InDesign, the count opens a menu that leads to the Preflight panel.

@@ -2820,11 +2820,23 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     (
         "Alt-click clears overrides",
-        ["Alt-Klick entfernt Abweichungen", "Alt-clic efface les remplacements", "Alt-clic borra las modificaciones", "Alt を押しながらクリックするとオーバーライドを消去します", "Alt-单击清除覆盖"],
+        [
+            "Alt-Klick entfernt Abweichungen",
+            "Alt-clic efface les remplacements",
+            "Alt-clic borra las modificaciones",
+            "Alt を押しながらクリックするとオーバーライドを消去します",
+            "Alt-单击清除覆盖",
+        ],
     ),
     (
         "Apply \"{name}\", Clear Overrides",
-        ["„{name}“ anwenden, Abweichungen löschen", "Appliquer « {name} », effacer les remplacements", "Aplicar \"{name}\", borrar modificaciones", "\"{name}\" を適用、オーバーライドを消去", "应用\"{name}\"，清除覆盖"],
+        [
+            "„{name}“ anwenden, Abweichungen löschen",
+            "Appliquer « {name} », effacer les remplacements",
+            "Aplicar \"{name}\", borrar modificaciones",
+            "\"{name}\" を適用、オーバーライドを消去",
+            "应用\"{name}\"，清除覆盖",
+        ],
     ),
     ("⚠ out of date", ["⚠ out of date", "⚠ obsolète", "⚠ out of date", "⚠ out of date", "⚠ 已过期"]),
     ("General", ["General", "Général", "General", "General", "常规"]),

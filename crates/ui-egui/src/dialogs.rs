@@ -7652,10 +7652,8 @@ mod tests {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({})).unwrap();
         let before = app.session.doc().unwrap().doc.clone();
-        let mut d = Dialog::new(
-            "paragraphStyleOptions",
-            json!({"name": designcraft_doc::BASIC_PARAGRAPH, "preview": true, "p.wordSpaceDesired": 1.1}),
-        );
+        let mut d =
+            Dialog::new("paragraphStyleOptions", json!({"name": designcraft_doc::BASIC_PARAGRAPH, "preview": true, "p.wordSpaceDesired": 1.1}));
         style_options_preview(&mut app, &mut d);
         assert_ne!(app.session.doc().unwrap().doc, before, "a valid value previews");
         // Minimum above Desired: the page goes back and the dialog says why.
