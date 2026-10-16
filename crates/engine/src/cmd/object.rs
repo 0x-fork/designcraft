@@ -567,7 +567,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fitting",
             ["Object", "Fitting"],
             None,
-            "{mode: fillProportionally (preserves aspect ratio, covers frame, clips overflow)|fitProportionally (preserves aspect ratio, shows whole image, may leave empty space)|fitContentToFrame (stretches content to frame)|centerContent (keeps current size, positions at fitting alignment)|fitFrameToContent (resizes frame to content), axis?: both|height|width (frame-local sides Fit Frame to Content moves; default both), ids?}",
+            "{mode: fillProportionally (preserves aspect ratio, covers frame, clips overflow)|fitProportionally (preserves aspect ratio, shows whole image, may leave empty space)|fitContentToFrame (stretches content to frame)|centerContent (keeps current size, positions at fitting alignment)|fitFrameToContent (resizes frame to content), axis?: both|height|width (frame-local sides Fit Frame to Content moves; default both), ids?} — locked objects and objects on locked layers are left as they are",
             has_selection,
             fit
         ),
@@ -2781,7 +2781,7 @@ fn fitted_text_frame(d: &Document, id: ItemId, height: bool, width: bool) -> Res
     // First fit the height at the existing width, then measure the complete text's width.
     // Recheck height after fitting width, since a small width change can change a line break.
     if height {
-        out = fit_text_height(out, &mut compose)?;
+        out = fit_text_height(out, id, tf.options.inset[2], &mut compose)?;
     }
     if width && tf.options.columns <= 1 {
         let cs = compose(out);
@@ -2792,13 +2792,18 @@ fn fitted_text_frame(d: &Document, id: ItemId, height: bool, width: bool) -> Res
             }
         }
         if height {
-            out = fit_text_height(out, &mut compose)?;
+            out = fit_text_height(out, id, tf.options.inset[2], &mut compose)?;
         }
     }
     Ok(Some(out))
 }
 
-fn fit_text_height(mut rect: Rect, compose: &mut impl FnMut(Rect) -> Arc<designcraft_compose::ComposedStory>) -> Result<Rect> {
+fn fit_text_height(
+    mut rect: Rect,
+    id: ItemId,
+    inset_bottom: f64,
+    compose: &mut impl FnMut(Rect) -> Arc<designcraft_compose::ComposedStory>,
+) -> Result<Rect> {
     let mut low = 1.0;
     let limit = 20_000.0;
     let mut high = rect.height().clamp(1.0, limit);
@@ -2825,6 +2830,13 @@ fn fit_text_height(mut rect: Rect, compose: &mut impl FnMut(Rect) -> Arc<designc
         }
     }
     rect.y1 = rect.y0 + high;
+    // A line is set when its baseline is within 0.01 pt of the bottom, so the search stops just
+    // short of the lowest baseline. The bottom goes onto it (plus the inset): the frame then fits
+    // its text exactly and still does when it is scaled up.
+    let lowest = compose(rect).frame(id).and_then(|ft| ft.lines.iter().map(|l| l.baseline).reduce(f64::max));
+    if let Some(b) = lowest.map(|b| b + inset_bottom).filter(|b| b.is_finite() && *b > rect.y1 && *b - rect.y1 <= 0.02) {
+        rect.y1 = b;
+    }
     Ok(rect)
 }
 
@@ -4731,7 +4743,11 @@ mod fit_text_frame_tests {
         assert!(b.x0 == 100.0 && b.width() > 100.0 && b.width() < 250.0, "{b:?}");
         let d = s.doc().unwrap().doc.clone();
         let sid = d.item(id).unwrap().text_frame().unwrap().story;
-        assert!(!s.cache.get(&d, sid, None).is_overset(), "still fits");
+        let cs = s.cache.get(&d, sid, None);
+        assert!(!cs.is_overset(), "still fits");
+        // The bottom is on the baseline, so a frame scaled up with its text still fits.
+        let baseline = cs.frame(id).unwrap().lines[0].baseline;
+        assert!((b.y1 - baseline).abs() < 1e-9, "{b:?} {baseline}");
     }
 
     #[test]
