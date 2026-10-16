@@ -2308,6 +2308,12 @@ pub const MAC_APP_MENU: &[AppMenuItem] = &[
     AppMenuItem::Cmd { id: "dc-quit", label: "Quit DesignCraft", command: "app.quit" },
 ];
 
+/// A label as the macOS menu bar library takes it: it reads "&" as a mnemonic marker and drops
+/// it, and shows "&&" as one "&".
+pub fn native_label(label: &str) -> String {
+    label.replace('&', "&&")
+}
+
 /// The menu tree for the macOS menu bar: `menu_tree` without the commands `MAC_APP_MENU` holds,
 /// so each command (and its shortcut) appears once, and with the standard Window › Minimize (⌘M)
 /// at the top of the Window menu.
@@ -5516,6 +5522,13 @@ mod tests {
         assert!(open, "hovering the visible portion still opens the submenu");
         let (_, Some((_, _, open))) = frame(500.0, vec![]) else { panic!("test menu remains open") };
         assert!(!open, "an open submenu closes when its row becomes fully clipped");
+    }
+
+    #[test]
+    fn native_labels_keep_their_ampersands() {
+        assert_eq!(native_label("Numbering & Section Options…"), "Numbering && Section Options…");
+        assert_eq!(native_label("A&&B"), "A&&&&B");
+        assert_eq!(native_label("Pages"), "Pages");
     }
 
     #[test]

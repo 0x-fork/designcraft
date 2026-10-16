@@ -45,6 +45,11 @@ fn accel(sc: &str) -> Option<Accelerator> {
     Accelerator::from_str(&sc.replace("Cmd", "CMD").replace("Alt", "ALT").replace("Shift", "SHIFT").replace("Ctrl", "CTRL")).ok()
 }
 
+/// A menu or item label in the interface language, as the native menu bar takes it.
+fn menu_title(app: &DesignApp, label: &str) -> String {
+    menus::native_label(designcraft_ui_egui::i18n::tr(&app.ui.language, label))
+}
+
 /// A command's default shortcut, as the in-window menus show it.
 fn shortcut(id: &str) -> Option<&'static str> {
     menus::ui_label(id).and_then(|(_, sc)| sc).or_else(|| designcraft_engine::find_command(id).and_then(|c| c.shortcut))
@@ -71,7 +76,7 @@ impl NativeMenu {
             let _ = match *entry {
                 AppMenuItem::Cmd { id, label, command } => {
                     let sc = shortcut(command).and_then(accel);
-                    let item = MenuItem::with_id(id, designcraft_ui_egui::i18n::tr(&app.ui.language, label), true, sc);
+                    let item = MenuItem::with_id(id, menu_title(app, label), true, sc);
                     let appended = app_menu.append(&item);
                     items.insert(id.into(), (command.into(), Value::Null, Handle::Plain(item)));
                     appended
@@ -85,7 +90,7 @@ impl NativeMenu {
         }
         let _ = menu.append(&app_menu);
         for (title, entries) in menus::native_menu_tree() {
-            let sub = Submenu::new(designcraft_ui_egui::i18n::tr(&app.ui.language, title), true);
+            let sub = Submenu::new(menu_title(app, title), true);
             build(app, &sub, &entries, &mut items, &mut counter, title, &mut recent);
             let _ = menu.append(&sub);
         }
@@ -121,7 +126,7 @@ impl NativeMenu {
             match it {
                 Item::Cmd { label, id, params, .. } => {
                     let mid = format!("dc-recent{position}");
-                    let item = MenuItem::with_id(mid.clone(), label, true, None);
+                    let item = MenuItem::with_id(mid.clone(), menus::native_label(&label), true, None);
                     let _ = r.submenu.insert(&item, position);
                     self.items.insert(mid.clone(), (id, params, Handle::Plain(item)));
                     r.ids.push(mid);
@@ -184,7 +189,7 @@ fn build(
                 let _ = parent.append(&PredefinedMenuItem::separator());
             }
             Item::Sub(label, children) => {
-                let sub = Submenu::new(designcraft_ui_egui::i18n::tr(&app.ui.language, label), true);
+                let sub = Submenu::new(menu_title(app, label), true);
                 let path = format!("{path}/{label}");
                 build(app, &sub, children, items, counter, &path, recent);
                 if path == menus::OPEN_RECENT {
@@ -198,7 +203,7 @@ fn build(
                 *counter += 1;
                 let mid = format!("dc{counter}");
                 let sc = if params.is_null() { shortcut.and_then(accel) } else { None };
-                let label = designcraft_ui_egui::i18n::tr(&app.ui.language, label);
+                let label = menu_title(app, label);
                 let handle = if menus::checked(app, id, params).is_some() {
                     let c = CheckMenuItem::with_id(mid.clone(), label, true, false, sc);
                     let _ = parent.append(&c);
