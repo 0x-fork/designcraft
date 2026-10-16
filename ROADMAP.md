@@ -349,6 +349,8 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
   inherit later edits; real overrides and named character styles remain.
 - **2026-10-15** · Redefine paragraph and character styles from local formatting, including the
   Styles panel context menu, global updates and one-step undo.
+- **2026-10-15** · Paragraph Styles marks local character overrides and offers Clear Overrides
+  in the style row menu; named character styles and equal local values are not false overrides.
 
 - **2026-10-13** · Switching between document and parent pages refreshes the canvas immediately, preventing black parent pages and stale document objects when the zoom stays the same. Ordinary edits retain partial repainting. No readiness percentage change.
 
