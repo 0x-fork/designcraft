@@ -34,7 +34,17 @@ fn shown(file: Vec<u8>, fill: Fill) -> Vec<[u8; 4]> {
     let aid = AssetId(d.alloc());
     d.assets.insert(
         aid,
-        Arc::new(Asset { page: 0, id: aid, name: "a".into(), mime: "image/png".into(), link: None, data: Arc::new(file), pixels: Some((3, 1)), pdf_crop: Default::default(), pdf_box: None }),
+        Arc::new(Asset {
+            page: 0,
+            id: aid,
+            name: "a".into(),
+            mime: "image/png".into(),
+            link: None,
+            data: Arc::new(file),
+            pixels: Some((3, 1)),
+            pdf_crop: Default::default(),
+            pdf_box: None,
+        }),
     );
     let id = ItemId(d.alloc());
     let mut it = Item::new(id, d.default_layer(), Shape::Rectangle, shapes::rectangle(Rect::new(100.0, 100.0, 250.0, 150.0)));
