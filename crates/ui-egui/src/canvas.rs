@@ -2,7 +2,7 @@
 //! selection, text ports and threads, the text caret, rulers, and pointer/keyboard input.
 
 use designcraft_compose as compose;
-use designcraft_doc::{Content, Document, Item, PageSide, SpreadRef};
+use designcraft_doc::{Content, Document, Item, SpreadRef};
 use designcraft_engine::doc::Selection;
 use designcraft_geom::{Affine, Point, Rect as DRect, Vec2 as DVec2};
 use designcraft_tools::{CanvasLayout, Cursor, Mods, Overlay, PointerEvent, PointerKind, ToolKey};
@@ -882,15 +882,9 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
         let pt = |p: Point| xf.to_screen(m * p);
         let rect = |r: DRect| xf.rect(m.transform_rect_bbox(r));
         // Bleed: one rectangle around the spread (inside bleed only applies at the spread's outer edges).
-        let b = s.bleed;
         if app.ui.guides
-            && b.iter().any(|v| *v > 0.0)
-            && let Some((first, last)) = sp.outer_page_indices().and_then(|(l, r)| Some((sp.pages.get(l)?, sp.pages.get(r)?)))
+            && let Some(br) = sp.bleed_rect(s.bleed)
         {
-            let l = if first.side == PageSide::Left { b[3] } else { b[2] };
-            let r = if last.side == PageSide::Right || last.side == PageSide::Single { b[3] } else { b[2] };
-            let sb = sp.bounds();
-            let br = DRect::new(sb.x0 - l, sb.y0 - b[0], sb.x1 + r, sb.y1 + b[1]);
             painter.rect_stroke(rect(br), 0.0, Stroke::new(hair(painter), c32(s.bleed_color)), StrokeKind::Middle);
         }
         let pasteboard = m.inverse().transform_rect_bbox(layout.pasteboard);
