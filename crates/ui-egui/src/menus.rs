@@ -1936,8 +1936,18 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
 /// Save by handing the serialized document to the host as a download (web).
 /// Switch screen modes; entering Presentation remembers the mode to return to.
 fn set_screen_mode(app: &mut DesignApp, mode: ScreenMode) {
-    if mode == ScreenMode::Presentation && app.ui.screen_mode != ScreenMode::Presentation {
+    let presenting = app.ui.screen_mode == ScreenMode::Presentation;
+    if mode == ScreenMode::Presentation && !presenting {
         app.ui.presentation_return = app.ui.screen_mode;
+        // Presentation fits the spread to the screen; leaving it puts the user's view back.
+        app.ui.presentation_view = app.view_key().zip(app.view().copied());
+    }
+    if mode != ScreenMode::Presentation
+        && presenting
+        && let Some((k, v)) = app.ui.presentation_view.take()
+        && let Some(view) = app.views.get_mut(&k)
+    {
+        *view = v;
     }
     app.ui.screen_mode = mode;
 }
@@ -4248,6 +4258,12 @@ mod tests {
         };
         frame(&mut app, vec![]);
         frame(&mut app, vec![]);
+        // The user's own view (zoomed in, scrolled) comes back after Presentation.
+        let view = app.view_mut().unwrap();
+        view.zoom = 2.0;
+        view.origin.x += 150.0;
+        view.origin.y += 300.0;
+        let before = *app.view().unwrap();
         app.run("view.screenMode", json!({"mode": "presentation"})).unwrap();
         frame(&mut app, vec![]);
         frame(&mut app, vec![]);
@@ -4282,8 +4298,10 @@ mod tests {
         assert_eq!(spread(&app), 0, "Shift-click the previous one");
         assert_eq!(app.session.active().unwrap().selection.items, vec![id], "clicks don't select");
         assert_eq!(app.session.tool_id(), "selection");
-        // Out of Presentation, the arrow keys nudge again.
+        // Out of Presentation, the view is the one it was entered from, and the arrow keys nudge
+        // again.
         app.run("view.screenMode", json!({"mode": "normal"})).unwrap();
+        assert_eq!(*app.view().unwrap(), before);
         frame(&mut app, vec![]);
         frame(&mut app, key(egui::Key::ArrowRight));
         assert_ne!(app.session.active().unwrap().doc.item(id).unwrap().bounds(), bounds);

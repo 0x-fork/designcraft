@@ -189,6 +189,9 @@ pub struct UiState {
     pub screen_mode: ScreenMode,
     /// The screen mode leaving Presentation returns to: the one it was entered from.
     pub presentation_return: ScreenMode,
+    /// The view (by its `views` key) Presentation was entered from; leaving puts it back.
+    #[serde(skip)]
+    pub presentation_view: Option<(u64, View)>,
     pub frame_edges: bool,
     pub rulers: bool,
     pub guides: bool,
@@ -350,6 +353,7 @@ impl Default for UiState {
             brightness: theme::Brightness::MediumDark,
             screen_mode: ScreenMode::Normal,
             presentation_return: ScreenMode::Normal,
+            presentation_view: None,
             frame_edges: true,
             rulers: true,
             guides: true,
