@@ -13,7 +13,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "{path?, embedImages?: true} — writes an IDML package to `path`, or returns {base64} without a path",
             has_doc, export_idml),
         cmd!(noundo "file.openIdml", "Open IDML", [], None,
-            "{path | base64, name?} — opens an IDML package as a new document (linked images are read next to the file or from its Links/ folder; the fonts in a `Document Fonts` folder beside it load first) → {index, documentFonts, warnings}",
+            "{path | base64, name?} — opens an IDML package as a new document (linked images are read next to the file or from its Links/ folder; the fonts in a `Document Fonts` folder beside it load first) → {index, documentFonts, warnings: package parts missing, font files skipped}",
             always, open_idml),
     ]
 }
@@ -25,15 +25,26 @@ fn export_idml(s: &mut Session, p: &Value) -> Result<Value> {
     match str_param(p, "path") {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
-            std::fs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            crate::io::write_file(path, &bytes).map_err(EngineError::Other)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
         None => Ok(json!({"base64": base64_encode(&bytes), "bytes": bytes.len()})),
     }
 }
 
+/// [`designcraft_idml::import_idml`] with the linked images read through [`crate::io`], so the
+/// automation read root applies to the paths the package names.
+pub(crate) fn import_idml_confined(bytes: &[u8]) -> designcraft_idml::Result<Document> {
+    designcraft_idml::import_idml_with(bytes, &|path| crate::io::read_file(path).ok())
+}
+
 /// Import IDML bytes; `dir` is the folder the package came from (for relative link lookup).
 pub fn import(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<Document> {
+    import_report(bytes, dir).map(|(document, _)| document)
+}
+
+/// [`import`], with the problems that did not stop it (parts missing from the package, …).
+pub fn import_report(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<(Document, Vec<String>)> {
     #[cfg(not(target_arch = "wasm32"))]
     let resolved = std::cell::RefCell::new(std::collections::HashMap::new());
     let read = |link: &str| -> Option<Vec<u8>> {
@@ -49,7 +60,8 @@ pub fn import(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<Document> {
             None
         }
     };
-    let document = designcraft_idml::import_idml_with(bytes, &read).map_err(|e| EngineError::Other(e.to_string()))?;
+    let designcraft_idml::Imported { document, warnings } =
+        designcraft_idml::import_idml_report(bytes, &read).map_err(|e| EngineError::Other(e.to_string()))?;
     #[cfg(not(target_arch = "wasm32"))]
     let document = {
         let mut document = document;
@@ -62,7 +74,7 @@ pub fn import(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<Document> {
         resolve_packaged_links(&mut document, dir);
         document
     };
-    Ok(document)
+    Ok((document, warnings))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -106,10 +118,10 @@ pub(crate) fn resolve_packaged_links(document: &mut Document, dir: Option<&std::
     let Some(dir) = dir else { return };
     for asset in document.assets.values_mut() {
         let Some(link) = asset.link.as_deref() else { continue };
-        if link.len() > MAX_LINK_PATH_BYTES || std::path::Path::new(link).is_file() {
+        if link.len() > MAX_LINK_PATH_BYTES || crate::io::is_file(link) {
             continue;
         }
-        let Some(path) = packaged_link_candidates(link, Some(dir)).into_iter().find(|p| p.is_file()) else { continue };
+        let Some(path) = packaged_link_candidates(link, Some(dir)).into_iter().find(|p| crate::io::is_file(p)) else { continue };
         // Preserve ordinary Windows paths rather than canonicalizing to a verbatim URI.
         let path = std::path::absolute(&path).unwrap_or(path);
         std::sync::Arc::make_mut(asset).link = Some(path.to_string_lossy().into_owned());
@@ -119,7 +131,7 @@ pub(crate) fn resolve_packaged_links(document: &mut Document, dir: Option<&std::
 #[cfg(not(target_arch = "wasm32"))]
 fn read_packaged_link(link: &str, dir: Option<&std::path::Path>) -> Option<(String, Vec<u8>)> {
     for path in packaged_link_candidates(link, dir) {
-        if let Ok(bytes) = std::fs::read(&path) {
+        if let Ok(bytes) = crate::io::read_file(&path) {
             // Keep ordinary Windows drive/UNC syntax for IDML URI export; canonicalize
             // would introduce a verbatim prefix that is not an IDML file URI.
             let path = std::path::absolute(&path).unwrap_or(path);
@@ -134,7 +146,7 @@ pub(crate) fn open_idml(s: &mut Session, p: &Value) -> Result<Value> {
         (base64_decode(b), None, str_param(p, "name").map(|n| n.trim_end_matches(".idml").to_string()))
     } else if let Some(path) = str_param(p, "path") {
         #[cfg(not(target_arch = "wasm32"))]
-        let b = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        let b = crate::io::read_file(path).map_err(EngineError::Other)?;
         #[cfg(target_arch = "wasm32")]
         let b: Vec<u8> = Vec::new();
         let pp = std::path::Path::new(path);
@@ -142,14 +154,15 @@ pub(crate) fn open_idml(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         return Err(bad("file.openIdml", "missing `path` or `base64`"));
     };
-    let mut d = import(&bytes, dir.as_deref())?;
+    let (mut d, mut warnings) = import_report(&bytes, dir.as_deref())?;
     if let Some(n) = name {
         d.title = n;
     }
-    let (fonts, faces, warnings) = match str_param(p, "path").filter(|_| str_param(p, "base64").is_none()) {
+    let (fonts, faces, font_warnings) = match str_param(p, "path").filter(|_| str_param(p, "base64").is_none()) {
         Some(path) => super::file::load_document_fonts(&mut d, path),
         None => (None, 0, Vec::new()),
     };
+    warnings.extend(font_warnings);
     // Never save over the .idml with the native format: the document starts unsaved.
     let mut st = DocState::new(d, None);
     st.fonts = fonts;
