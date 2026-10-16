@@ -350,10 +350,15 @@ mod tests {
             let slice = damaged.extract(pair_len..damaged.len());
             assert_eq!(slice.text, format!("{ENDNOTE_REF}{NOTE_MARK}").repeat(2));
             let expected = if available == 2 { 1 } else { 0 };
-            assert_eq!((slice.endnotes.len(), slice.editorial.len()), (expected, expected));
+            // The slice is a valid story: missing payloads become empty notes.
+            slice.check().unwrap();
+            assert_eq!((slice.endnotes.len(), slice.editorial.len()), (2, 2));
             if expected == 1 {
                 assert_eq!(slice.endnotes[0], source.endnotes[1]);
                 assert_eq!(slice.editorial[0], source.editorial[1]);
+            } else {
+                assert!(slice.endnotes[0].text.is_empty());
+                assert!(slice.editorial[0].text.is_empty());
             }
             let mut dest = Story::new(StoryId(2));
             append_note_pair(&mut dest, "untouched");
