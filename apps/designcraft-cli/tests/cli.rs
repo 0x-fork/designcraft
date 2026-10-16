@@ -217,10 +217,11 @@ fn closed_stdout_ends_quietly() {
 }
 
 /// `--pdf-options` that was JSON but no object (`[1]`) panicked when the PDF's path was added to it.
+/// `null` means no options (see `pdf_options_that_are_not_an_object_are_an_error_not_a_panic`).
 #[test]
 fn run_pdf_options_that_are_no_object_are_an_error() {
     let pdf = std::env::temp_dir().join(format!("dc-cli-options-{}.pdf", std::process::id()));
-    for options in ["[1]", "\"all\"", "1", "null"] {
+    for options in ["[1]", "\"all\"", "1"] {
         let out = cli().args(["run", "--sample", "--pdf-options", options, "--export", pdf.to_str().unwrap()]).output().unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{options}: {err}");
