@@ -1574,32 +1574,38 @@ impl ScopedFonts<'_> {
     }
 
     /// Resolve localized and legacy family names without confusing replacement fonts with
-    /// installed originals. Document-local aliases take precedence over shared fonts.
+    /// installed originals. Document-local names take precedence over shared fonts.
+    ///
+    /// In each scope (the document's faces, loaded faces, the catalog) an exact typographic name
+    /// wins, then a WWS family name (an optical-size face's, see `find`), which names its faces as
+    /// it is, then the aliases. An optical-size face's legacy family name (name ID 1) is usually
+    /// its WWS name, so the aliases must not claim it first.
     pub fn canonical_family(&self, family: &str) -> Option<String> {
-        let matches =
-            |f: &&Arc<FontFace>| f.family.eq_ignore_ascii_case(family) || f.family_aliases.iter().any(|alias| alias.eq_ignore_ascii_case(family));
-        if let Some(face) = self.own().iter().find(matches) {
-            return Some(face.family.clone());
-        }
-        if let Some(face) = self.db.read_faces().iter().find(matches) {
-            return Some(face.family.clone());
+        let is = |name: &str| name.eq_ignore_ascii_case(family);
+        let in_faces = |faces: &[Arc<FontFace>]| -> Option<String> {
+            if let Some(f) = faces.iter().find(|f| is(&f.family)) {
+                return Some(f.family.clone());
+            }
+            if let Some(w) = faces.iter().find_map(|f| f.wws.as_ref().filter(|w| is(&w.0))) {
+                return Some(w.0.clone());
+            }
+            faces.iter().find(|f| f.family_aliases.iter().any(|alias| is(alias))).map(|f| f.family.clone())
+        };
+        if let Some(name) = in_faces(self.own()).or_else(|| in_faces(&self.db.read_faces())) {
+            return Some(name);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(face) = self
-            .db
-            .read_catalog()
-            .iter()
-            .find(|f| f.family.eq_ignore_ascii_case(family) || f.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(family)))
         {
-            return Some(face.family.clone());
-        }
-        // A WWS family name (an optical-size face's, see `find`) names its faces as it is.
-        if let Some(face) = self.own().iter().chain(self.db.read_faces().iter()).find(|f| has_wws_family(f, family)) {
-            return face.wws.as_ref().map(|w| w.0.clone());
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(c) = self.db.read_catalog().iter().find(|c| c.wws.as_ref().is_some_and(|w| w.0.eq_ignore_ascii_case(family))) {
-            return c.wws.as_ref().map(|w| w.0.clone());
+            let catalog = self.db.read_catalog();
+            if let Some(c) = catalog.iter().find(|c| is(&c.family)) {
+                return Some(c.family.clone());
+            }
+            if let Some(w) = catalog.iter().find_map(|c| c.wws.as_ref().filter(|w| is(&w.0))) {
+                return Some(w.0.clone());
+            }
+            if let Some(c) = catalog.iter().find(|c| c.aliases.iter().any(|alias| is(alias))) {
+                return Some(c.family.clone());
+            }
         }
         None
     }
@@ -1610,7 +1616,10 @@ impl ScopedFonts<'_> {
             return false;
         }
         let face = self.face(family, style);
-        norm(&face.style) == norm(style) || (face.coords.is_empty() && face.style_aliases.iter().any(|alias| norm(alias) == norm(style)))
+        norm(&face.style) == norm(style)
+            || (face.coords.is_empty() && face.style_aliases.iter().any(|alias| norm(alias) == norm(style)))
+            // An optical-size face asked for by its WWS names.
+            || face.wws.as_ref().is_some_and(|w| w.0.eq_ignore_ascii_case(family) && norm(&w.1) == norm(style))
     }
 
     /// Prefer known metric-compatible substitutes, then an appropriate script family. This

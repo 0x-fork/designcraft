@@ -72,15 +72,19 @@ pub fn font_mapping(family: &str, glyphs: &[(char, char)]) -> Option<Vec<u8>> {
 /// ("Kepler Std" / "Light Display" and "Kepler Std Display" / "Light"). `None` if the bundled font
 /// can't be read.
 pub fn font_with_wws(family: &str, style: &str, wws_family: &str, wws_style: &str, chars: &[char]) -> Option<Vec<u8>> {
-    let base = font_with(family, chars)?;
-    let entries = [(1u16, family), (2, style), (16, family), (17, style), (21, wws_family), (22, wws_style)];
+    font_with_names(&[(1, family), (2, style), (16, family), (17, style), (21, wws_family), (22, wws_style)], chars)
+}
+
+/// [`font_with`] whose name table holds exactly `entries`: (name ID, Windows English name).
+pub fn font_with_names(entries: &[(u16, &str)], chars: &[char]) -> Option<Vec<u8>> {
+    let base = font_with(entries.first()?.1, chars)?;
     let count = u16::try_from(entries.len()).ok()?;
     let mut name = Vec::new();
     for v in [0u16, count, 6 + count * 12] {
         name.extend_from_slice(&v.to_be_bytes());
     }
     let mut at = 0usize;
-    for (id, s) in entries {
+    for &(id, s) in entries {
         let len = s.encode_utf16().count() * 2;
         for v in [3u16, 1, 0x409, id, u16::try_from(len).ok()?, u16::try_from(at).ok()?] {
             name.extend_from_slice(&v.to_be_bytes());
