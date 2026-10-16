@@ -288,14 +288,22 @@ fn pages_param(id: &str, p: &Value, page_count: usize) -> Result<Option<Vec<usiz
         Some(Value::Array(a)) => {
             let mut v = Vec::new();
             for x in a {
-                let n = x.as_u64().filter(|n| *n >= 1 && (*n as usize) <= page_count).ok_or_else(|| bad(id, format!("bad page {x}")))?;
-                v.push(n as usize - 1);
+                let n = x
+                    .as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| *n >= 1 && *n <= page_count)
+                    .ok_or_else(|| bad(id, format!("bad page {x}")))?;
+                v.push(n - 1);
             }
             Some(v)
         }
         Some(Value::Number(n)) => {
-            let n = n.as_u64().filter(|n| *n >= 1 && (*n as usize) <= page_count).ok_or_else(|| bad(id, format!("bad page {n}")))?;
-            Some(vec![n as usize - 1])
+            let n = n
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|n| *n >= 1 && *n <= page_count)
+                .ok_or_else(|| bad(id, format!("bad page {n}")))?;
+            Some(vec![n - 1])
         }
         Some(v) => return Err(bad(id, format!("bad `pages`: {v}"))),
     })

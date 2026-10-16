@@ -229,6 +229,14 @@ fn pictures_are_cropped_to_their_frames() {
 }
 
 #[test]
+fn maximal_page_index_is_an_error() {
+    let d = Document::new(&NewDocument::default());
+    let options = PptxOptions { pages: Some(vec![usize::MAX]), ..Default::default() };
+    let result = export_pptx(&d, &Cache::new(), &options);
+    assert!(matches!(result, Err(PptxError::BadPage(usize::MAX))));
+}
+
+#[test]
 fn bad_pages_and_hostile_geometry_are_errors_not_crashes() {
     let mut d = Document::new(&NewDocument::default());
     let r = export_pptx(&d, &Cache::new(), &PptxOptions { pages: Some(vec![5]), ..Default::default() });
