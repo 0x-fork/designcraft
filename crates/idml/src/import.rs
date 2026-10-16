@@ -629,10 +629,12 @@ impl<'r> Importer<'r> {
                     characters: c.get("CustomCharacters").unwrap_or("").into(),
                     family: c.prop("AppliedFont").as_deref().and_then(names::font_family_in).unwrap_or_default(),
                     style: c.get("FontStyle").unwrap_or("Regular").trim_start_matches("$ID/").into(),
-                    relative_size: c.num("RelativeSize").unwrap_or(100.0) / 100.0,
-                    horizontal_scale: c.num("HorizontalScale").unwrap_or(100.0) / 100.0,
-                    vertical_scale: c.num("VerticalScale").unwrap_or(100.0) / 100.0,
-                    baseline_shift: c.num("BaselineShift").unwrap_or(0.0) / 100.0,
+                    // A metric `Document::check` refuses would make the whole file fail to
+                    // open, so one that is unusable here falls back to full size / no shift.
+                    relative_size: c.num("RelativeSize").filter(|v| v.is_finite() && *v > 0.0).unwrap_or(100.0) / 100.0,
+                    horizontal_scale: c.num("HorizontalScale").filter(|v| v.is_finite() && *v > 0.0).unwrap_or(100.0) / 100.0,
+                    vertical_scale: c.num("VerticalScale").filter(|v| v.is_finite() && *v > 0.0).unwrap_or(100.0) / 100.0,
+                    baseline_shift: c.num("BaselineShift").filter(|v| v.is_finite()).unwrap_or(0.0) / 100.0,
                     scale_option: c.boolean("ScaleOption").unwrap_or(true),
                 })
                 .collect();
