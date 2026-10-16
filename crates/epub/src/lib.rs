@@ -1982,9 +1982,9 @@ mod tests {
         assert_eq!(css_weight_style("Bold"), (700, "normal"));
         assert_eq!(css_weight_style("Extra Bold"), (800, "normal"));
         assert_eq!(css_weight_style("Regular"), (400, "normal"));
-    assert_eq!(css_weight_style("Light"), (300, "normal"));
-    assert_eq!(css_weight_style("Thin Oblique"), (100, "italic"));
-    assert_eq!(css_weight_style("Black"), (900, "normal"));
+        assert_eq!(css_weight_style("Light"), (300, "normal"));
+        assert_eq!(css_weight_style("Thin Oblique"), (100, "italic"));
+        assert_eq!(css_weight_style("Black"), (900, "normal"));
 
         let mut d = Document::new(&NewDocument::default());
         let lid = d.default_layer();

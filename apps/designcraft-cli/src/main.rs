@@ -273,7 +273,9 @@ impl Export {
             Some("html" | "htm") => Export::Command("file.exportHtml"),
             // The story being edited or of the selected frame.
             Some("rtf" | "txt") => Export::Command("file.exportText"),
-            Some(_) => return Err(format!("--export {out}: unknown file type (.png, .jpg, .pdf, .designcraft, .idml, .epub, .pptx, .html, .rtf, .txt)")),
+            Some(_) => {
+                return Err(format!("--export {out}: unknown file type (.png, .jpg, .pdf, .designcraft, .idml, .epub, .pptx, .html, .rtf, .txt)"));
+            }
         })
     }
 }
