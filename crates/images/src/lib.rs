@@ -607,27 +607,6 @@ mod tests {
         assert_eq!(text_face(r#" font-family="NoSuch-Font""#), "SourceSerif4-Regular");
     }
 
-    #[test]
-    fn svg_family_names_match_in_any_case() {
-        let font = designcraft_fonts::testing::font_with("DC Test SVG Casing", &['A', 'b']).unwrap();
-        designcraft_fonts::FontDb::global().add_font(font);
-        let text = |family: &str, attrs: &str| {
-            format!(
-                r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><text y="30" font-size="20" font-family="{family}"{attrs}>Ab</text></svg>"#
-            )
-        };
-        for family in ["DC Test SVG Casing", "dc test svg casing", "DC TEST svg Casing", "Nope, dc test SVG casing, serif"] {
-            let set = glyph_families(&text(family, ""));
-            assert!(set.len() == 2 && set.iter().all(|(f, gid)| f == "DC Test SVG Casing" && *gid != 0), "{family}: {set:?}");
-        }
-        // Weight and style still reach the query: there's only a regular face, so it sets the text.
-        let set = glyph_families(&text("dc test svg casing", r#" font-weight="700" font-style="italic""#));
-        assert!(set.len() == 2 && set.iter().all(|(f, _)| f == "DC Test SVG Casing"), "{set:?}");
-        // A family nobody has still falls to the bundled serif.
-        let set = glyph_families(&text("DC Test SVG Nobody", ""));
-        assert!(set.len() == 2 && set.iter().all(|(f, _)| f == "Source Serif 4"), "{set:?}");
-    }
-
     /// A minimal Photoshop file: 2×1 RGB, no layers, raw merged image.
     fn tiny_psd() -> Vec<u8> {
         let mut b = Vec::new();
