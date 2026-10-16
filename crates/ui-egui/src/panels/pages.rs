@@ -160,6 +160,7 @@ pub struct PanelOptions {
     pub page_size: IconSize,
     pub page_thumbnails: bool,
     pub parent_size: IconSize,
+    pub parent_thumbnails: bool,
     pub parents_vertical: bool,
     pub pages_on_top: bool,
     pub resize: PanelResize,
@@ -171,6 +172,7 @@ impl Default for PanelOptions {
             page_size: IconSize::Medium,
             page_thumbnails: true,
             parent_size: IconSize::Small,
+            parent_thumbnails: true,
             parents_vertical: true,
             pages_on_top: false,
             resize: PanelResize::ParentsFixed,
@@ -289,8 +291,8 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     .max(160.0);
     let row_h = opts.parent_size.row_h();
     let icon_h = row_h - 5.0;
-    // Extra Small has no room for a thumbnail.
-    let parent_thumbnails = opts.parent_size != IconSize::ExtraSmall;
+    // Extra Small has no room for a thumbnail; Show Thumbnails off draws blank pages.
+    let parent_thumbnails = opts.parent_thumbnails && opts.parent_size != IconSize::ExtraSmall;
     // Parents side by side (Show Vertically off): tiles of the icon and the prefix, wrapping.
     let tile_w = |unit_w: f32| (icon_h * unit_w + 16.0).max(44.0);
     let natural = if opts.parents_vertical {
@@ -652,7 +654,7 @@ pub fn open_panel_options(app: &mut DesignApp) {
         "pagesPanelOptions",
         json!({
             "pageSize": o.page_size.key(), "pageThumbnails": o.page_thumbnails,
-            "parentSize": o.parent_size.key(), "parentsVertical": o.parents_vertical,
+            "parentSize": o.parent_size.key(), "parentThumbnails": o.parent_thumbnails, "parentsVertical": o.parents_vertical,
             "layout": if o.pages_on_top { "pagesOnTop" } else { "parentsOnTop" }, "resize": o.resize.key(),
         }),
     ));
@@ -1016,6 +1018,27 @@ mod tests {
         crate::dialogs::confirm(&mut h.state_mut().app).unwrap();
         h.run_steps(4);
         assert!(page(&h).height() < 0.5 * medium);
+    }
+
+    /// Panel Options' parent size sets the height of the parents' rendered thumbnails (cached per
+    /// parent and size), and Show Thumbnails off leaves them blank.
+    #[test]
+    fn parent_thumbnails_follow_panel_options() {
+        let parent_thumb_heights = |thumbnails: bool| {
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({})).unwrap();
+            app.ui.dock_tab = "pages".into();
+            app.ui.pages_panel.parent_size = IconSize::Large;
+            app.ui.pages_panel.parent_thumbnails = thumbnails;
+            let h = crate::test_window::open(app, vec2(1400.0, 900.0));
+            let st = h.state().app.session.active().unwrap();
+            let id = st.doc.parents[0].id;
+            let thumbs = super::THUMBS.lock().unwrap();
+            let keys = thumbs.as_ref().map(|m| m.keys().copied().collect::<Vec<_>>()).unwrap_or_default();
+            keys.into_iter().filter(|k| k.0 == st.uid && k.2 == super::ThumbOf::Parent(id)).map(|k| k.3).collect::<Vec<_>>()
+        };
+        assert_eq!(parent_thumb_heights(true), vec![IconSize::Large.row_h() as u32 - 5]);
+        assert_eq!(parent_thumb_heights(false), Vec::<u32>::new());
     }
 
     #[test]

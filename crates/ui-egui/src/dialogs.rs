@@ -2606,6 +2606,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                             crate::rtl::label(ui, crate::i18n::tr(&lang, "Size:"));
                             combo(ui, &mut d, "parentSize", &sizes);
                         });
+                        ui.add_enabled_ui(d.s("parentSize") != "extraSmall", |ui| {
+                            check(ui, &mut d, "parentThumbnails", crate::i18n::tr(&lang, "Show Thumbnails"))
+                        });
                         check(ui, &mut d, "parentsVertical", crate::i18n::tr(&lang, "Show Vertically"));
                         group(ui, "Panel Layout");
                         for (v, label) in [("pagesOnTop", "Pages on Top"), ("parentsOnTop", "Parents on Top")] {
@@ -3452,6 +3455,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             o.page_size = IconSize::from_key(&d.s("pageSize")).unwrap_or(o.page_size);
             o.page_thumbnails = d.b("pageThumbnails");
             o.parent_size = IconSize::from_key(&d.s("parentSize")).unwrap_or(o.parent_size);
+            o.parent_thumbnails = d.b("parentThumbnails");
             o.parents_vertical = d.b("parentsVertical");
             o.pages_on_top = d.s("layout") == "pagesOnTop";
             o.resize = PanelResize::from_key(&d.s("resize")).unwrap_or(o.resize);
