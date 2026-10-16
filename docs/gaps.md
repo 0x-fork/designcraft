@@ -250,6 +250,7 @@ Cue. These are excluded from every percentage.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-16 | minor | Gap 27 closed: the loaded text cursor threads into a text frame inside a group (#1075) |
+| 2026-10-16 | trivial | Gap 13 shrunk: Greek hyphenates, so five languages do (#1077) |
 | 2026-10-13 | minor | Gap 16: Parent Options dialog and overrides of base items on a parent spread |
 | 2026-10-12 | minor | Gap 0 shrunk to the Primary Text Frame page fixes (#165): text threads by hand; gaps added for autoflow onto existing pages and threading into grouped frames |
 | 2026-10-10 | minor | Gap 0 added and marked alpha blocker: manual text threading is missing (stage re-normalized to pre-alpha) |
