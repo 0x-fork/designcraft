@@ -251,7 +251,12 @@ pub(crate) fn open_idml(s: &mut Session, p: &Value) -> Result<Value> {
     // share its buffer.
     let mut previews = std::collections::HashMap::new();
     let bytes = if is_indd(&file, &bytes) {
-        let conversion = indd::convert(&bytes, &file).map_err(|e| EngineError::Other(format!("can't convert the InDesign file: {e}")))?;
+        // What the converter can't read still comes over as IDML (#21).
+        let conversion = indd::convert(&bytes, &file).map_err(|e| {
+            EngineError::Other(format!(
+                "can't convert the InDesign file: {e}. In InDesign, choose File ▸ Export… ▸ InDesign Markup (IDML) and open the .idml in DesignCraft."
+            ))
+        })?;
         warnings.extend(conversion.warnings.iter().map(|w| w.message().to_string()));
         for p in conversion.previews {
             let data = std::sync::Arc::new(p.data);
