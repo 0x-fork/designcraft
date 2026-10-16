@@ -438,6 +438,15 @@ fn main() -> std::process::ExitCode {
             b.with_x11();
         }));
     }
+    // AppKit Dock Quit otherwise terminates before egui can cancel the close. Route it through
+    // ordinary CloseRequested events, preserving the same transactional Save/Don't Save flow.
+    #[cfg(target_os = "macos")]
+    {
+        options.event_loop_builder = Some(Box::new(|builder| {
+            use winit::platform::macos::EventLoopBuilderExtMacOS;
+            builder.with_close_requested_on_terminate(true);
+        }));
+    }
     // Registered before the event loop starts, so it catches the Finder event that launched the app
     // as well as later ones. Lives until the event loop returns; the app creator only borrows it.
     #[cfg(target_os = "macos")]
