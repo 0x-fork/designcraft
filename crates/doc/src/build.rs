@@ -844,6 +844,8 @@ mod tests {
     fn presets_and_parents() {
         let nd = NewDocument::from_preset("A4").unwrap();
         assert!((nd.width - 595.2756).abs() < 1e-3);
+        let a0 = NewDocument::from_preset("A0").unwrap();
+        assert_eq!((a0.width.round(), a0.height.round()), (2384.0, 3370.0));
         let mut d = Document::new(&nd);
         assert_eq!(d.next_parent_prefix(), "B");
         let b = d.add_parent("B", "Parent", 2, 12.0, Margins::uniform(36.0));
