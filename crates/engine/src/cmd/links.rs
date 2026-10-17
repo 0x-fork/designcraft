@@ -500,7 +500,7 @@ mod tests {
         let result = s.execute("file.exportEpub", &json!({})).unwrap();
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(super::super::file::base64_decode(result["base64"].as_str().unwrap()))).unwrap();
         let mut image = Vec::new();
-        z.by_name(&format!("OEBPS/images/{}.png", aid.0)).unwrap().read_to_end(&mut image).unwrap();
+        z.by_name(&format!("OEBPS/images/logo-{}.png", aid.0)).unwrap().read_to_end(&mut image).unwrap();
         assert_eq!(image, png);
         let mut opf = String::new();
         z.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut opf).unwrap();
@@ -649,7 +649,7 @@ mod tests {
         let bytes = super::super::file::base64_decode(result["base64"].as_str().unwrap());
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let mut image = Vec::new();
-        archive.by_name(&format!("OEBPS/images/{}.png", aid.0)).unwrap().read_to_end(&mut image).unwrap();
+        archive.by_name(&format!("OEBPS/images/logo-{}.png", aid.0)).unwrap().read_to_end(&mut image).unwrap();
         assert_eq!(image, proxy);
         let mut opf = String::new();
         archive.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut opf).unwrap();
@@ -738,8 +738,11 @@ mod tests {
             let revision = st.revision;
             let undo = st.history.undo.len();
             let journal = s.journal.len();
-            let params =
-                json!({"asset": aid.0, "path": replacement.to_string_lossy(), "dir": dir.join("new").to_string_lossy(), "missingOnly": false});
+            let params = match command {
+                "links.relinkFolder" => json!({"dir": dir.join("new").to_string_lossy(), "missingOnly": false}),
+                "links.update" => json!({"asset": aid.0}),
+                _ => json!({"asset": aid.0, "path": replacement.to_string_lossy()}),
+            };
             let err = s.execute(command, &params).unwrap_err();
             assert!(err.to_string().contains("PDF page 2"), "{command}: {err}");
             let st = s.doc().unwrap();
@@ -843,8 +846,10 @@ mod relink_folder_tests {
         let r = s.execute("links.relinkFolder", &json!({"dir": dir.join("new").to_string_lossy()})).unwrap();
         assert_eq!(r["relinked"], 2);
         let st = s.doc().unwrap();
-        assert_eq!(st.revision, revision + 1, "the batch commits once");
-        assert_eq!(st.history.undo.len(), undo + 1);
+        // `revision` is drawn from a process-wide counter, so a test running beside this one
+        // can take the next value: that the batch commits *once* is what the single undo step is.
+        assert_ne!(st.revision, revision, "the batch commits");
+        assert_eq!(st.history.undo.len(), undo + 1, "exactly one undo step");
         s.execute("edit.undo", &json!({})).unwrap();
         assert!(Arc::ptr_eq(&s.doc().unwrap().doc, &before));
         let _ = std::fs::remove_dir_all(dir);

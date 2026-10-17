@@ -21,8 +21,9 @@ use designcraft_doc::{AssetId, Document, ParaAttrs, Story};
 use serde_json::{Value, json};
 
 pub const MIME: &str = "application/vnd.designcraft+zip";
-/// Latest reader capability. Version 2 adds rendering of retained EPS source assets.
-pub const VERSION: u32 = 2;
+/// Latest reader capability. Version 2 pinned the Keep Lines Together and drop cap defaults;
+/// version 3 adds rendering of retained EPS source assets.
+pub const VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
@@ -84,8 +85,9 @@ fn save_with_large_entries_from(doc: &Document, preview: Option<&[u8]>, large_en
         z.write_all(MIME.as_bytes()).map_err(|e| FormatError::Io(e.to_string()))?;
         z.start_file("meta.json", deflate).map_err(io)?;
         // Older readers would silently omit EPS artwork. Preview-only legacy assets and
-        // documents without EPS still use version 1 so their existing readers keep working.
-        let version = if doc.assets.values().any(|a| designcraft_images::is_eps(&a.data)) { VERSION } else { 1 };
+        // documents without EPS stay at 2 so their existing readers keep working; writing 1
+        // would make a reader re-run the version 2 paragraph upgrade over current defaults.
+        let version = if doc.assets.values().any(|a| designcraft_images::is_eps(&a.data)) { VERSION } else { 2 };
         let meta = json!({"format": "designcraft", "version": version, "generator": concat!("DesignCraft ", env!("CARGO_PKG_VERSION"))});
         z.write_all(meta.to_string().as_bytes()).map_err(|e| FormatError::Io(e.to_string()))?;
         if let Some(png) = preview {
@@ -439,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn eps_source_requires_new_reader_but_preview_documents_keep_version_one() {
+    fn eps_source_requires_new_reader_but_preview_documents_keep_the_older_one() {
         let mut d = Document::new(&NewDocument::default());
         let version = |d: &Document| {
             let bytes = save(d).unwrap();
@@ -448,7 +450,7 @@ mod tests {
             z.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
             serde_json::from_str::<Value>(&meta).unwrap()["version"].as_u64().unwrap()
         };
-        assert_eq!(version(&d), 1);
+        assert_eq!(version(&d), 2);
         let aid = AssetId(d.alloc());
         let source = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 20 10\n%%EOF\n".to_vec();
         d.assets.insert(
@@ -464,10 +466,11 @@ mod tests {
                 ..Default::default()
             }),
         );
-        assert_eq!(version(&d), 2, "sniff source even when legacy metadata says PNG");
+        place(&mut d, aid, 0.0);
+        assert_eq!(version(&d), 3, "sniff source even when legacy metadata says PNG");
         assert_eq!(load(&save(&d).unwrap()).unwrap().assets[&aid].data.as_slice(), source);
         Arc::make_mut(d.assets.get_mut(&aid).unwrap()).data = Arc::new(b"\x89PNG\r\n\x1a\npreview".to_vec());
-        assert_eq!(version(&d), 1, "legacy EPS previews stay compatible");
+        assert_eq!(version(&d), 2, "legacy EPS previews stay compatible");
     }
 
     #[test]
