@@ -14,5 +14,9 @@ designcraft-color = { workspace = true }
 designcraft-doc = { workspace = true }
 designcraft-images = { workspace = true }
 thiserror = { workspace = true }
+log = { workspace = true }
 quick-xml = { workspace = true }
 zip = { workspace = true }
+
+[dev-dependencies]
+designcraft-compose = { workspace = true }

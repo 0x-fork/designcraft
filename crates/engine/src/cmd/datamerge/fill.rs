@@ -75,6 +75,11 @@ fn renumber(dst: &mut designcraft_doc::Document, src: &designcraft_doc::Document
     let new_id = ItemId(dst.alloc());
     maps.items.insert(old, new_id);
     it.id = new_id;
+    if let Some(m) = it.media.as_mut()
+        && let Some(p) = m.poster
+    {
+        m.poster = dst.adopt_asset(src, p).or(Some(p));
+    }
     match &mut it.content {
         Content::Text(tf) => {
             let new_sid = if let Some(n) = maps.stories.get(&tf.story) {
@@ -83,6 +88,15 @@ fn renumber(dst: &mut designcraft_doc::Document, src: &designcraft_doc::Document
                 let n = StoryId(dst.alloc());
                 let mut st = src.story(tf.story).cloned().unwrap_or_else(|| Story::new(n));
                 st.id = n;
+                let mut assets = HashMap::new();
+                for a in designcraft_doc::story_asset_refs(&st) {
+                    if let Some(na) = dst.adopt_asset(src, a)
+                        && na != a
+                    {
+                        assets.insert(a, na);
+                    }
+                }
+                designcraft_doc::remap_story_assets(&mut st, &assets);
                 st.frames.clear();
                 dst.stories.insert(n, Arc::new(st));
                 maps.stories.insert(tf.story, n);
@@ -94,8 +108,8 @@ fn renumber(dst: &mut designcraft_doc::Document, src: &designcraft_doc::Document
             }
         }
         Content::Graphic(g) => {
-            if let Some(a) = src.assets.get(&g.asset) {
-                dst.assets.entry(g.asset).or_insert_with(|| a.clone());
+            if let Some(a) = dst.adopt_asset(src, g.asset) {
+                g.asset = a;
             }
         }
         Content::Group { items } => {
@@ -326,11 +340,11 @@ fn place_image(
     let cands = image_candidates(cell, data_dir, doc_dir);
     let found = cands.iter().find_map(|p| {
         // Refuse huge files before reading them; a too-large image counts as missing.
-        let len = std::fs::metadata(p).ok()?.len();
+        let len = crate::io::metadata(p).ok()?.len();
         if len == 0 || len > super::MAX_IMAGE_FILE_BYTES {
             return None;
         }
-        std::fs::read(p).ok().filter(|b| !b.is_empty()).map(|b| (p.clone(), b))
+        crate::io::read_file(p).ok().filter(|b| !b.is_empty()).map(|b| (p.clone(), b))
     });
     let Some((path, bytes)) = found else {
         if let Some(it) = doc.item_mut(item) {
@@ -340,7 +354,7 @@ fn place_image(
         report.warnings.push(format!("Record {record}, field {field}: missing image {cell}."));
         return;
     };
-    let Some(((pw, ph), (nw, nh))) = designcraft_render::image_size(&bytes).zip(designcraft_render::image_natural_size(&bytes)) else {
+    let Some(((pw, ph), (nw, nh))) = designcraft_render::image_size(&bytes).zip(designcraft_render::natural_size(&bytes, 0)) else {
         if let Some(it) = doc.item_mut(item) {
             it.content = Content::Unassigned;
         }
@@ -354,8 +368,17 @@ fn place_image(
         return;
     };
     let mode = fitting_of(&options.fitting);
-    let mut g =
-        Graphic { asset: AssetId(0), size: (nw, nh), xf: Affine::translate((inner.x0, inner.y0)), auto_fit: mode, fit_align: 0, crop: [0.0; 4] };
+    let mut g = Graphic {
+        asset: AssetId(0),
+        size: (nw, nh),
+        xf: Affine::translate((inner.x0, inner.y0)),
+        auto_fit: mode,
+        fit_align: 0,
+        crop: [0.0; 4],
+        wrap: Default::default(),
+        clip: None,
+        fill: Default::default(),
+    };
     if let Some(xf) = g.fitted(inner, mode) {
         g.xf = xf;
     }
@@ -365,6 +388,7 @@ fn place_image(
         let m = bb.center();
         g.xf = Affine::translate((c.x - m.x, c.y - m.y)) * g.xf;
     }
+    // Reject geometry that cannot be represented before an asset is allocated for it.
     if super::super::file::validate_placement((nw, nh), inner, g.xf, "data.merge").is_err() {
         if let Some(it) = doc.item_mut(item) {
             it.content = Content::Unassigned;
@@ -373,22 +397,18 @@ fn place_image(
         report.warnings.push(format!("Record {record}, field {field}: image {cell} exceeds finite geometry limits."));
         return;
     }
-    let aid = AssetId(doc.alloc());
+    let fresh = AssetId(doc.alloc());
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| field.to_string());
     let link = options.link_images.then(|| path.to_string_lossy().into_owned());
-    doc.assets.insert(
-        aid,
-        Arc::new(Asset {
-            id: aid,
-            name,
-            mime: designcraft_render::image_mime(&bytes).to_string(),
-            link,
-            data: Arc::new(bytes),
-            pixels: Some((pw, ph)),
-            page: 0,
-        }),
-    );
-    g.asset = aid;
+    g.asset = doc.add_asset(Asset {
+        id: fresh,
+        name,
+        mime: designcraft_render::image_mime(&bytes).to_string(),
+        link,
+        data: Arc::new(bytes),
+        pixels: Some((pw, ph)),
+        ..Default::default()
+    });
     if let Some(it) = doc.item_mut(item) {
         it.content = Content::Graphic(g);
     }

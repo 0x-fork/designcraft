@@ -70,6 +70,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
     let mut st = Story::new(StoryId(0));
     let mut stack: Vec<State> = vec![State { uc: 1, ..Default::default() }];
     let mut pending = 0usize; // characters still to skip after \uN
+    let mut units = crate::Utf16Units::default();
     let mut buf = String::new();
     let mut fmt = stack[0].format();
     let mut warnings = Vec::new();
@@ -108,6 +109,8 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                 if stack.len() > 1 {
                     stack.pop();
                 }
+                // The `\uN` fallback skip ends with the group.
+                pending = 0;
                 fmt = stack.last().map(State::format).unwrap_or_default();
                 i += 1;
             }
@@ -124,6 +127,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                     if let Ok(b) = u8::from_str_radix(&hex, 16)
                         && !stack.last().is_some_and(|s| s.skip)
                     {
+                        units.reset();
                         buf.push(cp1252(b));
                     }
                     continue;
@@ -155,7 +159,9 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                 }
                 let word: String = chars[i + 1..j].iter().collect();
                 let mut k = j;
-                if k < chars.len() && (chars[k] == '-' || chars[k].is_ascii_digit()) {
+                // A '-' only starts the parameter when a digit follows; otherwise it is text.
+                let negative = chars.get(k) == Some(&'-') && chars.get(k + 1).is_some_and(char::is_ascii_digit);
+                if negative || chars.get(k).is_some_and(char::is_ascii_digit) {
                     k += 1;
                     while k < chars.len() && chars[k].is_ascii_digit() {
                         k += 1;
@@ -225,8 +231,8 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                     }
                     "u" => {
                         if let Some(n) = param {
-                            let cp = if n < 0 { (n + 65536) as u32 } else { n as u32 };
-                            if let Some(ch) = char::from_u32(cp) {
+                            let unit = if n < 0 { (n + 65536) as u32 } else { n as u32 };
+                            if let Some(ch) = units.push(unit) {
                                 buf.push(ch);
                             }
                             pending = stack.last().map_or(1, |s| s.uc);
@@ -243,6 +249,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                     continue;
                 }
                 if !stack.last().is_some_and(|s| s.skip) {
+                    units.reset();
                     buf.push(c);
                 }
             }
@@ -254,6 +261,8 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
         let n = st.len();
         st.delete(n - 1..n);
     }
+    // A page or column break ends its paragraph.
+    st.end_paragraphs_at_breaks();
     Ok(Imported { story: st, para_styles: vec![], char_styles: vec![], warnings })
 }
 
@@ -286,5 +295,36 @@ Caf\'e9 \u8364? price\tab tab\line next\par
         assert_eq!(st.format_after(st.text.find("plain").unwrap()).over.font_style, None);
         assert_eq!(st.format_after(0).over.size, Some(12.0));
         assert!(!st.text.contains("Times"), "font table skipped");
+    }
+
+    /// A '-' right after a control word is text unless a digit follows it (then it is a negative
+    /// parameter). It used to be swallowed.
+    #[test]
+    fn hyphen_after_control_word_without_digits_is_text() {
+        let i = import(br"{\rtf1\ansi Rock\emdash-roll, x\tab-y, a\li-720 b}").unwrap();
+        assert_eq!(i.story.text, "Rock\u{2014}-roll, x\t-y, ab");
+    }
+
+    /// Characters past U+FFFF are written as two `\uN` words, a UTF-16 surrogate pair (the form
+    /// our own exporter and Word write). Each half was converted alone and dropped.
+    #[test]
+    fn surrogate_pairs_become_one_character() {
+        let i = import(br"{\rtf1\ansi\uc1 A\u-10179?\u-8704?B \u-10174?\u-8265?\u30000?}").unwrap();
+        assert_eq!(i.story.text, "A\u{1F600}B \u{20BB7}\u{7530}");
+        // What the exporter writes comes back.
+        let mut st = Story::new(StoryId(1));
+        st.insert(0, "x \u{1F600} \u{20BB7}\u{7530} y");
+        let doc = designcraft_doc::Document::new(&designcraft_doc::build::NewDocument::default());
+        assert_eq!(import(crate::export::rtf(&doc, &st).as_bytes()).unwrap().story.text, st.text);
+        // Half a pair is not a character: it is still left out.
+        assert_eq!(import(br"{\rtf1 A\u-10179?B\u-8704?C}").unwrap().story.text, "ABC");
+    }
+
+    /// A `\uN` at the end of a group has no fallback character inside it. The skip count must
+    /// end with the group, not eat the text after it.
+    #[test]
+    fn unicode_fallback_skip_ends_with_group() {
+        assert_eq!(import(br"{\rtf1 {\b \u8364} AB}").unwrap().story.text, "\u{20AC} AB");
+        assert_eq!(import(br"{\rtf1 {\uc2\b \u8364} ABC}").unwrap().story.text, "\u{20AC} ABC");
     }
 }
