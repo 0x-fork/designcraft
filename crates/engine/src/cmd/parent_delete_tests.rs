@@ -61,7 +61,7 @@ fn parent_delete_preserves_local_copies_cleans_references_and_roundtrips_undo() 
     })
     .unwrap();
     s.execute("layout.pages.applyParent", &json!({"pages": [1], "parent": "B"})).unwrap();
-    let other_local = ItemId(s.execute("layout.overrideParentItems", &json!({"page": 1})).unwrap()["ids"][0].as_u64().unwrap());
+    let other_local = ItemId(s.execute("layout.overrideParentItems", &json!({"page": 1, "ids": [inherited.0]})).unwrap()["ids"][0].as_u64().unwrap());
     s.execute("layout.parents.edit", &json!({"on": true})).unwrap();
     s.doc_mut().unwrap().selection = Selection::text(TextSel::caret(story, 0));
     let before = s.doc().unwrap().doc.clone();
@@ -108,18 +108,22 @@ fn parent_delete_last_parent_returns_to_document_pages() {
     let id = s.doc().unwrap().doc.parents[0].id;
     s.execute("layout.parents.edit", &json!({"on": true})).unwrap();
     frame(&mut s, 0, Some("Last parent"));
+    let selection_before = s.doc().unwrap().selection.clone();
+    assert!(selection_before.text.is_some(), "creating the text frame leaves a caret");
     s.execute("layout.parents.delete", &json!({"id": id.0})).unwrap();
     let st = s.doc().unwrap();
     assert!(st.doc.parents.is_empty());
     assert!(!st.editing_parents);
+    assert_eq!(st.selection, Selection::default());
     assert_eq!(st.doc.page_count(), 2);
     assert!(st.doc.spreads.iter().flat_map(|sp| &sp.pages).all(|page| page.parent.is_none()));
     s.execute("edit.undo", &Value::Null).unwrap();
     assert_eq!(s.doc().unwrap().doc.parents[0].id, id);
-    assert_eq!(s.doc().unwrap().selection, Selection::default());
+    assert_eq!(s.doc().unwrap().selection, selection_before);
     s.execute("edit.redo", &Value::Null).unwrap();
     assert!(s.doc().unwrap().doc.parents.is_empty());
     assert!(!s.doc().unwrap().editing_parents);
+    assert_eq!(s.doc().unwrap().selection, Selection::default());
     // A parent-free document still supports creating another parent.
     s.execute("layout.parents.new", &json!({"prefix": "B"})).unwrap();
     assert_eq!(s.doc().unwrap().doc.parents.len(), 1);
