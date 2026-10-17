@@ -1075,6 +1075,7 @@ name = "designcraft-format"
 version = "0.8.0"
 dependencies = [
  "designcraft-doc",
+ "designcraft-images",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1102,6 +1103,7 @@ dependencies = [
  "designcraft-compose",
  "designcraft-doc",
  "designcraft-geom",
+ "designcraft-images",
  "log",
  "quick-xml",
  "thiserror 2.0.21",
