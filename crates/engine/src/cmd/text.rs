@@ -130,7 +130,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 let text = super::text_param(p, "text");
                 s.edit(|d, sel| {
                     let st = d.story_mut(sid).ok_or(designcraft_doc::DocError::NoStory(sid))?;
-                    let (a, b) = (a.min(st.len()), b.min(st.len()).max(a.min(st.len())));
+                    let n = st.len();
+                    if a > b || b > n || !st.text.is_char_boundary(a) || !st.text.is_char_boundary(b) {
+                        let msg = format!("range {a}..{b} must be UTF-8 byte offsets on character boundaries, start <= end; the story is {n} bytes");
+                        return Err(bad("story.replaceRange", msg));
+                    }
                     st.replace(a..b, &text);
                     let len = st.len();
                     if let Some(t) = sel.text.as_mut().filter(|t| t.story == sid) {
@@ -2292,9 +2296,14 @@ mod open_type_tests {
         s.execute("file.new", &json!({})).unwrap();
         let r = s.execute("frame.create", &json!({"rect": [0, 0, 200, 100], "content": "text", "text": "é漢🙂x"})).unwrap();
         let sid = r["story"].clone();
-        // Offsets inside 漢 (2..5) and 🙂 (5..9) snap back to the character starts: 漢 is replaced.
-        s.execute("story.replaceRange", &json!({"story": sid, "start": 3, "end": 6, "text": "字"})).unwrap();
         let story = designcraft_doc::StoryId(sid.as_u64().unwrap());
+        // Offsets inside 漢 (2..5) and 🙂 (5..9), past the end, or reversed are refused and change nothing.
+        for (start, end) in [(3, 6), (2, 4), (0, 99), (5, 2)] {
+            let r = s.execute("story.replaceRange", &json!({"story": sid, "start": start, "end": end, "text": "字"}));
+            assert!(r.is_err_and(|e| e.to_string().contains("10 bytes")), "{start}..{end}");
+            assert_eq!(s.doc().unwrap().doc.story(story).unwrap().text, "é漢🙂x");
+        }
+        s.execute("story.replaceRange", &json!({"story": sid, "start": 2, "end": 5, "text": "字"})).unwrap();
         assert_eq!(s.doc().unwrap().doc.story(story).unwrap().text, "é字🙂x");
         // A caret before 🙂 (byte 5) would land inside it once é (2 bytes) is gone.
         s.execute("text.select", &json!({"story": sid, "anchor": 5})).unwrap();
