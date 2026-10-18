@@ -1201,11 +1201,10 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
     let to = rect_param(p, "to").ok_or_else(|| bad("transform.resize", "missing to"))?;
     let scale_content = bool_or(p, "content", false);
     let distribute = bool_or(p, "distribute", false);
-    if from.width().abs() < 1e-9 || from.height().abs() < 1e-9 {
-        return Err(bad("transform.resize", "degenerate source rect"));
-    }
-    let sx = to.width() / from.width();
-    let sy = to.height() / from.height();
+    // A flat source (a horizontal or vertical line) has no size to scale on its flat axis: that axis only moves.
+    let ratio = |new: f64, old: f64| if old.abs() < 1e-9 { 1.0 } else { new / old };
+    let sx = ratio(to.width(), from.width());
+    let sy = ratio(to.height(), from.height());
     let sx = if sx.abs() < 1e-3 { 1e-3f64.copysign(sx) } else { sx };
     let sy = if sy.abs() < 1e-3 { 1e-3f64.copysign(sy) } else { sy };
     let m = Affine::translate((to.x0, to.y0)) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-from.x0, -from.y0));
@@ -4187,6 +4186,16 @@ mod fitting_tests {
         assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("soft effects")), "{r}");
         let bytes = super::super::file::base64_decode(r["base64"].as_str().unwrap());
         assert!(String::from_utf8_lossy(&bytes).contains("/Subtype/Image"));
+    }
+
+    #[test]
+    fn a_flat_line_resizes_along_its_length() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("line.create", &json!({"a": [100, 100], "b": [200, 100]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("transform.resize", &json!({"ids": [id], "from": [100, 100, 200, 100], "to": [100, 100, 300, 100]})).unwrap();
+        let r = s.doc().unwrap().doc.item(ItemId(id)).unwrap().bounds();
+        assert!((r.x0 - 100.0).abs() < 1e-9 && (r.x1 - 300.0).abs() < 1e-9 && (r.y0 - 100.0).abs() < 1e-9 && r.height().abs() < 1e-9, "{r:?}");
     }
 
     #[test]
