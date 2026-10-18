@@ -1,6 +1,7 @@
 # DesignCraft roadmap
 
 **Stage: pre-alpha** · next: alpha, ~5–7 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
+- PK340: File › Package writes the document's and the IDML's links relative to the package (`Links/logo.png`, `file:Links/logo.png`), so a package holds no path from the machine that made it; opening a document resolves them to the files beside it. Links › Copy Link(s) To still links by full path.
 - FID1: PDF export normalizes mixed emitted gradient color spaces to RGB with an explicit warning; homogeneous device-space gradients retain their components. Linear/radial, midpoint, archival and print policies have synthetic regression coverage.
 
 > **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects; table anchors keep their own paragraphs; grouped HTML/EPUB reading order; Links source paths; XLSX cached cell values retain numeric precision and text) · **Target:** Adobe InDesign 2026
