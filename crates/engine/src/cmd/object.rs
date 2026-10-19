@@ -259,9 +259,28 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stroke",
             [],
             None,
-            "{swatch?, tint?, weight?, align?: center|inside|outside, type?: {kind:…}, cap?: butt|round|projecting, join?: miter|round|bevel, miterLimit?, start?, end?: none|simple|simpleWide|triangle|triangleWide|barbed|curved|circle|circleSolid|square|squareSolid|bar, gapSwatch?, gapTint?, gapOverprint?: bool, ids?}",
+            "{swatch?, tint?, weight?, align?: center|inside|outside, type?: {kind: solid|dashed|dotted|thickThin|thinThick|thinThin|thickThick|thinThickThin|thickThinThick|wavy|hashed|stripes|style, pattern?: [dash, gap, …] (dashed: required, points), bands?: [[start, width], …] (stripes: required, fractions of stroke weight), name?: string (style: required, document stroke style name)} (other kinds take no extra fields; unknown type fields are errors), cap?: butt|round|projecting, join?: miter|round|bevel, miterLimit?, start?, end?: none|simple|simpleWide|triangle|triangleWide|barbed|curved|circle|circleSolid|square|squareSolid|bar, gapSwatch?, gapTint?, gapOverprint?: bool, ids?}",
             has_doc,
             |s, p| {
+                let kind: Option<designcraft_doc::StrokeType> = p
+                    .get("type")
+                    .map(|v| {
+                        if let Some(fields) = v.as_object() {
+                            let field = match v.get("kind").and_then(Value::as_str) {
+                                Some("dashed") => Some("pattern"),
+                                Some("stripes") => Some("bands"),
+                                Some("style") => Some("name"),
+                                _ => None,
+                            };
+                            for key in fields.keys() {
+                                if key != "kind" && Some(key.as_str()) != field {
+                                    return Err(bad("object.stroke", format!("type: unknown field `{key}`")));
+                                }
+                            }
+                        }
+                        serde_json::from_value(v.clone()).map_err(|e| bad("object.stroke", format!("type: {e}")))
+                    })
+                    .transpose()?;
                 for key in ["swatch", "gapSwatch"] {
                     if let Some(name) = p.get(key).and_then(Value::as_str) {
                         known_swatch(&s.doc()?.doc, name, "object.stroke", key)?;
@@ -314,11 +333,13 @@ pub fn specs() -> Vec<CommandSpec> {
                         if let Some(v) = p2.get("gapOverprint").and_then(Value::as_bool) {
                             st.gap_overprint = v;
                         }
-                        for (k, apply) in [("align", 0), ("type", 1), ("cap", 2), ("join", 3), ("start", 4), ("end", 5)] {
+                        if let Some(kind) = &kind {
+                            st.kind = kind.clone();
+                        }
+                        for (k, apply) in [("align", 0), ("cap", 2), ("join", 3), ("start", 4), ("end", 5)] {
                             if let Some(v) = p2.get(k).cloned() {
                                 let _ = match apply {
                                     0 => serde_json::from_value(v).map(|x| st.align = x),
-                                    1 => serde_json::from_value(v).map(|x| st.kind = x),
                                     2 => serde_json::from_value(v).map(|x| st.cap = x),
                                     3 => serde_json::from_value(v).map(|x| st.join = x),
                                     4 => serde_json::from_value(v).map(|x| st.start = x),
@@ -4821,6 +4842,64 @@ mod group_tests {
         let e = group_ids(&mut s, &[a, b]).unwrap_err().to_string();
         assert!(e.contains("multi-state"), "{e}");
         assert_eq!(children(&s, g), vec![a, b]);
+    }
+}
+
+#[cfg(test)]
+mod stroke_type_tests {
+    use serde_json::json;
+
+    #[test]
+    fn malformed_stroke_types_return_bad_params_without_editing() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [0, 0, 100, 100]})).unwrap()["id"].clone();
+        for (kind, hint) in [
+            (json!({"kind": "dashed", "dash": [8, 2.5]}), "dash"),
+            (json!({"kind": "zigzag"}), "zigzag"),
+            (json!({"kind": "solid", "dash": [8, 2.5]}), "dash"),
+            (json!({"kind": "dashed", "pattern": [8, 2.5], "dash": [1, 2]}), "dash"),
+            (json!({"kind": "dashed"}), "pattern"),
+            (json!({"kind": "dashed", "pattern": "bad"}), "type"),
+            (json!({"kind": "stripes", "bands": [[0, "bad"]]}), "type"),
+            (json!({"kind": "style"}), "name"),
+            (json!({}), "kind"),
+            (json!("solid"), "type"),
+            (json!(null), "type"),
+        ] {
+            let before = s.doc().unwrap().doc.clone();
+            let error = s.execute("object.stroke", &json!({"ids": [id], "weight": 5, "type": kind})).unwrap_err();
+            assert!(matches!(error, crate::EngineError::BadParams { .. }), "{error}");
+            assert!(error.to_string().contains(hint), "{kind}: {error}");
+            assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc), "{kind}: nothing changed");
+        }
+    }
+
+    #[test]
+    fn stroke_types_apply_all_supported_variants() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s.execute("frame.create", &json!({"rect": [0, 0, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+        for kind in [
+            json!({"kind": "solid"}),
+            json!({"kind": "dashed", "pattern": [8, 2.5]}),
+            json!({"kind": "dotted"}),
+            json!({"kind": "thickThin"}),
+            json!({"kind": "thinThick"}),
+            json!({"kind": "thinThin"}),
+            json!({"kind": "thickThick"}),
+            json!({"kind": "thinThickThin"}),
+            json!({"kind": "thickThinThick"}),
+            json!({"kind": "wavy"}),
+            json!({"kind": "hashed"}),
+            json!({"kind": "stripes", "bands": [[0, 0.3], [0.7, 0.3]]}),
+            json!({"kind": "style", "name": "Rails"}),
+        ] {
+            let result = s.execute("object.stroke", &json!({"ids": [id], "type": kind})).unwrap();
+            assert_eq!(result["changed"], 1);
+            let item = s.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap();
+            assert_eq!(item.stroke.kind, serde_json::from_value::<designcraft_doc::StrokeType>(kind).unwrap());
+        }
     }
 }
 
