@@ -180,7 +180,9 @@ Positions in a story's text are **UTF-8 byte offsets**, not character counts: `a
 `start` / `end` of `story.replaceRange` and of `find.find` matches, the `pos` that `text.placeCaret`, `text.insert`
 and `text.move` return, a story's `length` in `get_story` and `inspect_document`, and its `overset` position in
 `get_story`. A character outside ASCII takes 2 to 4 bytes (é 2, — and は 3), so the story `はただ商店` has length 15
-and its second character starts at 3. An offset inside a character snaps back to the start of that character.
+and its second character starts at 3. An offset inside a character snaps back to the start of that character, except
+in `story.replaceRange`: there an offset inside a character, an `end` past the end of the story or a `start` after `end`
+is an error that gives the story length in bytes, and the story is left unchanged.
 
 ## Text and image fitting
 
