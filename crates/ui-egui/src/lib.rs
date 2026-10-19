@@ -43,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use control::{ControlRequest, ControlResponse};
+pub use prefs::ReadPreferences;
 
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
@@ -116,7 +117,7 @@ pub struct SavedWorkspace {
     pub docking: Option<craft_ui::docking::Layout<String>>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub docking_hidden: std::collections::BTreeMap<String, craft_ui::docking::Location<String>>,
-    /// The workspace's own icon column (see [`UiState::icon_groups`]).
+    /// The workspace's own iconic column (see [`UiState::icon_groups`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_groups: Option<Vec<Vec<String>>>,
     /// Saved with New Workspace › Capture › Panel Locations off: choosing the workspace leaves the
@@ -253,11 +254,14 @@ pub struct UiState {
     pub shortcuts: std::collections::BTreeMap<String, String>,
     pub control_bar: bool,
     pub tools_double_column: bool,
-    /// Expanded right-dock panel group tab.
+    /// The front tab of the default layout's Properties · Pages · Layers group. `dock_tab`,
+    /// `open_panel`, `floating`, `dock_expanded` and `icon_groups` describe a workspace's
+    /// default layout (`panel_docking::default_layout`).
     pub dock_tab: String,
-    /// Panel opened from the collapsed icon column (flyout).
+    /// The panel it opens below that group (Printing and Proofing: Swatches).
     pub open_panel: Option<String>,
-    /// Panels torn off the dock into their own floating windows: (panel id, top-left position).
+    /// Its floating panels, and the float-only panels' windows (Type › Tabs): (panel id,
+    /// top-left position). A customized layout holds its own floating panels.
     pub floating: Vec<(String, [f32; 2])>,
     /// The panel layout once the user customizes it; `None` is the workspace's default layout
     /// (`panel_docking::default_layout`).
@@ -274,12 +278,13 @@ pub struct UiState {
     /// One-frame reveal request; z-order is never persisted.
     #[serde(skip)]
     pub docking_raise: Option<String>,
-    /// Last explicitly revealed customized panel, for the legacy closePanel control.
+    /// The panel last revealed explicitly, which `ui.set closePanel` closes.
     #[serde(skip)]
     pub docking_opened: Option<String>,
+    /// Whether the default layout's outer column is expanded (false: collapsed to icons).
     pub dock_expanded: bool,
-    /// A workspace's iconic panel groups (Essentials Classic), shown with their names in the icon
-    /// column instead of every panel; `None` is the full icon column.
+    /// A workspace's iconic panel groups (Essentials Classic), shown with their names in the
+    /// iconic column instead of every panel; `None` is one icon per panel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_groups: Option<Vec<Vec<String>>>,
     pub units: Unit,
@@ -1563,7 +1568,7 @@ impl DesignApp {
         let t = theme::Tokens::get(&ctx);
         let presenting = self.ui.screen_mode == ScreenMode::Presentation;
         if presenting || self.ui.hidden_panels != 0 {
-            panel_docking::cancel_gesture(self, &ctx);
+            panel_docking::cancel_gesture(&ctx);
         }
         canvas::begin_frame(&ctx);
         let dbg = std::env::var_os("DESIGNCRAFT_DEBUG_LAYOUT").is_some();
@@ -1631,7 +1636,7 @@ impl DesignApp {
         }
         // Tab, Shift+Tab and Presentation hide the floating panels with the docked ones.
         if !presenting && self.ui.hidden_panels == 0 {
-            dock::floating(self, &ctx);
+            dock::float_only_windows(self, &ctx);
         }
         story_editor::show(self, &ctx);
         dialogs::show(self, &ctx);

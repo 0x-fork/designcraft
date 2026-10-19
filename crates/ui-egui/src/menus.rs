@@ -236,7 +236,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         None,
         "{panel: properties|pages|layers|swatches|paragraphStyles|characterStyles|stroke|character|paragraph|textWrap|links|table|preflight}",
     ),
-    ("window.floatPanel", "Float Panel", None, "{panel, x?, y?} — the panel in its own movable window"),
+    ("window.floatPanel", "Float Panel", None, "{panel, x?, y?} — the panel in its own floating window (window.panel.float)"),
     (
         "window.panel.layout",
         "Change Panel Layout",
@@ -255,7 +255,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("window.panel.close", "Close Panel", None, "{panel} — hide a panel"),
     ("window.panel.closeGroup", "Close Tab Group", None, "{panel} — hide the panel and the panels tabbed with it"),
     ("window.collapseToIcons", "Collapse to Icons", None, "{} — the panel dock shrinks to its column of icons"),
-    ("window.dockPanel", "Dock Panel", None, "{panel} — back into the dock's icon column"),
+    ("window.dockPanel", "Dock Panel", None, "{panel} — back to its place in the dock (window.panel.dock)"),
     ("window.controlBar", "Control", Some("Cmd+Alt+6"), "{}"),
     // Object › Fitting with InDesign's shortcuts (one `object.fit` mode each).
     ("fit.fillFrameProportionally", "Fill Frame Proportionally", Some("Cmd+Alt+Shift+C"), "{} — object.fit {mode: fillProportionally}"),
@@ -925,7 +925,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
 pub const WORKSPACES: &[&str] =
     &["Advanced", "Book", "Digital Publishing", "Essentials", "Essentials Classic", "Interactive for PDF", "Printing and Proofing", "Typography"];
 
-/// Essentials Classic's icon column: InDesign's iconic panel groups, top to bottom.
+/// Essentials Classic's iconic column: InDesign's iconic panel groups, top to bottom.
 pub const CLASSIC_GROUPS: &[&[&str]] = &[
     &["pages", "layers", "links"],
     &["stroke", "color"],
@@ -955,10 +955,10 @@ pub fn ui_label(id: &str) -> Option<(&'static str, Option<&'static str>)> {
 /// Type › Tabs: float the Tabs panel (placed above the selected text frame) or close it.
 fn toggle_tabs_panel(app: &mut DesignApp) {
     if app.ui.floating.iter().any(|(p, _)| p == "tabs") {
-        crate::dock::dock_panel(app, "tabs");
+        app.ui.floating.retain(|(p, _)| p != "tabs");
     } else {
         let at = app.canvas_rect.map_or(egui::pos2(300.0, 140.0), |r| r.min + egui::vec2(80.0, 60.0));
-        crate::dock::float_panel(app, "tabs", at);
+        app.ui.floating.push(("tabs".into(), [at.x, at.y]));
         app.ui.tabs_panel.snap_request = 2;
     }
 }
@@ -1342,10 +1342,6 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             };
             return Some(r);
         }
-        "app.tablePanel" => {
-            app.ui.open_panel = if app.ui.open_panel.as_deref() == Some("table") { None } else { Some("table".into()) };
-            Ok(Value::Null)
-        }
         "app.tabsPanel" => {
             toggle_tabs_panel(app);
             Ok(Value::Null)
@@ -1647,19 +1643,13 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             run_ui(app, "window.panel", &json!({"panel": panel})).unwrap_or(Ok(Value::Null))
         }
         "app.insertCurrentPageNumber" => app.run("text.insert", json!({"text": "\u{e000}", "raw": true})),
+        // `panel_docking::command` takes the dock panels (and the Window › Styles group) first.
         "window.panel" => {
-            let panel = p.get("panel").and_then(Value::as_str).unwrap_or("properties").to_string();
-            // A panel in the workspace's icon groups opens from there (Essentials Classic's Pages).
-            let iconic = app.ui.icon_groups.as_ref().is_some_and(|g| g.iter().flatten().any(|p| *p == panel));
-            if panel == "tabs" {
-                toggle_tabs_panel(app);
-            } else if !iconic && crate::dock::DOCK_TABS.iter().any(|(id, _, _)| *id == panel) {
-                app.ui.dock_tab = panel;
-                app.ui.dock_expanded = true;
-                app.ui.open_panel = None;
-            } else if !app.ui.floating.iter().any(|(p, _)| *p == panel) {
-                app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(panel.as_str()) { None } else { Some(panel) };
+            let panel = p.get("panel").and_then(Value::as_str).unwrap_or("properties");
+            if panel != "tabs" {
+                return crate::panel_docking::command(app, "window.panel.activate", &json!({"panel": panel}));
             }
+            toggle_tabs_panel(app);
             Ok(Value::Null)
         }
         "fit.fillFrameProportionally" | "fit.contentProportionally" | "fit.frameToContent" | "fit.contentToFrame" | "fit.centerContent" => {
@@ -1736,22 +1726,6 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             let v = p.get("scale").and_then(Value::as_f64).unwrap_or(1.0) as f32;
             app.ui.ui_scale = v.clamp(0.5, 3.0);
             Ok(json!({"scale": app.ui.ui_scale}))
-        }
-        "window.floatPanel" | "window.dockPanel" => {
-            let panel = p.get("panel").and_then(Value::as_str).unwrap_or("");
-            if !crate::dock::ICON_PANELS.iter().any(|(id, _, _)| *id == panel) && !crate::dock::FLOATING_PANELS.iter().any(|(id, _)| *id == panel) {
-                return Some(Err(format!("{id}: unknown panel `{panel}`")));
-            }
-            if id == "window.floatPanel" {
-                let at = egui::pos2(
-                    p.get("x").and_then(Value::as_f64).unwrap_or(400.0) as f32,
-                    p.get("y").and_then(Value::as_f64).unwrap_or(160.0) as f32,
-                );
-                crate::dock::float_panel(app, panel, at);
-            } else {
-                crate::dock::dock_panel(app, panel);
-            }
-            Ok(json!({"floating": app.ui.floating.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>()}))
         }
         "window.controlBar" => flag(&mut app.ui.control_bar),
         "view.flattenerPreview" => flag(&mut app.ui.flattener_preview),
@@ -1904,7 +1878,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.docking = None;
             app.ui.docking_hidden.clear();
             app.ui.control_bar = matches!(name, "Advanced" | "Typography" | "Printing and Proofing" | "Book" | "Essentials Classic");
-            // Essentials Classic: the Control panel and an icon column of grouped panels, no
+            // Essentials Classic: the Control panel and an iconic column of grouped panels, no
             // Properties stack.
             let groups = match name {
                 "Essentials Classic" => Some(CLASSIC_GROUPS),
@@ -4730,13 +4704,21 @@ mod tests {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         let r = run_ui(&mut app, "window.floatPanel", &json!({"panel": "swatches", "x": 50, "y": 60})).unwrap().unwrap();
         assert_eq!(r["floating"], json!(["swatches"]));
-        assert_eq!(app.ui.floating[0].1, [50.0, 60.0]);
-        // Showing a floating panel doesn't also open its flyout.
+        let window = &app.ui.docking.as_ref().unwrap().floating[0];
+        assert_eq!([window.rect[0], window.rect[1]], [50.0, 60.0]);
+        // Showing a floating panel leaves it where it is.
         run_ui(&mut app, "window.panel", &json!({"panel": "swatches"})).unwrap().unwrap();
         assert_eq!(app.ui.open_panel, None);
-        run_ui(&mut app, "window.dockPanel", &json!({"panel": "swatches"})).unwrap().unwrap();
-        assert!(app.ui.floating.is_empty());
+        let r = run_ui(&mut app, "window.dockPanel", &json!({"panel": "swatches"})).unwrap().unwrap();
+        assert_eq!(r["floating"], json!([]));
+        assert!(app.ui.docking.as_ref().unwrap().floating.is_empty());
         assert!(run_ui(&mut app, "window.floatPanel", &json!({"panel": "nope"})).unwrap().is_err());
+        // Float-only panels (Type › Tabs) have their own windows outside the layout.
+        let r = run_ui(&mut app, "window.floatPanel", &json!({"panel": "tabs", "x": 10, "y": 20})).unwrap().unwrap();
+        assert_eq!(r["floating"], json!(["tabs"]));
+        assert_eq!(app.ui.floating, [("tabs".to_string(), [10.0, 20.0])]);
+        run_ui(&mut app, "window.dockPanel", &json!({"panel": "tabs"})).unwrap().unwrap();
+        assert!(app.ui.floating.is_empty());
     }
 
     /// One frame as the desktop app runs it: queued synthetic input, then the native menu item

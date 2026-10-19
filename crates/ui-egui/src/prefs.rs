@@ -1,43 +1,92 @@
 //! Compatibility recovery at the saved-preferences boundary. Command deserialization stays strict.
 
+use std::collections::BTreeMap;
+
 use craft_ui::docking::{Layout, Location};
 use serde_json::Value;
 
-use crate::UiState;
+use crate::{SavedWorkspace, UiState, panel_docking};
+
+/// Saved preferences, and whether reading them discarded anything.
+pub struct ReadPreferences {
+    pub ui: UiState,
+    /// False when unreadable docking data was dropped. The caller keeps the file it read
+    /// instead of overwriting it.
+    pub intact: bool,
+}
 
 impl UiState {
     /// Read saved preferences, discarding only unreadable optional docking metadata.
     /// A layout from a newer craft-ui version must not reset unrelated settings or named workspaces.
     pub fn from_preferences_json(bytes: &[u8]) -> serde_json::Result<Self> {
+        Self::read_preferences(bytes).map(|read| read.ui)
+    }
+
+    /// [`Self::from_preferences_json`], also reporting whether anything was discarded. Layouts
+    /// saved before the canvas joined the panel layout are converted (see
+    /// [`panel_docking::from_dock_only`]); that is not a loss.
+    pub fn read_preferences(bytes: &[u8]) -> serde_json::Result<ReadPreferences> {
         let mut saved: Value = serde_json::from_slice(bytes)?;
-        recover_docking(&mut saved);
+        let mut intact = recover_docking(&mut saved);
         if let Some(workspaces) = saved.get_mut("customWorkspaces").and_then(Value::as_array_mut) {
             for workspace in workspaces {
-                recover_docking(workspace);
+                intact &= recover_docking(workspace);
             }
         }
-        serde_json::from_value(saved)
+        let mut ui: UiState = serde_json::from_value(saved)?;
+        migrate(&mut ui.docking, &mut ui.floating, &ui.docking_hidden, ui.dock_expanded, ui.icon_groups.as_deref());
+        for workspace in &mut ui.custom_workspaces {
+            let SavedWorkspace { docking, floating, docking_hidden, dock_expanded, icon_groups, .. } = workspace;
+            migrate(docking, floating, docking_hidden, *dock_expanded, icon_groups.as_deref());
+        }
+        Ok(ReadPreferences { ui, intact })
     }
 }
 
-fn recover_docking(saved: &mut Value) {
-    let Some(fields) = saved.as_object_mut() else { return };
+/// Drop docking data this version cannot read. True when nothing was dropped.
+fn recover_docking(saved: &mut Value) -> bool {
+    let Some(fields) = saved.as_object_mut() else { return true };
+    let mut intact = true;
     if fields.get("docking").is_some_and(|value| serde_json::from_value::<Option<Layout<String>>>(value.clone()).is_err()) {
         fields.remove("docking");
+        intact = false;
     }
     if let Some(hidden) = fields.get_mut("dockingHidden") {
         if let Some(entries) = hidden.as_object_mut() {
+            let before = entries.len();
             entries.retain(|_, value| serde_json::from_value::<Location<String>>(value.clone()).is_ok());
+            intact &= entries.len() == before;
         } else {
             fields.remove("dockingHidden");
+            intact = false;
         }
+    }
+    intact
+}
+
+/// Convert a layout saved before the canvas joined the panel layout. One that cannot be
+/// converted gives way to the workspace's default layout, which the workspace fields
+/// (`dockTab`, `openPanel`, `floating`, `dockExpanded`, `iconGroups`) still describe.
+fn migrate(
+    docking: &mut Option<Layout<String>>,
+    floating: &mut Vec<(String, [f32; 2])>,
+    hidden: &BTreeMap<String, Location<String>>,
+    dock_expanded: bool,
+    icon_groups: Option<&[Vec<String>]>,
+) {
+    let Some(old) = docking.as_ref().filter(|layout| panel_docking::dock_only(layout)) else { return };
+    *docking = panel_docking::from_dock_only(old, hidden.keys(), dock_expanded, icon_groups);
+    if docking.is_some() {
+        // The converted layout holds the floating dock panels.
+        floating.retain(|(id, _)| crate::dock::float_only(id));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DesignApp, SavedWorkspace};
+    use crate::DesignApp;
+    use craft_ui::docking::{Column, Node, Side};
     use serde_json::json;
 
     fn populated() -> UiState {
@@ -106,6 +155,144 @@ mod tests {
         assert!(!original.docking_hidden.is_empty());
         assert_eq!(loaded.docking_hidden, original.docking_hidden);
         assert_eq!(loaded.custom_workspaces[0].docking_hidden, original.custom_workspaces[0].docking_hidden);
+    }
+
+    #[test]
+    fn unreadable_docking_is_reported_so_the_file_is_kept() {
+        let mut saved = serde_json::to_value(populated()).unwrap();
+        assert!(UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap().intact);
+        saved["customWorkspaces"][1]["docking"] = json!({"root":{"FutureLayout":{}}});
+        assert!(!UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap().intact);
+    }
+
+    /// The dock of a layout in the current shape: the canvas beside a dock at the end edge.
+    fn dock(layout: &Layout<String>) -> &[Column<String>] {
+        assert!(crate::panel_docking::valid(layout), "{layout:?}");
+        let Some(Node::Split { first, second, .. }) = &layout.root else { panic!("expected the canvas split: {layout:?}") };
+        assert!(matches!(&**first, Node::Tabs { panels, .. } if panels == &["canvas"]));
+        let Node::Dock { side: Side::End, columns } = &**second else { panic!("expected an end dock: {second:?}") };
+        columns
+    }
+
+    fn panels(column: &Column<String>) -> Vec<Vec<&str>> {
+        column.groups.iter().map(|g| g.panels.iter().map(String::as_str).collect()).collect()
+    }
+
+    /// Hand-written pre-trial `ui.json` files: each loads through the app's path with nothing lost.
+    fn load(saved: serde_json::Value) -> UiState {
+        UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).map(|read| read.ui).unwrap()
+    }
+
+    #[test]
+    fn classic_dock_file_loads_as_its_workspace_default_layout() {
+        let ui = load(json!({
+            "workspace": "Printing and Proofing", "dockTab": "layers", "dockExpanded": true, "openPanel": "swatches",
+            "floating": [["glyphs", [100.0, 120.0]]],
+        }));
+        assert!(ui.docking.is_none());
+        let layout = crate::panel_docking::default_layout(&ui);
+        let columns = dock(&layout);
+        assert_eq!(panels(&columns[0]), [vec!["properties", "pages", "layers"], vec!["swatches"]]);
+        assert_eq!(columns[0].groups[0].active, 2, "Layers stays in front");
+        assert!(!columns[0].iconic && columns[1].iconic);
+        assert!(columns[1].groups.iter().all(|g| !g.panels.iter().any(|p| p == "glyphs" || p == "swatches")));
+        assert_eq!(layout.floating.len(), 1);
+        assert_eq!(layout.floating[0].groups[0].panels, ["glyphs"]);
+        assert_eq!(&layout.floating[0].rect[..2], &[100.0, 120.0]);
+    }
+
+    #[test]
+    fn dock_only_layout_becomes_the_main_column() {
+        let ui = load(json!({
+            "dockExpanded": true,
+            "docking": {"root": {"Tabs": {"panels": ["properties", "pages", "layers", "swatches"], "active": 3}}, "floating": []},
+            "customWorkspaces": [{
+                "name": "Split", "dockExpanded": true,
+                "docking": {"root": {"Split": {"axis": "Horizontal", "size": {"Ratio": 0.5},
+                    "first": {"Tabs": {"panels": ["links"], "active": 0}},
+                    "second": {"Split": {"axis": "Vertical", "size": {"Ratio": 0.5},
+                        "first": {"Tabs": {"panels": ["properties", "pages"], "active": 1}},
+                        "second": {"Stack": {"entries": [
+                            {"panel": "layers", "open": true, "height": null},
+                            {"panel": "swatches", "open": false, "height": 120.0}]}}}}}},
+                    "floating": []},
+            }],
+        }));
+        let columns = dock(ui.docking.as_ref().unwrap());
+        assert_eq!(panels(&columns[0]), [vec!["properties", "pages", "layers", "swatches"]]);
+        assert_eq!(columns[0].groups[0].active, 3);
+        assert!(!columns[0].iconic);
+        let icons = &columns[1];
+        assert!(icons.iconic && icons.groups.iter().any(|g| g.panels == ["stroke"]));
+        assert!(icons.groups.iter().all(|g| g.panels != ["swatches"]), "each panel appears once");
+
+        // Splits: a vertical split stacks groups in one column, a horizontal one adds a column
+        // (the dock lists columns from the window edge inwards).
+        let columns = dock(ui.custom_workspaces[0].docking.as_ref().unwrap());
+        assert_eq!(panels(&columns[0]), [vec!["properties", "pages"], vec!["layers"], vec!["swatches"]]);
+        assert_eq!(columns[0].groups[0].active, 1);
+        assert!(columns[0].groups[2].minimized && columns[0].groups[2].height == Some(120.0), "a closed accordion entry stays minimized");
+        assert_eq!(panels(&columns[1]), [vec!["links"]]);
+        assert!(columns[2].iconic);
+    }
+
+    #[test]
+    fn icon_groups_become_the_iconic_column_in_order() {
+        let ui = load(json!({
+            "dockExpanded": true,
+            "iconGroups": [["pages", "layers"], ["properties", "swatches", "color"]],
+            "docking": {"root": {"Tabs": {"panels": ["properties"], "active": 0}}, "floating": []},
+        }));
+        let columns = dock(ui.docking.as_ref().unwrap());
+        assert_eq!(columns.len(), 2);
+        assert_eq!(panels(&columns[0]), [vec!["properties"]]);
+        assert!(columns[1].iconic);
+        assert_eq!(panels(&columns[1]), [vec!["pages", "layers"], vec!["swatches", "color"]]);
+    }
+
+    #[test]
+    fn collapsed_dock_makes_the_main_column_iconic() {
+        let ui = load(json!({
+            "dockExpanded": false,
+            "docking": {"root": {"Tabs": {"panels": ["properties", "pages", "layers"], "active": 0}}, "floating": []},
+        }));
+        let columns = dock(ui.docking.as_ref().unwrap());
+        assert_eq!(panels(&columns[0]), [vec!["properties", "pages", "layers"]]);
+        assert!(columns.iter().all(|c| c.iconic));
+    }
+
+    #[test]
+    fn floating_windows_and_hidden_places_survive_the_migration() {
+        let saved = json!({
+            "dockExpanded": true,
+            "floating": [["glyphs", [40.0, 60.0]], ["character", [40.0, 60.0]], ["tabs", [10.0, 20.0]]],
+            "docking": {
+                "root": {"Tabs": {"panels": ["properties", "pages", "layers"], "active": 0}},
+                "floating": [{"panels": ["glyphs", "character"], "active": 1, "rect": [40.0, 60.0, 300.0, 400.0]}],
+            },
+            "dockingHidden": {"color": {"floating": null, "anchor": "layers", "placement": {"Split": "Bottom"},
+                "size": {"Ratio": 0.5}, "stack": null}},
+        });
+        let read = UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert!(read.intact, "converting is not a loss");
+        let ui = read.ui;
+        let layout = ui.docking.clone().unwrap();
+        let columns = dock(&layout);
+        assert_eq!(layout.floating.len(), 1);
+        assert_eq!(layout.floating[0].groups[0].panels, ["glyphs", "character"]);
+        assert_eq!(layout.floating[0].groups[0].active, 1);
+        assert_eq!(layout.floating[0].rect, [40.0, 60.0, 300.0, 400.0]);
+        assert_eq!(ui.floating, [("tabs".to_string(), [10.0, 20.0])], "the layout holds the floating dock panels");
+        assert!(ui.docking_hidden.contains_key("color") && !layout.contains(&"color".to_string()), "a closed panel stays closed");
+        assert!(columns[1].groups.iter().all(|g| g.panels != ["glyphs"]));
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Default::default());
+        app.ui = ui;
+        app.run("window.panel", json!({"panel": "color"})).unwrap();
+        assert!(app.ui.docking.as_ref().unwrap().contains(&"color".to_string()));
+        assert!(!app.ui.docking_hidden.contains_key("color"));
+        // Saved again, the file is in the current shape and loads unchanged.
+        let again = UiState::from_preferences_json(&serde_json::to_vec(&app.ui).unwrap()).unwrap();
+        assert_eq!(again.docking, app.ui.docking);
     }
 
     #[test]

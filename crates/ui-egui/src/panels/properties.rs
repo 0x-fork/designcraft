@@ -16,12 +16,9 @@ use crate::widgets::{
 };
 use crate::{DesignApp, icons};
 
-/// A link to another panel. `window.panel` shows it in the docked layout or as a flyout; it
-/// toggles the flyout, so a flyout that is already open is left as it is.
+/// A link to another panel: `window.panel` shows it in the docking layout.
 fn show_panel(app: &mut DesignApp, panel: &str) {
-    if app.ui.open_panel.as_deref() != Some(panel) {
-        let _ = app.run("window.panel", json!({"panel": panel}));
-    }
+    let _ = app.run("window.panel", json!({"panel": panel}));
 }
 
 fn units(app: &DesignApp) -> Unit {
@@ -1692,12 +1689,8 @@ pub fn character_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Opens the Typography panel, or focuses it when it is already showing. `window.panel` toggles a
-/// flyout, so it is skipped while the Typography flyout is open.
+/// Opens the Typography panel, or brings it to the front when it is already open.
 pub fn show_typography_panel(app: &mut DesignApp) {
-    if app.ui.open_panel.as_deref() == Some("typography") {
-        return;
-    }
     let _ = app.run("window.panel", json!({"panel": "typography"}));
 }
 

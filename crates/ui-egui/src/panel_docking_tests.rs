@@ -136,16 +136,7 @@ fn capture_custom_panel_docking_visual_fixtures() {
                             ready = true;
                             return;
                         }
-                        crate::dock::show(app, ui);
-                        egui::CentralPanel::default().show(ui, |ui| {
-                            ui.label("Custom panel workspace");
-                            if app.ui.language == "ar" {
-                                ui.label("Shaped action references:");
-                                for action in ["Float Panel", "Group with", "Close Panel"] {
-                                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, action));
-                                }
-                            }
-                        });
+                        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| crate::panel_docking::show(app, ui));
                     },
                     app,
                 );
@@ -174,10 +165,7 @@ fn capture_custom_panel_docking_visual_fixtures() {
                     harness.run_steps(2);
                     assert!(egui::Popup::is_any_open(&harness.ctx), "actual tab context menu must be open");
                     for action in ["Float Panel", "Group with", "Close Panel"] {
-                        assert!(
-                            harness.query_all_by_label(crate::i18n::tr("ar", action)).count() >= 2,
-                            "both logical reference and actual menu label must exist"
-                        );
+                        assert!(harness.query_all_by_label(crate::i18n::tr("ar", action)).count() >= 1, "the menu lists {action}");
                     }
                     harness.render().unwrap().save(directory.join(format!("designcraft-dock-context-{}-ar.png", theme.id()))).unwrap();
                 }
@@ -352,7 +340,7 @@ fn changing_workspace_during_a_drag_cancels_the_stale_gesture() {
 }
 
 #[test]
-fn first_customization_preserves_the_visible_legacy_flyout() {
+fn first_customization_keeps_the_panel_the_workspace_opened() {
     let mut app = app();
     app.ui.open_panel = Some("paragraphStyles".into());
     app.ui.dock_expanded = false;
@@ -383,7 +371,7 @@ fn hiding_before_first_destination_frame_does_not_restore_an_old_drag_snapshot()
     let floating = h.state().ui.floating.clone();
     // The app calls this before dock rendering when panels are hidden or Presentation starts.
     let ctx = h.ctx.clone();
-    cancel_gesture(h.state_mut(), &ctx);
+    cancel_gesture(&ctx);
     assert_eq!(h.state().ui.docking, destination);
     assert_eq!(h.state().ui.open_panel, open_panel);
     assert_eq!(h.state().ui.floating, floating);
@@ -393,7 +381,7 @@ fn hiding_before_first_destination_frame_does_not_restore_an_old_drag_snapshot()
 }
 
 #[test]
-fn legacy_table_and_control_visibility_work_after_customization_without_document_edits() {
+fn table_and_control_visibility_work_after_customization_without_document_edits() {
     let mut app = app();
     app.run("file.new", json!({})).unwrap();
     let doc = serde_json::to_value(&app.session.active().unwrap().doc).unwrap();
@@ -549,82 +537,6 @@ fn first_story_editor_frame_conservatively_blocks_owned_tab_release() {
 }
 
 #[test]
-fn capture_legacy_panel_menu_visual_fixture() {
-    let Some(directory) = std::env::var_os("CRAFT_UI_DOCKING_FIXTURES").map(std::path::PathBuf::from) else { return };
-    std::fs::create_dir_all(&directory).unwrap();
-    let mut app = app();
-    app.run("file.new", json!({})).unwrap();
-    app.run("frame.create", json!({"rect":[40,40,280,180],"content":"text","text":"Legacy Arabic menu fixture"})).unwrap();
-    app.run("app.language", json!({"lang":"ar"})).unwrap();
-    let doc = serde_json::to_value(&app.session.active().unwrap().doc).unwrap();
-    let mut ready = false;
-    let mut h = Harness::builder().with_size(vec2(800.0, 800.0)).wgpu().build_ui_state(
-        move |ui, app: &mut DesignApp| {
-            if !ready {
-                crate::theme::install_fonts(ui.ctx(), &app.ui.language);
-                crate::theme::apply(ui.ctx(), &crate::theme::Tokens::for_brightness(crate::theme::Brightness::Dark));
-                ready = true;
-                return;
-            }
-            crate::dock::show(app, ui);
-            egui::CentralPanel::default().show(ui, |ui| {
-                ui.label("Shaped legacy menu references:");
-                for label in ["Float Panel", "Layers"] {
-                    crate::rtl::label(ui, crate::i18n::tr("ar", label));
-                }
-            });
-        },
-        app,
-    );
-    h.input_mut().max_texture_side = Some(8192);
-    h.run_steps(5);
-    assert!(h.state().ui.docking.is_none(), "fixture must use the actual legacy menu before customization");
-    let at = h.get_by_label("Properties").rect().center();
-    h.input_mut().events.extend([
-        Event::PointerMoved(at),
-        Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE },
-    ]);
-    h.run_steps(1);
-    h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
-    h.run_steps(2);
-    assert!(egui::Popup::is_any_open(&h.ctx));
-    assert_eq!(h.query_all_by_label(crate::i18n::tr("ar", "Float Panel")).count(), 2, "reference and actual logical action must be accessible");
-    h.render().unwrap().save(directory.join("designcraft-legacy-context-dark-ar.png")).unwrap();
-    let group = h.get_by_label_contains(crate::i18n::tr("ar", "Group with")).rect().center();
-    h.hover_at(group);
-    h.run_steps(4);
-    assert_eq!(h.query_all_by_label(crate::i18n::tr("ar", "Layers")).count(), 2, "reference and actual target must be accessible");
-    h.render().unwrap().save(directory.join("designcraft-legacy-targets-dark-ar.png")).unwrap();
-    assert!(h.state().ui.docking.is_none());
-    let (last, last_label, _) = crate::dock::ICON_PANELS.last().unwrap();
-    let logical = crate::i18n::tr("ar", last_label);
-    let scroll_at = h.query_all_by_label(crate::i18n::tr("ar", "Layers")).find(|node| node.rect().left() > 500.0).unwrap().rect().center();
-    let submenu_layer = h.ctx.layer_id_at(scroll_at).unwrap();
-    let submenu = h.ctx.memory(|m| m.area_rect(submenu_layer.id)).unwrap();
-    let before = h.query_all_by_label(logical).find(|node| submenu.x_range().contains(node.rect().center().x)).map(|node| node.rect());
-    assert!(before.is_none_or(|rect| !submenu.contains_rect(rect)), "actual submenu must require scrolling to reach its last target");
-    h.input_mut().events.extend([
-        Event::PointerMoved(scroll_at),
-        Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(0.0, -1600.0), phase: egui::TouchPhase::Move, modifiers: Modifiers::NONE },
-    ]);
-    h.run_steps(12);
-    let target = h.query_all_by_label(logical).find(|node| submenu.x_range().contains(node.rect().center().x)).unwrap().rect();
-    assert!(submenu.contains_rect(target), "last target must be inside the actual submenu after scrolling");
-    assert!(h.ctx.content_rect().contains_rect(target), "last target must be physically visible after wheel scrolling");
-    h.render().unwrap().save(directory.join("designcraft-legacy-targets-scrolled-dark-ar.png")).unwrap();
-    h.query_all_by_label(logical).find(|node| submenu.contains_rect(node.rect())).unwrap().click();
-    h.run_steps(4);
-    let layout = h.state().ui.docking.as_ref().unwrap();
-    assert_eq!(layout.panels().iter().filter(|panel| panel.as_str() == "properties").count(), 1);
-    assert_eq!(layout.panels().iter().filter(|panel| panel.as_str() == *last).count(), 1);
-    let group = group_members_for_test(layout, last);
-    assert!(group.iter().any(|panel| panel == "properties"));
-    assert_eq!(group.last().map(String::as_str), Some("properties"), "clicked destination must receive the original panel after it");
-    assert_eq!(serde_json::to_value(&h.state().session.active().unwrap().doc).unwrap(), doc);
-    h.render().unwrap().save(directory.join("designcraft-legacy-last-target-selected-dark-ar.png")).unwrap();
-}
-
-#[test]
 fn dock_menu_button_opens_the_active_panel_menu() {
     let mut app = app();
     app.run("file.new", json!({})).unwrap();
@@ -757,7 +669,7 @@ fn click(h: &mut Harness<'static, DesignApp>, at: Pos2, button: PointerButton) {
 }
 
 /// Window › Paragraph Styles switches to the docking layout. After Window › Pages the Pages panel
-/// keeps its three-line panel menu, and its tab menu lists what the classic dock's does.
+/// keeps its three-line panel menu, and its tab menu lists InDesign's tab commands.
 #[test]
 fn pages_keeps_its_panel_menu_in_the_docking_layout() {
     let mut app = app();

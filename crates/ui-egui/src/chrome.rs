@@ -735,12 +735,9 @@ pub fn doc_tabs(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Show the Preflight panel. `window.panel` toggles a panel that is already open, so it runs
-/// only when Preflight isn't showing.
+/// Show the Preflight panel.
 fn show_preflight(app: &mut DesignApp) {
-    if app.ui.open_panel.as_deref() != Some("preflight")
-        && let Err(e) = app.run("window.panel", json!({"panel": "preflight"}))
-    {
+    if let Err(e) = app.run("window.panel", json!({"panel": "preflight"})) {
         app.status(e);
     }
 }

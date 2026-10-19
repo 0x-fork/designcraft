@@ -87,7 +87,12 @@ workspace opens (Printing and Proofing: Swatches) is a group below Properties ·
 The `canvas` panel never moves, floats, closes or takes tabs; a panel or tab group dropped
 over it floats there. Workspace saves retain its groups, active tabs, split sizes, floating
 geometry, and the positions of hidden panels. Resetting a built-in workspace restores its
-default dock.
+default dock. Preferences saved before the canvas joined the layout load with nothing lost:
+the classic dock becomes the workspace's default layout, and a customized dock-only layout
+becomes the dock's expanded columns (iconic if the dock was collapsed), with the remaining
+panels (or the workspace's named groups) in the iconic column and its floating windows and
+hidden-panel positions kept. A `ui.json` the app cannot read in full is copied to
+`ui.unreadable.json` before it is saved again.
 
 - `window.panel.move {panel, anchor, zone?, before?}` moves a panel into the target group.
   `zone` is `tab` (default), `center`, `left`, `right`, `top`, or `bottom`; `before` reorders
@@ -95,12 +100,17 @@ default dock.
   `top` and `bottom` add a group above or below its group and `left` and `right` add a column
   on that side; in a floating window, `top` and `bottom` add a group and `left` and `right`
   are errors.
-- `window.panel.float {panel, x?, y?, width?, height?}` detaches a panel.
-- `window.panel.dock {panel, anchor?, zone?, before?}` returns a panel to its previous
-  dock placement when possible, or to the supplied destination.
+- `window.panel.float {panel, x?, y?, width?, height?}` (and `window.floatPanel {panel, x?, y?}`)
+  detaches a panel.
+- `window.panel.dock {panel, anchor?, zone?, before?}` (and `window.dockPanel {panel}`)
+  returns a panel to its previous dock placement when possible, or to the supplied
+  destination. For the float-only Tabs panel (`tabs`), which has its own window outside the
+  layout, float opens that window and dock closes it.
 - `window.panel.activate {panel}` (and `window.panel {panel}`) reveals and selects a panel,
   restoring its saved position when possible; a panel in an iconic column expands that
   column. `window.panel.close {panel}` hides it.
+- `window.panel.closeGroup {panel}` hides the panel and the panels tabbed with it (craft-ui's
+  `CloseGroup`); the result lists them in `closed`.
 - `window.collapseToIcons` collapses every dock column to icons.
 
 Panel IDs are stable across themes. Invalid IDs, non-finite or invalid geometry, and
