@@ -1250,15 +1250,15 @@ mod tests {
         h.run_steps(3);
         h.get_by_label("Preflight Panel…").click();
         h.run_steps(3);
-        // Preflight is not a dock tab: `window.panel` shows it as its own panel.
-        assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
+        // Preflight is in the iconic column: `window.panel` shows it.
+        assert!(crate::panel_docking::showing(&h.state().app, "preflight"));
         h.get_by_label("Preflight");
         // With the panel already showing, the entry keeps it open.
         h.get_by_label("No errors ▾").click();
         h.run_steps(3);
         h.get_by_label("Preflight Panel…").click();
         h.run_steps(3);
-        assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
+        assert!(crate::panel_docking::showing(&h.state().app, "preflight"));
     }
 
     /// As in InDesign, double-clicking the preflight count (or its light) shows the panel.
@@ -1272,7 +1272,7 @@ mod tests {
         count.click();
         count.click();
         h.run_steps(3);
-        assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
+        assert!(crate::panel_docking::showing(&h.state().app, "preflight"));
         h.get_by_label("Preflight");
         assert!(h.query_by_label("Preflight Panel…").is_none(), "the menu isn't left open");
         // A double-click with the panel already showing keeps it open.
@@ -1280,7 +1280,7 @@ mod tests {
         count.click();
         count.click();
         h.run_steps(3);
-        assert_eq!(h.state().app.ui.open_panel.as_deref(), Some("preflight"));
+        assert!(crate::panel_docking::showing(&h.state().app, "preflight"));
     }
 
     /// A very long document name made its tab grow past the window, hiding the close button

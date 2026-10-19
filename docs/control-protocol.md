@@ -35,7 +35,8 @@ so only enable it while you use it. Transport: `apps/designcraft/src/control_ser
 | `engine.execute` / `ui.menu.invoke` | `{command, params}` | Run any engine or UI command (see `engine.commands`). `ui.menu.invoke` without `params` acts like choosing the menu item: a command labelled "…" that takes parameters opens its dialog. A key the command's params description doesn't name is an error (`unknown parameter …`), not ignored |
 | `engine.commands` | — | Every command: id, label, menu path, shortcut, params doc, enabled |
 | `document.inspect` | — | Pages, spreads, items, stories (overset), styles, swatches, selection |
-| `ui.inspect` | — | Tool, UI state, view (zoom/origin), canvas rect, perf |
+| `ui.inspect` | — | Tool, UI state, view (zoom/origin), canvas rect, panel layout (`docking`), perf |
+| `ui.docking` | — | The panel layout in use and the focused panel (see Shared panel docking) |
 | `ui.menu.list` / `ui.tool.list` | — | Menu tree / Tools panel groups |
 | `ui.tool.select` | `{tool}` | Select a tool (`selection`, `type`, `rectangleFrame`, …) |
 | `ui.pointer` | `{events:[{kind: down\|drag\|up\|move\|doubleclick, x, y, space?: "screen"\|"canvas", clicks?}], mods?}` | Drive the active tool through the same code path as the mouse; `clicks` on a `down` is the press count (3 = triple click); returns the selection, the tool and its cursor at the last event (e.g. `LoadedText`, `ThreadLink`, `Unthread`) |
@@ -77,18 +78,30 @@ Panel arrangements support tab grouping and reordering, horizontal and vertical 
 and movable, resizable floating groups inside the application window. Drag a panel tab,
 or use its context menu. Floating groups remain within the application viewport.
 
-The shared layout begins with the existing workspace on the first docking operation.
-Workspace saves retain its groups, active tabs, split sizes, floating geometry, and the
-positions of hidden panels. Resetting a built-in workspace restores its default dock.
+The window is one panel layout: the protected `canvas` panel (the document area) beside a
+dock at the logical end edge, the right in left-to-right languages and the left in
+right-to-left ones. Each built-in workspace has a default layout. Essentials and most others
+have an outer column with the Properties · Pages · Layers group and an iconic column with the
+other panels; Essentials Classic and Typography have their named iconic groups only. A panel a
+workspace opens (Printing and Proofing: Swatches) is a group below Properties · Pages · Layers.
+The `canvas` panel never moves, floats, closes or takes tabs; a panel or tab group dropped
+over it floats there. Workspace saves retain its groups, active tabs, split sizes, floating
+geometry, and the positions of hidden panels. Resetting a built-in workspace restores its
+default dock.
 
 - `window.panel.move {panel, anchor, zone?, before?}` moves a panel into the target group.
   `zone` is `tab` (default), `center`, `left`, `right`, `top`, or `bottom`; `before` reorders
-  tabs by panel ID. The destination must already be visible.
+  tabs by panel ID. The destination must already be visible. Beside a panel in a dock column,
+  `top` and `bottom` add a group above or below its group and `left` and `right` add a column
+  on that side; in a floating window, `top` and `bottom` add a group and `left` and `right`
+  are errors.
 - `window.panel.float {panel, x?, y?, width?, height?}` detaches a panel.
 - `window.panel.dock {panel, anchor?, zone?, before?}` returns a panel to its previous
   dock placement when possible, or to the supplied destination.
-- `window.panel.activate {panel}` reveals and selects a panel, restoring its saved
-  position when possible. `window.panel.close {panel}` hides it.
+- `window.panel.activate {panel}` (and `window.panel {panel}`) reveals and selects a panel,
+  restoring its saved position when possible; a panel in an iconic column expands that
+  column. `window.panel.close {panel}` hides it.
+- `window.collapseToIcons` collapses every dock column to icons.
 
 Panel IDs are stable across themes. Invalid IDs, non-finite or invalid geometry, and
 invalid destinations return an error without changing the arrangement.
@@ -102,8 +115,26 @@ resizes the root divider (`false`/`true` path entries select first/second childr
 The UI dispatches these same commands. Unknown panel IDs, invalid geometry, and stale
 split paths return an error without changing the workspace.
 
-After panel customization, `app.tablePanel` (including Shift+F9) still toggles the
-Table panel. `ui.set` with `closePanel` closes the last explicitly opened panel;
-`dockExpanded:false` hides the root dock while floating groups remain visible.
-The icon rail can reopen a collapsed dock through any root panel. Activating a
-floating panel also raises its group. These operations change only UI layout.
+`app.tablePanel` (including Shift+F9) toggles the Table panel. `ui.set` with `closePanel`
+closes the last explicitly opened panel; `dockExpanded:false` collapses every dock column
+to icons and `dockExpanded:true` expands the outer column. Activating a floating panel also
+raises its group. These operations change only UI layout.
+
+`ui.docking` returns the panel layout in use; `ui.inspect` includes the same object as
+`docking`:
+
+```json
+{"layout": {"root": {"Split": {"axis": "Horizontal", "size": {"FixedSecond": 297.0},
+   "first": {"Tabs": {"panels": ["canvas"], "active": 0}},
+   "second": {"Dock": {"side": "End", "columns": [
+     {"groups": [{"panels": ["properties", "pages", "layers"], "active": 0}], "width": 260.0,
+      "iconic": false, "iconic_width": 37.0},
+     {"groups": [{"panels": ["stroke"], "active": 0}, …], "width": 260.0, "iconic": true,
+      "iconic_width": 37.0}]}}}},
+  "floating": []},
+ "customized": false, "focused": "canvas", "rightToLeft": false, "hidden": []}
+```
+
+`layout` is craft-ui's serialized `Layout`; `customized` is false while the workspace's
+default layout is in use; `focused` is the panel (or `canvas`) last clicked or selected, or
+null; `hidden` lists closed panels that remember their place.

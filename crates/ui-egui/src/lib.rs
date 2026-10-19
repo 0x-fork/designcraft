@@ -259,11 +259,15 @@ pub struct UiState {
     pub open_panel: Option<String>,
     /// Panels torn off the dock into their own floating windows: (panel id, top-left position).
     pub floating: Vec<(String, [f32; 2])>,
-    /// Shared panel layout after the user customizes the legacy dock.
+    /// The panel layout once the user customizes it; `None` is the workspace's default layout
+    /// (`panel_docking::default_layout`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docking: Option<craft_ui::docking::Layout<String>>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub docking_hidden: std::collections::BTreeMap<String, craft_ui::docking::Location<String>>,
+    /// The panel (or the canvas) last clicked or selected in the docking layout.
+    #[serde(skip)]
+    pub docking_focused: Option<String>,
     /// Invalidates in-flight gestures when a workspace is replaced.
     #[serde(skip)]
     pub docking_generation: u64,
@@ -404,6 +408,7 @@ impl Default for UiState {
             docking_generation: 0,
             docking_raise: None,
             docking_opened: None,
+            docking_focused: None,
             dock_expanded: true,
             icon_groups: None,
             units: Unit::Picas,
@@ -1488,6 +1493,63 @@ impl DesignApp {
         raw.events.extend(events.drain(..n));
     }
 
+    /// The document area: the start screen, or the document tabs over one or two canvas panes.
+    pub(crate) fn canvas_area(&mut self, ui: &mut egui::Ui, presenting: bool) {
+        let t = theme::Tokens::get(ui.ctx());
+        if self.session.active().is_none() {
+            chrome::start_screen(self, ui);
+            return;
+        }
+        if !presenting {
+            chrome::doc_tabs(self, ui);
+        }
+        let split_layout = (self.split && !presenting)
+            .then(|| {
+                craft_ui::layout::split_rect(
+                    ui.available_rect_before_wrap(),
+                    craft_ui::layout::SplitAxis::Horizontal,
+                    craft_ui::layout::SplitSize::Ratio(0.5),
+                    2.0,
+                    0.0,
+                )
+            })
+            .flatten();
+        if let Some(layout) = split_layout {
+            // Two panes with a divider; each has its own view (zoom, scroll) and render cache.
+            ui.painter().rect_filled(layout.divider, 0.0, t.border);
+            // Resolve the clicked pane before either canvas handles this frame's keys.
+            if let Some(p) = ui.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten()) {
+                if layout.first.contains(p) {
+                    self.focus_pane = 0;
+                } else if layout.second.contains(p) {
+                    self.focus_pane = 1;
+                }
+            }
+            for (k, half) in [layout.first, layout.second].into_iter().enumerate() {
+                self.switch_pane(k as u8);
+                // A new pane starts at the other pane's view.
+                if k == 1 && self.view().is_none() {
+                    self.switch_pane(0);
+                    let v = self.view().copied();
+                    self.switch_pane(1);
+                    if let (Some(mut v), Some(m)) = (v, self.view_mut()) {
+                        v.fitted = false;
+                        *m = v;
+                    }
+                }
+                ui.scope_builder(egui::UiBuilder::new().max_rect(half), |ui| canvas::show(self, ui));
+            }
+            self.switch_pane(self.focus_pane);
+        } else {
+            self.switch_pane(0);
+            // With a second window, the main one takes the focus back when clicked.
+            if !self.second_window || (ui.input(|i| i.pointer.any_pressed()) && ui.ui_contains_pointer()) {
+                self.focus_pane = 0;
+            }
+            canvas::show(self, ui);
+        }
+    }
+
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -1523,62 +1585,13 @@ impl DesignApp {
             if self.ui.hidden_panels != 1 {
                 toolbar::show(self, ui);
             }
-            if self.ui.hidden_panels == 0 {
-                dock::show(self, ui);
-            }
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| {
-            if self.session.active().is_none() {
-                chrome::start_screen(self, ui);
-                return;
-            }
-            if !presenting {
-                chrome::doc_tabs(self, ui);
-            }
-            let split_layout = (self.split && !presenting)
-                .then(|| {
-                    craft_ui::layout::split_rect(
-                        ui.available_rect_before_wrap(),
-                        craft_ui::layout::SplitAxis::Horizontal,
-                        craft_ui::layout::SplitSize::Ratio(0.5),
-                        2.0,
-                        0.0,
-                    )
-                })
-                .flatten();
-            if let Some(layout) = split_layout {
-                // Two panes with a divider; each has its own view (zoom, scroll) and render cache.
-                ui.painter().rect_filled(layout.divider, 0.0, t.border);
-                // Resolve the clicked pane before either canvas handles this frame's keys.
-                if let Some(p) = ui.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten()) {
-                    if layout.first.contains(p) {
-                        self.focus_pane = 0;
-                    } else if layout.second.contains(p) {
-                        self.focus_pane = 1;
-                    }
-                }
-                for (k, half) in [layout.first, layout.second].into_iter().enumerate() {
-                    self.switch_pane(k as u8);
-                    // A new pane starts at the other pane's view.
-                    if k == 1 && self.view().is_none() {
-                        self.switch_pane(0);
-                        let v = self.view().copied();
-                        self.switch_pane(1);
-                        if let (Some(mut v), Some(m)) = (v, self.view_mut()) {
-                            v.fitted = false;
-                            *m = v;
-                        }
-                    }
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(half), |ui| canvas::show(self, ui));
-                }
-                self.switch_pane(self.focus_pane);
+            // The panel layout holds the canvas as its protected `canvas` panel.
+            if presenting || self.ui.hidden_panels != 0 {
+                self.canvas_area(ui, presenting);
             } else {
-                self.switch_pane(0);
-                // With a second window, the main one takes the focus back when clicked.
-                if !self.second_window || (ui.input(|i| i.pointer.any_pressed()) && ui.ui_contains_pointer()) {
-                    self.focus_pane = 0;
-                }
-                canvas::show(self, ui);
+                panel_docking::show(self, ui);
             }
         });
         // New Window: pane 1 in a window of its own.
@@ -1618,7 +1631,6 @@ impl DesignApp {
         }
         // Tab, Shift+Tab and Presentation hide the floating panels with the docked ones.
         if !presenting && self.ui.hidden_panels == 0 {
-            dock::flyout(self, &ctx);
             dock::floating(self, &ctx);
         }
         story_editor::show(self, &ctx);

@@ -59,8 +59,7 @@ fn harness(app: DesignApp, size: egui::Vec2) -> Harness<'static, DesignApp> {
                 ready = true;
                 return;
             }
-            crate::dock::show(app, ui);
-            egui::CentralPanel::default().show(ui, |_| {});
+            egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| crate::panel_docking::show(app, ui));
         },
         app,
     );
@@ -188,7 +187,7 @@ fn capture_custom_panel_docking_visual_fixtures() {
 }
 
 #[test]
-fn escape_cancels_the_first_drag_without_replacing_the_legacy_workspace() {
+fn escape_cancels_a_tab_drag_without_customizing_the_workspace() {
     let mut h = harness(app(), vec2(1280.0, 800.0));
     let source = h.query_all_by_label("Layers").find(|node| node.rect().height() <= 45.0).unwrap().rect().center();
     h.event(Event::PointerMoved(source));
@@ -197,7 +196,6 @@ fn escape_cancels_the_first_drag_without_replacing_the_legacy_workspace() {
     h.run_steps(1);
     h.event(Event::PointerMoved(source - vec2(90.0, 0.0)));
     h.run_steps(2);
-    assert!(h.state().ui.docking.is_some());
     h.event(Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE });
     h.run_steps(1);
     assert!(h.state().ui.docking.is_none());
@@ -235,27 +233,26 @@ fn serialized_layout_actions_cover_geometry_reorder_accordion_and_atomic_rejecti
         assert_eq!(app.ui.docking, before);
         assert_eq!(app.ui.docking_hidden, hidden);
     }
+    let stack = Node::Stack { entries: vec![craft_ui::docking::StackEntry { panel: "layers".into(), open: true, height: Some(100.0) }] };
     app.ui.docking = Some(Layout {
-        root: Some(Node::Stack { entries: vec![craft_ui::docking::StackEntry { panel: "layers".into(), open: true, height: Some(100.0) }] }),
+        root: Some(Node::Split {
+            axis: craft_ui::layout::SplitAxis::Horizontal,
+            size: craft_ui::layout::SplitSize::Ratio(0.7),
+            first: Box::new(Node::Tabs { panels: vec![CANVAS.into()], active: 0 }),
+            second: Box::new(stack),
+        }),
         floating: Vec::new(),
     });
     app.run("window.panel.layout", json!({"action":{"SetStackOpen":{"panel":"layers","open":false}}})).unwrap();
     app.run("window.panel.layout", json!({"action":{"ResizeStack":{"panel":"layers","height":150}}})).unwrap();
-    let Some(Node::Stack { entries }) = &app.ui.docking.as_ref().unwrap().root else { panic!("expected stack") };
+    let Some(Node::Split { second, .. }) = &app.ui.docking.as_ref().unwrap().root else { panic!("expected split") };
+    let Node::Stack { entries } = &**second else { panic!("expected stack") };
     assert!(!entries[0].open);
     assert_eq!(entries[0].height, Some(150.0));
 }
 
 fn group_members_for_test(layout: &Layout<String>, panel: &str) -> Vec<String> {
-    let mut pending: Vec<_> = layout.root.iter().collect();
-    while let Some(node) = pending.pop() {
-        match node {
-            Node::Tabs { panels, .. } if panels.iter().any(|p| p == panel) => return panels.clone(),
-            Node::Split { first, second, .. } => pending.extend([first.as_ref(), second.as_ref()]),
-            _ => {}
-        }
-    }
-    Vec::new()
+    tab_group(layout, panel)
 }
 
 #[test]
@@ -309,7 +306,7 @@ fn properties_stroke_link_opens_the_stroke_panel_in_a_custom_workspace() {
     app.run("window.panel.float", json!({"panel":"layers"})).unwrap();
     // Floating Layers leaves Pages the active tab beside Properties.
     app.run("window.panel", json!({"panel":"properties"})).unwrap();
-    assert!(!app.ui.docking.as_ref().unwrap().contains(&"stroke".into()));
+    assert!(in_iconic_column(app.ui.docking.as_ref().unwrap(), "stroke"));
     let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_ui_state(
         |ui, app: &mut DesignApp| {
             app.logic(ui.ctx());
@@ -326,7 +323,7 @@ fn properties_stroke_link_opens_the_stroke_panel_in_a_custom_workspace() {
         h.run_steps(1);
     }
     h.run_steps(2);
-    assert!(h.state().ui.docking.as_ref().unwrap().contains(&"stroke".into()));
+    assert!(!in_iconic_column(h.state().ui.docking.as_ref().unwrap(), "stroke"));
     assert_eq!(h.state().ui.docking_opened.as_deref(), Some("stroke"));
 }
 
@@ -628,7 +625,7 @@ fn capture_legacy_panel_menu_visual_fixture() {
 }
 
 #[test]
-fn legacy_dock_menu_button_opens_the_active_panel_menu() {
+fn dock_menu_button_opens_the_active_panel_menu() {
     let mut app = app();
     app.run("file.new", json!({})).unwrap();
     app.ui.dock_tab = "pages".into();
@@ -636,8 +633,8 @@ fn legacy_dock_menu_button_opens_the_active_panel_menu() {
     let mut h = harness(app, vec2(1280.0, 800.0));
     assert!(h.state().ui.docking.is_none());
     let tab = h.query_all_by_label("Pages").find(|node| node.rect().height() <= 45.0).unwrap().rect();
-    let dock = egui::containers::panel::PanelState::load(&h.ctx, egui::Id::new("dock")).unwrap().outer_rect;
-    let at = egui::pos2(dock.right() - 15.0, tab.center().y);
+    // The outer dock column is at the window's right edge; the ≡ ends its tab strip.
+    let at = egui::pos2(1280.0 - 12.0, tab.center().y);
     h.event(Event::PointerMoved(at));
     h.run_steps(1);
     for pressed in [true, false] {
@@ -697,9 +694,11 @@ fn a_tabs_context_menu_lists_indesigns_tab_commands_and_close_works() {
     h.run_steps(1);
     h.event(Event::PointerButton { pos: tab, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
     h.run_steps(2);
+    // The column bar's » button is also labelled Collapse to Icons.
     for item in ["Close", "Close Tab Group", "Minimize", "Collapse to Icons", "Float Panel"] {
-        assert!(h.query_by_label(item).is_some(), "{item}");
+        assert!(h.query_all_by_label(item).next().is_some(), "{item}");
     }
+    assert_eq!(h.query_all_by_label("Minimize").count(), 1, "the tab menu lists Minimize once");
     h.get_by_label("Close").click();
     h.run_steps(2);
     assert!(!h.state().ui.docking.as_ref().unwrap().contains(&"layers".to_string()));
@@ -716,7 +715,7 @@ fn paragraph_styles_open_floating_with_character_styles() {
     assert_eq!(group.panels, ["characterStyles", "paragraphStyles"]);
     assert_eq!(group.panels[group.active], "paragraphStyles", "the one chosen is in front");
     // The dock still shows Properties in front.
-    assert!(matches!(&layout.root, Some(craft_ui::docking::Node::Tabs { panels, active }) if panels[*active] == "properties"), "{:?}", layout.root);
+    assert!(front_tabs(&layout).iter().any(|p| p == "properties"), "{:?}", layout.root);
     // Other panels from Window leave it open.
     app.run("window.panel", json!({"panel":"color"})).unwrap();
     app.run("window.panel", json!({"panel":"links"})).unwrap();
@@ -768,8 +767,7 @@ fn pages_keeps_its_panel_menu_in_the_docking_layout() {
     assert!(app.ui.docking.is_some());
     let mut h = harness(app, vec2(1280.0, 800.0));
     let tab = h.query_all_by_label("Pages").find(|node| node.rect().height() <= 45.0).unwrap().rect();
-    let dock = egui::containers::panel::PanelState::load(&h.ctx, egui::Id::new("shared-panel-dock")).unwrap().outer_rect;
-    click(&mut h, egui::pos2(dock.right() - 12.0, tab.center().y), PointerButton::Primary);
+    click(&mut h, egui::pos2(1280.0 - 12.0, tab.center().y), PointerButton::Primary);
     assert!(egui::Popup::is_any_open(&h.ctx), "the three-line button must open a menu");
     for item in ["Numbering & Section Options…", "Close Tab Group", "Float Panel"] {
         assert!(h.query_by_label(item).is_some(), "{item}");
@@ -797,6 +795,11 @@ fn group_with<'a>(layout: &'a Layout<String>, panel: &str) -> (bool, &'a [String
         match node {
             Node::Split { first, second, .. } => visit.extend([&**first, &**second]),
             Node::Tabs { panels, active } if panels.iter().any(|p| p == panel) => return (false, panels, *active),
+            Node::Dock { columns, .. } => {
+                if let Some(g) = columns.iter().flat_map(|c| &c.groups).find(|g| g.panels.iter().any(|p| p == panel)) {
+                    return (false, &g.panels, g.active);
+                }
+            }
             _ => {}
         }
     }
@@ -814,7 +817,7 @@ fn drag_bar(h: &Harness<'static, DesignApp>, first: &str) -> egui::Rect {
 fn dragging_a_docked_group_by_its_bar_moves_every_tab() {
     let mut app = app();
     app.run("window.panel", json!({"panel":"paragraphStyles"})).unwrap();
-    let below = json!({"MoveGroup": {"panel": "characterStyles", "to": {"At": {"anchor": "properties", "placement": {"Split": "Bottom"}}}}});
+    let below = json!({"MoveGroup": {"panel": "characterStyles", "to": {"At": {"anchor": "properties", "placement": {"Group": {"below": true}}}}}});
     app.run("window.panel.layout", json!({"action": below})).unwrap();
     let styles = ["characterStyles", "paragraphStyles"];
     assert_eq!(group_with(app.ui.docking.as_ref().unwrap(), "characterStyles"), (false, &styles.map(String::from)[..], 1));
@@ -836,4 +839,82 @@ fn dragging_a_docked_group_by_its_bar_moves_every_tab() {
     assert_eq!(panels.get(at + 1).map(String::as_str), Some("paragraphStyles"), "{panels:?}");
     assert_eq!(panels[active], "paragraphStyles");
     assert!(layout.floating.is_empty(), "{:?}", layout.floating);
+}
+
+fn dock_of(layout: &Layout<String>) -> (Side, &[Column<String>]) {
+    let Some(Node::Split { first, second, .. }) = &layout.root else { panic!("root is not a split: {layout:?}") };
+    assert!(matches!(&**first, Node::Tabs { panels, .. } if panels == &[CANVAS.to_string()]), "{layout:?}");
+    let Node::Dock { side, columns } = &**second else { panic!("second is not a dock: {layout:?}") };
+    (*side, columns)
+}
+
+#[test]
+fn default_workspaces_are_the_canvas_beside_an_end_dock() {
+    let mut app = app();
+    let layout = default_layout(&app.ui);
+    assert!(valid(&layout));
+    let (side, columns) = dock_of(&layout);
+    assert_eq!(side, Side::End);
+    let [outer, icons] = columns else { panic!("{columns:?}") };
+    assert!(!outer.iconic);
+    assert_eq!(outer.groups.len(), 1);
+    assert_eq!(outer.groups[0].panels, ["properties", "pages", "layers"]);
+    assert!(icons.iconic);
+    assert!(icons.groups.iter().all(|g| g.panels.len() == 1));
+    assert!(!layout.contains(&"paragraphStyles".to_string()), "Window › Styles opens the styles floating");
+    // Essentials Classic: only its named icon groups, in one iconic column.
+    app.run("window.workspace", json!({"name": "Essentials Classic"})).unwrap();
+    let layout = default_layout(&app.ui);
+    assert!(valid(&layout));
+    let (_, columns) = dock_of(&layout);
+    let [column] = columns else { panic!("{columns:?}") };
+    assert!(column.iconic);
+    let expected: Vec<Vec<String>> = app.ui.icon_groups.clone().unwrap();
+    let groups: Vec<Vec<String>> = column.groups.iter().map(|g| g.panels.clone()).collect();
+    assert_eq!(groups.len(), expected.len());
+    assert!(groups.iter().flatten().all(|p| expected.iter().flatten().any(|e| e == p)));
+}
+
+#[test]
+fn the_dock_is_at_the_right_in_english_and_the_left_in_arabic() {
+    let tab = |h: &Harness<'static, DesignApp>| {
+        h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"properties".to_string()))).map(|r| r.rect).unwrap()
+    };
+    let h = harness(app(), vec2(1280.0, 800.0));
+    assert!(tab(&h).left() > 640.0, "{:?}", tab(&h));
+    let mut arabic = app();
+    arabic.ui.language = "ar".into();
+    let h = harness(arabic, vec2(1280.0, 800.0));
+    assert!(tab(&h).right() < 640.0, "{:?}", tab(&h));
+}
+
+#[test]
+fn ui_docking_reports_the_layout_and_the_focused_panel() {
+    let mut h = harness(app(), vec2(1280.0, 800.0));
+    let ctx = h.ctx.clone();
+    let docking = |app: &mut DesignApp| {
+        let (req, _rx) = crate::control::ControlRequest::new("ui.docking", json!({}));
+        match crate::control::handle(app, &ctx, &req) {
+            crate::control::Outcome::Done(v) => v,
+            crate::control::Outcome::Screenshot { .. } => panic!("ui.docking took a screenshot"),
+        }
+    };
+    let v = docking(h.state_mut());
+    assert_eq!(v["ok"], true, "{v}");
+    let result = &v["result"];
+    assert_eq!(result["customized"], false);
+    assert_eq!(result["rightToLeft"], false);
+    assert!(result["focused"].is_null());
+    let layout: Layout<String> = serde_json::from_value(result["layout"].clone()).unwrap();
+    assert_eq!(layout, default_layout(&h.state().ui));
+    let at = h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"layers".to_string()))).unwrap().rect.center();
+    click(&mut h, at, PointerButton::Primary);
+    let v = docking(h.state_mut());
+    assert_eq!(v["result"]["focused"], "layers", "{v}");
+    // Closing the focused panel releases the focus.
+    h.state_mut().run("window.panel.close", json!({"panel": "layers"})).unwrap();
+    let v = docking(h.state_mut());
+    assert!(v["result"]["focused"].is_null(), "{v}");
+    assert_eq!(v["result"]["customized"], true);
+    assert_eq!(v["result"]["hidden"], json!(["layers"]));
 }

@@ -1,6 +1,10 @@
 //! Application-owned panel IDs and commands around the shared docking layout.
+//!
+//! The window's panels and the canvas are one craft-ui layout: a horizontal split of the
+//! protected `canvas` panel and a dock at the logical end edge (the right in left-to-right
+//! languages, the left in right-to-left ones).
 
-use craft_ui::docking::{Action, Floating, Layout, Node, Placement, Target, Zone};
+use craft_ui::docking::{Action, Column, Floating, Group, Layout, Node, Permissions, Placement, Side, Target, Zone};
 use serde_json::{Value, json};
 
 use crate::DesignApp;
@@ -43,35 +47,144 @@ fn normalize(raw: &str) -> Option<&'static str> {
         .map(|(id, _, _)| *id)
 }
 
-pub(crate) fn valid(layout: &Layout<String>) -> bool {
-    layout.validate().is_ok() && layout.panels().iter().all(|id| normalize(id) == Some(id.as_str()))
+/// The panel that holds the document area. It never moves, floats, closes or takes tabs.
+pub(crate) const CANVAS: &str = "canvas";
+/// Width of an expanded dock column.
+const COLUMN_WIDTH: f32 = 260.0;
+/// Width of an iconic column of bare icons, and of one whose groups show their names.
+const ICON_WIDTH: f32 = 37.0;
+const NAMED_ICON_WIDTH: f32 = 150.0;
+/// Height of the group a workspace opens below Properties · Pages · Layers.
+const OPEN_PANEL_HEIGHT: f32 = 260.0;
+
+fn registered(id: &str) -> bool {
+    id == CANVAS || normalize(id) == Some(id)
 }
 
-fn legacy(app: &DesignApp) -> Layout<String> {
-    let panels: Vec<String> = crate::dock::DOCK_TABS.iter().map(|p| p.0.to_string()).collect();
-    let active = panels.iter().position(|p| p == &app.ui.dock_tab).unwrap_or(0);
-    let mut layout = Layout { root: Some(Node::Tabs { panels, active }), floating: Vec::new() };
-    for (id, at) in &app.ui.floating {
-        if normalize(id).is_some() && !layout.contains(id) && at.iter().all(|v| v.is_finite()) {
-            layout.floating.push(Floating::single(vec![id.clone()], 0, [at[0], at[1], 280.0, 360.0]));
+/// The policy commands and the renderer apply: the canvas is protected.
+fn model_permissions(id: &String) -> Permissions {
+    if id == CANVAS { Permissions::PROTECTED } else { Permissions::default() }
+}
+
+pub(crate) fn valid(layout: &Layout<String>) -> bool {
+    layout.validate().is_ok()
+        && layout.panels().iter().all(|id| registered(id))
+        && Layout { root: layout.root.clone(), floating: Vec::new() }.contains(&CANVAS.to_string())
+}
+
+/// The layout of a workspace that has not been customized, from its panel settings: the
+/// canvas beside a dock whose outer column is the Properties · Pages · Layers group (with an
+/// open flyout panel stacked below it) and whose inner column is iconic. Essentials Classic
+/// and Typography (`icon_groups`) have the iconic column only.
+pub(crate) fn default_layout(ui: &crate::UiState) -> Layout<String> {
+    let mut placed: Vec<String> = Vec::new();
+    let take = |id: &str, placed: &mut Vec<String>| -> Option<String> {
+        let id = normalize(id)?;
+        (!placed.iter().any(|p| p == id)).then(|| {
+            placed.push(id.to_string());
+            id.to_string()
+        })
+    };
+    let mut floating = Vec::new();
+    for (id, at) in &ui.floating {
+        if at.iter().all(|v| v.is_finite())
+            && let Some(id) = take(id, &mut placed)
+        {
+            floating.push(Floating::single(vec![id], 0, [at[0], at[1], 280.0, 360.0]));
         }
     }
-    if let Some(id) = &app.ui.open_panel
-        && normalize(id).is_some()
-        && !layout.contains(id)
-    {
-        // Preserve the visible flyout when the first unrelated docking gesture succeeds.
-        if let Some(Node::Tabs { panels, active }) = &mut layout.root {
-            panels.push(id.clone());
-            *active = panels.len().saturating_sub(1);
+    let mut columns = Vec::new();
+    match &ui.icon_groups {
+        Some(groups) => {
+            let groups: Vec<Group<String>> = groups
+                .iter()
+                .map(|g| g.iter().filter_map(|id| take(id, &mut placed)).collect::<Vec<_>>())
+                .filter(|panels| !panels.is_empty())
+                .map(|panels| Group::new(panels, 0))
+                .collect();
+            if !groups.is_empty() {
+                columns.push(Column { groups, width: COLUMN_WIDTH, iconic: true, iconic_width: Some(NAMED_ICON_WIDTH) });
+            }
+        }
+        None => {
+            let panels: Vec<String> = crate::dock::DOCK_TABS.iter().filter_map(|p| take(p.0, &mut placed)).collect();
+            let active = panels.iter().position(|p| p == &ui.dock_tab).unwrap_or(0);
+            let mut groups = Vec::new();
+            if !panels.is_empty() {
+                groups.push(Group::new(panels, active));
+            }
+            // The panel a workspace opens (Printing and Proofing: Swatches) goes below at a fixed
+            // height, so Properties keeps most of the column.
+            if let Some(id) = ui.open_panel.as_deref().and_then(|id| take(id, &mut placed)) {
+                groups.push(Group { height: Some(OPEN_PANEL_HEIGHT), ..Group::new(vec![id], 0) });
+            }
+            if !groups.is_empty() {
+                columns.push(Column { groups, width: COLUMN_WIDTH, iconic: !ui.dock_expanded, iconic_width: Some(ICON_WIDTH) });
+            }
+            // Window › Styles opens the style panels as a floating group, so they start outside.
+            let icons: Vec<Group<String>> = crate::dock::ICON_PANELS
+                .iter()
+                .filter(|p| !FLOATING_GROUPS.iter().any(|g| g.contains(&p.0)))
+                .filter_map(|p| take(p.0, &mut placed))
+                .map(|id| Group::new(vec![id], 0))
+                .collect();
+            if !icons.is_empty() {
+                columns.push(Column { groups: icons, width: COLUMN_WIDTH, iconic: true, iconic_width: Some(ICON_WIDTH) });
+            }
         }
     }
-    layout
+    let width: f32 = columns.iter().map(|c| if c.iconic { c.iconic_width.unwrap_or(ICON_WIDTH) } else { c.width }).sum();
+    Layout {
+        root: Some(Node::Split {
+            axis: craft_ui::layout::SplitAxis::Horizontal,
+            size: craft_ui::layout::SplitSize::FixedSecond(width),
+            first: Box::new(Node::Tabs { panels: vec![CANVAS.to_string()], active: 0 }),
+            second: Box::new(Node::Dock { side: Side::End, columns }),
+        }),
+        floating,
+    }
+}
+
+/// The layout in use: the customized one, or the workspace's default.
+fn layout_of(app: &DesignApp) -> Layout<String> {
+    app.ui.docking.clone().unwrap_or_else(|| default_layout(&app.ui))
+}
+
+/// Is `panel` showing: in front of its group, and not in a column collapsed to icons?
+pub(crate) fn showing(app: &DesignApp, panel: &str) -> bool {
+    layout_of(app).panel_state(&panel.to_string()) == craft_ui::docking::PanelState::Front
+}
+
+/// Is `panel` in a dock column collapsed to icons?
+fn in_iconic_column(layout: &Layout<String>, panel: &str) -> bool {
+    dock_columns(layout).iter().any(|c| c.iconic && c.groups.iter().any(|g| g.panels.iter().any(|p| p == panel)))
+}
+
+/// Every dock column, from each dock's window edge inwards.
+fn dock_columns(layout: &Layout<String>) -> Vec<&Column<String>> {
+    let mut out = Vec::new();
+    let mut visit: Vec<&Node<String>> = layout.root.iter().collect();
+    let mut seen = 0usize;
+    while let Some(node) = visit.pop() {
+        seen = seen.saturating_add(1);
+        if seen > 2 * craft_ui::docking::MAX_PANELS {
+            break;
+        }
+        match node {
+            Node::Split { first, second, .. } => {
+                visit.push(second);
+                visit.push(first);
+            }
+            Node::Dock { columns, .. } => out.extend(columns),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The panels tabbed with `panel`: its floating group, or its tab group in the dock. A panel in
 /// an accordion, or not in the layout, is a group of its own.
-fn tab_group(layout: &Layout<String>, panel: &str) -> Vec<String> {
+pub(crate) fn tab_group(layout: &Layout<String>, panel: &str) -> Vec<String> {
     if let Some(group) = layout.floating.iter().flat_map(|w| &w.groups).find(|g| g.panels.iter().any(|p| p == panel)) {
         return group.panels.clone();
     }
@@ -124,14 +237,26 @@ fn open_in_stack(layout: &Layout<String>, panel: &str) -> bool {
     false
 }
 
-fn first_root(layout: &Layout<String>, except: &str) -> Option<String> {
-    let root = Layout { root: layout.root.clone(), floating: Vec::new() };
-    root.panels().into_iter().find(|p| p.as_str() != except).cloned()
+/// Where a panel with no other destination goes: a panel of the first expanded dock column,
+/// else of any column, else of the root.
+fn first_dock_panel(layout: &Layout<String>, except: &str) -> Option<String> {
+    let usable = |p: &&String| p.as_str() != except && p.as_str() != CANVAS;
+    let columns = dock_columns(layout);
+    let in_columns =
+        |iconic: bool| columns.iter().filter(|c| c.iconic == iconic).flat_map(|c| &c.groups).flat_map(|g| &g.panels).find(usable).cloned();
+    in_columns(false).or_else(|| in_columns(true)).or_else(|| {
+        let root = Layout { root: layout.root.clone(), floating: Vec::new() };
+        root.panels().into_iter().find(usable).cloned()
+    })
 }
 
 fn ensure(layout: &mut Layout<String>, panel: &str) -> Result<(), String> {
-    let anchor = first_root(layout, panel);
-    layout.apply(Action::Open { panel: panel.into(), anchor }).map_err(|e| e.to_string())
+    let anchor = first_dock_panel(layout, panel);
+    apply(layout, Action::Open { panel: panel.into(), anchor })
+}
+
+fn apply(layout: &mut Layout<String>, action: Action<String>) -> Result<(), String> {
+    layout.apply_with_permissions(action, model_permissions).map_err(|e| e.to_string())
 }
 
 fn number(params: &Value, key: &str, default: f32) -> Result<f32, String> {
@@ -145,7 +270,33 @@ fn number(params: &Value, key: &str, default: f32) -> Result<f32, String> {
     }
 }
 
-fn placement(params: &Value) -> Result<Placement<String>, String> {
+/// The side of the dock holding `panel`, if a dock column holds it.
+fn dock_side(layout: &Layout<String>, panel: &str) -> Option<Side> {
+    let mut visit: Vec<&Node<String>> = layout.root.iter().collect();
+    let mut seen = 0usize;
+    while let Some(node) = visit.pop() {
+        seen = seen.saturating_add(1);
+        if seen > 2 * craft_ui::docking::MAX_PANELS {
+            break;
+        }
+        match node {
+            Node::Split { first, second, .. } => {
+                visit.push(first);
+                visit.push(second);
+            }
+            Node::Dock { side, columns } if columns.iter().flat_map(|c| &c.groups).any(|g| g.panels.iter().any(|p| p == panel)) => {
+                return Some(*side);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The placement a `zone` names beside `anchor`. In a dock column or a floating window, top and
+/// bottom add a group above or below the anchor's group; in a dock column, left and right add a
+/// column on that side of the anchor's. Elsewhere the sides split the anchor's group.
+fn placement(params: &Value, layout: &Layout<String>, anchor: &str, rtl: bool) -> Result<Placement<String>, String> {
     if let Some(before) = params.get("before") {
         let id = before.as_str().and_then(normalize).ok_or("before must name a panel")?;
         return Ok(Placement::Tab { before: Some(id.into()) });
@@ -154,9 +305,18 @@ fn placement(params: &Value) -> Result<Placement<String>, String> {
         None => "tab",
         Some(value) => value.as_str().ok_or("zone must be a string")?,
     };
+    let side = dock_side(layout, anchor);
+    let floating = layout.floating.iter().any(|w| w.contains(anchor));
     Ok(match zone {
         "tab" => Placement::Tab { before: None },
         "center" => Placement::Split(Zone::Center),
+        "top" | "bottom" if side.is_some() || floating => Placement::Group { below: zone == "bottom" },
+        "left" | "right" if floating => return Err("a floating window has no columns; use top, bottom or tab".into()),
+        "left" | "right" if let Some(side) = side => {
+            // Columns count from the window edge inwards; `after` is away from the edge.
+            let edge_is_right = (side == Side::End) != rtl;
+            Placement::Column { after: (zone == "right") != edge_is_right }
+        }
         "left" => Placement::Split(Zone::Left),
         "right" => Placement::Split(Zone::Right),
         "top" => Placement::Split(Zone::Top),
@@ -166,10 +326,11 @@ fn placement(params: &Value) -> Result<Placement<String>, String> {
 }
 
 pub(crate) fn command(app: &mut DesignApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    if id == "app.tablePanel" && app.ui.docking.is_some() {
-        let panel = "table".to_string();
-        let visible = app.ui.docking.as_ref().is_some_and(|layout| layout.contains(&panel));
-        return Some(change(app, if visible { "close" } else { "activate" }, &json!({"panel": panel})));
+    if id == "app.tablePanel" {
+        return Some(change(app, if showing(app, "table") { "close" } else { "activate" }, &json!({"panel": "table"})));
+    }
+    if id == "window.collapseToIcons" {
+        return Some(set_iconic(app, true));
     }
     if id == "window.panel.closeGroup" {
         return Some(close_group(app, params));
@@ -194,7 +355,8 @@ pub(crate) fn command(app: &mut DesignApp, id: &str, params: &Value) -> Option<R
         "window.panel.dock" | "window.dockPanel" => "dock",
         "window.panel.activate" => "activate",
         "window.panel.close" => "close",
-        "window.panel" if app.ui.docking.is_some() => "activate",
+        // Float-only panels (Type › Tabs) are not in the layout.
+        "window.panel" if params.get("panel").and_then(Value::as_str).and_then(normalize).is_some() => "activate",
         _ => return None,
     };
     Some(change(app, operation, params))
@@ -203,7 +365,7 @@ pub(crate) fn command(app: &mut DesignApp, id: &str, params: &Value) -> Option<R
 // UI output and automation share this atomic dispatcher. The application owns the registry
 // and saved return locations; craft-ui owns tree validation and structural changes.
 fn apply_action(app: &mut DesignApp, action: Action<String>) -> Result<Value, String> {
-    let registered = |id: &String| normalize(id) == Some(id.as_str());
+    let registered = |id: &String| self::registered(id);
     let known = match &action {
         Action::Move { panel, anchor, placement } | Action::OpenAt { panel, anchor, placement } => {
             registered(panel)
@@ -251,28 +413,25 @@ fn apply_action(app: &mut DesignApp, action: Action<String>) -> Result<Value, St
     if app.ui.docking.as_ref().is_some_and(|layout| !valid(layout)) {
         return Err("saved panel layout is invalid; reset the workspace first".into());
     }
-    let mut layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
+    let mut layout = layout_of(app);
+    let closed = layout.closed_by(&action).map_err(|e| e.to_string())?;
     // Window › a closed panel, and Dock Panel after a float, bring it back where it was.
     let returning: Vec<_> = match &action {
         Action::Float { panel, .. } => {
             layout.location(panel).ok().filter(|location| location.floating.is_none()).map(|location| (panel.clone(), location)).into_iter().collect()
         }
-        _ => layout
-            .closed_by(&action)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|panel| layout.location(&panel).ok().map(|location| (panel, location)))
-            .collect(),
+        _ => closed.iter().filter_map(|panel| layout.location(panel).ok().map(|location| (panel.clone(), location))).collect(),
     };
     let reveal = match &action {
         Action::Activate { panel } | Action::Open { panel, .. } | Action::OpenAt { panel, .. } => Some(panel.clone()),
         _ => None,
     };
-    layout.apply(action).map_err(|error| error.to_string())?;
+    apply(&mut layout, action)?;
     for (panel, location) in returning {
         app.ui.docking_hidden.insert(panel, location);
     }
     app.ui.docking = Some(layout);
+    release_closed(app, &closed);
     sync_legacy(app);
     if let Some(panel) = reveal {
         app.ui.docking_opened = Some(panel.clone());
@@ -355,7 +514,7 @@ fn open_floating_group(app: &mut DesignApp, params: &Value) -> Option<Result<Val
     if group.iter().any(|p| app.ui.docking_hidden.get(*p).is_some_and(|l| l.floating.is_none())) {
         return None;
     }
-    let layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
+    let layout = layout_of(app);
     if group.iter().any(|p| layout.contains(&p.to_string())) {
         return None;
     }
@@ -390,7 +549,7 @@ fn change(app: &mut DesignApp, operation: &str, params: &Value) -> Result<Value,
     if app.ui.docking.as_ref().is_some_and(|layout| !valid(layout)) {
         return Err("saved panel layout is invalid; reset the workspace first".into());
     }
-    let mut layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
+    let mut layout = layout_of(app);
     let mut hidden: std::collections::BTreeMap<_, _> =
         app.ui.docking_hidden.iter().filter(|(id, _)| normalize(id).is_some()).take(64).map(|(id, at)| (id.clone(), at.clone())).collect();
     let mut restored = false;
@@ -403,7 +562,7 @@ fn change(app: &mut DesignApp, operation: &str, params: &Value) -> Result<Value,
     {
         let mut candidate = layout.clone();
         if candidate.contains(&panel.to_string()) {
-            candidate.apply(Action::Close { panel: panel.into() }).map_err(|e| e.to_string())?;
+            apply(&mut candidate, Action::Close { panel: panel.into() })?;
         }
         if candidate.restore(panel.into(), location).is_ok() {
             layout = candidate;
@@ -421,7 +580,7 @@ fn change(app: &mut DesignApp, operation: &str, params: &Value) -> Result<Value,
             {
                 hidden.insert(panel.into(), location);
             }
-            layout.apply(Action::Float { panel: panel.into(), rect }).map_err(|e| e.to_string())?;
+            apply(&mut layout, Action::Float { panel: panel.into(), rect })?;
         }
         "move" | "dock" => {
             if operation == "move" && params.get("anchor").or_else(|| params.get("onto")).is_none() {
@@ -429,24 +588,24 @@ fn change(app: &mut DesignApp, operation: &str, params: &Value) -> Result<Value,
             }
             let anchor = match params.get("anchor").or_else(|| params.get("onto")) {
                 Some(v) => Some(v.as_str().and_then(normalize).ok_or("anchor must name a registered panel")?.to_string()),
-                None => first_root(&layout, panel),
+                None => first_dock_panel(&layout, panel),
             };
-            let placement = placement(params)?;
             if let Some(anchor) = anchor {
+                let placement = placement(params, &layout, &anchor, crate::i18n::is_rtl(&app.ui.language))?;
                 ensure(&mut layout, panel)?;
-                layout.apply(Action::Move { panel: panel.into(), anchor, placement }).map_err(|e| e.to_string())?;
+                apply(&mut layout, Action::Move { panel: panel.into(), anchor, placement })?;
             } else if operation == "dock" {
                 if layout.contains(&panel.to_string()) {
-                    layout.apply(Action::Close { panel: panel.into() }).map_err(|e| e.to_string())?;
+                    apply(&mut layout, Action::Close { panel: panel.into() })?;
                 }
-                layout.apply(Action::Open { panel: panel.into(), anchor: None }).map_err(|e| e.to_string())?;
+                apply(&mut layout, Action::Open { panel: panel.into(), anchor: None })?;
             } else {
                 return Err("move requires an existing destination panel".into());
             }
         }
         "close" => {
             hidden.insert(panel.into(), layout.location(&panel.to_string()).map_err(|e| e.to_string())?);
-            layout.apply(Action::Close { panel: panel.into() }).map_err(|e| e.to_string())?;
+            apply(&mut layout, Action::Close { panel: panel.into() })?;
         }
         _ => {
             if !layout.contains(&panel.to_string())
@@ -457,10 +616,17 @@ fn change(app: &mut DesignApp, operation: &str, params: &Value) -> Result<Value,
             }
             ensure(&mut layout, panel)?;
             hidden.remove(panel);
+            // Iconic columns open no flyouts yet, so showing a panel there expands its column.
+            if in_iconic_column(&layout, panel) {
+                apply(&mut layout, Action::SetIconic { panel: panel.into(), iconic: false })?;
+            }
         }
     }
     app.ui.docking = Some(layout);
     app.ui.docking_hidden = hidden;
+    if operation == "close" {
+        release_closed(app, &[panel.to_owned()]);
+    }
     sync_legacy(app);
     app.ui.open_panel = None;
     app.ui.docking_opened = if operation == "close" { None } else { Some(panel.to_owned()) };
@@ -471,7 +637,40 @@ fn change(app: &mut DesignApp, operation: &str, params: &Value) -> Result<Value,
     Ok(json!({"panel": panel, "floating": app.ui.floating.iter().map(|(id, _)| id).collect::<Vec<_>>(), "layout": app.ui.docking}))
 }
 
-pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) -> bool {
+/// Forget what DesignCraft keeps about panels that just closed: the focus, the panel last
+/// opened (for `ui.set closePanel`) and a pending raise.
+fn release_closed(app: &mut DesignApp, closed: &[String]) {
+    for slot in [&mut app.ui.docking_focused, &mut app.ui.docking_opened, &mut app.ui.docking_raise] {
+        if slot.as_ref().is_some_and(|panel| closed.contains(panel)) {
+            *slot = None;
+        }
+    }
+}
+
+/// Window › Collapse to Icons collapses every dock column; `iconic: false` (the control
+/// channel's `dockExpanded`) expands the outer column.
+pub(crate) fn set_iconic(app: &mut DesignApp, iconic: bool) -> Result<Value, String> {
+    if app.ui.docking.as_ref().is_some_and(|layout| !valid(layout)) {
+        return Err("saved panel layout is invalid; reset the workspace first".into());
+    }
+    let mut layout = layout_of(app);
+    let columns = dock_columns(&layout);
+    let firsts = |c: &&Column<String>| c.groups.first().and_then(|g| g.panels.first()).cloned();
+    let targets: Vec<String> = if iconic {
+        columns.iter().filter(|c| !c.iconic).filter_map(firsts).collect()
+    } else {
+        columns.first().filter(|c| c.iconic).and_then(firsts).into_iter().collect()
+    };
+    for panel in targets {
+        apply(&mut layout, Action::SetIconic { panel, iconic })?;
+    }
+    app.ui.docking = Some(layout);
+    app.ui.dock_expanded = !iconic;
+    app.ui.open_panel = None;
+    Ok(Value::Null)
+}
+
+pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let area = egui::Id::new("designcraft-panel-docking");
     let changed_workspace = ui.ctx().data_mut(|data| {
         let previous = data.get_temp::<u64>(area.with("generation"));
@@ -482,22 +681,11 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) -> bool {
         craft_ui::docking::cancel_drag::<String>(ui.ctx(), area);
         ui.ctx().data_mut(|data| data.remove::<LegacyDrag>(area.with("legacy-origin")));
     }
-
-    let cancelled =
-        ui.input(|input| !input.focused || input.key_pressed(egui::Key::Escape) || (!input.pointer.primary_down() && !input.pointer.any_released()));
-    if cancelled && cancel_legacy_drag(app, ui.ctx()) && app.ui.docking.is_none() {
-        return false;
-    }
-    let Some(layout) = app.ui.docking.as_ref() else { return false };
-    if !valid(layout) {
+    if app.ui.docking.as_ref().is_some_and(|layout| !valid(layout)) {
         app.ui.docking = None;
         app.status(crate::i18n::tr(&app.ui.language, "Invalid panel layout; restored the default dock"));
-        return false;
     }
-    let mut layout = layout.clone();
-    if !app.ui.dock_expanded {
-        layout.root = None;
-    }
+    let layout = layout_of(app);
     let raise = app.ui.docking_raise.take();
     let mut blocked = Vec::new();
     if app.ui.dialog.is_some() || app.ui.about || app.ui.palette.is_some() || egui::Popup::is_any_open(ui.ctx()) {
@@ -507,79 +695,87 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) -> bool {
         let rect = ui.ctx().memory(|m| m.area_rect(egui::Id::new("story_editor"))).unwrap_or_else(|| ui.ctx().content_rect());
         blocked.push(rect);
     }
-    let t = crate::theme::Tokens::get(ui.ctx());
-    let language = app.ui.language.clone();
-    let mut draw = |ui: &mut egui::Ui| {
-        let mut style = craft_ui::docking::DockStyle::from_ui(ui);
-        style.tab_height = 27.0;
-        style.background = t.panel;
-        style.tab_background = t.tab_strip;
-        style.active_background = t.panel;
-        style.text = t.text_strong;
-        style.inactive_text = t.text_dim;
-        style.border = egui::Stroke::new(1.0, t.border);
-        style.accent = t.accent;
-        style.float_label = crate::i18n::tr(&language, "Float Panel").to_owned();
-        style.close_label = crate::i18n::tr(&language, "Close Panel").to_owned();
-        style.move_label = crate::i18n::tr(&language, "Group with").to_owned();
-        style.panels_label = crate::i18n::tr(&language, "Panels").to_owned();
-        style.resize_label = crate::i18n::tr(&language, "Resize panels").to_owned();
-        style.resize_window_label = crate::i18n::tr(&language, "Resize panel window").to_owned();
-        let mut area = craft_ui::docking::DockArea::new(egui::Id::new("designcraft-panel-docking")).blocked_rects(&blocked);
-        if let Some(panel) = &raise {
-            area = area.raise_panel(panel.clone());
-        }
-        area.show_customized(
-            ui,
-            &layout,
-            &style,
-            |id| {
-                crate::i18n::tr(
-                    &language,
-                    crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS).find(|p| p.0 == id).map(|p| p.1).unwrap_or(id),
-                )
-                .to_owned()
-            },
-            // Close comes from the panel's own tab commands, so the surface doesn't add another.
-            |_| craft_ui::docking::Permissions { closable: false, ..Default::default() },
-            |_| craft_ui::docking::PanelLimits { min: egui::vec2(220.0, 80.0), ..Default::default() },
-            &mut PanelContent(app),
-        )
-    };
-    let output = if layout.root.is_some() {
-        egui::Panel::right("shared-panel-dock")
-            .default_size(310.0)
-            .size_range(220.0..=720.0)
-            .resizable(true)
-            .frame(egui::Frame::NONE.fill(t.panel))
-            .show(ui, &mut draw)
-            .inner
-    } else {
-        draw(ui)
-    };
+    let style = dock_style(ui, &app.ui.language);
+    let mut dock = craft_ui::docking::DockArea::new(area).blocked_rects(&blocked);
+    if let Some(panel) = raise {
+        dock = dock.raise_panel(panel);
+    }
+    let mut content = PanelContent(app, Vec::new());
+    let output = dock.show_content(ui, &layout, &style, &mut content);
+    let floats = content.1;
     if let Some(panel) = output.focused {
-        app.ui.docking_opened = Some(panel);
+        if panel != CANVAS {
+            app.ui.docking_opened = Some(panel.clone());
+        }
+        app.ui.docking_focused = Some(panel);
     }
     if let Some(error) = output.error {
         app.ui.status = error.to_string();
     }
-    if ui.input(|input| input.pointer.any_released()) {
-        if !output.actions.iter().any(|action| matches!(action, Action::Move { .. } | Action::Float { .. } | Action::MoveGroup { .. }))
-            && cancel_legacy_drag(app, ui.ctx())
-        {
-            return app.ui.docking.is_some();
-        }
-        ui.ctx().data_mut(|data| data.remove::<LegacyDrag>(egui::Id::new("designcraft-panel-docking").with("legacy-origin")));
-    }
-    for action in output.actions {
+    for action in output.actions.into_iter().chain(floats) {
         if let Err(error) = app.run("window.panel.layout", json!({"action": action})) {
             app.ui.status = error;
         }
     }
-    icon_rail(app, ui);
-    true
 }
 
+/// What the control channel reports: the layout in use (craft-ui's serialized `Layout`),
+/// whether it is the workspace's default, the panel (or `canvas`) last clicked or selected, and
+/// the panels closed with a remembered place.
+pub(crate) fn inspect(app: &DesignApp) -> Value {
+    json!({
+        "layout": layout_of(app),
+        "customized": app.ui.docking.is_some(),
+        "focused": app.ui.docking_focused,
+        "rightToLeft": crate::i18n::is_rtl(&app.ui.language),
+        "hidden": app.ui.docking_hidden.keys().collect::<Vec<_>>(),
+    })
+}
+
+fn dock_style(ui: &egui::Ui, language: &str) -> craft_ui::docking::DockStyle {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let mut style = craft_ui::docking::DockStyle::from_ui(ui);
+    style.tab_height = 27.0;
+    style.background = t.panel;
+    style.tab_background = t.tab_strip;
+    style.active_background = t.panel;
+    style.text = t.text_strong;
+    style.inactive_text = t.text_dim;
+    style.border = egui::Stroke::new(1.0, t.border);
+    style.accent = t.accent;
+    style.right_to_left = crate::i18n::is_rtl(language);
+    style.localized(|key| DOCK_LABELS.iter().find(|(k, _)| *k == key).map(|(_, english)| crate::i18n::tr(language, english).to_owned()))
+}
+
+/// DesignCraft's wording of craft-ui's docking labels, translated through `i18n::tr`.
+const DOCK_LABELS: &[(&str, &str)] = &[
+    ("dock.float", "Float Panel"),
+    ("dock.close", "Close"),
+    ("dock.move", "Group with"),
+    ("dock.panels", "Panels"),
+    ("dock.resize", "Resize panels"),
+    ("dock.resizeWindow", "Resize panel window"),
+    ("dock.moveGroup", "Move Tab Group"),
+    ("dock.closeGroup", "Close Tab Group"),
+    ("dock.minimize", "Minimize"),
+    ("dock.expand", "Expand"),
+    ("dock.floatGroup", "Float Tab Group"),
+    ("dock.groupWith", "Group Tab Group with"),
+    ("dock.moveColumn", "Move Panel Column"),
+    ("dock.collapseToIcons", "Collapse to Icons"),
+    ("dock.expandPanels", "Expand Panels"),
+    ("dock.moveWindow", "Move Panel Window"),
+    ("dock.closeWindow", "Close Panel Window"),
+    ("dock.undock", "Undock Panel"),
+    ("dock.undockGroup", "Undock Panel Group"),
+    ("dock.closePanelGroup", "Close Panel Group"),
+    ("dock.closeOthers", "Close Other Panels in Group"),
+    ("dock.maximize", "Maximize Frame"),
+    ("dock.restoreFrame", "Restore Frame Size"),
+    ("dock.newWindow", "Move Panel to New Window"),
+];
+
+#[allow(dead_code)] // The classic icon rail; removed with the classic dock.
 fn icon_rail(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get(ui.ctx());
     let column = egui::Panel::right("shared-panel-icons")
@@ -616,7 +812,7 @@ pub(crate) fn legacy_tab(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str, re
     if response.drag_started()
         && let Some(id) = normalize(panel)
     {
-        let mut layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
+        let mut layout = layout_of(app);
         let bounds = ui.max_rect();
         let source = egui::Rect::from_min_size(
             egui::pos2(bounds.left(), response.rect.top()),
@@ -705,9 +901,51 @@ fn floating_size(panel: &str) -> egui::Vec2 {
     }
 }
 
-struct PanelContent<'a>(&'a mut DesignApp);
+/// The panels' content, and the floats released over the canvas this frame.
+struct PanelContent<'a>(&'a mut DesignApp, Vec<Action<String>>);
 impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
+    /// A panel or group released over the document area floats there, as in InDesign, instead of
+    /// splitting the canvas. The window's edge bands still make new docks and root splits.
+    fn resolve_drag(
+        &mut self,
+        _: &egui::Context,
+        style: &craft_ui::docking::DockStyle,
+        request: &craft_ui::docking::DropRequest<'_, String>,
+    ) -> Option<craft_ui::docking::DropFeedback> {
+        let pointer = request.pointer;
+        let over_canvas = request.targets.iter().rev().find(|t| t.rect.contains(pointer)).is_some_and(|t| t.anchor == CANVAS);
+        let band = style.edge_band.max(style.new_dock_band);
+        if !over_canvas || !request.workspace.shrink(band).contains(pointer) {
+            return None;
+        }
+        // A floating window moving live has no float rect; it moves as before.
+        if request.whole_group && request.floating_rect.is_none() {
+            return None;
+        }
+        if request.released
+            && let Some(r) = request.floating_rect
+        {
+            let rect = [r.left(), r.top(), r.width(), r.height()];
+            let panel = request.panel.clone();
+            self.1.push(if request.whole_group {
+                Action::MoveGroup { panel, to: Target::Float { rect: Some(rect) } }
+            } else {
+                Action::Float { panel, rect }
+            });
+        }
+        Some(craft_ui::docking::DropFeedback { preview: request.floating_rect, insertion: None })
+    }
     fn body(&mut self, ui: &mut egui::Ui, id: &String) {
+        if id == CANVAS {
+            let fill = crate::theme::Tokens::get(ui.ctx()).pasteboard;
+            ui.painter().rect_filled(ui.max_rect(), 0.0, fill);
+            // A bare panel has no tab to report focus through, so the canvas reports its own.
+            if ui.input(|i| i.pointer.any_pressed()) && ui.ui_contains_pointer() {
+                self.0.ui.docking_focused = Some(CANVAS.to_string());
+            }
+            self.0.canvas_area(ui, false);
+            return;
+        }
         egui::Frame::NONE.inner_margin(egui::Margin::same(8)).show(ui, |ui| {
             if crate::dock::scrolls_itself(id) {
                 crate::dock::panel_body(self.0, ui, id);
@@ -719,16 +957,22 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
                 .show(ui, |ui| crate::dock::panel_body(self.0, ui, id));
         });
     }
-    fn panel_menu(&mut self, ui: &mut egui::Ui, id: &String) {
-        // The docking surface adds Float Panel and Group with after these, so a tab's menu lists
-        // what the classic dock's does.
-        if let Some(panel) = normalize(id) {
-            tab_commands(self.0, ui, panel);
-            ui.separator();
-        }
+    fn logical_label(&self, id: &String) -> String {
+        let english = crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS).find(|p| p.0 == id).map_or(id.as_str(), |p| p.1);
+        crate::i18n::tr(&self.0.ui.language, english).to_owned()
+    }
+    fn permissions(&self, id: &String) -> Permissions {
+        model_permissions(id)
+    }
+    fn limits(&self, id: &String) -> craft_ui::docking::PanelLimits {
+        let min = if id == CANVAS { egui::vec2(200.0, 120.0) } else { egui::vec2(220.0, 80.0) };
+        craft_ui::docking::PanelLimits { min, ..Default::default() }
     }
     fn floating_size(&self, id: &String) -> Option<egui::Vec2> {
         Some(floating_size(id))
+    }
+    fn bare(&self, id: &String) -> bool {
+        id == CANVAS
     }
     fn group_header_width(&self, _: &[String], _: &String, _: bool) -> f32 {
         24.0
@@ -750,7 +994,7 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
 /// closed with Close.
 fn close_group(app: &mut DesignApp, params: &Value) -> Result<Value, String> {
     let panel = params.get("panel").and_then(Value::as_str).and_then(normalize).ok_or("panel must name a registered panel")?;
-    let layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
+    let layout = layout_of(app);
     let group = tab_group(&layout, panel);
     for p in &group {
         change(app, "close", &json!({"panel": p}))?;
@@ -758,8 +1002,9 @@ fn close_group(app: &mut DesignApp, params: &Value) -> Result<Value, String> {
     Ok(json!({"closed": group}))
 }
 
-/// InDesign's commands on a panel tab (and at the end of its panel menu): Close, Close Tab Group,
-/// Minimize (an open accordion entry) and Collapse to Icons.
+/// InDesign's panel tab commands at the end of a panel's three-line menu: Close, Close Tab Group,
+/// Minimize (an open accordion entry) and Collapse to Icons. A tab's own context menu is
+/// craft-ui's, which lists the same commands.
 fn tab_commands(app: &mut DesignApp, ui: &mut egui::Ui, panel: &'static str) {
     let language = app.ui.language.clone();
     let tr = |s: &str| crate::i18n::tr(&language, s).to_owned();
@@ -775,26 +1020,24 @@ fn tab_commands(app: &mut DesignApp, ui: &mut egui::Ui, panel: &'static str) {
     if ui.button(crate::rtl::widget(ui, tr("Close Tab Group"))).clicked() {
         run(app, ui, "window.panel.closeGroup", json!({"panel": panel}));
     }
-    let layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
+    let layout = layout_of(app);
     let minimizable = open_in_stack(&layout, panel);
     if ui.add_enabled(minimizable, egui::Button::new(crate::rtl::widget(ui, tr("Minimize")))).clicked() {
         run(app, ui, "window.panel.layout", json!({"action": {"SetStackOpen": {"panel": panel, "open": false}}}));
     }
     ui.separator();
-    if ui.add_enabled(app.ui.dock_expanded, egui::Button::new(crate::rtl::widget(ui, tr("Collapse to Icons")))).clicked() {
+    let expanded = dock_columns(&layout).iter().any(|c| !c.iconic);
+    if ui.add_enabled(expanded, egui::Button::new(crate::rtl::widget(ui, tr("Collapse to Icons")))).clicked() {
         run(app, ui, "window.collapseToIcons", json!({}));
     }
 }
 
 /// Close the last explicitly opened panel through the same validated layout transaction.
 pub(crate) fn close_visible(app: &mut DesignApp) -> Result<(), String> {
-    if app.ui.docking.is_some() {
-        if let Some(panel) = app.ui.docking_opened.clone() {
-            change(app, "close", &json!({"panel": panel}))?;
-        }
-    } else {
-        app.ui.open_panel = None;
+    if let Some(panel) = app.ui.docking_opened.clone() {
+        change(app, "close", &json!({"panel": panel}))?;
     }
+    app.ui.open_panel = None;
     Ok(())
 }
 

@@ -1826,11 +1826,6 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             Ok(json!({"url": url}))
         }
         "window.toolsDoubleColumn" => flag(&mut app.ui.tools_double_column),
-        "window.collapseToIcons" => {
-            app.ui.dock_expanded = false;
-            app.ui.open_panel = None;
-            Ok(Value::Null)
-        }
         "window.newWorkspace" => {
             let Some(name) = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) else {
                 app.ui.dialog =
@@ -4003,8 +3998,9 @@ mod tests {
                 out.textures_delta.clear();
             }
         };
-        // The icon column's flyout (the classic dock) and a floating panel group (the docking layout).
-        let flyout = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("panel_flyout"));
+        // The docked panel's tab and a floating panel group.
+        let tab = egui::Id::new("designcraft-panel-docking").with(("tab", &"preflight".to_string()));
+        let docked = || ctx.read_response(tab).is_some();
         let group = egui::LayerId::new(egui::Order::Middle, egui::Id::new("designcraft-panel-docking").with(("floating", "preflight")));
         let shown = |layer: egui::LayerId| ctx.memory(|m| m.areas().is_visible(&layer));
         let toggles = [
@@ -4014,14 +4010,14 @@ mod tests {
         ];
         app.run("window.panel", json!({"panel": "preflight"})).unwrap();
         frame(&mut app);
-        assert!(app.ui.docking.is_none() && shown(flyout));
+        assert!(docked());
         for (id, hide, show) in &toggles {
             app.run(id, hide.clone()).unwrap();
             frame(&mut app);
-            assert!(!shown(flyout), "{id} hides the flyout");
+            assert!(!docked(), "{id} hides the dock");
             app.run(id, show.clone()).unwrap();
             frame(&mut app);
-            assert!(shown(flyout), "{id} again brings it back");
+            assert!(docked(), "{id} again brings it back");
         }
         app.run("window.floatPanel", json!({"panel": "preflight", "x": 400, "y": 200})).unwrap();
         frame(&mut app);
@@ -5055,7 +5051,7 @@ mod tests {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({})).unwrap();
         activate(&mut app, "app.characterPanel", &Value::Null);
-        assert_eq!(app.ui.open_panel.as_deref(), Some("character"));
+        assert!(crate::panel_docking::showing(&app, "character"));
         // Paragraph Styles opens floating, grouped with Character Styles, as in InDesign.
         activate(&mut app, "app.paragraphStylesPanel", &Value::Null);
         let layout = app.ui.docking.as_ref().unwrap();
@@ -5132,7 +5128,10 @@ mod tests {
         assert_eq!(checked(&app, "window.workspace", &json!({"name": "Essentials"})), Some(false));
         // Window › Pages opens Pages from its icon group, not the Properties stack.
         run_ui(&mut app, "window.panel", &json!({"panel": "pages"})).unwrap().unwrap();
-        assert_eq!((app.ui.open_panel.as_deref(), app.ui.dock_expanded), (Some("pages"), false));
+        assert!(crate::panel_docking::showing(&app, "pages"));
+        let layout = app.ui.docking.clone().unwrap();
+        assert!(!layout.contains(&"properties".to_string()));
+        assert_eq!(crate::panel_docking::tab_group(&layout, "pages"), ["pages", "layers", "links"]);
         // A workspace saved from it keeps the groups.
         run_ui(&mut app, "window.newWorkspace", &json!({"name": "Mine"})).unwrap().unwrap();
         run_ui(&mut app, "window.workspace", &json!({"name": "Essentials"})).unwrap().unwrap();
@@ -5154,8 +5153,8 @@ mod tests {
         assert_eq!(groups[5], ["character", "characterStyles"]);
         for panel in ["pages", "paragraphStyles", "characterStyles"] {
             run_ui(&mut app, "window.panel", &json!({"panel":panel})).unwrap().unwrap();
-            assert_eq!(app.ui.open_panel.as_deref(), Some(panel));
-            assert!(!app.ui.dock_expanded);
+            assert!(crate::panel_docking::showing(&app, panel), "{panel}");
+            assert!(app.ui.docking.as_ref().unwrap().floating.is_empty(), "{panel} opens from its icon group");
         }
         run_ui(&mut app, "window.resetWorkspace", &json!({})).unwrap().unwrap();
         assert_eq!(app.ui.icon_groups, Some(groups));

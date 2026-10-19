@@ -58,10 +58,8 @@ pub fn panel_label(id: &str) -> &'static str {
     DOCK_TABS.iter().chain(ICON_PANELS).map(|p| (p.0, p.1)).chain(FLOATING_PANELS.iter().copied()).find(|p| p.0 == id).map_or("Panel", |p| p.1)
 }
 
+/// The classic dock, replaced by the docking layout (`panel_docking::show`) and no longer drawn.
 pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
-    if crate::panel_docking::show(app, ui) {
-        return;
-    }
     let t = Tokens::get(ui.ctx());
     // Expanded panel stack (outermost, 253 pt) — declared first so it sits at the far right.
     if app.ui.dock_expanded {
@@ -331,7 +329,7 @@ pub fn float_panel(app: &mut DesignApp, id: &str, at: egui::Pos2) {
 
 /// Put a floating panel back in the dock's icon column.
 pub fn dock_panel(app: &mut DesignApp, id: &str) {
-    if app.ui.docking.is_some() && !float_only(id) {
+    if !float_only(id) {
         if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.dock", &serde_json::json!({"panel":id})) {
             app.status(error);
         }
@@ -342,11 +340,10 @@ pub fn dock_panel(app: &mut DesignApp, id: &str) {
 
 /// Floating panels: movable, resizable windows; "Dock" returns one to the icon column.
 pub fn floating(app: &mut DesignApp, ctx: &egui::Context) {
-    // A customized layout draws its own floating groups; float-only panels are drawn here.
-    let customized = app.ui.docking.is_some();
+    // The docking layout draws its own floating groups; float-only panels are drawn here.
     let t = Tokens::get(ctx);
     for (id, at) in app.ui.floating.clone() {
-        if customized && !float_only(&id) {
+        if !float_only(&id) {
             continue;
         }
         let label = crate::i18n::tr(&app.ui.language, panel_label(&id)).to_owned();
