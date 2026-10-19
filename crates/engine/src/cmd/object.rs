@@ -297,7 +297,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             st.swatch = v.into();
                         }
                         if let Some(v) = p2.get("tint").and_then(Value::as_f64) {
-                            st.tint = v as f32;
+                            st.tint = v.clamp(0.0, 1.0) as f32;
                         }
                         if let Some(v) = p2.get("weight").and_then(Value::as_f64) {
                             st.weight = v.max(0.0);
@@ -309,7 +309,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             st.gap_swatch = v.into();
                         }
                         if let Some(v) = p2.get("gapTint").and_then(Value::as_f64) {
-                            st.gap_tint = v as f32;
+                            st.gap_tint = v.clamp(0.0, 1.0) as f32;
                         }
                         if let Some(v) = p2.get("gapOverprint").and_then(Value::as_bool) {
                             st.gap_overprint = v;
