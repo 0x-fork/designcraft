@@ -33,6 +33,39 @@ const PANEL_KEYS: &[(&str, &str)] = &[
     ("align", "Shift+F7"),
 ];
 
+/// Other names shortcut sets use for a command (InDesign's feature names), by command id.
+const IMPORT_ALIASES: &[(&str, &str)] = &[
+    ("app.quit", "Exit"),
+    ("app.preferences", "General"),
+    ("app.insertTableDialog", "Insert Table"),
+    ("view.togglePresentation", "Presentation"),
+    ("color.defaultFillStroke", "Apply Default Fill and Stroke Colors"),
+    ("color.swapFillStroke", "Swap Fill and Stroke Colors"),
+    ("view.togglePreview", "Toggle View Setting Between Default and Preview"),
+    ("type.bold", "Apply Bold"),
+    ("type.italic", "Apply Italic"),
+    ("window.hidePanels", "Show/Hide All Panels"),
+    ("window.hidePanelsExceptTools", "Show/Hide All Panels Except Toolbox"),
+    ("window.nextDocument", "Next Window"),
+    ("window.previousDocument", "Previous Window"),
+];
+
+/// Extra menu paths for import, where an alias would leave two commands on one name: InDesign's
+/// Tools area has Apply Color, which is also `object.color`'s label.
+const IMPORT_PATHS: &[(&str, &[&str])] = &[("color.applyColor", &["Tools", "Apply Color"])];
+
+/// Commands that open a panel, by panel id. The panel's binding gets the command's default key
+/// too, so the two are twins: a shortcut set that gives either one the key leaves both with it.
+const PANEL_TWINS: &[(&str, &str)] = &[
+    ("character", "app.characterPanel"),
+    ("paragraph", "app.paragraphPanel"),
+    ("glyphs", "app.glyphsPanel"),
+    ("characterStyles", "app.characterStylesPanel"),
+    ("paragraphStyles", "app.paragraphStylesPanel"),
+    ("table", "app.tablePanel"),
+    ("textWrap", "object.textWrap"),
+];
+
 pub fn panel(id: &str) -> CommandRef {
     CommandRef::with_params(PANEL_COMMAND, json!({ "panel": id }))
 }
@@ -72,23 +105,23 @@ fn build_catalogue() -> Vec<Bindable> {
     let rows: HashSet<Vec<String>> = paths.values().flatten().map(|p| normalized(p)).collect();
     let app = Scope::app();
     let mut out = Vec::new();
-    let mut add = |command: CommandRef, label: &str, default: Option<&str>, fallback_path: Option<Vec<String>>, kind: Kind| {
+    let mut add = |command: CommandRef, label: &str, defaults: &[&str], fallback_path: Option<Vec<String>>, kind: Kind| {
         let mut b = Bindable::new(command, label, app.clone()).with_kind(kind);
         match paths.get(&b.command.key()) {
             Some(found) => b.paths.extend(found.iter().cloned()),
             None => b.paths.extend(fallback_path.filter(|p| !rows.contains(&normalized(p)))),
         }
-        if let Some(binding) = default.and_then(|d| Binding::parse(d).ok()) {
+        for binding in defaults.iter().filter_map(|d| Binding::parse(d).ok()) {
             b = b.with_default(binding);
         }
         out.push(b);
     };
     for (id, label, _, _) in menus::UI_COMMANDS {
-        add(CommandRef::new(*id), label, menus::default_shortcut(id), None, Kind::Command);
+        add(CommandRef::new(*id), label, menus::default_shortcut(id).as_slice(), None, Kind::Command);
     }
     for c in designcraft_engine::command_specs() {
         let path = (!c.menu.is_empty()).then(|| c.menu.iter().map(|s| s.to_string()).chain([c.label.to_string()]).collect());
-        add(CommandRef::new(c.id), c.label, c.shortcut, path, Kind::Command);
+        add(CommandRef::new(c.id), c.label, c.shortcut.as_slice(), path, Kind::Command);
     }
     let mut seen = Vec::new();
     for (id, label, _) in crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS) {
@@ -96,15 +129,25 @@ fn build_catalogue() -> Vec<Bindable> {
             continue;
         }
         seen.push(id);
-        let default = PANEL_KEYS.iter().find(|(p, _)| p == id).map(|(_, k)| *k);
-        add(panel(id), label, default, Some(vec!["Window".into(), (*label).into()]), Kind::Command);
+        let own = PANEL_KEYS.iter().find(|(p, _)| p == id).map(|(_, k)| *k);
+        let twin = PANEL_TWINS.iter().find(|(p, _)| p == id).and_then(|(_, c)| menus::default_shortcut(c));
+        let defaults: Vec<&str> = own.into_iter().chain(twin).collect();
+        add(panel(id), label, &defaults, Some(vec!["Window".into(), (*label).into()]), Kind::Command);
     }
     for group in designcraft_tools::TOOL_GROUPS {
         let Some(first) = group.first() else { continue };
         for t in group.iter() {
             let kind = Kind::Tool { group: Some(first.id.to_string()) };
-            add(tool(t.id), t.label, t.shortcut, Some(vec!["Tools".into(), t.label.into()]), kind);
+            add(tool(t.id), t.label, t.shortcut.as_slice(), Some(vec!["Tools".into(), t.label.into()]), kind);
         }
+    }
+    for b in &mut out {
+        if !b.command.params.is_null() {
+            continue;
+        }
+        let id = b.command.id.as_str();
+        b.aliases.extend(IMPORT_ALIASES.iter().filter(|(c, _)| *c == id).map(|(_, a)| a.to_string()));
+        b.paths.extend(IMPORT_PATHS.iter().filter(|(c, _)| *c == id).map(|(_, p)| p.iter().map(|s| s.to_string()).collect()));
     }
     out
 }
@@ -197,15 +240,8 @@ pub fn set(app: &mut DesignApp, cmd: &CommandRef, shortcut: Option<&str>, policy
 /// Other commands on the keys `cmd` holds, by command key.
 pub fn conflicts(keymap: &Keymap, cmd: &CommandRef) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for c in keymap.conflicts() {
-        let other = if c.a.0 == *cmd {
-            &c.b.0
-        } else if c.b.0 == *cmd {
-            &c.a.0
-        } else {
-            continue;
-        };
-        let key = other.key();
+    for c in keymap.conflicts_with(cmd) {
+        let key = c.b.0.key();
         if !out.contains(&key) {
             out.push(key);
         }

@@ -3005,38 +3005,21 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
     let contexts: &[&str] = if typing { &[crate::keys::TEXT_CONTEXT] } else { &[] };
     let active = craft_keymap::Active { panel: None, contexts, typing };
     let hits = ctx.input_mut(|i| {
-        let platform = app.keymap.platform();
-        // Presses the dispatcher must not take: the clipboard events the canvas and text tools
-        // handle themselves (Paste carries the text), Clear (the active tool deletes), and the
-        // keys the native menu's accelerators already handled. They go back afterwards.
-        let mut held = Vec::new();
-        i.events.retain(|e| {
-            let keep = match e {
-                egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) => false,
-                egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                    let exact =
-                        craft_keymap::Key::from_egui(*key).map(|k| craft_keymap::Chord::new(craft_keymap::Mods::from_egui(modifiers, platform), k));
-                    let run = match exact.map(|c| app.keymap.lookup(&c, false, &active)) {
-                        Some(craft_keymap::Lookup::Run(c)) => Some(c),
-                        _ => None,
-                    };
-                    // The native menu's accelerator holds the command's default keys and fires
-                    // only for them exactly: the Plus key standing in for = never reaches it.
-                    !run.is_some_and(|c| {
-                        c.id == "edit.clear"
-                            || (c.params.is_null() && app.native_shortcuts.contains(&c.id) && app.keymap.overrides().get(&c.id).is_none())
-                    })
-                }
-                _ => true,
-            };
-            if !keep {
-                held.push(e.clone());
-            }
-            keep
-        });
-        let hits = app.key_dispatcher.dispatch(i, &app.keymap, &active);
-        i.events.extend(held);
-        hits
+        let native = &app.native_shortcuts;
+        let overrides = app.keymap.overrides();
+        // Presses the dispatcher leaves alone: Clear (the active tool deletes) and the keys the
+        // native menu's accelerators already handled. An accelerator holds the command's default
+        // keys and fires only for them exactly: the Plus key standing in for = never reaches it.
+        // Copy, Cut and Paste stay too (the dispatcher's default): the canvas and text tools
+        // handle them, and Paste carries the text.
+        let accept = |hit: &craft_keymap::egui::Hit| {
+            let c = &hit.command;
+            let leave = hit.exact
+                && hit.cycle.is_empty()
+                && (c.id == "edit.clear" || (c.params.is_null() && native.contains(&c.id) && overrides.get(&c.id).is_none()));
+            !leave
+        };
+        app.key_dispatcher.dispatch_filtered(i, &app.keymap, &active, accept)
     });
     for hit in hits {
         if !hit.cycle.is_empty() {
@@ -3513,9 +3496,12 @@ mod tests {
         assert_eq!(shortcut_of(&app, "app.palette"), None, "a removed default stays removed");
         assert_eq!(shortcut_of(&app, "file.close"), None);
         assert_eq!(shortcut_of(&app, "app.save").as_deref(), Some("Cmd+S"));
-        // Saved again in the current form, it reads back the same.
+        // Saved again it reads back the same, and with one key per command it keeps the map form
+        // an older version reads.
         let resaved = serde_json::to_vec(&app.ui).unwrap();
         assert_eq!(crate::UiState::from_preferences_json(&resaved).unwrap().shortcuts, app.ui.shortcuts);
+        let saved: Value = serde_json::from_slice(&resaved).unwrap();
+        assert_eq!(saved["shortcuts"], json!({"app.preferences": "Cmd+Alt+Shift+9", "app.palette": "", "file.close": ""}));
     }
 
     #[test]

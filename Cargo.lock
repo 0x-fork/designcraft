@@ -827,7 +827,7 @@ dependencies = [
 [[package]]
 name = "craft-keymap"
 version = "0.1.0"
-source = "git+https://github.com/aiongg/craft-libs?rev=d6c7b45350f7a4352b845c9fdd2e63913d1af27d#d6c7b45350f7a4352b845c9fdd2e63913d1af27d"
+source = "git+https://github.com/aiongg/craft-libs?rev=66f22029ba71dad29dcda156f01f680763aa6659#66f22029ba71dad29dcda156f01f680763aa6659"
 dependencies = [
  "egui",
  "serde",

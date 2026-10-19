@@ -352,6 +352,16 @@ mod tests {
     }
 
     #[test]
+    fn a_panel_item_shares_its_key_with_the_command_that_opens_the_panel() {
+        let mut app = app();
+        let set = "Shortcut Set : Panels\r\nProduct area : Window Menu\r\n\tType & Tables: Character --- Default: Ctrl+T\r\n";
+        let r = menus::run_ui(&mut app, "window.importShortcuts", &json!({"text": set})).unwrap().unwrap();
+        assert_eq!(crate::keys::shortcut(&app.keymap, &crate::keys::panel("character")).as_deref(), Some("Cmd+T"));
+        assert_eq!(menus::shortcut_of(&app, "app.characterPanel").as_deref(), Some("Cmd+T"));
+        assert!(!r["conflictsCleared"].as_array().into_iter().flatten().any(|c| c["id"] == "app.characterPanel"), "{r}");
+    }
+
+    #[test]
     fn hostile_input_returns_a_report_or_an_error() {
         let mut app = app();
         for text in ["", "\0\0\0", "--- ---", " --- Default: Ctrl+", "Product area : \n\t: --- Default: +, Default: ,,,", "x --- Default: ⌘⇧"] {
