@@ -972,3 +972,25 @@ fn clicking_an_iconic_column_icon_opens_its_flyout() {
     click(&mut h, icon.center(), PointerButton::Primary);
     assert!(h.state().ui.docking_flyout.is_none());
 }
+
+/// Iconic columns paint DesignCraft's own panel icons, in the colour craft-ui passes; a panel
+/// without an icon paints nothing.
+#[test]
+fn panel_icons_are_painted_in_code() {
+    let mut app = app();
+    let mut content = PanelContent { app: &mut app };
+    let ctx = egui::Context::default();
+    let mut paint = |panel: &str| {
+        let mut painted = false;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.ctx().layer_painter(egui::LayerId::background());
+            let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(20.0, 20.0));
+            painted = craft_ui::docking::DockContent::paint_icon(&mut content, &painter, rect, &panel.to_string(), egui::Color32::RED);
+        });
+        output.textures_delta.clear();
+        (painted, output.shapes.len())
+    };
+    let (painted, shapes) = paint("pages");
+    assert!(painted && shapes > 0, "{painted} {shapes}");
+    assert_eq!(paint(CANVAS), (false, 0));
+}

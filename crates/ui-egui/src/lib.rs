@@ -22,7 +22,6 @@ mod modal_drag;
 mod new_document;
 mod object_control;
 mod panel_docking;
-mod panel_icons;
 pub mod panels;
 mod prefs;
 pub mod render_worker;

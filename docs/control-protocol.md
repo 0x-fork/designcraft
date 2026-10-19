@@ -109,8 +109,11 @@ read as `anchor`.
   `zone` and `before`.
 - `window.panel.float {panel, x?, y?, width?, height?, group?, column?}` (and
   `window.floatPanel`) detaches a panel, its tab group (`group`) or its dock column
-  (`column`). A panel floats at 400, 140 at its own size unless the params say otherwise; a
-  panel already alone in a floating window moves or resizes.
+  (`column`). Without a position it floats 24 points inside the dock area's top-left corner,
+  clear of the menu bar; a panel floats at its own size and a tab group or column at the size
+  a drag would float it at. Given values replace these. A panel already alone in a floating
+  window moves or resizes, and a tab group that is already a whole floating window keeps its
+  rect unless the params change it.
 - `window.panel.dock {panel, anchor?, zone?, before?, group?, column?, side?}` (and
   `window.dockPanel`) docks beside `anchor`, or in a new column of the dock at `side`
   (`Start` or `End`; a new dock when there is none). Without either, a panel that floated from
@@ -179,7 +182,8 @@ default; a column bar's menu toggles it), Escape or a click outside the flyout c
 
 `layout` is craft-ui's serialized `Layout`; `customized` is false while the workspace's
 default layout is in use; `focused` is the panel (or `canvas`) last clicked or selected, or
-null; `flyout` is the panel whose iconic-column flyout is open; `autoCollapse` is the
+null; `flyout` is the panel whose iconic-column flyout is open (as drawn in the last frame,
+or as a command that opens one sets it); `autoCollapse` is the
 Auto-Collapse Iconic Panels setting; `hidden` lists closed panels that remember their place.
 `hitRects` lists where each docking gesture starts in the last frame, from craft-ui's
 `DockArea::hit_rects`: `hit` is a serialized craft-ui `Hit` (`Tab`, `DragBar`, `Border`,

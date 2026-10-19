@@ -5,14 +5,22 @@
 //! languages, the left in right-to-left ones).
 
 use craft_ui::docking::{
-    Action, Column, DockCommand, DockOperation, Floating, Group, Layout, Node, Permissions, Placement, Side, Target, UiDock, Workspace,
+    Action, Column, DockCommand, DockOperation, FloatSpace, Floating, Group, Layout, Node, Permissions, Placement, Side, Target, UiDock, Workspace,
 };
 use serde_json::{Value, json};
 
 use crate::DesignApp;
 
+/// The id of the dock area that draws the panels.
+fn area_id() -> egui::Id {
+    egui::Id::new("designcraft-panel-docking")
+}
+
+/// The dock area a headless app floats into, before it ever drew a frame.
+const HEADLESS_AREA: egui::Rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1400.0, 900.0));
+
 pub(crate) fn cancel_gesture(ctx: &egui::Context) {
-    craft_ui::docking::cancel_drag::<String>(ctx, egui::Id::new("designcraft-panel-docking"));
+    craft_ui::docking::cancel_drag::<String>(ctx, area_id());
 }
 
 fn normalize(raw: &str) -> Option<&'static str> {
@@ -412,17 +420,20 @@ fn floats_alone(layout: &Layout<String>, panel: &str) -> bool {
 /// A shared docking command (`window.panel.*`, `window.workspace.*`, `ui.dock`) on the layout in
 /// use, all or nothing. craft-ui's `DockCommand` parses it and makes the layout actions;
 /// DesignCraft resolves panel names, shows a hidden panel before moving, floating or docking
-/// it, floats a panel at its own size, and returns a floated panel to its dock place on Dock
-/// Panel.
+/// it, floats a panel at its own size (also when it was hidden, which craft-ui never drew),
+/// and returns a floated panel to its dock place on Dock Panel.
 fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value, String> {
     let mut params = resolve_panels(params)?;
+    let whole = |key: &str| params.get(key).and_then(Value::as_bool).unwrap_or(false);
     if id == "window.panel.float"
+        && !whole("group")
+        && !whole("column")
         && let Some(panel) = named_panel(&params)
         && !floats_alone(&layout_of(app), &panel)
         && let Some(fields) = params.as_object_mut()
     {
         let size = floating_size(&panel);
-        for (key, default) in [("x", 400.0), ("y", 140.0), ("width", size.x), ("height", size.y)] {
+        for (key, default) in [("width", size.x), ("height", size.y)] {
             fields.entry(key).or_insert(json!(default));
         }
     }
@@ -440,6 +451,7 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
         _ => {}
     }
     let rtl = crate::i18n::is_rtl(&app.ui.language);
+    let space = float_space(app);
     let mut txn = Transaction::begin(app)?;
     let shows = match &command {
         DockCommand::Activate { panel }
@@ -462,7 +474,7 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
     let actions = match &command {
         // Showing it was the whole command (craft-ui's `DockCommand::apply` does the same).
         DockCommand::Dock { anchor: None, side: None, .. } if shown || returned => Vec::new(),
-        _ => command.to_actions(&txn.workspace, rtl).map_err(|e| e.to_string())?,
+        _ => command.to_actions(&txn.workspace, rtl, &space).map_err(|e| e.to_string())?,
     };
     let reveal = match &command {
         DockCommand::Layout { action } | DockCommand::UiDock(UiDock::Action { action }) => match action {
@@ -479,6 +491,14 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
         closed.extend(txn.apply(action)?);
     }
     Ok(txn.commit(app, closed, reveal))
+}
+
+/// Where a command floats a panel, group or column it gives no rect: inside the dock area as
+/// last drawn, else inside the window, else (headless, before any frame) inside
+/// [`HEADLESS_AREA`].
+fn float_space(app: &DesignApp) -> FloatSpace<String> {
+    let Some(ctx) = app.egui_ctx.as_ref() else { return FloatSpace::new(HEADLESS_AREA) };
+    craft_ui::docking::float_space::<String>(ctx, area_id()).unwrap_or_else(|| FloatSpace::new(ctx.content_rect()))
 }
 
 /// A change to the layout in use, committed only when every step succeeded.
@@ -721,7 +741,7 @@ pub(crate) fn set_iconic(app: &mut DesignApp, iconic: bool) -> Result<Value, Str
 }
 
 pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
-    let area = egui::Id::new("designcraft-panel-docking");
+    let area = area_id();
     let changed_workspace = ui.ctx().data_mut(|data| {
         let previous = data.get_temp::<u64>(area.with("generation"));
         data.insert_temp(area.with("generation"), app.ui.docking_generation);
@@ -749,12 +769,12 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     if let Some(panel) = raise {
         dock = dock.raise_panel(panel);
     }
-    let icons = crate::panel_icons::panel_icons(ui.ctx(), style.icon_size);
-    let output = dock.show_content(ui, &layout, &style, &mut PanelContent { app: &mut *app, icons });
-    app.ui.docking_flyout = craft_ui::docking::flyout::<String>(ui.ctx(), area);
-    for event in &output.events {
-        if *event == craft_ui::docking::DockEvent::ToggleAutoCollapse {
-            app.ui.dock_auto_collapse = !app.ui.dock_auto_collapse;
+    let mut output = dock.show_content(ui, &layout, &style, &mut PanelContent { app: &mut *app });
+    for event in std::mem::take(&mut output.events) {
+        match event {
+            craft_ui::docking::DockEvent::ToggleAutoCollapse => app.ui.dock_auto_collapse = !app.ui.dock_auto_collapse,
+            craft_ui::docking::DockEvent::FlyoutChanged { panel } => app.ui.docking_flyout = panel,
+            _ => {}
         }
     }
     if let Some(panel) = output.focused {
@@ -778,7 +798,7 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
 /// panels closed with a remembered place, the panel whose flyout is open, and where each
 /// docking gesture starts in the last frame (`hitRects`).
 pub(crate) fn inspect(app: &DesignApp, ctx: &egui::Context) -> Value {
-    let hits = craft_ui::docking::DockArea::<String>::hit_rects(ctx, egui::Id::new("designcraft-panel-docking"));
+    let hits = craft_ui::docking::DockArea::<String>::hit_rects(ctx, area_id());
     let hit_rects: Vec<Value> = hits.iter().map(|(hit, r)| json!({"hit": hit, "rect": [r.left(), r.top(), r.width(), r.height()]})).collect();
     json!({
         "layout": layout_of(app),
@@ -901,10 +921,14 @@ fn floating_size(panel: &str) -> egui::Vec2 {
     }
 }
 
+/// The name of a dock panel's icon in [`crate::icons`].
+fn panel_icon(panel: &str) -> Option<&'static str> {
+    crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS).find(|(id, _, _)| *id == panel).map(|(_, _, icon)| *icon)
+}
+
 /// The panels' content and icons.
 struct PanelContent<'a> {
     app: &'a mut DesignApp,
-    icons: std::collections::HashMap<String, egui::ImageSource<'static>>,
 }
 impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     fn body(&mut self, ui: &mut egui::Ui, id: &String) {
@@ -939,8 +963,10 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     fn floating_size(&self, id: &String) -> Option<egui::Vec2> {
         Some(floating_size(id))
     }
-    fn icon(&self, id: &String) -> Option<egui::ImageSource<'static>> {
-        self.icons.get(id).cloned()
+    fn paint_icon(&mut self, painter: &egui::Painter, rect: egui::Rect, id: &String, color: egui::Color32) -> bool {
+        let Some(icon) = panel_icon(id) else { return false };
+        crate::icons::paint(painter, rect, icon, color);
+        true
     }
     fn bare(&self, id: &String) -> bool {
         id == CANVAS
