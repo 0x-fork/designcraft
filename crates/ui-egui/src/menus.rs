@@ -2179,7 +2179,7 @@ pub fn shortcut_string(m: egui::Modifiers, key: egui::Key) -> String {
 /// A shortcut for display: ⌃⌥⇧⌘K on macOS, Ctrl+Alt+Shift+K elsewhere.
 pub fn shortcut_text(sc: &str) -> String {
     match craft_keymap::Binding::parse(sc) {
-        Ok(b) => b.trigger.display(craft_keymap::Platform::current()),
+        Ok(b) => b.trigger.display(crate::keys::platform()),
         Err(_) => sc.to_string(),
     }
 }

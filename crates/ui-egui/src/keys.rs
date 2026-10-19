@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use craft_keymap::{Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Overrides, Platform, Policy, Scope, Scopes};
 use serde_json::{Value, json};
@@ -88,9 +89,53 @@ pub fn command_ref(id: &str, params: &Value) -> CommandRef {
     }
 }
 
-/// The keymap with the user's overrides.
+/// The browser's operating system as [`note_os`] recorded it, by [`platform_code`]; 0 before the
+/// first frame.
+static WEB_PLATFORM: AtomicU8 = AtomicU8::new(0);
+
+fn platform_code(p: Platform) -> u8 {
+    match p {
+        Platform::Mac => 1,
+        Platform::Windows => 2,
+        Platform::Linux => 3,
+    }
+}
+
+/// The platform shortcuts follow: the build's, and on the web the browser's operating system, so a
+/// browser on a Mac reads ⌘ as Cmd and leaves Control as Control.
+pub fn platform() -> Platform {
+    if !cfg!(target_arch = "wasm32") {
+        return Platform::current();
+    }
+    match WEB_PLATFORM.load(Ordering::Relaxed) {
+        1 => Platform::Mac,
+        2 => Platform::Windows,
+        3 => Platform::Linux,
+        _ => Platform::current(),
+    }
+}
+
+/// The platform for an operating system egui reports (on the web, guessed from the browser's user
+/// agent). An iPad with a keyboard has ⌘ as on a Mac.
+pub fn platform_of(os: egui::os::OperatingSystem) -> Platform {
+    use egui::os::OperatingSystem as Os;
+    match os {
+        Os::Mac | Os::IOS => Platform::Mac,
+        Os::Windows => Platform::Windows,
+        Os::Nix | Os::Android | Os::Unknown => Platform::Linux,
+    }
+}
+
+/// Records the operating system egui reports, which the web build reads from the browser.
+pub fn note_os(os: egui::os::OperatingSystem) {
+    if cfg!(target_arch = "wasm32") {
+        WEB_PLATFORM.store(platform_code(platform_of(os)), Ordering::Relaxed);
+    }
+}
+
+/// The keymap with the user's overrides, for [`platform`].
 pub fn new_keymap(overrides: Overrides) -> Keymap {
-    Keymap::new(catalogue().to_vec(), Scopes::new().with_context(TEXT_CONTEXT), Platform::current()).with_overrides(overrides)
+    Keymap::new(catalogue().to_vec(), Scopes::new().with_context(TEXT_CONTEXT), platform()).with_overrides(overrides)
 }
 
 /// Every bindable command, in dispatch order: where two share keys the earlier one runs. UI
@@ -205,7 +250,7 @@ pub fn shortcut_display(keymap: &Keymap, cmd: &CommandRef) -> Option<String> {
 /// A key press as shortcut text ("Cmd+Shift+K"); `None` for a key the keymap has no name for.
 pub fn chord_text(m: egui::Modifiers, key: egui::Key) -> Option<String> {
     let key = Key::from_egui(key)?;
-    Some(Chord::new(Mods::from_egui(&m, Platform::current()), key).to_string())
+    Some(Chord::new(Mods::from_egui(&m, platform()), key).to_string())
 }
 
 /// Copies the keymap's overrides to the saved UI state.
@@ -258,4 +303,32 @@ pub fn conflicts(keymap: &Keymap, cmd: &CommandRef) -> Vec<String> {
 /// A command's label, by its key.
 pub fn label(keymap: &Keymap, key: &str) -> String {
     CommandRef::parse_key(key).and_then(|c| keymap.bindable(&c).map(|b| b.label.clone())).unwrap_or_else(|| key.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The web build follows the operating system in the browser's user agent.
+    #[test]
+    fn browser_user_agent_picks_the_platform() {
+        use egui::os::OperatingSystem as Os;
+        let of = |ua: &str| platform_of(Os::from_user_agent(ua));
+        let mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
+        let ipad = "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
+        let windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+        let linux = "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0";
+        let android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+        assert_eq!(of(mac), Platform::Mac);
+        assert_eq!(of(ipad), Platform::Mac);
+        assert_eq!(of(windows), Platform::Windows);
+        assert_eq!(of(linux), Platform::Linux);
+        assert_eq!(of(android), Platform::Linux);
+        assert_eq!(platform_of(Os::Unknown), Platform::Linux);
+        // Native builds keep their own platform whatever egui reports.
+        if !cfg!(target_arch = "wasm32") {
+            note_os(Os::Mac);
+            assert_eq!(platform(), Platform::current());
+        }
+    }
 }

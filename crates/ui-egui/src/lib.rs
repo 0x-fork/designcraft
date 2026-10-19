@@ -1127,9 +1127,13 @@ impl DesignApp {
         }
     }
 
-    /// Applies `ui.shortcuts` to the keymap when they differ, e.g. after preferences were loaded.
+    /// Applies `ui.shortcuts` to the keymap when they differ, e.g. after preferences were loaded,
+    /// and rebuilds it when the shortcut platform changed (the web build learns the browser's
+    /// operating system on the first frame).
     pub fn sync_keymap(&mut self) {
-        if *self.keymap.overrides() != self.ui.shortcuts {
+        if self.keymap.platform() != keys::platform() {
+            self.keymap = keys::new_keymap(self.ui.shortcuts.clone());
+        } else if *self.keymap.overrides() != self.ui.shortcuts {
             self.keymap.set_overrides(self.ui.shortcuts.clone());
         }
     }
@@ -1144,6 +1148,7 @@ impl DesignApp {
         if self.egui_ctx.is_none() {
             self.egui_ctx = Some(ctx.clone());
         }
+        keys::note_os(ctx.os());
         self.sync_keymap();
         self.window_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         if !self.color_applied {
