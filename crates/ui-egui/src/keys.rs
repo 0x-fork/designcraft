@@ -36,7 +36,7 @@ const PANEL_KEYS: &[(&str, &str)] = &[
 /// Other names shortcut sets use for a command (InDesign's feature names), by command id.
 const IMPORT_ALIASES: &[(&str, &str)] = &[
     ("app.quit", "Exit"),
-    ("app.preferences", "General"),
+    ("app.preferences", "Preferences: General…"),
     ("app.insertTableDialog", "Insert Table"),
     ("view.togglePresentation", "Presentation"),
     ("color.defaultFillStroke", "Apply Default Fill and Stroke Colors"),
@@ -49,6 +49,11 @@ const IMPORT_ALIASES: &[(&str, &str)] = &[
     ("window.nextDocument", "Next Window"),
     ("window.previousDocument", "Previous Window"),
 ];
+
+/// Commands that show and hide something without "Show/Hide" in their label. A shortcut set may
+/// name a toggle by what it does now (`Hide Hidden Characters`); the importer matches such names
+/// only to toggles.
+const TOGGLES: &[&str] = &["view.hiddenCharacters", "view.tagMarkers"];
 
 /// Extra menu paths for import, where an alias would leave two commands on one name: InDesign's
 /// Tools area has Apply Color, which is also `object.color`'s label.
@@ -146,6 +151,7 @@ fn build_catalogue() -> Vec<Bindable> {
             continue;
         }
         let id = b.command.id.as_str();
+        b.is_toggle = b.label.starts_with("Show/Hide ") || TOGGLES.contains(&id);
         b.aliases.extend(IMPORT_ALIASES.iter().filter(|(c, _)| *c == id).map(|(_, a)| a.to_string()));
         b.paths.extend(IMPORT_PATHS.iter().filter(|(c, _)| *c == id).map(|(_, p)| p.iter().map(|s| s.to_string()).collect()));
     }

@@ -145,20 +145,30 @@ fn strip_suffix_ignore_case<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 }
 
 /// The set as `craft_keymap::import` reads it. An area named `<menu> Menu` is that menu; the
-/// Tools area is the Tools menu, where items named `… Tool` select tools. Items of other areas
-/// (panel menus, text and tables, views) have no menu, so they match only by a one-segment name.
-/// The keys are read with Mac modifier names when any key in the set uses one.
+/// Tools area is the Tools menu, where items named `… Tool` select tools. Items of the Panel Menus
+/// area name their panel first (`Character: All Caps`) and match a command under that panel.
+/// Items of other areas (text and tables, views) have no menu, so they match only by a one-segment
+/// name. The keys are read with Mac modifier names when any key in the set uses one.
 fn foreign(set: &ParsedSet) -> ForeignSet {
+    #[derive(Clone, Copy, Default)]
+    struct Area<'a> {
+        menu: Option<&'a str>,
+        tools: bool,
+        panel_menu: bool,
+    }
     let flavor = Flavor::detect(set.items.iter().flat_map(|i| &i.entries).map(|e| e.keys.as_str()));
-    let menus: Vec<(Option<&str>, bool)> = set
+    let areas: Vec<Area> = set
         .areas
         .iter()
         .map(|a| {
             let a = a.trim();
             if a.eq_ignore_ascii_case("tools") {
-                (Some(a), true)
+                Area { menu: Some(a), tools: true, panel_menu: false }
+            } else if a.eq_ignore_ascii_case("panel menus") {
+                Area { panel_menu: true, ..Area::default() }
             } else {
-                (strip_suffix_ignore_case(a, " menu").map(str::trim).filter(|m| !m.is_empty() && !m.contains(':')), false)
+                let menu = strip_suffix_ignore_case(a, " menu").map(str::trim).filter(|m| !m.is_empty() && !m.contains(':'));
+                Area { menu, ..Area::default() }
             }
         })
         .collect();
@@ -166,9 +176,12 @@ fn foreign(set: &ParsedSet) -> ForeignSet {
         .items
         .iter()
         .map(|item| {
-            let (menu, tools) = item.area.and_then(|a| menus.get(a)).copied().unwrap_or((None, false));
-            let mut entry = ForeignEntry::new(menu, item.name.split(": ").map(str::trim)).at_line(item.line);
-            entry.is_tool = tools && strip_suffix_ignore_case(&item.name, " tool").is_some();
+            let area = item.area.and_then(|a| areas.get(a)).copied().unwrap_or_default();
+            let mut entry = ForeignEntry::new(area.menu, item.name.split(": ").map(str::trim)).at_line(item.line);
+            if area.panel_menu {
+                entry = entry.in_panel_menu();
+            }
+            entry.is_tool = area.tools && strip_suffix_ignore_case(&item.name, " tool").is_some();
             entry.keys = item.entries.iter().map(|e| ForeignKey::read(Some(&e.context), &e.keys, flavor)).collect();
             entry
         })
@@ -313,6 +326,8 @@ mod tests {
             \tColor: Swatches --- Default: Shift+Ctrl+F2\r\n\
             Product area : Tools\r\n\
             \tPen Tool --- Default: Shift+Ctrl+F3\r\n\
+            Product area : File Menu\r\n\
+            \tExit --- Default: Ctrl+Alt+F12\r\n\
             garbage line without a separator\r\n";
         let r = menus::run_ui(&mut app, "window.importShortcuts", &json!({"text": set})).unwrap().unwrap();
         assert_eq!(r["set"], "My Set");
@@ -343,9 +358,11 @@ mod tests {
         // A Window menu panel item and a Tools item apply to the panel and the tool.
         assert_eq!(crate::keys::shortcut(&app.keymap, &crate::keys::panel("swatches")).as_deref(), Some("Cmd+Shift+F2"));
         assert_eq!(crate::keys::shortcut(&app.keymap, &crate::keys::tool("pen")).as_deref(), Some("Cmd+Shift+F3"));
+        // InDesign's name for a command, as an alias.
+        assert_eq!(menus::shortcut_of(&app, "app.quit").as_deref(), Some("Cmd+Alt+F12"));
         // The numeric keypad key is bound as the main key of the same name, and reported.
         assert_eq!(r["approximated"][0]["item"], "File > Close", "{r}");
-        assert_eq!(r["imported"], 6, "{r}");
+        assert_eq!(r["imported"], 7, "{r}");
         // Reset Shortcuts is the way back.
         menus::run_ui(&mut app, "window.resetShortcuts", &json!({})).unwrap().unwrap();
         assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Enter"));
