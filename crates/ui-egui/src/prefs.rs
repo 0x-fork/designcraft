@@ -1,11 +1,9 @@
 //! Compatibility recovery at the saved-preferences boundary. Command deserialization stays strict.
 
-use std::collections::BTreeMap;
-
 use craft_ui::docking::{Layout, Location};
 use serde_json::Value;
 
-use crate::{SavedWorkspace, UiState, panel_docking};
+use crate::{HiddenPanels, SavedWorkspace, UiState, panel_docking};
 
 /// Saved preferences, and whether reading them discarded anything.
 pub struct ReadPreferences {
@@ -52,7 +50,12 @@ fn recover_docking(saved: &mut Value) -> bool {
         intact = false;
     }
     if let Some(hidden) = fields.get_mut("dockingHidden") {
-        if let Some(entries) = hidden.as_object_mut() {
+        // `[[panel, location], …]`, or an object keyed by panel from older files.
+        if let Some(entries) = hidden.as_array_mut() {
+            let before = entries.len();
+            entries.retain(|entry| serde_json::from_value::<(String, Location<String>)>(entry.clone()).is_ok());
+            intact &= entries.len() == before;
+        } else if let Some(entries) = hidden.as_object_mut() {
             let before = entries.len();
             entries.retain(|_, value| serde_json::from_value::<Location<String>>(value.clone()).is_ok());
             intact &= entries.len() == before;
@@ -70,7 +73,7 @@ fn recover_docking(saved: &mut Value) -> bool {
 fn migrate(
     docking: &mut Option<Layout<String>>,
     floating: &mut Vec<(String, [f32; 2])>,
-    hidden: &BTreeMap<String, Location<String>>,
+    hidden: &HiddenPanels,
     dock_expanded: bool,
     icon_groups: Option<&[Vec<String>]>,
 ) {
@@ -149,8 +152,8 @@ mod tests {
     fn unreadable_hidden_origin_does_not_discard_other_origins() {
         let original = populated();
         let mut saved = serde_json::to_value(&original).unwrap();
-        saved["dockingHidden"]["futurePanel"] = json!({"FutureLocation":{}});
-        saved["customWorkspaces"][0]["dockingHidden"]["futurePanel"] = json!(false);
+        saved["dockingHidden"].as_array_mut().unwrap().push(json!(["futurePanel", {"FutureLocation":{}}]));
+        saved["customWorkspaces"][0]["dockingHidden"].as_array_mut().unwrap().push(json!(false));
         let loaded = UiState::from_preferences_json(&serde_json::to_vec(&saved).unwrap()).unwrap();
         assert!(!original.docking_hidden.is_empty());
         assert_eq!(loaded.docking_hidden, original.docking_hidden);
@@ -293,6 +296,32 @@ mod tests {
         // Saved again, the file is in the current shape and loads unchanged.
         let again = UiState::from_preferences_json(&serde_json::to_vec(&app.ui).unwrap()).unwrap();
         assert_eq!(again.docking, app.ui.docking);
+    }
+
+    /// `dockingHidden` as an object keyed by panel (files before craft-ui's `Workspace::hidden`
+    /// list) loads as the list, drops only its unreadable entries and saves as the list.
+    #[test]
+    fn hidden_panels_keyed_by_panel_load_as_the_workspace_list() {
+        let place = json!({"floating": null, "anchor": "layers", "placement": {"Split": "Bottom"}, "size": {"Ratio": 0.5}, "stack": null});
+        let saved = json!({
+            "dockingHidden": {"color": place, "swatches": place, "futurePanel": {"FutureLocation": {}}},
+            "customWorkspaces": [{"name": "Old", "dockingHidden": {"stroke": place}}],
+        });
+        let read = UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert!(!read.intact, "the unreadable entry is reported so the file is kept");
+        let ui = read.ui;
+        assert_eq!(ui.docking_hidden.keys().collect::<Vec<_>>(), ["color", "swatches"]);
+        assert_eq!(ui.custom_workspaces[0].docking_hidden.keys().collect::<Vec<_>>(), ["stroke"]);
+        let written = serde_json::to_value(&ui).unwrap();
+        assert_eq!(written["dockingHidden"][0][0], "color");
+        let workspace: craft_ui::docking::Workspace<String> =
+            serde_json::from_value(json!({"layout": {"root": null, "floating": []}, "hidden": written["dockingHidden"]})).unwrap();
+        assert_eq!(workspace.hidden, ui.docking_hidden.0, "the same shape as craft-ui's Workspace::hidden");
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Default::default());
+        app.ui = ui;
+        app.run("window.panel", json!({"panel": "color"})).unwrap();
+        assert!(app.ui.docking.as_ref().unwrap().contains(&"color".to_string()));
+        assert!(!app.ui.docking_hidden.contains_key("color"));
     }
 
     #[test]

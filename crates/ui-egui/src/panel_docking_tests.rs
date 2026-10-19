@@ -311,7 +311,10 @@ fn properties_stroke_link_opens_the_stroke_panel_in_a_custom_workspace() {
         h.run_steps(1);
     }
     h.run_steps(2);
-    assert!(!in_iconic_column(h.state().ui.docking.as_ref().unwrap(), "stroke"));
+    // Stroke stays in the iconic column and opens as its flyout.
+    assert!(in_iconic_column(h.state().ui.docking.as_ref().unwrap(), "stroke"));
+    assert_eq!(h.state().ui.docking_flyout.as_deref(), Some("stroke"));
+    assert!(showing(h.state(), "stroke"));
     assert_eq!(h.state().ui.docking_opened.as_deref(), Some("stroke"));
 }
 
@@ -399,7 +402,7 @@ fn table_and_control_visibility_work_after_customization_without_document_edits(
     assert!(!app.ui.dock_expanded);
     assert!(!app.ui.docking.as_ref().unwrap().contains(&"table".into()));
     app.run("window.panel", json!({"panel":"properties"})).unwrap();
-    assert!(app.ui.dock_expanded);
+    assert_eq!(app.ui.docking_flyout.as_deref(), Some("properties"), "it opens as a flyout from the collapsed dock");
     assert_eq!(app.ui.docking_raise.as_deref(), Some("properties"));
     assert_eq!(serde_json::to_value(&app.session.active().unwrap().doc).unwrap(), doc);
     assert_eq!(app.session.active().unwrap().history.undo.len(), undo);
@@ -591,9 +594,12 @@ fn collapse_to_icons_shrinks_the_dock_to_its_icons() {
     assert!(app.ui.dock_expanded);
     app.run("window.collapseToIcons", json!({})).unwrap();
     assert!(!app.ui.dock_expanded);
-    // A panel chosen from Window opens the dock again.
+    // A panel chosen from Window opens as a flyout beside its icon; the dock stays collapsed.
     app.run("window.panel", json!({"panel":"pages"})).unwrap();
-    assert!(app.ui.dock_expanded);
+    assert_eq!(app.ui.docking_flyout.as_deref(), Some("pages"));
+    assert_eq!(app.ui.docking_raise.as_deref(), Some("pages"));
+    assert!(showing(&app, "pages"));
+    assert!(in_iconic_column(app.ui.docking.as_ref().unwrap(), "pages"));
 }
 
 #[test]
@@ -627,7 +633,8 @@ fn paragraph_styles_open_floating_with_character_styles() {
     assert_eq!(group.panels, ["characterStyles", "paragraphStyles"]);
     assert_eq!(group.panels[group.active], "paragraphStyles", "the one chosen is in front");
     // The dock still shows Properties in front.
-    assert!(front_tabs(&layout).iter().any(|p| p == "properties"), "{:?}", layout.root);
+    assert_eq!(layout.panel_state(&"properties".to_string()), craft_ui::docking::PanelState::Front, "{:?}", layout.root);
+    assert_eq!(layout.floating.len(), 1, "one floating window holds both tabs");
     // Other panels from Window leave it open.
     app.run("window.panel", json!({"panel":"color"})).unwrap();
     app.run("window.panel", json!({"panel":"links"})).unwrap();
@@ -829,4 +836,139 @@ fn ui_docking_reports_the_layout_and_the_focused_panel() {
     assert!(v["result"]["focused"].is_null(), "{v}");
     assert_eq!(v["result"]["customized"], true);
     assert_eq!(v["result"]["hidden"], json!(["layers"]));
+}
+
+fn hits(h: &Harness<'static, DesignApp>) -> Vec<(craft_ui::docking::Hit<String>, egui::Rect)> {
+    craft_ui::docking::DockArea::<String>::hit_rects(&h.ctx, egui::Id::new("designcraft-panel-docking"))
+}
+
+/// `window.panel.*` ids and DesignCraft's aliases go through craft-ui's `DockCommand`.
+#[test]
+fn shared_panel_commands_float_dock_and_reject_atomically() {
+    let mut app = app();
+    let docked = default_layout(&app.ui);
+    app.run("window.floatPanel", json!({"panel": "Layers", "x": 60, "y": 90})).unwrap();
+    let layout = app.ui.docking.clone().unwrap();
+    let window = layout.floating.iter().find(|w| w.contains(&"layers".to_string())).expect("Layers floats");
+    assert_eq!(window.rect, [60.0, 90.0, 300.0, 420.0], "at the given place, at its own size");
+    app.run("window.dockPanel", json!({"panel": "layers"})).unwrap();
+    let layout = app.ui.docking.clone().unwrap();
+    assert!(layout.floating.is_empty());
+    assert_eq!(
+        layout.root,
+        docked.root.map(|mut root| {
+            // Back in its place, in front of its group.
+            if let Node::Split { second, .. } = &mut root
+                && let Node::Dock { columns, .. } = &mut **second
+                && let Some(group) = columns.first_mut().and_then(|c| c.groups.first_mut())
+            {
+                group.active = 2;
+            }
+            root
+        }),
+        "Dock Panel returns it where it floated from"
+    );
+    // A whole group, by any of its panels, then into a new column of the end dock.
+    app.run("window.panel.float", json!({"panel": "pages", "group": true, "x": 80, "y": 80, "width": 300, "height": 400})).unwrap();
+    let layout = app.ui.docking.clone().unwrap();
+    assert_eq!(layout.floating.len(), 1);
+    assert_eq!(layout.floating[0].groups[0].panels, ["properties", "pages", "layers"]);
+    app.run("window.panel.dock", json!({"panel": "pages", "group": true, "side": "End"})).unwrap();
+    let layout = app.ui.docking.clone().unwrap();
+    assert!(layout.floating.is_empty());
+    assert_eq!(tab_group(&layout, "pages"), ["properties", "pages", "layers"]);
+    // A lone panel to a new dock at the start edge.
+    app.run("window.panel.float", json!({"panel": "stroke"})).unwrap();
+    app.run("window.panel.dock", json!({"panel": "stroke", "side": "Start"})).unwrap();
+    assert!(
+        matches!(&app.ui.docking.as_ref().unwrap().root, Some(Node::Split { first, .. }) if matches!(&**first, Node::Dock { side: Side::Start, .. }))
+    );
+    // Close Others and Minimize are shared commands too.
+    app.run("window.panel.closeOthers", json!({"panel": "pages"})).unwrap();
+    assert_eq!(tab_group(app.ui.docking.as_ref().unwrap(), "pages"), ["pages"]);
+    assert!(app.ui.docking_hidden.contains_key("properties") && app.ui.docking_hidden.contains_key("layers"));
+    app.run("window.panel.minimize", json!({"panel": "pages"})).unwrap();
+    let location = app.ui.docking.as_ref().unwrap().location(&"pages".to_string()).unwrap();
+    assert!(location.group.is_some_and(|g| g.minimized));
+    // Rejected commands change nothing.
+    let before = (app.ui.docking.clone(), app.ui.docking_hidden.clone());
+    for (id, params) in [
+        ("window.workspace.lock", json!({})),
+        ("window.panel.window", json!({"panel": "pages"})),
+        ("window.panel.move", json!({"panel": "stroke", "anchor": "pages", "zone": "left", "before": "pages"})),
+        ("window.panel.dock", json!({"panel": "stroke", "side": "Middle"})),
+    ] {
+        assert!(app.run(id, params).is_err(), "{id}");
+        assert_eq!((app.ui.docking.clone(), app.ui.docking_hidden.clone()), before, "{id}");
+    }
+    // Every shared id is registered for the command list and MCP.
+    for id in craft_ui::docking::DockCommand::<String>::IDS {
+        assert!(crate::menus::UI_COMMANDS.iter().any(|c| c.0 == *id), "{id} is not registered");
+    }
+}
+
+/// A tab released over the canvas floats there (craft-ui: the protected canvas takes no tabs or
+/// splits); a lone panel released in the window's left edge band makes a new dock there.
+#[test]
+fn tabs_dropped_on_the_canvas_float_and_at_the_far_edge_make_a_dock() {
+    let mut h = harness(app(), vec2(1280.0, 800.0));
+    let tab = |h: &Harness<'static, DesignApp>, panel: &str| {
+        hits(h).into_iter().find(|(hit, _)| *hit == craft_ui::docking::Hit::Tab(panel.into())).map(|(_, r)| r)
+    };
+    let layers = tab(&h, "layers").expect("the Layers tab");
+    drag(&mut h, layers.center(), egui::pos2(500.0, 400.0));
+    let layout = h.state().ui.docking.clone().unwrap();
+    assert!(layout.floating.iter().any(|w| w.contains(&"layers".to_string())), "{layout:?}");
+    // A new dock takes a panel that is alone in its group: the floating Layers, by its title bar.
+    // The harness's area starts 8 pt in from the window edge.
+    let title = hits(&h).into_iter().find(|(hit, _)| *hit == craft_ui::docking::Hit::Title("layers".into())).expect("the title bar").1;
+    drag(&mut h, title.center(), egui::pos2(12.0, 400.0));
+    let layout = h.state().ui.docking.clone().unwrap();
+    assert!(valid(&layout));
+    let mut docks = Vec::new();
+    let mut nodes: Vec<&Node<String>> = layout.root.iter().collect();
+    while let Some(node) = nodes.pop() {
+        match node {
+            Node::Split { first, second, .. } => nodes.extend([&**first, &**second]),
+            Node::Dock { side, columns } => {
+                docks.push((*side, columns.iter().flat_map(|c| &c.groups).flat_map(|g| g.panels.clone()).collect::<Vec<_>>()))
+            }
+            _ => {}
+        }
+    }
+    assert!(docks.iter().any(|(side, panels)| *side == Side::Start && panels == &["layers"]), "{docks:?} {:?}", layout.floating);
+}
+
+/// `ui.docking` lists where each gesture starts: tabs, drag bars and the iconic column's icons.
+#[test]
+fn ui_docking_reports_hit_rects() {
+    let h = harness(app(), vec2(1280.0, 800.0));
+    let v = crate::panel_docking::inspect(h.state(), &h.ctx);
+    let rects = v["hitRects"].as_array().expect("hitRects");
+    let rect_of = |hit: Value| {
+        let entry = rects.iter().find(|r| r["hit"] == hit).unwrap_or_else(|| panic!("no {hit} in {rects:?}"));
+        let r: Vec<f32> = serde_json::from_value(entry["rect"].clone()).unwrap();
+        egui::Rect::from_min_size(egui::pos2(r[0], r[1]), vec2(r[2], r[3]))
+    };
+    let tab = rect_of(json!({"Tab": "pages"}));
+    let bar = rect_of(json!({"DragBar": "properties"}));
+    let icon = rect_of(json!({"Icon": "stroke"}));
+    assert!(tab.width() > 20.0 && bar.width() >= 24.0 && icon.width() > 20.0, "{tab:?} {bar:?} {icon:?}");
+    assert!((tab.center().y - bar.center().y).abs() < 1.0, "the bar is in the tab strip");
+    assert!(icon.left() > 640.0, "the iconic column is at the end edge");
+}
+
+/// Clicking an icon in the iconic column opens its panel as a flyout on the canvas side; a
+/// second click closes it.
+#[test]
+fn clicking_an_iconic_column_icon_opens_its_flyout() {
+    let mut h = harness(app(), vec2(1280.0, 800.0));
+    let icon = hits(&h).into_iter().find(|(hit, _)| *hit == craft_ui::docking::Hit::Icon("swatches".into())).expect("the Swatches icon").1;
+    click(&mut h, icon.center(), PointerButton::Primary);
+    assert_eq!(h.state().ui.docking_flyout.as_deref(), Some("swatches"));
+    let tab = hits(&h).into_iter().find(|(hit, _)| *hit == craft_ui::docking::Hit::Tab("swatches".into())).expect("the flyout's tab").1;
+    assert!(tab.right() <= icon.left() + 1.0, "the flyout is beside the column, on the canvas side: {tab:?} {icon:?}");
+    assert!(showing(h.state(), "swatches"));
+    click(&mut h, icon.center(), PointerButton::Primary);
+    assert!(h.state().ui.docking_flyout.is_none());
 }

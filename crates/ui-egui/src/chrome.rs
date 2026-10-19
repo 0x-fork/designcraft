@@ -1249,7 +1249,7 @@ mod tests {
         h.run_steps(3);
         // Preflight is in the iconic column: `window.panel` shows it.
         assert!(crate::panel_docking::showing(&h.state().app, "preflight"));
-        h.get_by_label("Preflight");
+        assert!(h.query_all_by_label("Preflight").count() >= 2, "its icon and its tab in the flyout");
         // With the panel already showing, the entry keeps it open.
         h.get_by_label("No errors ▾").click();
         h.run_steps(3);
@@ -1270,9 +1270,12 @@ mod tests {
         count.click();
         h.run_steps(3);
         assert!(crate::panel_docking::showing(&h.state().app, "preflight"));
-        h.get_by_label("Preflight");
+        assert!(h.query_all_by_label("Preflight").count() >= 2, "its icon and its tab in the flyout");
         assert!(h.query_by_label("Preflight Panel…").is_none(), "the menu isn't left open");
-        // A double-click with the panel already showing keeps it open.
+        // A double-click with the panel already showing keeps it open (the first click closes
+        // its flyout, the double-click opens it again). Past the double-click time, so the
+        // clicks are not counted with the ones before.
+        h.run_steps(30);
         let count = h.get_by_label("No errors ▾");
         count.click();
         count.click();

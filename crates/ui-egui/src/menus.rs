@@ -236,7 +236,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         None,
         "{panel: properties|pages|layers|swatches|paragraphStyles|characterStyles|stroke|character|paragraph|textWrap|links|table|preflight}",
     ),
-    ("window.floatPanel", "Float Panel", None, "{panel, x?, y?} — the panel in its own floating window (window.panel.float)"),
+    ("window.floatPanel", "Float Panel", None, "{panel, x?, y?, width?, height?} — the panel in its own floating window (window.panel.float)"),
     (
         "window.panel.layout",
         "Change Panel Layout",
@@ -247,13 +247,38 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "window.panel.move",
         "Move Panel",
         None,
-        "{panel, anchor, zone?: tab|center|left|right|top|bottom, before?: panel} — group, split or reorder a panel",
+        "{panel, anchor, zone?: tab|center|left|right|top|bottom|above|below, before?: panel|null, group?, placement?} — group, split or reorder a panel (group: its whole tab group)",
     ),
-    ("window.panel.float", "Float Panel", None, "{panel, x?, y?, width?, height?} — detach a panel inside the application window"),
-    ("window.panel.dock", "Dock Panel", None, "{panel, anchor?, zone?, before?} — return a floating panel to a dock group"),
+    (
+        "window.panel.float",
+        "Float Panel",
+        None,
+        "{panel, x?, y?, width?, height?, group?, column?} — detach a panel (or its group, or its dock column) inside the application window",
+    ),
+    (
+        "window.panel.dock",
+        "Dock Panel",
+        None,
+        "{panel, anchor?, zone?, before?, group?, column?, side?: Start|End} — dock a floating panel: beside anchor, in a new column at side, or back where it floated from",
+    ),
     ("window.panel.activate", "Activate Panel", None, "{panel} — show and select a panel in its current group"),
     ("window.panel.close", "Close Panel", None, "{panel} — hide a panel"),
     ("window.panel.closeGroup", "Close Tab Group", None, "{panel} — hide the panel and the panels tabbed with it"),
+    ("window.panel.closeOthers", "Close Other Panels in Group", None, "{panel} — hide the panels tabbed with it"),
+    ("window.panel.minimize", "Minimize", None, "{panel, minimized?} — minimize the panel's group to its tab strip (toggles without minimized)"),
+    ("window.panel.iconic", "Collapse to Icons", None, "{panel, iconic?} — collapse the panel's dock column to icons (toggles without iconic)"),
+    ("window.panel.window", "Move Panel to New Window", None, "{panel, native?} — not available: DesignCraft keeps panels in its window"),
+    ("window.workspace.new", "New Workspace", None, "{name} — save the current workspace (window.newWorkspace)"),
+    ("window.workspace.delete", "Delete Workspace", None, "{name} — delete a saved workspace (window.deleteWorkspace)"),
+    ("window.workspace.reset", "Reset Workspace", None, "{} — back to the current workspace as saved (window.resetWorkspace)"),
+    ("window.workspace.lock", "Lock Workspace", None, "{locked?} — not available in DesignCraft"),
+    (
+        "ui.dock",
+        "Change Panel Layout",
+        None,
+        "{action} | {operation: open|close|activate|float|moveFloating|move|setStackOpen|resizeStack|resizeSplit, …} — craft-ui's shared ui.dock shape",
+    ),
+    ("ui.dock.reset", "Reset Workspace", None, "{} — window.workspace.reset"),
     ("window.collapseToIcons", "Collapse to Icons", None, "{} — the panel dock shrinks to its column of icons"),
     ("window.dockPanel", "Dock Panel", None, "{panel} — back to its place in the dock (window.panel.dock)"),
     ("window.controlBar", "Control", Some("Cmd+Alt+6"), "{}"),
@@ -1848,6 +1873,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.docking_generation = app.ui.docking_generation.wrapping_add(1);
             app.ui.docking_raise = None;
             app.ui.docking_opened = None;
+            app.ui.docking_flyout = None;
             let name = p.get("name").and_then(Value::as_str).unwrap_or("Essentials");
             if let Some(w) = app.ui.custom_workspaces.iter().find(|w| w.name == name).cloned() {
                 if let Some(hidden) = w.hidden_menu_items {
@@ -2079,6 +2105,10 @@ pub fn enabled(app: &DesignApp, id: &str) -> bool {
     }
     if is_window_control(id) {
         return window_control_available(app, id);
+    }
+    // Shared docking commands DesignCraft does not provide (native panel windows, Lock Workspace).
+    if matches!(id, "window.panel.window" | "window.workspace.lock") {
+        return false;
     }
     match designcraft_engine::find_command(id) {
         Some(c) => (c.enabled)(&app.session).is_ok(),

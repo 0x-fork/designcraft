@@ -22,6 +22,7 @@ mod modal_drag;
 mod new_document;
 mod object_control;
 mod panel_docking;
+mod panel_icons;
 pub mod panels;
 mod prefs;
 pub mod render_worker;
@@ -88,6 +89,59 @@ pub struct Services {
     pub clipboard_text: Option<ClipboardFn>,
 }
 
+/// Closed panels, each with where it goes back, in craft-ui's `Workspace::hidden` shape
+/// (`[[panel, location], …]`). A floating panel's entry is where Dock Panel returns it.
+/// Files from before this shape hold an object keyed by panel; it still loads.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct HiddenPanels(pub Vec<(String, craft_ui::docking::Location<String>)>);
+
+impl<'de> Deserialize<'de> for HiddenPanels {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Shape {
+            List(Vec<(String, craft_ui::docking::Location<String>)>),
+            Keyed(std::collections::BTreeMap<String, craft_ui::docking::Location<String>>),
+        }
+        let entries = match Shape::deserialize(deserializer)? {
+            Shape::List(entries) => entries,
+            Shape::Keyed(entries) => entries.into_iter().collect(),
+        };
+        let mut hidden = Self::default();
+        for (panel, location) in entries {
+            hidden.insert(panel, location);
+        }
+        Ok(hidden)
+    }
+}
+
+impl HiddenPanels {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn contains_key(&self, panel: &str) -> bool {
+        self.0.iter().any(|(p, _)| p == panel)
+    }
+    pub fn get(&self, panel: &str) -> Option<&craft_ui::docking::Location<String>> {
+        self.0.iter().find(|(p, _)| p == panel).map(|(_, location)| location)
+    }
+    /// Record where `panel` goes back, replacing an earlier entry.
+    pub fn insert(&mut self, panel: String, location: craft_ui::docking::Location<String>) {
+        self.remove(&panel);
+        self.0.push((panel, location));
+    }
+    pub fn remove(&mut self, panel: &str) {
+        self.0.retain(|(p, _)| p != panel);
+    }
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().map(|(p, _)| p)
+    }
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ScreenMode {
@@ -115,8 +169,8 @@ pub struct SavedWorkspace {
     /// Custom panel membership and placement; absent in older workspace files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docking: Option<craft_ui::docking::Layout<String>>,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub docking_hidden: std::collections::BTreeMap<String, craft_ui::docking::Location<String>>,
+    #[serde(default, skip_serializing_if = "HiddenPanels::is_empty")]
+    pub docking_hidden: HiddenPanels,
     /// The workspace's own iconic column (see [`UiState::icon_groups`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_groups: Option<Vec<Vec<String>>>,
@@ -267,8 +321,8 @@ pub struct UiState {
     /// (`panel_docking::default_layout`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docking: Option<craft_ui::docking::Layout<String>>,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub docking_hidden: std::collections::BTreeMap<String, craft_ui::docking::Location<String>>,
+    #[serde(default, skip_serializing_if = "HiddenPanels::is_empty")]
+    pub docking_hidden: HiddenPanels,
     /// The panel (or the canvas) last clicked or selected in the docking layout.
     #[serde(skip)]
     pub docking_focused: Option<String>,
@@ -281,6 +335,12 @@ pub struct UiState {
     /// The panel last revealed explicitly, which `ui.set closePanel` closes.
     #[serde(skip)]
     pub docking_opened: Option<String>,
+    /// The panel whose iconic-column flyout is open, as of the last frame or a command that
+    /// opened it.
+    #[serde(skip)]
+    pub docking_flyout: Option<String>,
+    /// Auto-Collapse Iconic Panels: a flyout closes on Escape or a click outside it.
+    pub dock_auto_collapse: bool,
     /// Whether the default layout's outer column is expanded (false: collapsed to icons).
     pub dock_expanded: bool,
     /// A workspace's iconic panel groups (Essentials Classic), shown with their names in the
@@ -413,6 +473,8 @@ impl Default for UiState {
             docking_generation: 0,
             docking_raise: None,
             docking_opened: None,
+            docking_flyout: None,
+            dock_auto_collapse: true,
             docking_focused: None,
             dock_expanded: true,
             icon_groups: None,

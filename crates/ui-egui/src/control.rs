@@ -78,7 +78,7 @@ pub fn inspect(app: &DesignApp, ctx: &egui::Context) -> Value {
         "ui": serde_json::to_value(&app.ui).unwrap_or_default(),
         "view": app.view().map(|v| serde_json::to_value(v).unwrap_or_default()),
         "canvasRect": app.canvas_rect.map(|c| json!([c.left(), c.top(), c.width(), c.height()])),
-        "docking": crate::panel_docking::inspect(app),
+        "docking": crate::panel_docking::inspect(app, ctx),
         "window": [r.width(), r.height()],
         "documents": app
             .session
@@ -171,7 +171,7 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
         "engine.commands" => ok(all_commands(app)),
         "document.inspect" => wrap(app.run("document.inspect", json!({}))),
         "ui.inspect" => ok(inspect(app, ctx)),
-        "ui.docking" => ok(crate::panel_docking::inspect(app)),
+        "ui.docking" => ok(crate::panel_docking::inspect(app, ctx)),
         "ui.menu.list" => ok(serde_json::to_value(menus::MENUS).unwrap_or_default()),
         "ui.tool.select" => wrap(app.run("tool.select", json!({"tool": s("tool").unwrap_or("")}))),
         "ui.tool.list" => ok(serde_json::to_value(designcraft_tools::TOOL_GROUPS).unwrap_or_default()),
