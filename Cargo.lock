@@ -825,6 +825,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-keymap"
+version = "0.1.0"
+source = "git+https://github.com/aiongg/craft-libs?rev=d6c7b45350f7a4352b845c9fdd2e63913d1af27d#d6c7b45350f7a4352b845c9fdd2e63913d1af27d"
+dependencies = [
+ "egui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "craft-pdf"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=c3487320b2d1de657b860b3c8abb44e1f2b32bd8#c3487320b2d1de657b860b3c8abb44e1f2b32bd8"
@@ -1212,6 +1222,7 @@ dependencies = [
 name = "designcraft-ui-egui"
 version = "0.8.0"
 dependencies = [
+ "craft-keymap",
  "craft-ui",
  "designcraft-color",
  "designcraft-compose",

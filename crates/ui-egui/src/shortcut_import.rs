@@ -350,6 +350,13 @@ fn command_label(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+/// Gives the command with this key the shortcut, none (`""`), or its default (`None`).
+fn store(app: &mut DesignApp, key: &str, shortcut: Option<&str>) {
+    if let Some(cmd) = craft_keymap::CommandRef::parse_key(key) {
+        let _ = crate::keys::set(app, &cmd, shortcut, craft_keymap::Policy::Keep);
+    }
+}
+
 fn keys_of(sc: &str) -> Option<(bool, bool, bool, bool, egui::Key)> {
     menus::parse_shortcut(sc).map(|(m, k)| (m.command, m.alt, m.shift, m.ctrl, k))
 }
@@ -444,16 +451,16 @@ pub fn import(app: &mut DesignApp, text: &str) -> Result<Value, String> {
                 }
                 taken.push((keys, d.id.clone()));
                 if menus::default_shortcut(&d.id).and_then(keys_of) == Some(keys) {
-                    app.ui.shortcuts.remove(&d.id);
+                    store(app, &d.id, None);
                 } else {
-                    app.ui.shortcuts.insert(d.id.clone(), sc.clone());
+                    store(app, &d.id, Some(sc.as_str()));
                 }
             }
             None if d.all_none => {
                 if menus::default_shortcut(&d.id).is_none() {
-                    app.ui.shortcuts.remove(&d.id);
+                    store(app, &d.id, None);
                 } else {
-                    app.ui.shortcuts.insert(d.id.clone(), String::new());
+                    store(app, &d.id, Some(""));
                 }
             }
             None => continue,
@@ -475,7 +482,7 @@ pub fn import(app: &mut DesignApp, text: &str) -> Result<Value, String> {
         if let Some(keys) = keys_of(&sc)
             && taken.iter().any(|(k, by)| *k == keys && !twin(by))
         {
-            app.ui.shortcuts.insert(id.clone(), String::new());
+            store(app, &id, Some(""));
             conflicts.push(json!({"id": id, "label": command_label(&id), "shortcut": sc}));
         }
     }
@@ -590,7 +597,7 @@ mod tests {
         assert_eq!(r["imported"], 4);
         // Reset Shortcuts is the way back.
         menus::run_ui(&mut app, "window.resetShortcuts", &json!({})).unwrap().unwrap();
-        assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Return"));
+        assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Enter"));
     }
 
     #[test]
