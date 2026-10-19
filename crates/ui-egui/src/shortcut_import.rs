@@ -247,6 +247,9 @@ fn report_json(r: &ImportReport) -> Value {
         "suggestions": Value::Array(r.suggestions.iter().map(|s| json!({
             "item": s.item, "line": s.line, "candidates": s.candidates.iter().map(|c| c.key()).collect::<Vec<_>>(),
         })).collect()),
+        "matchedWithoutChange": Value::Array(r.matched_without_change.iter().map(|m| json!({
+            "id": m.command.key(), "label": m.label, "item": m.item, "line": m.line, "reason": name_of(&m.reason),
+        })).collect()),
         "truncated": r.truncated,
     })
 }
