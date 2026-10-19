@@ -298,6 +298,52 @@ pub(crate) fn tab_group(layout: &Layout<String>, panel: &str) -> Vec<String> {
     vec![panel.to_string()]
 }
 
+/// Where a panel is: its floating window and group, or the path to its tab group, accordion or
+/// dock in the tree with the dock column and group. A different place means the panel moved.
+#[derive(Debug, PartialEq)]
+enum Place {
+    Floating { window: usize, group: usize },
+    Tree { path: Vec<bool>, column: usize, group: usize },
+}
+
+fn place(layout: &Layout<String>, panel: &str) -> Option<Place> {
+    let has = |group: &Group<String>| group.panels.iter().any(|p| p == panel);
+    for (window, floating) in layout.floating.iter().enumerate() {
+        if let Some(group) = floating.groups.iter().position(has) {
+            return Some(Place::Floating { window, group });
+        }
+    }
+    let mut visit: Vec<(&Node<String>, Vec<bool>)> = layout.root.iter().map(|node| (node, Vec::new())).collect();
+    let mut seen = 0usize;
+    while let Some((node, path)) = visit.pop() {
+        seen = seen.saturating_add(1);
+        if seen > 2 * craft_ui::docking::MAX_PANELS || path.len() > craft_ui::docking::MAX_DEPTH {
+            return None;
+        }
+        match node {
+            Node::Split { first, second, .. } => {
+                let mut second_path = path.clone();
+                second_path.push(true);
+                let mut first_path = path;
+                first_path.push(false);
+                visit.push((second, second_path));
+                visit.push((first, first_path));
+            }
+            Node::Tabs { panels, .. } if panels.iter().any(|p| p == panel) => return Some(Place::Tree { path, column: 0, group: 0 }),
+            Node::Stack { entries } if entries.iter().any(|e| e.panel == panel) => return Some(Place::Tree { path, column: 0, group: 0 }),
+            Node::Dock { columns, .. } => {
+                for (column, c) in columns.iter().enumerate() {
+                    if let Some(group) = c.groups.iter().position(has) {
+                        return Some(Place::Tree { path, column, group });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Is `panel` an open entry of an accordion (which Minimize closes)?
 fn open_in_stack(layout: &Layout<String>, panel: &str) -> bool {
     let mut visit: Vec<&Node<String>> = layout.root.iter().collect();
@@ -567,6 +613,12 @@ impl Transaction {
         }
         let reveal = reveal.filter(|panel| layout.contains(panel));
         let flyout = reveal.as_ref().filter(|panel| in_iconic_column(&layout, panel)).cloned();
+        // Focus stays on a panel only while it stays where the user left it, as craft-ui's tab
+        // focus does: a command that moves it gives the focus up.
+        let before = layout_of(app);
+        if app.ui.docking_focused.as_deref().is_some_and(|panel| panel != CANVAS && place(&before, panel) != place(&layout, panel)) {
+            app.ui.docking_focused = None;
+        }
         app.ui.docking = Some(layout);
         app.ui.docking_hidden = hidden;
         release_closed(app, &closed);
@@ -578,6 +630,7 @@ impl Transaction {
         } else if app.ui.docking_opened.as_ref().is_some_and(|panel| !app.ui.docking.as_ref().is_some_and(|layout| layout.contains(panel))) {
             app.ui.docking_opened = None;
         }
+        release_flyout(app);
         app.ui.open_panel = None;
         json!({"layout": app.ui.docking, "closed": closed, "floating": floating_panels(app)})
     }
@@ -701,6 +754,22 @@ fn release_closed(app: &mut DesignApp, closed: &[String]) {
     }
 }
 
+/// Forget the panel focused, opened, raised or showing as a flyout: the workspace was replaced.
+pub(crate) fn forget_panels(app: &mut DesignApp) {
+    app.ui.docking_focused = None;
+    app.ui.docking_opened = None;
+    app.ui.docking_raise = None;
+    app.ui.docking_flyout = None;
+}
+
+/// A flyout opens only from an iconic column; forget it once its panel is no longer in one.
+fn release_flyout(app: &mut DesignApp) {
+    let layout = layout_of(app);
+    if app.ui.docking_flyout.as_deref().is_some_and(|panel| !in_iconic_column(&layout, panel)) {
+        app.ui.docking_flyout = None;
+    }
+}
+
 /// Window › Collapse to Icons collapses every dock column; `iconic: false` (the control
 /// channel's `dockExpanded`) expands the outer column.
 pub(crate) fn set_iconic(app: &mut DesignApp, iconic: bool) -> Result<Value, String> {
@@ -721,6 +790,7 @@ pub(crate) fn set_iconic(app: &mut DesignApp, iconic: bool) -> Result<Value, Str
     app.ui.docking = Some(layout);
     app.ui.dock_expanded = !iconic;
     app.ui.open_panel = None;
+    release_flyout(app);
     Ok(Value::Null)
 }
 
@@ -736,6 +806,7 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
     if app.ui.docking.as_ref().is_some_and(|layout| !valid(layout)) {
         app.ui.docking = None;
+        forget_panels(app);
         app.status(crate::i18n::tr(&app.ui.language, "Invalid panel layout; restored the default dock"));
     }
     let layout = layout_of(app);
@@ -770,10 +841,15 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     if let Some(error) = output.error {
         app.ui.status = error.to_string();
     }
+    // The user's own gesture keeps the focus on the panel it moves, while that panel stays open.
+    let focused = app.ui.docking_focused.clone();
     for action in output.actions {
         if let Err(error) = app.run("window.panel.layout", json!({"action": action})) {
             app.ui.status = error;
         }
+    }
+    if let Some(panel) = focused.filter(|panel| panel == CANVAS || layout_of(app).contains(panel)) {
+        app.ui.docking_focused = Some(panel);
     }
 }
 

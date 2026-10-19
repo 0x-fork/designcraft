@@ -93,6 +93,7 @@ fn ordinary_panel_tab_drag_enters_shared_docking_and_can_redock_into_another_tab
     let layout = h.state().ui.docking.as_ref().unwrap();
     assert!(!layout.floating.iter().flat_map(|w| &w.groups).any(|g| g.panels.contains(&"layers".into())));
     assert!(valid(layout));
+    assert_eq!(h.state().ui.docking_focused.as_deref(), Some("layers"), "the user's drag keeps the focus on the panel it moved");
 }
 
 #[test]
@@ -404,6 +405,8 @@ fn table_and_control_visibility_work_after_customization_without_document_edits(
     app.run("window.panel", json!({"panel":"properties"})).unwrap();
     assert_eq!(app.ui.docking_flyout.as_deref(), Some("properties"), "it opens as a flyout from the collapsed dock");
     assert_eq!(app.ui.docking_raise.as_deref(), Some("properties"));
+    set_iconic(&mut app, false).unwrap();
+    assert_eq!(app.ui.docking_flyout, None, "expanding the column closes its flyout");
     assert_eq!(serde_json::to_value(&app.session.active().unwrap().doc).unwrap(), doc);
     assert_eq!(app.session.active().unwrap().history.undo.len(), undo);
 }
@@ -836,6 +839,42 @@ fn ui_docking_reports_the_layout_and_the_focused_panel() {
     assert!(v["result"]["focused"].is_null(), "{v}");
     assert_eq!(v["result"]["customized"], true);
     assert_eq!(v["result"]["hidden"], json!(["layers"]));
+}
+
+/// A reset replaces the panels: none of them stays focused, opened for `ui.set closePanel` or
+/// queued to raise.
+#[test]
+fn workspace_reset_forgets_the_focused_opened_and_raised_panel() {
+    let mut app = app();
+    app.run("window.panel.float", json!({"panel": "layers"})).unwrap();
+    app.ui.docking_focused = Some("layers".into());
+    assert_eq!(app.ui.docking_opened.as_deref(), Some("layers"));
+    assert_eq!(app.ui.docking_raise.as_deref(), Some("layers"));
+    app.run("window.workspace.reset", json!({})).unwrap();
+    assert_eq!(app.ui.docking_focused, None);
+    assert_eq!(app.ui.docking_opened, None);
+    assert_eq!(app.ui.docking_raise, None);
+    close_visible(&mut app).unwrap();
+    assert!(layout_of(&app).contains(&"layers".to_string()), "closePanel after a reset closes nothing");
+}
+
+/// A command that moves the focused panel takes the focus away and leaves it the panel last
+/// opened; one that closes it forgets both.
+#[test]
+fn moving_or_closing_the_focused_panel_by_command_updates_the_panel_state() {
+    let mut app = app();
+    app.ui.docking_focused = Some("layers".into());
+    app.run("window.panel.activate", json!({"panel": "pages"})).unwrap();
+    assert_eq!(app.ui.docking_focused.as_deref(), Some("layers"), "a command that leaves Layers in place keeps its focus");
+    app.ui.docking_opened = Some("layers".into());
+    app.run("window.panel.move", json!({"panel": "layers", "anchor": "swatches", "zone": "tab"})).unwrap();
+    assert_eq!(app.ui.docking_focused, None);
+    assert_eq!(app.ui.docking_opened.as_deref(), Some("layers"));
+    app.ui.docking_focused = Some("layers".into());
+    app.run("window.panel.close", json!({"panel": "layers"})).unwrap();
+    assert_eq!(app.ui.docking_focused, None);
+    assert_eq!(app.ui.docking_opened, None);
+    assert_eq!(app.ui.docking_raise, None);
 }
 
 fn hits(h: &Harness<'static, DesignApp>) -> Vec<(craft_ui::docking::Hit<String>, egui::Rect)> {

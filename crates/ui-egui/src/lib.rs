@@ -322,7 +322,8 @@ pub struct UiState {
     pub docking: Option<craft_ui::docking::Layout<String>>,
     #[serde(default, skip_serializing_if = "HiddenPanels::is_empty")]
     pub docking_hidden: HiddenPanels,
-    /// The panel (or the canvas) last clicked or selected in the docking layout.
+    /// The panel (or the canvas) last clicked or selected in the docking layout, while the panel
+    /// stays where the user left it.
     #[serde(skip)]
     pub docking_focused: Option<String>,
     /// Invalidates in-flight gestures when a workspace is replaced.
