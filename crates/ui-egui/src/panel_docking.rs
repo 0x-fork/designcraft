@@ -1,6 +1,6 @@
 //! Application-owned panel IDs and commands around the shared docking layout.
 
-use craft_ui::docking::{Action, Floating, Layout, Node, Placement, Zone};
+use craft_ui::docking::{Action, Floating, Layout, Node, Placement, Target, Zone};
 use serde_json::{Value, json};
 
 use crate::DesignApp;
@@ -53,7 +53,7 @@ fn legacy(app: &DesignApp) -> Layout<String> {
     let mut layout = Layout { root: Some(Node::Tabs { panels, active }), floating: Vec::new() };
     for (id, at) in &app.ui.floating {
         if normalize(id).is_some() && !layout.contains(id) && at.iter().all(|v| v.is_finite()) {
-            layout.floating.push(Floating { panels: vec![id.clone()], active: 0, rect: [at[0], at[1], 280.0, 360.0] });
+            layout.floating.push(Floating::single(vec![id.clone()], 0, [at[0], at[1], 280.0, 360.0]));
         }
     }
     if let Some(id) = &app.ui.open_panel
@@ -72,7 +72,7 @@ fn legacy(app: &DesignApp) -> Layout<String> {
 /// The panels tabbed with `panel`: its floating group, or its tab group in the dock. A panel in
 /// an accordion, or not in the layout, is a group of its own.
 fn tab_group(layout: &Layout<String>, panel: &str) -> Vec<String> {
-    if let Some(group) = layout.floating.iter().find(|g| g.panels.iter().any(|p| p == panel)) {
+    if let Some(group) = layout.floating.iter().flat_map(|w| &w.groups).find(|g| g.panels.iter().any(|p| p == panel)) {
         return group.panels.clone();
     }
     let mut visit: Vec<&Node<String>> = layout.root.iter().collect();
@@ -88,6 +88,11 @@ fn tab_group(layout: &Layout<String>, panel: &str) -> Vec<String> {
                 visit.push(second);
             }
             Node::Tabs { panels, .. } if panels.iter().any(|p| p == panel) => return panels.clone(),
+            Node::Dock { columns, .. } => {
+                if let Some(group) = columns.iter().flat_map(|c| &c.groups).find(|g| g.panels.iter().any(|p| p == panel)) {
+                    return group.panels.clone();
+                }
+            }
             _ => {}
         }
     }
@@ -113,7 +118,7 @@ fn open_in_stack(layout: &Layout<String>, panel: &str) -> bool {
                     return e.open;
                 }
             }
-            Node::Tabs { .. } => {}
+            _ => {}
         }
     }
     false
@@ -216,6 +221,29 @@ fn apply_action(app: &mut DesignApp, action: Action<String>) -> Result<Value, St
         | Action::SetStackOpen { panel, .. }
         | Action::ResizeStack { panel, .. } => registered(panel),
         Action::ResizeSplit { path, .. } => path.len() <= craft_ui::docking::MAX_DEPTH,
+        Action::MoveGroup { panel, to } | Action::MoveColumn { panel, to } | Action::MoveWindow { panel, to } => {
+            registered(panel)
+                && match to {
+                    Target::At { anchor, placement } => {
+                        registered(anchor)
+                            && match placement {
+                                Placement::Tab { before: Some(id) } => registered(id),
+                                _ => true,
+                            }
+                    }
+                    _ => true,
+                }
+        }
+        Action::CloseGroup { panel }
+        | Action::CloseWindow { panel }
+        | Action::CloseOthers { panel }
+        | Action::SetMinimized { panel, .. }
+        | Action::SetIconic { panel, .. }
+        | Action::ResizeColumn { panel, .. }
+        | Action::ResizeGroup { panel, .. }
+        | Action::ResizeIconic { panel, .. } => registered(panel),
+        // Native OS windows are not enabled in DesignCraft; newer actions are rejected.
+        _ => false,
     };
     if !known {
         return Err("docking action contains an unknown panel or an excessive split path".into());
@@ -224,19 +252,24 @@ fn apply_action(app: &mut DesignApp, action: Action<String>) -> Result<Value, St
         return Err("saved panel layout is invalid; reset the workspace first".into());
     }
     let mut layout = app.ui.docking.clone().unwrap_or_else(|| legacy(app));
-    let returning = match &action {
-        Action::Close { panel } => layout.location(panel).ok().map(|location| (panel.clone(), location)),
+    // Window › a closed panel, and Dock Panel after a float, bring it back where it was.
+    let returning: Vec<_> = match &action {
         Action::Float { panel, .. } => {
-            layout.location(panel).ok().filter(|location| location.floating.is_none()).map(|location| (panel.clone(), location))
+            layout.location(panel).ok().filter(|location| location.floating.is_none()).map(|location| (panel.clone(), location)).into_iter().collect()
         }
-        _ => None,
+        _ => layout
+            .closed_by(&action)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|panel| layout.location(&panel).ok().map(|location| (panel, location)))
+            .collect(),
     };
     let reveal = match &action {
         Action::Activate { panel } | Action::Open { panel, .. } | Action::OpenAt { panel, .. } => Some(panel.clone()),
         _ => None,
     };
     layout.apply(action).map_err(|error| error.to_string())?;
-    if let Some((panel, location)) = returning {
+    for (panel, location) in returning {
         app.ui.docking_hidden.insert(panel, location);
     }
     app.ui.docking = Some(layout);
@@ -266,7 +299,8 @@ fn front_tabs(layout: &Layout<String>) -> Vec<String> {
                 visit.push(second);
             }
             Node::Tabs { panels, active } => out.extend(panels.get(*active).cloned()),
-            Node::Stack { .. } => {}
+            Node::Dock { columns, .. } => out.extend(columns.iter().flat_map(|c| &c.groups).filter_map(|g| g.active_panel().cloned())),
+            _ => {}
         }
     }
     out
@@ -291,7 +325,14 @@ fn restore_front_tabs(layout: &mut Layout<String>, front: &[String]) {
                     *active = i;
                 }
             }
-            Node::Stack { .. } => {}
+            Node::Dock { columns, .. } => {
+                for group in columns.iter_mut().flat_map(|c| &mut c.groups) {
+                    if let Some(i) = group.panels.iter().position(|p| front.contains(p)) {
+                        group.active = i;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -523,7 +564,9 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) -> bool {
         app.ui.status = error.to_string();
     }
     if ui.input(|input| input.pointer.any_released()) {
-        if !output.actions.iter().any(|action| matches!(action, Action::Move { .. } | Action::Float { .. })) && cancel_legacy_drag(app, ui.ctx()) {
+        if !output.actions.iter().any(|action| matches!(action, Action::Move { .. } | Action::Float { .. } | Action::MoveGroup { .. }))
+            && cancel_legacy_drag(app, ui.ctx())
+        {
             return app.ui.docking.is_some();
         }
         ui.ctx().data_mut(|data| data.remove::<LegacyDrag>(egui::Id::new("designcraft-panel-docking").with("legacy-origin")));
@@ -548,7 +591,7 @@ fn icon_rail(app: &mut DesignApp, ui: &mut egui::Ui) {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 for &(id, label, icon) in crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS) {
                     if app.ui.docking.as_ref().is_some_and(|layout| {
-                        layout.contains(&id.to_string()) && (app.ui.dock_expanded || layout.floating.iter().any(|g| g.panels.iter().any(|p| p == id)))
+                        layout.contains(&id.to_string()) && (app.ui.dock_expanded || layout.floating.iter().any(|g| g.panels().any(|p| p == id)))
                     }) {
                         continue;
                     }
@@ -652,6 +695,16 @@ pub(crate) fn panel_menu(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
     });
 }
 
+/// The size a panel floats at (tab strip included), whatever the size of the dock it left.
+fn floating_size(panel: &str) -> egui::Vec2 {
+    match panel {
+        "properties" | "pages" | "layers" => egui::vec2(300.0, 420.0),
+        "characterStyles" | "paragraphStyles" => egui::vec2(290.0, 340.0),
+        "glyphs" | "library" | "links" | "preflight" | "dataMerge" => egui::vec2(320.0, 400.0),
+        _ => egui::vec2(280.0, 360.0),
+    }
+}
+
 struct PanelContent<'a>(&'a mut DesignApp);
 impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     fn body(&mut self, ui: &mut egui::Ui, id: &String) {
@@ -673,6 +726,9 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
             tab_commands(self.0, ui, panel);
             ui.separator();
         }
+    }
+    fn floating_size(&self, id: &String) -> Option<egui::Vec2> {
+        Some(floating_size(id))
     }
     fn group_header_width(&self, _: &[String], _: &String, _: bool) -> f32 {
         24.0
@@ -750,7 +806,7 @@ fn sync_legacy(app: &mut DesignApp) {
         app.ui.floating = layout
             .floating
             .iter()
-            .flat_map(|group| group.panels.iter().map(|id| (id.clone(), [group.rect[0], group.rect[1]])))
+            .flat_map(|window| window.panels().map(|id| (id.clone(), [window.rect[0], window.rect[1]])))
             .chain(float_only)
             .collect();
     }
