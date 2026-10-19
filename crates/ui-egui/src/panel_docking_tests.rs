@@ -868,6 +868,13 @@ fn shared_panel_commands_float_dock_and_reject_atomically() {
         }),
         "Dock Panel returns it where it floated from"
     );
+    // A docked panel that shares its group leaves it for a new dock at the start edge.
+    let mut tabbed = self::app();
+    tabbed.run("window.panel.dock", json!({"panel": "layers", "side": "Start"})).unwrap();
+    let layout = tabbed.ui.docking.clone().unwrap();
+    assert_eq!(tab_group(&layout, "pages"), ["properties", "pages"]);
+    assert!(matches!(&layout.root, Some(Node::Split { first, .. }) if matches!(&**first, Node::Dock { side: Side::Start, .. })));
+    assert_eq!(tab_group(&layout, "layers"), ["layers"]);
     // A whole group, by any of its panels, then into a new column of the end dock.
     app.run("window.panel.float", json!({"panel": "pages", "group": true, "x": 80, "y": 80, "width": 300, "height": 400})).unwrap();
     let layout = app.ui.docking.clone().unwrap();
