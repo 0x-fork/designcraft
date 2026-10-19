@@ -407,36 +407,12 @@ fn resolve_panels(params: &Value) -> Result<Value, String> {
     Ok(params)
 }
 
-/// The panel `params` names, resolved, if it names one.
-fn named_panel(params: &Value) -> Option<String> {
-    params.get("panel").and_then(Value::as_str).map(str::to_owned)
-}
-
-/// Is `panel` alone in a floating window?
-fn floats_alone(layout: &Layout<String>, panel: &str) -> bool {
-    layout.floating.iter().any(|w| w.contains(&panel.to_string()) && w.panels().count() == 1)
-}
-
 /// A shared docking command (`window.panel.*`, `window.workspace.*`, `ui.dock`) on the layout in
 /// use, all or nothing. craft-ui's `DockCommand` parses it and makes the layout actions;
 /// DesignCraft resolves panel names, shows a hidden panel before moving, floating or docking
-/// it, floats a panel at its own size (also when it was hidden, which craft-ui never drew),
-/// and returns a floated panel to its dock place on Dock Panel.
+/// it, and returns a floated panel to its dock place on Dock Panel.
 fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value, String> {
     let mut params = resolve_panels(params)?;
-    let whole = |key: &str| params.get(key).and_then(Value::as_bool).unwrap_or(false);
-    if id == "window.panel.float"
-        && !whole("group")
-        && !whole("column")
-        && let Some(panel) = named_panel(&params)
-        && !floats_alone(&layout_of(app), &panel)
-        && let Some(fields) = params.as_object_mut()
-    {
-        let size = floating_size(&panel);
-        for (key, default) in [("width", size.x), ("height", size.y)] {
-            fields.entry(key).or_insert(json!(default));
-        }
-    }
     if let Some(fields) = params.as_object_mut() {
         fields.insert("command".into(), Value::String(id.to_owned()));
     }
@@ -496,9 +472,17 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
 /// Where a command floats a panel, group or column it gives no rect: inside the dock area as
 /// last drawn, else inside the window, else (headless, before any frame) inside
 /// [`HEADLESS_AREA`].
+/// Seeded with every panel's own size, so a panel the area never drew (shown from hidden by the
+/// same command, or headless) floats at that size too.
 fn float_space(app: &DesignApp) -> FloatSpace<String> {
-    let Some(ctx) = app.egui_ctx.as_ref() else { return FloatSpace::new(HEADLESS_AREA) };
-    craft_ui::docking::float_space::<String>(ctx, area_id()).unwrap_or_else(|| FloatSpace::new(ctx.content_rect()))
+    let space = match app.egui_ctx.as_ref() {
+        Some(ctx) => craft_ui::docking::float_space::<String>(ctx, area_id()).unwrap_or_else(|| FloatSpace::new(ctx.content_rect())),
+        None => FloatSpace::new(HEADLESS_AREA),
+    };
+    crate::dock::DOCK_TABS
+        .iter()
+        .chain(crate::dock::ICON_PANELS)
+        .fold(space, |space, (id, _, _)| space.with_panel_size((*id).to_owned(), floating_size(id)))
 }
 
 /// A change to the layout in use, committed only when every step succeeded.
