@@ -125,8 +125,12 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             |s, p| {
                 let sid = StoryId(p.get("story").and_then(Value::as_u64).ok_or_else(|| bad("story.replaceRange", "missing story"))?);
-                let a = p.get("start").and_then(Value::as_u64).unwrap_or(0) as usize;
-                let b = p.get("end").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(a);
+                let offset = |v: u64| usize::try_from(v).map_err(|_| bad("story.replaceRange", format!("offset {v} is out of range")));
+                let a = offset(p.get("start").and_then(Value::as_u64).unwrap_or(0))?;
+                let b = match p.get("end").and_then(Value::as_u64) {
+                    Some(v) => offset(v)?,
+                    None => a,
+                };
                 let text = super::text_param(p, "text");
                 s.edit(|d, sel| {
                     let st = d.story_mut(sid).ok_or(designcraft_doc::DocError::NoStory(sid))?;
