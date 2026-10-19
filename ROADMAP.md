@@ -215,7 +215,6 @@ same references), and from the app's JSON control channel. See [docs/agents.md](
 | # | Milestone | State |
 **Stage: pre-alpha** · next: alpha, ~0% and ~15–25 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (undoable parent deletion) · **Target:** Adobe InDesign 2026
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (A0, A1 and A2 poster presets) · **Target:** Adobe InDesign 2026
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (text threads by hand; the alpha gate waits on Primary Text Frame page fixes) · **Target:** Adobe InDesign 2026
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (parent canvas refresh) · **Target:** Adobe InDesign 2026
@@ -350,7 +349,6 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 Newest first.
 
 - **2026-10-16** · Parents can be deleted from their Pages-panel context menu or `layout.parents.delete {id}`. Applied-page and based-on references are cleared, local override copies survive, and Undo restores the parent. Addresses the deletion portion of #956; no readiness percentage change.
-
 - **2026-10-16** · Threading: the loaded text cursor threads into a text frame inside a group (it hit the group and showed it could not thread); a plain click still selects the group (#1075). Gap 27 closed. No readiness percentage change.
 - **2026-10-16** · Greek text hyphenates. The patterns were never compiled in, so Greek set unhyphenated however narrow the column; `"Greek"`, `"Greek: Greece"`, `el` and `el-GR` all resolve now and ανθρωπος breaks αν-θρω-πος. They are the monotonic patterns (hyph-el-monoton, Dimitrios Filippou, under MIT), which is what polytonic text hyphenates by too. Five of InDesign's ~40 hyphenation languages. No readiness percentage change.
 - **2026-10-16** · A swatch applied to a placed greyscale or bitmap image colours it, as in InDesign: IDML's `<Image FillColor>` is read and written, greyscale pixels become a tint of the swatch on opaque white and a bitmap's white lets the frame show through, on screen and in PDF (spot swatches print on their plate). Colour images keep their colours. Applying the swatch from the Swatches panel comes next. No readiness percentage change.
