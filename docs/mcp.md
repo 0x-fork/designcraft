@@ -7,21 +7,64 @@ the result as PNG images. It speaks newline-delimited JSON-RPC 2.0 on stdin/stdo
 
 ## Register it
 
-Build the CLI (`cargo build --release -p designcraft-cli`), then:
+### From source (development)
+
+With Rust and Cargo installed, run this from the repository root:
+
+```sh
+cargo install --path apps/designcraft-cli --locked
+```
+
+Cargo copies the executable into its installation root's `bin` directory, normally
+`~/.cargo/bin` (Windows `%USERPROFILE%\.cargo\bin`). If you set `CARGO_INSTALL_ROOT`,
+Cargo's `install.root` configuration, or `CARGO_HOME`, use that installation's `bin`
+directory instead. Unlike a symlink into `target/release`, this copy survives
+`cargo clean`. Repeat the install command after source changes to update it.
+
+Ensure that directory is on `PATH`. For a default install in a POSIX shell:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+designcraft-cli --help
+```
+
+Persist the PATH setting in your shell configuration (on Windows, add the directory
+to your user Path). The **MCP client process** must inherit that PATH too; restart
+the client after changing it. A GUI-launched client may not read shell configuration.
+If it still reports `ENOENT` or "executable not found", use the absolute path to the
+installed binary in its registration instead of the bare name.
+
+### Headless and connected registration
+
+After installation, register the CLI by name:
 
 ```sh
 # Headless: an in-process engine, no window
-claude mcp add designcraft -- /path/to/target/release/designcraft-cli mcp
+claude mcp add designcraft -- designcraft-cli mcp
 
-# Drive the running desktop app (start it first with a control port)
+# Drive the running desktop app (install/start the desktop app separately)
 designcraft --control 7979
-claude mcp add designcraft-app -- /path/to/target/release/designcraft-cli mcp --connect 7979
+claude mcp add designcraft-app -- designcraft-cli mcp --connect 7979
 ```
 
 Other MCP clients use the same command line, e.g. in a JSON config:
 
 ```json
-{"mcpServers": {"designcraft": {"command": "/path/to/designcraft-cli", "args": ["mcp"]}}}
+{
+  "mcpServers": {
+    "designcraft": {
+      "command": "designcraft-cli",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+If the client cannot find the CLI on PATH, substitute the absolute installed path
+(not a path under `target/`), for example:
+
+```sh
+claude mcp add designcraft -- /absolute/install/root/bin/designcraft-cli mcp
 ```
 
 ### From an installed release
