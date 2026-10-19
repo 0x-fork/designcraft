@@ -69,7 +69,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             ui,
             |ui| {
                 if dock_header(ui, &t, "»").clicked() {
-                    app.ui.dock_expanded = false;
+                    let _ = app.run("window.collapseToIcons", serde_json::json!({}));
                 }
                 // Tab strip (27 pt).
                 let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 27.0), Sense::hover());
