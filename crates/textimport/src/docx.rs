@@ -115,6 +115,12 @@ pub(crate) fn parse(xml: &str) -> Result<El, ImportError> {
                     p.kids.push(Node::Text(s));
                 }
             }
+            Event::CData(t) => {
+                let s = t.decode().map(|s| s.to_string()).unwrap_or_default();
+                if let Some(p) = stack.last_mut() {
+                    p.kids.push(Node::Text(s));
+                }
+            }
             Event::GeneralRef(e) => {
                 let name = String::from_utf8_lossy(&e).to_string();
                 let s = match name.as_str() {
@@ -577,6 +583,12 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn cdata_text() {
+        let el = parse("<a><t><![CDATA[x < y]]></t></a>").unwrap();
+        assert_eq!(el.child("t").unwrap().text(), "x < y");
+    }
 
     /// Issue #712: nesting past the budget is an error from the parser, not a stack overflow later.
     #[test]
