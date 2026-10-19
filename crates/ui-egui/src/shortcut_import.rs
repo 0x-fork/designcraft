@@ -426,12 +426,20 @@ pub fn import(app: &mut DesignApp, text: &str) -> Result<Value, String> {
     let mut taken: Vec<((bool, bool, bool, bool, egui::Key), String)> = Vec::new();
     let mut skipped = Vec::new();
     let mut decided: BTreeSet<String> = BTreeSet::new();
-    for d in &decisions {
+    // When two items in the set want the same keys, the later one takes them (the rule shared by
+    // the Craft apps' importers).
+    let mut winner: HashMap<(bool, bool, bool, bool, egui::Key), usize> = HashMap::new();
+    for (i, d) in decisions.iter().enumerate() {
+        if let Some(keys) = d.shortcut.as_deref().and_then(keys_of) {
+            winner.insert(keys, i);
+        }
+    }
+    for (i, d) in decisions.iter().enumerate() {
         match &d.shortcut {
             Some(sc) => {
                 let Some(keys) = keys_of(sc) else { continue };
-                if let Some((_, by)) = taken.iter().find(|(k, _)| *k == keys) {
-                    skipped.push(json!({"id": d.id, "item": d.item, "shortcut": sc, "keptBy": by}));
+                if let Some(w) = winner.get(&keys).filter(|&&w| w != i).and_then(|&w| decisions.get(w)) {
+                    skipped.push(json!({"id": d.id, "item": d.item, "shortcut": sc, "takenBy": w.id}));
                     continue;
                 }
                 taken.push((keys, d.id.clone()));
@@ -558,6 +566,8 @@ mod tests {
             Product area : File Menu\r\n\
             \tClose --- Default: Shift+Ctrl+Num 5, Default: Ctrl+F4\r\n\
             \tSave --- Default: Ctrl+Hyperspace\r\n\
+            \tRevert --- Default: Shift+Ctrl+F9\r\n\
+            \tSave As... --- Default: Shift+Ctrl+F9\r\n\
             garbage line without a separator\r\n";
         let r = menus::run_ui(&mut app, "window.importShortcuts", &json!({"text": set})).unwrap().unwrap();
         assert_eq!(r["set"], "My Set");
@@ -574,7 +584,10 @@ mod tests {
         assert_eq!(r["unmatchedWithoutShortcut"], 1);
         assert_eq!(r["unreadable"][0]["item"], "File Menu › Save");
         assert_eq!(menus::shortcut_of(&app, "app.save").as_deref(), Some("Cmd+S"));
-        assert_eq!(r["imported"], 3);
+        // Two items want the same keys: the later one takes them.
+        assert_eq!(menus::shortcut_of(&app, "app.saveDialog").as_deref(), Some("Cmd+Shift+F9"));
+        assert_eq!(r["skipped"][0]["takenBy"], "app.saveDialog", "{r}");
+        assert_eq!(r["imported"], 4);
         // Reset Shortcuts is the way back.
         menus::run_ui(&mut app, "window.resetShortcuts", &json!({})).unwrap().unwrap();
         assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Return"));
