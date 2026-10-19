@@ -1003,9 +1003,10 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
                 crate::dock::panel_body(self.app, ui, id);
                 return;
             }
+            // Shrinking to the content's height lets craft-ui fit a float or flyout to it.
             egui::ScrollArea::vertical()
                 .id_salt(("shared-panel-body", id))
-                .auto_shrink([false, false])
+                .auto_shrink([false, true])
                 .show(ui, |ui| crate::dock::panel_body(self.app, ui, id));
         });
     }
