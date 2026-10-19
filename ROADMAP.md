@@ -348,6 +348,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-17** · Object strokes reject malformed types and unknown type fields before changing the document; command help lists every stroke kind and its required fields. No readiness percentage change.
 - **2026-10-17** · Docs: documented a persistent source CLI install with Cargo, MCP-client PATH setup and bare-name server registration in `docs/mcp.md`. No readiness percentage change.
 
 - **2026-10-16** · Threading: the loaded text cursor threads into a text frame inside a group (it hit the group and showed it could not thread); a plain click still selects the group (#1075). Gap 27 closed. No readiness percentage change.
