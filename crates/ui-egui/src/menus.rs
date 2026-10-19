@@ -94,7 +94,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "window.importShortcuts",
         "Import InDesign Shortcut Set",
         None,
-        "{path | text} — a set saved by InDesign's Show Set (.txt): matched commands take its Default shortcuts (or none), other commands lose keys it takes → {set, imported, changed, conflictsCleared, skipped (an earlier item whose keys a later one took), unmatched, unmatchedWithoutShortcut, unreadable}",
+        "{path | text} — a set saved by InDesign's Show Set (.txt): matched commands, panels (Window menu items) and tools (Tools items) take its Default shortcuts (an item without Default keys takes its Text keys), or none when every item matched to them has none; other commands lose keys it takes unless they share them as defaults → {set, imported, changed [{id, label, item, line, from, to}], conflictsCleared [{id, label, shortcut}], skipped [{id, item, line, shortcut, takenBy, reason}] (an earlier item whose keys a later one took, or a reserved key), failed [{id, label, change, shortcuts}], unmatched [{item, line, keys, reason: noMatch | ambiguous | tool | context}], unmatchedWithoutShortcut, unreadable [{item, line, keys, reason}], approximated [{item, line, keys, note}] (numeric keypad keys bound as the main keys), suggestions [{item, line, candidates}] (never applied), truncated}; ids are command keys (`window.panel {\"panel\":\"layers\"}`)",
     ),
     ("app.findChange", "Find/Change…", Some("Cmd+F"), "{}"),
     ("app.insertTableDialog", "Create Table…", None, "{} — Insert Table dialog (body/header/footer rows, columns)"),
@@ -2980,14 +2980,6 @@ pub fn all_menu_items() -> Vec<(String, String)> {
         walk(&entries, menu, &mut out);
     }
     out
-}
-
-/// Reads shortcut text into egui's modifiers and key (`command` for Cmd, `ctrl` for the Mac
-/// Control key).
-pub(crate) fn parse_shortcut(sc: &str) -> Option<(egui::Modifiers, egui::Key)> {
-    let chord = craft_keymap::Chord::parse(sc).ok()?;
-    let s = chord.to_egui_shortcut();
-    Some((s.modifiers, s.logical_key))
 }
 
 /// Global keyboard shortcuts: menu commands, panels and tools, through the keymap.

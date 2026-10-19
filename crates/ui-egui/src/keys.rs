@@ -2,7 +2,7 @@
 //! tools with their default keys and menu paths), shortcut text, and the edits that
 //! `window.setShortcut`, the Keyboard Shortcuts dialog and the shortcut-set importer make.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use craft_keymap::{Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Overrides, Platform, Policy, Scope, Scopes};
@@ -65,13 +65,18 @@ pub fn catalogue() -> &'static [Bindable] {
 
 fn build_catalogue() -> Vec<Bindable> {
     let paths = menu_paths();
+    // An engine command's own menu placement counts only where no menu row stands: a row there
+    // runs a UI command in its place (File › Save is the Save dialog when needed), and two
+    // commands on one path leave the importer unable to pick either.
+    let normalized = |path: &[String]| path.iter().map(|s| craft_keymap::import::normalize_label(s)).collect::<Vec<_>>();
+    let rows: HashSet<Vec<String>> = paths.values().flatten().map(|p| normalized(p)).collect();
     let app = Scope::app();
     let mut out = Vec::new();
     let mut add = |command: CommandRef, label: &str, default: Option<&str>, fallback_path: Option<Vec<String>>, kind: Kind| {
         let mut b = Bindable::new(command, label, app.clone()).with_kind(kind);
         match paths.get(&b.command.key()) {
             Some(found) => b.paths.extend(found.iter().cloned()),
-            None => b.paths.extend(fallback_path),
+            None => b.paths.extend(fallback_path.filter(|p| !rows.contains(&normalized(p)))),
         }
         if let Some(binding) = default.and_then(|d| Binding::parse(d).ok()) {
             b = b.with_default(binding);
