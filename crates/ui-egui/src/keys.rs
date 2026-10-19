@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use craft_keymap::{Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Overrides, Platform, Policy, Scope, Scopes};
+use craft_keymap::{AssignError, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Overrides, Platform, Policy, Scope, Scopes};
 use serde_json::{Value, json};
 
 use crate::DesignApp;
@@ -135,7 +135,15 @@ pub fn note_os(os: egui::os::OperatingSystem) {
 
 /// The keymap with the user's overrides, for [`platform`].
 pub fn new_keymap(overrides: Overrides) -> Keymap {
-    Keymap::new(catalogue().to_vec(), Scopes::new().with_context(TEXT_CONTEXT), platform()).with_overrides(overrides)
+    keymap_for(platform(), overrides)
+}
+
+/// The keymap for `platform`: the system's own chords are reserved, so neither a user edit nor an
+/// imported set can take them.
+pub fn keymap_for(platform: Platform, overrides: Overrides) -> Keymap {
+    Keymap::new(catalogue().to_vec(), Scopes::new().with_context(TEXT_CONTEXT), platform)
+        .with_reserved(craft_keymap::reserved::system(platform))
+        .with_overrides(overrides)
 }
 
 /// Every bindable command, in dispatch order: where two share keys the earlier one runs. UI
@@ -280,12 +288,21 @@ pub fn set(app: &mut DesignApp, cmd: &CommandRef, shortcut: Option<&str>, policy
         }
         Some(sc) => {
             let binding = Binding::parse(sc).map_err(|e| format!("can't read shortcut `{sc}`: {e}"))?;
-            let done = app.keymap.set_bindings(cmd, vec![binding], policy).map_err(|e| format!("can't assign `{sc}`: {e}"))?;
+            let done = app.keymap.set_bindings(cmd, vec![binding], policy).map_err(|e| assign_error(&app.keymap, sc, &e))?;
             taken = done.taken_from.into_iter().map(|h| h.command).collect();
         }
     }
     store(app);
     Ok(taken)
+}
+
+/// Why the keymap refused `sc`. A chord the system takes is named as the menus show it
+/// ("⌘Tab is reserved by the system").
+fn assign_error(keymap: &Keymap, sc: &str, e: &AssignError) -> String {
+    match e {
+        AssignError::Reserved(t) => format!("{} is reserved by the system", t.display(keymap.platform())),
+        e => format!("can't assign `{sc}`: {e}"),
+    }
 }
 
 /// Other commands on the keys `cmd` holds, by command key.
@@ -308,6 +325,59 @@ pub fn label(keymap: &Keymap, key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PLATFORMS: [Platform; 3] = [Platform::Mac, Platform::Windows, Platform::Linux];
+
+    /// No default shortcut sits on a chord an operating system takes before the app sees it.
+    #[test]
+    fn defaults_avoid_reserved_chords() {
+        for p in PLATFORMS {
+            let km = keymap_for(p, Overrides::new());
+            let reserved: Vec<String> = km
+                .catalogue()
+                .iter()
+                .flat_map(|b| km.default_bindings(&b.command).into_iter().map(move |d| (b.command.key(), d)))
+                .filter(|(_, d)| km.is_reserved(&d.trigger.chord))
+                .map(|(k, d)| format!("{k} {}", d.trigger))
+                .collect();
+            assert_eq!(reserved, Vec::<String>::new(), "{p:?}: defaults on reserved chords");
+        }
+    }
+
+    /// A chord the operating system takes, per platform.
+    fn os_chord(p: Platform) -> &'static str {
+        match p {
+            Platform::Mac => "Cmd+Tab",
+            Platform::Windows => "Alt+F4",
+            Platform::Linux => "Cmd+Alt+F2",
+        }
+    }
+
+    /// Binding a chord the system takes is refused with a message naming it, and a saved override
+    /// on one leaves the command its default.
+    #[test]
+    fn a_reserved_chord_is_refused() {
+        let cmd = CommandRef::new("app.palette");
+        for p in PLATFORMS {
+            let mut km = keymap_for(p, Overrides::new());
+            let before = km.bindings(&cmd);
+            let sc = os_chord(p);
+            let binding = Binding::parse(sc).unwrap();
+            let shown = binding.trigger.display(p);
+            let err = km.set_bindings(&cmd, vec![binding], Policy::Steal).unwrap_err();
+            assert_eq!(assign_error(&km, sc, &err), format!("{shown} is reserved by the system"), "{p:?}");
+            assert_eq!(km.bindings(&cmd), before, "{p:?}");
+            let mut saved = Overrides::new();
+            saved.insert(cmd.key(), vec![sc.to_string()]);
+            assert_eq!(keymap_for(p, saved).bindings(&cmd), before, "{p:?}: a saved reserved chord");
+        }
+        // Through `window.setShortcut`, as the Keyboard Shortcuts dialog and the control channel set keys.
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let sc = os_chord(platform());
+        let r = menus::run_ui(&mut app, "window.setShortcut", &json!({"id": "app.palette", "shortcut": sc, "steal": true})).unwrap();
+        assert!(r.unwrap_err().ends_with("is reserved by the system"));
+        assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Enter"));
+    }
 
     /// The web build follows the operating system in the browser's user agent.
     #[test]

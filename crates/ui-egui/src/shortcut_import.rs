@@ -260,11 +260,19 @@ pub fn summary(lang: &str, report: &Value) -> String {
     let len = |k: &str| report[k].as_array().map_or(0, Vec::len).to_string();
     // Rows for keys in contexts DesignCraft lacks belong to items that did match.
     let unmatched = report["unmatched"].as_array().map_or(0, |rows| rows.iter().filter(|r| r["reason"] != "context").count());
-    crate::i18n::tr(lang, "Imported {count} shortcuts from “{set}”; {unmatched} items not matched, {unreadable} unreadable.")
+    let mut out = crate::i18n::tr(lang, "Imported {count} shortcuts from “{set}”; {unmatched} items not matched, {unreadable} unreadable.")
         .replace("{count}", &n("imported"))
         .replace("{set}", report["set"].as_str().unwrap_or_default())
         .replace("{unmatched}", &unmatched.to_string())
-        .replace("{unreadable}", &len("unreadable"))
+        .replace("{unreadable}", &len("unreadable"));
+    let reserved = report["skipped"].as_array().map_or(0, |rows| rows.iter().filter(|r| r["reason"] == "reserved").count());
+    if reserved > 0 {
+        out.push(' ');
+        out.push_str(
+            &crate::i18n::tr(lang, "{count} shortcuts are reserved by the system and were left out.").replace("{count}", &reserved.to_string()),
+        );
+    }
+    out
 }
 
 /// The Keyboard Shortcuts dialog's Import button: a native file picker imports at once and
@@ -330,7 +338,7 @@ mod tests {
             Product area : Tools\r\n\
             \tPen Tool --- Default: Shift+Ctrl+F3\r\n\
             Product area : File Menu\r\n\
-            \tExit --- Default: Ctrl+Alt+F12\r\n\
+            \tExit --- Default: Ctrl+Alt+F13\r\n\
             garbage line without a separator\r\n";
         let r = menus::run_ui(&mut app, "window.importShortcuts", &json!({"text": set})).unwrap().unwrap();
         assert_eq!(r["set"], "My Set");
@@ -362,13 +370,27 @@ mod tests {
         assert_eq!(crate::keys::shortcut(&app.keymap, &crate::keys::panel("swatches")).as_deref(), Some("Cmd+Shift+F2"));
         assert_eq!(crate::keys::shortcut(&app.keymap, &crate::keys::tool("pen")).as_deref(), Some("Cmd+Shift+F3"));
         // InDesign's name for a command, as an alias.
-        assert_eq!(menus::shortcut_of(&app, "app.quit").as_deref(), Some("Cmd+Alt+F12"));
+        assert_eq!(menus::shortcut_of(&app, "app.quit").as_deref(), Some("Cmd+Alt+F13"));
         // The numeric keypad key is bound as the main key of the same name, and reported.
         assert_eq!(r["approximated"][0]["item"], "File > Close", "{r}");
         assert_eq!(r["imported"], 7, "{r}");
         // Reset Shortcuts is the way back.
         menus::run_ui(&mut app, "window.resetShortcuts", &json!({})).unwrap().unwrap();
         assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Enter"));
+    }
+
+    /// A set's key on a chord the system takes is left out and the summary says so.
+    #[test]
+    fn a_reserved_chord_in_a_set_is_left_out() {
+        let mut app = app();
+        // Ctrl in a Windows set is ⌘ on a Mac.
+        let keys = if crate::keys::platform().is_mac() { "Ctrl+Tab" } else { "Alt+F4" };
+        let set = format!("Shortcut Set : OS\r\nProduct area : File Menu\r\n\tExit --- Default: {keys}\r\n");
+        let r = menus::run_ui(&mut app, "window.importShortcuts", &json!({ "text": set })).unwrap().unwrap();
+        assert_eq!(r["skipped"][0]["reason"], "reserved", "{r}");
+        assert_eq!(r["imported"], 0, "{r}");
+        assert_eq!(menus::shortcut_of(&app, "app.quit"), menus::default_shortcut("app.quit").map(str::to_string));
+        assert!(summary("en", &r).ends_with("1 shortcuts are reserved by the system and were left out."), "{}", summary("en", &r));
     }
 
     #[test]
