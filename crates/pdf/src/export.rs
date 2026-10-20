@@ -630,6 +630,27 @@ impl Exporter<'_> {
         self.doc.settings.intent == designcraft_doc::Intent::Print || self.opts.standard == Standard::PdfX4
     }
 
+    /// Whether a paint overprints: its own attribute, or 100% [Black] when Preferences ›
+    /// Appearance of Black overprints it (not in PDF/A, whose RGB output has no overprint).
+    pub(crate) fn overprints(&self, swatch: &str, tint: f32, flag: bool) -> bool {
+        flag || (!self.rgb_only && self.doc.settings.overprint_black && swatch == designcraft_color::swatch::BLACK && tint >= 0.999)
+    }
+
+    /// Overprint for what is painted until the matching pop: `/op` for fills, `/OP` for strokes,
+    /// and `/OPM 1`, so a CMYK paint's zero components leave the inks beneath it alone. Returns
+    /// whether it pushed. PDF/A exports are RGB and leave overprint out.
+    pub(crate) fn push_overprint(&mut self, s: &mut Surface, fill: bool, stroke: bool) -> bool {
+        if !fill && !stroke {
+            return false;
+        }
+        if self.rgb_only {
+            self.warn("PDF/A: overprint was left out");
+            return false;
+        }
+        s.push_overprint(krilla::blend::Overprint { fill, stroke, nonzero: true });
+        true
+    }
+
     pub(crate) fn warn(&mut self, w: impl Into<String>) {
         let w = w.into();
         if !self.warnings.contains(&w) {
@@ -899,10 +920,7 @@ impl Exporter<'_> {
                 && let Some(p) = &path
                 && let Some(paint) = self.fill_paint(&it.fill, bp.bounding_box())
             {
-                s.set_stroke(None);
-                s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
-                s.draw_path(p);
-                s.set_fill(None);
+                self.fill_item_path(s, &it.fill, paint, p);
             }
             s.pop();
             // The clip in page space, so the children keep their absolute transforms.
@@ -968,13 +986,7 @@ impl Exporter<'_> {
             && let Some(p) = &path
             && let Some(paint) = self.fill_paint(&it.fill, bp.bounding_box())
         {
-            if it.fill.overprint {
-                self.warn("overprint is not exported yet");
-            }
-            s.set_stroke(None);
-            s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
-            s.draw_path(p);
-            s.set_fill(None);
+            self.fill_item_path(s, &it.fill, paint, p);
         }
         if frame_art {
             s.end_tagged();
@@ -998,9 +1010,14 @@ impl Exporter<'_> {
                         // A gradient spans the path's box.
                         let fill = designcraft_doc::Fill { swatch: st.fill.clone(), tint: st.fill_tint, ..designcraft_doc::Fill::none() };
                         if let (Some(paint), Some(p)) = (self.fill_paint(&fill, bp.bounding_box()), to_path(&gp)) {
+                            let op = self.overprints(&st.fill, st.fill_tint, st.overprint_fill);
+                            let op = self.push_overprint(s, op, false);
                             s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
                             s.draw_path(&p);
                             s.set_fill(None);
+                            if op {
+                                s.pop();
+                            }
                         }
                     }
                 } else if let Some(ft) = cs.frame(it.id) {
@@ -1061,6 +1078,19 @@ impl Exporter<'_> {
                     pending.push((frame, transform * Affine::translate(cell.origin.to_vec2())));
                 }
             }
+        }
+    }
+
+    /// Fill `p` with an item's fill paint, overprinting when the fill does.
+    fn fill_item_path(&mut self, s: &mut Surface, fill: &designcraft_doc::Fill, paint: krilla::paint::Paint, p: &Path) {
+        let op = self.overprints(&fill.swatch, fill.tint, fill.overprint);
+        let pushed = self.push_overprint(s, op, false);
+        s.set_stroke(None);
+        s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
+        s.draw_path(p);
+        s.set_fill(None);
+        if pushed {
+            s.pop();
         }
     }
 
@@ -1164,6 +1194,10 @@ impl Exporter<'_> {
             c.into()
         };
         let closed = it.path.is_closed();
+        // Overprint Stroke covers the stroke and its arrowheads, Overprint Gap the gap colour;
+        // each is pushed around what it paints (a filled outline or a stroked path).
+        let stroke_op = self.overprints(&st.swatch, st.tint, st.overprint);
+        let gap_op = self.overprints(&st.gap_swatch, st.gap_tint, st.gap_overprint);
         let mut cap = match st.cap {
             designcraft_doc::Cap::Butt => krilla::paint::LineCap::Butt,
             designcraft_doc::Cap::Round => krilla::paint::LineCap::Round,
@@ -1178,14 +1212,22 @@ impl Exporter<'_> {
             if let Some(g) = self.swatch_color(&st.gap_swatch, st.gap_tint)
                 && st.gap_swatch != designcraft_color::swatch::NONE
             {
+                let pushed = self.push_overprint(s, gap_op, gap_op);
                 s.set_stroke(Some(Stroke { paint: g.into(), width: st.weight as f32, opacity: NormalizedF32::ONE, ..Default::default() }));
                 s.set_fill(None);
                 s.draw_path(path);
                 s.set_stroke(None);
+                if pushed {
+                    s.pop();
+                }
             }
+            let pushed = self.push_overprint(s, stroke_op, stroke_op);
             s.set_fill(Some(Fill { paint: paint.clone(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero }));
             s.draw_path(&op);
             s.set_fill(None);
+            if pushed {
+                s.pop();
+            }
             return;
         }
         // Viewers expand dashes too: a degenerate pattern draws solid, as on screen.
@@ -1233,9 +1275,14 @@ impl Exporter<'_> {
             && let Some(g) = self.swatch_color(&st.gap_swatch, st.gap_tint)
         {
             // Gap colour under dashes and dots.
+            let pushed = self.push_overprint(s, gap_op, gap_op);
             s.set_stroke(Some(Stroke { paint: g.into(), width: width as f32, opacity: NormalizedF32::ONE, ..Default::default() }));
             s.draw_path(path);
+            if pushed {
+                s.pop();
+            }
         }
+        let pushed = self.push_overprint(s, stroke_op, stroke_op);
         s.set_stroke(Some(Stroke {
             paint: paint.clone(),
             width: width as f32,
@@ -1251,9 +1298,13 @@ impl Exporter<'_> {
         }));
         s.draw_path(path);
         s.set_stroke(None);
+        if pushed {
+            s.pop();
+        }
         for _ in 0..pushes {
             s.pop();
         }
+        let pushed = self.push_overprint(s, stroke_op, stroke_op);
         for h in arrows.iter().flat_map(|a| &a.1) {
             let Some(p) = to_path(&h.path) else { continue };
             match h.outline {
@@ -1268,6 +1319,9 @@ impl Exporter<'_> {
                     s.set_fill(None);
                 }
             }
+        }
+        if pushed {
+            s.pop();
         }
     }
 

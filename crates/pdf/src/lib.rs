@@ -14,6 +14,8 @@
 //!   as `/Separation /All`.
 //!   Gradients with mixed output colour spaces are converted to RGB with an export warning;
 //!   homogeneous gradients keep their existing colour space (subject to PDF/A conversion).
+//! - **Overprint:** Overprint Fill, Stroke and Gap, overprinting text and 100% [Black] (when
+//!   Appearance of Black says so) as `/op` and `/OP` with `/OPM 1`; left out of PDF/A.
 //! - **Images:** clipped to their frame; JPEG data is passed through, PNG/GIF/WebP are embedded
 //!   losslessly (or re-encoded as JPEG with [`PdfOptions::compress_images`]). PDF/X-4 and PDF/A
 //!   images are written without interpolation. In PDF/X-4 an RGB image without a profile of its own
@@ -25,7 +27,7 @@
 //! - **Standards:** PDF/A-2b through krilla's validator and PDF/X-4 output intent/identification
 //!   with built-in conformance checks. `designcraft-cli validate-pdf` exposes those checks for CI.
 //!
-//! Not yet: tagged PDF, bookmarks, hyperlinks, overprint, layers as optional content.
+//! Not yet: tagged PDF, bookmarks, hyperlinks, layers as optional content.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 

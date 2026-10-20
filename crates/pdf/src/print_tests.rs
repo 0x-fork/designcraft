@@ -131,3 +131,112 @@ fn output_intent_is_the_cmyk_working_space() {
     assert_eq!(intent.profile, &*want.icc);
     assert_ne!(intent.profile, craft_cms::builtin::COATED_FOGRA39_ICC);
 }
+
+/// The overprint entries of every ExtGState that has them: (`/op`, `/OP`, `/OPM`).
+fn overprint_states(bytes: &[u8]) -> Vec<(bool, bool, i32)> {
+    let pdf = Pdf::new(bytes.to_vec()).unwrap();
+    pdf.objects()
+        .into_iter()
+        .filter_map(|o| match o {
+            Object::Dict(d) => Some(d),
+            _ => None,
+        })
+        .filter_map(|d| Some((d.get::<bool>(b"op")?, d.get::<bool>(b"OP")?, d.get::<i32>(b"OPM")?)))
+        .collect()
+}
+
+/// A document whose [Black] doesn't overprint by itself, with one box `edit` sets up.
+fn one_box(swatch: &str, edit: impl FnOnce(&mut Item)) -> Document {
+    let mut d = Document::new(&NewDocument::default());
+    d.settings.overprint_black = false;
+    add_box(&mut d, Rect::new(36.0, 36.0, 236.0, 236.0), swatch, edit);
+    d
+}
+
+fn exported(d: &Document) -> Vec<u8> {
+    export_pdf(d, &Cache::new(), &PdfOptions::default()).unwrap()
+}
+
+/// Overprint Fill, Overprint Stroke and Overprint Gap are written as `/op` and `/OP` with
+/// `/OPM 1`; without them nothing overprints.
+#[test]
+fn overprint_attributes_are_written() {
+    const CYAN: &str = "C=100 M=0 Y=0 K=0";
+    let stroked = |b: &mut Item| {
+        b.stroke.swatch = "C=0 M=100 Y=0 K=0".into();
+        b.stroke.weight = 4.0;
+    };
+    assert_eq!(overprint_states(&exported(&one_box(CYAN, stroked))), []);
+    let fill = exported(&one_box(CYAN, |b| b.fill.overprint = true));
+    assert_eq!(overprint_states(&fill), [(true, false, 1)]);
+    let stroke = exported(&one_box(CYAN, |b| {
+        stroked(b);
+        b.stroke.overprint = true;
+    }));
+    assert!(overprint_states(&stroke).iter().all(|(_, s, opm)| *s && *opm == 1), "{:?}", overprint_states(&stroke));
+    assert!(!overprint_states(&stroke).is_empty());
+    let gap = exported(&one_box(CYAN, |b| {
+        stroked(b);
+        b.stroke.kind = designcraft_doc::StrokeType::Dashed { pattern: vec![12.0, 6.0] };
+        b.stroke.gap_swatch = "C=0 M=0 Y=100 K=0".into();
+        b.stroke.gap_overprint = true;
+    }));
+    assert!(overprint_states(&gap).iter().all(|(_, s, opm)| *s && *opm == 1), "{:?}", overprint_states(&gap));
+    assert_eq!(overprint_states(&gap).len(), 1, "only the gap overprints");
+    // PDF/A exports are RGB: overprint is left out, with a warning.
+    let opts = PdfOptions { standard: crate::Standard::PdfA2b, ..PdfOptions::default() };
+    let r = crate::export_pdf_with_report(&one_box(CYAN, |b| b.fill.overprint = true), &Cache::new(), &opts).unwrap();
+    assert_eq!(overprint_states(&r.bytes), []);
+    assert!(r.warnings.iter().any(|w| w == "PDF/A: overprint was left out"), "{:?}", r.warnings);
+}
+
+/// 100% [Black] fills, strokes and text overprint when Appearance of Black says so; tints of
+/// it and other colours don't.
+#[test]
+fn black_overprints_with_the_preference() {
+    let black = designcraft_color::swatch::BLACK;
+    let mut on = one_box(black, |_| {});
+    on.settings.overprint_black = true;
+    assert_eq!(overprint_states(&exported(&on)), [(true, false, 1)]);
+    let mut tint = one_box(black, |b| b.fill.tint = 0.5);
+    tint.settings.overprint_black = true;
+    assert_eq!(overprint_states(&exported(&tint)), []);
+    assert_eq!(overprint_states(&exported(&one_box(black, |_| {}))), [], "off in the preferences");
+    let mut stroke = one_box(designcraft_color::swatch::NONE, |b| {
+        b.stroke.swatch = black.into();
+        b.stroke.weight = 2.0;
+    });
+    stroke.settings.overprint_black = true;
+    assert!(overprint_states(&exported(&stroke)).iter().any(|(_, s, opm)| *s && *opm == 1));
+    // Text in [Black], the default.
+    let mut text = Document::new(&NewDocument::default());
+    let lid = text.default_layer();
+    text.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 100.0), lid, "Black text", Default::default()).unwrap();
+    assert_eq!(overprint_states(&exported(&text)), [(true, false, 1)]);
+    // PDF/A leaves [Black] overprint out without a warning: it is the default for all black text.
+    let opts = PdfOptions { standard: crate::Standard::PdfA2b, ..PdfOptions::default() };
+    let r = crate::export_pdf_with_report(&text, &Cache::new(), &opts).unwrap();
+    assert_eq!(overprint_states(&r.bytes), []);
+    assert!(!r.warnings.iter().any(|w| w.contains("overprint")), "{:?}", r.warnings);
+    text.settings.overprint_black = false;
+    assert_eq!(overprint_states(&exported(&text)), []);
+}
+
+/// Ruby with Overprint Fill on overprints.
+#[test]
+fn ruby_overprint_fill_is_written() {
+    use designcraft_doc::cjk_settings::AdornmentOverprint;
+    let mut d = Document::new(&NewDocument::default());
+    d.settings.overprint_black = false;
+    let lid = d.default_layer();
+    d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 576.0, 300.0), lid, "漢字です", Default::default()).unwrap();
+    assert_eq!(overprint_states(&exported(&d)), []);
+    let sid = *d.stories.keys().next().unwrap();
+    d.story_mut(sid).unwrap().format_chars(0.."漢字".len(), |f| {
+        f.over.ruby = Some("かんじ".into());
+        f.over.ruby_overprint_fill = Some(AdornmentOverprint::On);
+    });
+    let r = crate::export_pdf_with_report(&d, &Cache::new(), &PdfOptions::default()).unwrap();
+    assert_eq!(overprint_states(&r.bytes), [(true, false, 1)]);
+    assert!(!r.warnings.iter().any(|w| w.contains("overprint")), "{:?}", r.warnings);
+}
