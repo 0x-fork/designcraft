@@ -972,6 +972,7 @@ pub(crate) fn panel_menu(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
         }
         ui.close();
     }
+    dock_panel_item(app, ui, panel);
     ui.menu_button(crate::rtl::widget(ui, crate::i18n::tr(&language, "Group with")), |ui| {
         egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
             for (anchor, label, _) in crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS) {
@@ -988,6 +989,20 @@ pub(crate) fn panel_menu(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
             }
         });
     });
+}
+
+/// Dock Panel, for a floating panel: back to where it floated from (`Transaction::dock_back`),
+/// else into the dock.
+fn dock_panel_item(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
+    if !layout_of(app).floating.iter().any(|w| w.contains(&panel.to_owned())) {
+        return;
+    }
+    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Dock Panel"))).clicked() {
+        if let Err(error) = app.run("window.panel.dock", json!({"panel": panel})) {
+            app.status(error);
+        }
+        ui.close();
+    }
 }
 
 /// The size a panel floats at (tab strip included), whatever the size of the dock it left.
@@ -1050,6 +1065,11 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     }
     fn bare(&self, id: &String) -> bool {
         id == CANVAS
+    }
+    fn panel_menu(&mut self, ui: &mut egui::Ui, id: &String) {
+        if let Some(panel) = normalize(id) {
+            dock_panel_item(self.app, ui, panel);
+        }
     }
     fn group_header_width(&self, _: &[String], _: &String, _: bool, _: f32) -> f32 {
         24.0

@@ -619,9 +619,33 @@ fn a_tabs_context_menu_lists_indesigns_tab_commands_and_close_works() {
         assert!(h.query_all_by_label(item).next().is_some(), "{item}");
     }
     assert_eq!(h.query_all_by_label("Minimize").count(), 1, "the tab menu lists Minimize once");
+    assert!(h.query_all_by_label("Dock Panel").next().is_none(), "a docked panel has no Dock Panel");
     h.get_by_label("Close").click();
     h.run_steps(2);
     assert!(!h.state().ui.docking.as_ref().unwrap().contains(&"layers".to_string()));
+}
+
+/// A floating panel's tab menu and three-line menu have Dock Panel, which puts it back where it
+/// floated from.
+#[test]
+fn dock_panel_in_a_floating_panels_menus_returns_it_to_the_dock() {
+    let mut app = app();
+    app.run("window.panel.activate", json!({"panel":"layers"})).unwrap();
+    let docked = app.ui.docking.clone().unwrap();
+    app.run("window.panel.float", json!({"panel":"layers","x":200,"y":150})).unwrap();
+    let mut h = harness(app, vec2(1280.0, 800.0));
+    let tab = h.ctx.read_response(tab_id("layers")).unwrap().rect;
+    click(&mut h, tab.center(), PointerButton::Secondary);
+    h.get_by_label("Dock Panel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.docking.as_ref(), Some(&docked), "the tab menu docks it back in its group");
+    let mut app = h.into_state();
+    app.run("window.panel.float", json!({"panel":"layers","x":200,"y":150})).unwrap();
+    let mut menu = Harness::builder().with_size(vec2(300.0, 400.0)).build_ui_state(|ui, app: &mut DesignApp| panel_menu(app, ui, "layers"), app);
+    menu.run_steps(1);
+    menu.get_by_label("Dock Panel").click();
+    menu.run_steps(2);
+    assert_eq!(menu.state().ui.docking.as_ref(), Some(&docked), "so does the three-line menu");
 }
 
 /// Window › Styles › Paragraph Styles opens InDesign's floating Character Styles | Paragraph Styles
