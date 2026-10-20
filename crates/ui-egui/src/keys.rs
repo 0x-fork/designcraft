@@ -60,6 +60,11 @@ const TOGGLES: &[&str] = &["view.hiddenCharacters", "view.tagMarkers"];
 /// Tools area has Apply Color, which is also `object.color`'s label.
 const IMPORT_PATHS: &[(&str, &[&str])] = &[("color.applyColor", &["Tools", "Apply Color"])];
 
+/// Commands on text-editing chords (Cmd+Z, Cmd+A, and Ctrl+Y off macOS) that run while typing on the
+/// canvas too: the text tool has no undo or select-all of its own, and Story Editor toggles from the
+/// text. Their defaults get a copy in the Text context, which takes the chords from the text field.
+const TYPING_COMMANDS: &[&str] = &["edit.undo", "edit.redo", "edit.selectAll", "app.storyEditor"];
+
 /// Commands that open a panel, by panel id. The panel's binding gets the command's default key
 /// too, so the two are twins: a shortcut set that gives either one the key leaves both with it.
 const PANEL_TWINS: &[(&str, &str)] = &[
@@ -195,6 +200,12 @@ fn build_catalog() -> Vec<Bindable> {
         }
         let id = b.command.id.as_str();
         b.is_toggle = b.label.starts_with("Show/Hide ") || TOGGLES.contains(&id);
+        if TYPING_COMMANDS.contains(&id)
+            && let Some(text) = Scope::new(TEXT_CONTEXT)
+        {
+            let copies: Vec<Binding> = b.defaults.iter().filter(|d| d.scope.is_none()).map(|d| Binding::in_scope(d.trigger, text.clone())).collect();
+            b.defaults.extend(copies);
+        }
         b.aliases.extend(IMPORT_ALIASES.iter().filter(|(c, _)| *c == id).map(|(_, a)| a.to_string()));
         b.paths.extend(IMPORT_PATHS.iter().filter(|(c, _)| *c == id).map(|(_, p)| p.iter().map(|s| s.to_string()).collect()));
     }
@@ -295,10 +306,24 @@ fn assign_error(keymap: &Keymap, sc: &str, e: &AssignError) -> String {
     }
 }
 
-/// Other commands on the keys `cmd` holds, by command key.
+/// Whether `a` and `b` are a panel and the command that opens it ([`PANEL_TWINS`]).
+pub fn twins(a: &CommandRef, b: &CommandRef) -> bool {
+    let one_way = |p: &CommandRef, c: &CommandRef| {
+        p.id == PANEL_COMMAND
+            && c.params.is_null()
+            && p.params.get("panel").and_then(Value::as_str).is_some_and(|id| PANEL_TWINS.contains(&(id, c.id.as_str())))
+    };
+    one_way(a, b) || one_way(b, a)
+}
+
+/// Other commands on the keys `cmd` holds, by command key. A panel's twin is not a conflict: both
+/// open the panel.
 pub fn conflicts(keymap: &Keymap, cmd: &CommandRef) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for c in keymap.conflicts_with(cmd) {
+        if twins(cmd, &c.b.0) {
+            continue;
+        }
         let key = c.b.0.key();
         if !out.contains(&key) {
             out.push(key);
@@ -394,6 +419,109 @@ mod tests {
             ctx.set_os(Os::Mac);
             note_platform(&ctx);
             assert_eq!(platform(), Platform::current());
+        }
+    }
+
+    /// An app typing in a text frame holding "Page ", with the caret at its end, and a function
+    /// that runs one frame of the whole UI with `events` and `modifiers` held.
+    fn typing_in_a_text_frame() -> (DesignApp, Value, impl FnMut(&mut DesignApp, egui::Modifiers, Vec<egui::Event>)) {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let story = app.run("frame.create", json!({"rect": [36, 36, 300, 200], "content": "text", "text": "Page "})).unwrap()["story"].clone();
+        app.select_tool("type");
+        app.run("text.select", json!({"story": story, "anchor": 5, "focus": 5})).unwrap();
+        assert!(app.session.wants_text());
+        let ctx = egui::Context::default();
+        let frame = move |app: &mut DesignApp, modifiers: egui::Modifiers, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events: [egui::Event::ModifiersChanged(modifiers)].into_iter().chain(events).collect(),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        (app, story, frame)
+    }
+
+    fn story_text(app: &mut DesignApp, story: &Value) -> String {
+        app.session.execute("story.get", &json!({"story": story})).unwrap()["text"].as_str().unwrap().to_string()
+    }
+
+    /// A key press as egui sends it, with its release.
+    fn press(key: egui::Key, modifiers: egui::Modifiers) -> Vec<egui::Event> {
+        [true, false].map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers }).into()
+    }
+
+    /// The command modifier as egui reports it on this platform.
+    fn cmd() -> egui::Modifiers {
+        if platform().is_mac() { egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND } else { egui::Modifiers::CTRL | egui::Modifiers::COMMAND }
+    }
+
+    /// Off macOS, Ctrl+Alt+Shift+N inserts the page number while typing; AltGr+E, which a browser
+    /// on Windows reports as Ctrl+Alt+E (Fit Content to Frame) followed by the text it typed,
+    /// types `€`.
+    #[test]
+    fn ctrl_alt_chords_run_while_typing_unless_they_type_text() {
+        if platform().is_mac() {
+            return;
+        }
+        let (mut app, story, mut frame) = typing_in_a_text_frame();
+        frame(&mut app, Default::default(), vec![]);
+        let ctrl_alt = egui::Modifiers::CTRL | egui::Modifiers::COMMAND | egui::Modifiers::ALT;
+        frame(&mut app, ctrl_alt | egui::Modifiers::SHIFT, press(egui::Key::N, ctrl_alt | egui::Modifiers::SHIFT));
+        assert_eq!(story_text(&mut app, &story), "Page \u{e000}");
+        let mut altgr = press(egui::Key::E, ctrl_alt);
+        altgr.insert(1, egui::Event::Text("€".into()));
+        frame(&mut app, ctrl_alt, altgr);
+        assert_eq!(story_text(&mut app, &story), "Page \u{e000}€");
+    }
+
+    /// While typing, Cmd+Z undoes the document's last edit and Cmd+A selects the story's text: the
+    /// text tool has neither of its own.
+    #[test]
+    fn undo_and_select_all_work_while_typing() {
+        let (mut app, story, mut frame) = typing_in_a_text_frame();
+        frame(&mut app, Default::default(), vec![]);
+        frame(&mut app, Default::default(), vec![egui::Event::Text("X".into())]);
+        assert_eq!(story_text(&mut app, &story), "Page X");
+        frame(&mut app, cmd(), press(egui::Key::Z, cmd()));
+        assert_eq!(story_text(&mut app, &story), "Page ");
+        assert!(app.session.wants_text(), "the caret stays");
+        frame(&mut app, cmd(), press(egui::Key::A, cmd()));
+        frame(&mut app, Default::default(), vec![egui::Event::Text("Y".into())]);
+        assert_eq!(story_text(&mut app, &story), "Y");
+    }
+
+    /// Cmd+Shift+C centers the paragraph while typing, both as egui-winit sends it (a Copy event
+    /// with the modifiers held) and as the web build does (the press, then Copy); nothing is
+    /// copied.
+    #[test]
+    fn cmd_shift_c_centers_the_paragraph_while_typing() {
+        let cmd_shift = cmd() | egui::Modifiers::SHIFT;
+        let mut web = press(egui::Key::C, cmd_shift);
+        web.insert(1, egui::Event::Copy);
+        for (form, events) in [("desktop", vec![egui::Event::Copy]), ("web", web)] {
+            let (mut app, _, mut frame) = typing_in_a_text_frame();
+            frame(&mut app, Default::default(), vec![]);
+            frame(&mut app, cmd_shift, events);
+            let align = crate::panels::text_attrs(&mut app).unwrap()["para"]["align"].clone();
+            assert_eq!(align, "center", "{form}");
+        }
+    }
+
+    /// A panel and the command that opens it share their key without a reported conflict.
+    #[test]
+    fn a_panels_twin_is_not_a_conflict() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        for steal in [false, true] {
+            let r = menus::run_ui(&mut app, "window.setShortcut", &json!({"id": "app.characterPanel", "shortcut": "Cmd+T", "steal": steal}))
+                .unwrap()
+                .unwrap();
+            assert_eq!(r["conflicts"], json!([]), "steal: {steal}");
         }
     }
 }

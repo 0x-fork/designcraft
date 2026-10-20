@@ -1706,7 +1706,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
                 Ok(t) => t,
                 Err(e) => return Some(Err(e)),
             };
-            let mut conflicts: Vec<String> = taken.iter().map(|c| c.key()).collect();
+            let mut conflicts: Vec<String> = taken.iter().filter(|c| !crate::keys::twins(&cmd, c)).map(|c| c.key()).collect();
             for key in crate::keys::conflicts(&app.keymap, &cmd) {
                 if !conflicts.contains(&key) {
                     conflicts.push(key);
@@ -2162,18 +2162,6 @@ pub fn shortcut_label(app: &DesignApp, id: &str, params: &Value) -> Option<Strin
 /// The shortcut of a tool, for its button's tooltip.
 pub fn tool_shortcut_label(app: &DesignApp, tool: &str) -> Option<String> {
     crate::keys::shortcut_display(&app.keymap, &crate::keys::tool(tool))
-}
-
-/// Every command with a shortcut in effect: (command key, shortcut), in dispatch order. UI
-/// commands come first: where one shares keys with an engine command (⌘N, ⌘O…) it's the one
-/// with the dialog.
-pub fn effective_shortcuts(app: &DesignApp) -> Vec<(String, String)> {
-    app.keymap.catalog().iter().filter_map(|b| crate::keys::shortcut(&app.keymap, &b.command).map(|s| (b.command.key(), s))).collect()
-}
-
-/// A shortcut as written in this app ("Cmd+Alt+Shift+K") from a key press.
-pub fn shortcut_string(m: egui::Modifiers, key: egui::Key) -> String {
-    crate::keys::chord_text(m, key).unwrap_or_else(|| key.name().to_string())
 }
 
 /// A shortcut for display: ⌃⌥⇧⌘K on macOS, Ctrl+Alt+Shift+K elsewhere.
@@ -3449,6 +3437,13 @@ mod tests {
         assert_eq!(r["zone"], 0.0, "a negative zone turns snapping off");
     }
 
+    /// Every command with a shortcut in effect: (command key, shortcut), in dispatch order. UI
+    /// commands come first: where one shares keys with an engine command (⌘N, ⌘O…) it's the one
+    /// with the dialog.
+    fn effective_shortcuts(app: &DesignApp) -> Vec<(String, String)> {
+        app.keymap.catalog().iter().filter_map(|b| crate::keys::shortcut(&app.keymap, &b.command).map(|s| (b.command.key(), s))).collect()
+    }
+
     #[test]
     fn custom_shortcuts_override_defaults() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -3467,7 +3462,10 @@ mod tests {
         let first_cmd_n = effective_shortcuts(&app).into_iter().find(|(_, s)| s == "Cmd+N").map(|(i, _)| i);
         assert_eq!(first_cmd_n.as_deref(), Some("app.newDocumentDialog"));
         assert_eq!(shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Enter"));
-        assert_eq!(shortcut_string(egui::Modifiers { command: true, shift: true, ..Default::default() }, egui::Key::K), "Cmd+Shift+K");
+        assert_eq!(
+            crate::keys::chord_text(egui::Modifiers { command: true, shift: true, ..Default::default() }, egui::Key::K).as_deref(),
+            Some("Cmd+Shift+K")
+        );
         if cfg!(target_os = "macos") {
             assert_eq!(shortcut_text("Cmd+Alt+3"), "⌥⌘3");
             assert_eq!(shortcut_text("Cmd+Shift+."), "⇧⌘.");
