@@ -749,11 +749,10 @@ impl Exporter<'_> {
         n
     }
 
-    /// Isolate Blending / Knockout groups: an isolated transparency group (knockout is drawn
-    /// isolated too).
+    /// Isolate Blending / Knockout Group: a transparency group with `/I` and `/K` as set.
     fn push_isolation(s: &mut Surface, it: &Item) -> usize {
         if it.isolate || it.knockout {
-            s.push_isolated();
+            s.push_group(krilla::blend::GroupOptions { isolated: it.isolate, knockout: it.knockout });
             1
         } else {
             0

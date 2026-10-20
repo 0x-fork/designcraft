@@ -240,3 +240,38 @@ fn ruby_overprint_fill_is_written() {
     assert_eq!(overprint_states(&r.bytes), [(true, false, 1)]);
     assert!(!r.warnings.iter().any(|w| w.contains("overprint")), "{:?}", r.warnings);
 }
+
+/// Knockout Group writes `/K true` and Isolate Blending `/I true`, each on its own.
+#[test]
+fn knockout_and_isolation_are_group_attributes() {
+    let grouped = |knockout: bool, isolate: bool| {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let child = |d: &mut Document, r: Rect, swatch: &str| {
+            let mut b = Item::new(ItemId(d.alloc()), lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(r));
+            b.fill = Fill::swatch(swatch);
+            std::sync::Arc::new(b)
+        };
+        let items = vec![
+            child(&mut d, Rect::new(36.0, 36.0, 136.0, 136.0), "C=100 M=0 Y=0 K=0"),
+            child(&mut d, Rect::new(86.0, 86.0, 186.0, 186.0), "C=0 M=100 Y=0 K=0"),
+        ];
+        let mut g = Item::new(
+            ItemId(d.alloc()),
+            lid,
+            designcraft_doc::Shape::Group,
+            designcraft_geom::shapes::rectangle(Rect::new(36.0, 36.0, 186.0, 186.0)),
+        );
+        g.content = designcraft_doc::Content::Group { items };
+        g.knockout = knockout;
+        g.isolate = isolate;
+        d.insert_item(SpreadRef::Doc(0), g, None).unwrap();
+        form_groups(&exported(&d))
+    };
+    let attributes =
+        |groups: Vec<(Option<String>, bool, bool)>| groups.into_iter().map(|(_, i, k)| (i, k)).filter(|ik| *ik != (false, false)).collect::<Vec<_>>();
+    assert_eq!(attributes(grouped(true, false)), [(false, true)]);
+    assert_eq!(attributes(grouped(false, true)), [(true, false)]);
+    assert_eq!(attributes(grouped(true, true)), [(true, true)]);
+    assert_eq!(attributes(grouped(false, false)), []);
+}
