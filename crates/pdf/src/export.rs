@@ -559,11 +559,11 @@ pub(crate) fn norm(v: f32) -> NormalizedF32 {
     NormalizedF32::new(if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 }).unwrap_or(NormalizedF32::ONE)
 }
 
-fn q(v: f32) -> u8 {
+pub(crate) fn q(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-fn regular(c: &Color, rgb_only: bool) -> krilla::color::RegularColor {
+pub(crate) fn regular(c: &Color, rgb_only: bool) -> krilla::color::RegularColor {
     use krilla::color::RegularColor as R;
     if rgb_only && matches!(c, Color::Cmyk { .. }) {
         let [r, g, b] = c.to_rgb();
@@ -1104,41 +1104,10 @@ impl Exporter<'_> {
         let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
         if let Some(g) = designcraft_color::swatch::resolve_gradient(&self.doc.swatches, swatch) {
             let kind = g.kind;
-            let mut expanded = g.expanded_stops();
-            // Grey and CMYK stops blend as inks, so a grey stop beside a CMYK one is the K ink.
-            if !self.rgb_only && expanded.iter().any(|(_, c, _)| matches!(c, Color::Cmyk { .. })) {
-                for (_, c, _) in &mut expanded {
-                    if let Color::Gray { k } = *c {
-                        *c = Color::cmyk(0.0, 0.0, 0.0, k);
-                    }
-                }
-            }
-            // A PDF shading needs one colour space. Midpoint expansion can introduce RGB even
-            // when every authored stop is CMYK/Gray; PDF/A can also change the output space.
-            let components = |c: &Color| match c {
-                Color::Cmyk { .. } if !self.rgb_only => 4,
-                Color::Gray { .. } => 1,
-                _ => 3,
+            let stops = match self.ink_gradient_stops(g, swatch) {
+                Some(stops) => stops,
+                None => self.device_gradient_stops(g, swatch),
             };
-            let mixed = expanded.first().is_some_and(|(_, first, _)| expanded.iter().any(|(_, c, _)| components(c) != components(first)));
-            if mixed {
-                self.warn(format!("gradient '{swatch}': mixed color spaces converted to RGB (colour appearance and separations may change)"));
-            }
-            let mut stops: Vec<Stop> = Vec::new();
-            let mut last = 0.0f32;
-            for (o, c, a) in expanded {
-                let o = o.clamp(last, 1.0);
-                last = o;
-                let color = if mixed && !matches!(c, Color::Rgb { .. }) {
-                    let [r, g, b] = c.to_rgb();
-                    rgb::Color::new(q(r), q(g), q(b)).into()
-                } else {
-                    // Preserve RGB values, including already-interpolated display RGB, and
-                    // leave every homogeneous gradient on its existing device-space path.
-                    device(&c, self.rgb_only)
-                };
-                stops.push(Stop { offset: norm(o), color, opacity: norm(a) });
-            }
             if stops.is_empty() {
                 return None;
             }
@@ -1180,6 +1149,46 @@ impl Exporter<'_> {
             });
         }
         self.swatch_color(swatch, tint).map(Into::into)
+    }
+
+    /// A gradient's stops in device colours: CMYK, RGB or Gray, as one space.
+    fn device_gradient_stops(&mut self, g: &designcraft_color::Gradient, swatch: &str) -> Vec<Stop> {
+        let mut expanded = g.expanded_stops();
+        // Grey and CMYK stops blend as inks, so a grey stop beside a CMYK one is the K ink.
+        if !self.rgb_only && expanded.iter().any(|(_, c, _)| matches!(c, Color::Cmyk { .. })) {
+            for (_, c, _) in &mut expanded {
+                if let Color::Gray { k } = *c {
+                    *c = Color::cmyk(0.0, 0.0, 0.0, k);
+                }
+            }
+        }
+        // A PDF shading needs one colour space. Midpoint expansion can introduce RGB even
+        // when every authored stop is CMYK/Gray; PDF/A can also change the output space.
+        let components = |c: &Color| match c {
+            Color::Cmyk { .. } if !self.rgb_only => 4,
+            Color::Gray { .. } => 1,
+            _ => 3,
+        };
+        let mixed = expanded.first().is_some_and(|(_, first, _)| expanded.iter().any(|(_, c, _)| components(c) != components(first)));
+        if mixed {
+            self.warn(format!("gradient '{swatch}': mixed color spaces converted to RGB (colour appearance and separations may change)"));
+        }
+        let mut stops: Vec<Stop> = Vec::new();
+        let mut last = 0.0f32;
+        for (o, c, a) in expanded {
+            let o = o.clamp(last, 1.0);
+            last = o;
+            let color = if mixed && !matches!(c, Color::Rgb { .. }) {
+                let [r, g, b] = c.to_rgb();
+                rgb::Color::new(q(r), q(g), q(b)).into()
+            } else {
+                // Preserve RGB values, including already-interpolated display RGB, and
+                // leave every homogeneous gradient on its existing device-space path.
+                device(&c, self.rgb_only)
+            };
+            stops.push(Stop { offset: norm(o), color, opacity: norm(a) });
+        }
+        stops
     }
 
     fn stroke(&mut self, s: &mut Surface, it: &Item, bp: &BezPath, path: &Path) {
