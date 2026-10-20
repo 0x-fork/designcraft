@@ -2077,7 +2077,7 @@ fn swatch_options(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     if let Some(nb) = &base {
                         if !d.swatch(nb).is_some_and(|x| matches!(x.value, SwatchValue::Color { .. })) || *nb == name {
-                            return Err(bad(ID, format!("`{nb}` isn't a colour swatch")));
+                            return Err(bad(ID, format!("`{nb}` isn't a color swatch")));
                         }
                         *b = nb.clone();
                     }
