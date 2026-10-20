@@ -8,8 +8,8 @@ use crate::{HiddenPanels, SavedWorkspace, UiState, panel_docking};
 /// Saved preferences, and whether reading them discarded anything.
 pub struct ReadPreferences {
     pub ui: UiState,
-    /// False when unreadable docking data was dropped. The caller keeps the file it read
-    /// instead of overwriting it.
+    /// False when unreadable docking data, or an old layout that could not be converted, was
+    /// dropped. The caller keeps the file it read instead of overwriting it.
     pub intact: bool,
 }
 
@@ -22,7 +22,7 @@ impl UiState {
 
     /// [`Self::from_preferences_json`], also reporting whether anything was discarded. Layouts
     /// saved before the canvas joined the panel layout are converted (see
-    /// [`panel_docking::from_dock_only`]); that is not a loss.
+    /// [`panel_docking::from_dock_only`]); that is not a loss, unless one cannot be converted.
     pub fn read_preferences(bytes: &[u8]) -> serde_json::Result<ReadPreferences> {
         let mut saved: Value = serde_json::from_slice(bytes)?;
         let mut intact = recover_docking(&mut saved);
@@ -32,10 +32,10 @@ impl UiState {
             }
         }
         let mut ui: UiState = serde_json::from_value(saved)?;
-        migrate(&mut ui.docking, &mut ui.floating, &ui.docking_hidden, ui.dock_expanded, ui.icon_groups.as_deref());
+        intact &= migrate(&mut ui.docking, &mut ui.floating, &ui.docking_hidden, ui.dock_expanded, ui.icon_groups.as_deref());
         for workspace in &mut ui.custom_workspaces {
             let SavedWorkspace { docking, floating, docking_hidden, dock_expanded, icon_groups, .. } = workspace;
-            migrate(docking, floating, docking_hidden, *dock_expanded, icon_groups.as_deref());
+            intact &= migrate(docking, floating, docking_hidden, *dock_expanded, icon_groups.as_deref());
         }
         Ok(ReadPreferences { ui, intact })
     }
@@ -69,20 +69,22 @@ fn recover_docking(saved: &mut Value) -> bool {
 
 /// Convert a layout saved before the canvas joined the panel layout. One that cannot be
 /// converted gives way to the workspace's default layout, which the workspace fields
-/// (`dockTab`, `openPanel`, `floating`, `dockExpanded`, `iconGroups`) still describe.
+/// (`dockTab`, `openPanel`, `floating`, `dockExpanded`, `iconGroups`) still describe. False when
+/// a layout was dropped that way.
 fn migrate(
     docking: &mut Option<Layout<String>>,
     floating: &mut Vec<(String, [f32; 2])>,
     hidden: &HiddenPanels,
     dock_expanded: bool,
     icon_groups: Option<&[Vec<String>]>,
-) {
-    let Some(old) = docking.as_ref().filter(|layout| panel_docking::dock_only(layout)) else { return };
+) -> bool {
+    let Some(old) = docking.as_ref().filter(|layout| panel_docking::dock_only(layout)) else { return true };
     *docking = panel_docking::from_dock_only(old, hidden.keys(), dock_expanded, icon_groups);
     if docking.is_some() {
         // The converted layout holds the floating dock panels.
         floating.retain(|(id, _)| crate::dock::float_only(id));
     }
+    docking.is_some()
 }
 
 #[cfg(test)]
@@ -296,6 +298,16 @@ mod tests {
         // Saved again, the file is in the current shape and loads unchanged.
         let again = UiState::from_preferences_json(&serde_json::to_vec(&app.ui).unwrap()).unwrap();
         assert_eq!(again.docking, app.ui.docking);
+    }
+
+    /// An old layout that cannot be converted gives way to the workspace's default and is
+    /// reported, so the file it came from is kept.
+    #[test]
+    fn an_old_layout_that_cannot_be_converted_is_reported() {
+        let saved = json!({"docking": {"root": {"Tabs": {"panels": ["properties", "properties"], "active": 0}}, "floating": []}});
+        let read = UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert!(!read.intact);
+        assert_eq!(read.ui.docking, None);
     }
 
     /// `dockingHidden` as an object keyed by panel (files before craft-ui's `Workspace::hidden`
