@@ -997,10 +997,15 @@ fn shared_panel_commands_float_dock_and_reject_atomically() {
         ("window.panel.window", json!({"panel": "pages"})),
         ("window.panel.move", json!({"panel": "stroke", "anchor": "pages", "zone": "left", "before": "pages"})),
         ("window.panel.dock", json!({"panel": "stroke", "side": "Middle"})),
+        ("window.panel.dock", json!({"panel": "stroke", "zone": "left"})),
+        ("window.dockPanel", json!({"panel": "properties", "zone": "bottom"})),
     ] {
         assert!(app.run(id, params).is_err(), "{id}");
         assert_eq!((app.ui.docking.clone(), app.ui.docking_hidden.clone()), before, "{id}");
     }
+    // A zone is a side of an anchor; the error names the two ways to say where.
+    let error = app.run("window.panel.dock", json!({"panel": "stroke", "zone": "right"})).unwrap_err();
+    assert!(error.contains("anchor") && error.contains("side"), "{error}");
     // Every shared id is registered for the command list and MCP.
     for id in craft_ui::docking::DockCommand::<String>::IDS {
         assert!(crate::menus::UI_COMMANDS.iter().any(|c| c.0 == *id), "{id} is not registered");

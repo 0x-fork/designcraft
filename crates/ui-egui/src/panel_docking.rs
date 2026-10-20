@@ -491,6 +491,11 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
         DockCommand::Window { .. } => return Err("DesignCraft does not move panels to their own windows".into()),
         _ => {}
     }
+    // A zone is a side of `anchor`. DesignCraft's docks are columns beside the canvas, so a dock at
+    // a window edge is a `side`, not a frame on the outer edge (craft-ui's `Placement::Edge`).
+    if let DockCommand::Dock { anchor: None, side: None, zone: Some(_), .. } = &command {
+        return Err("zone needs an anchor: dock beside a panel with anchor, or in a new dock column with side (Start or End)".into());
+    }
     let rtl = crate::i18n::is_rtl(&app.ui.language);
     let space = float_space(app);
     let mut txn = Transaction::begin(app)?;

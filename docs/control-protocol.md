@@ -116,7 +116,9 @@ read as `anchor`.
   rect unless the params change it.
 - `window.panel.dock {panel, anchor?, zone?, before?, group?, column?, side?}` (and
   `window.dockPanel`) docks beside `anchor`, or in a new column of the dock at `side`
-  (`Start` or `End`; a new dock when there is none). Without either, a panel that floated from
+  (`Start` or `End`; a new dock when there is none). A panel that already leads that dock's
+  last column stays where it is. `zone` places the panel beside `anchor`, so a `zone` without
+  `anchor` or `side` is an error. Without `anchor` and `side`, a panel that floated from
   the dock goes back to that place, and another floating panel joins the first dock group. For
   the float-only Tabs panel (`tabs`), which has its own window outside the layout, float opens
   that window and dock closes it.
