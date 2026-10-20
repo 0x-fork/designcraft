@@ -296,7 +296,7 @@ fn keyboard_shortcuts(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     // UI commands, the panels and the tools.
     let mut rows: Vec<(String, String, String)> = app
         .keymap
-        .catalogue()
+        .catalog()
         .iter()
         .filter(|b| {
             let ui_command = crate::menus::UI_COMMANDS.iter().any(|c| c.0 == b.command.id);

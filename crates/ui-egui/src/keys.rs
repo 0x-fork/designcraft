@@ -1,4 +1,4 @@
-//! Keyboard shortcuts on `craft-keymap`: the catalogue (UI commands, engine commands, panels and
+//! Keyboard shortcuts on `craft-keymap`: the catalog (UI commands, engine commands, panels and
 //! tools with their default keys and menu paths), shortcut text, and the edits that
 //! `window.setShortcut`, the Keyboard Shortcuts dialog and the shortcut-set importer make.
 
@@ -89,8 +89,8 @@ pub fn command_ref(id: &str, params: &Value) -> CommandRef {
     }
 }
 
-/// The browser's operating system as [`note_os`] recorded it, by [`platform_code`]; 0 before the
-/// first frame.
+/// The browser's operating system as [`note_platform`] recorded it, by [`platform_code`]; 0
+/// before the first frame.
 static WEB_PLATFORM: AtomicU8 = AtomicU8::new(0);
 
 fn platform_code(p: Platform) -> u8 {
@@ -98,6 +98,7 @@ fn platform_code(p: Platform) -> u8 {
         Platform::Mac => 1,
         Platform::Windows => 2,
         Platform::Linux => 3,
+        _ => 0,
     }
 }
 
@@ -115,21 +116,10 @@ pub fn platform() -> Platform {
     }
 }
 
-/// The platform for an operating system egui reports (on the web, guessed from the browser's user
-/// agent). An iPad with a keyboard has ⌘ as on a Mac.
-pub fn platform_of(os: egui::os::OperatingSystem) -> Platform {
-    use egui::os::OperatingSystem as Os;
-    match os {
-        Os::Mac | Os::IOS => Platform::Mac,
-        Os::Windows => Platform::Windows,
-        Os::Nix | Os::Android | Os::Unknown => Platform::Linux,
-    }
-}
-
-/// Records the operating system egui reports, which the web build reads from the browser.
-pub fn note_os(os: egui::os::OperatingSystem) {
+/// Records the platform egui reports, which the web build reads from the browser's user agent.
+pub fn note_platform(ctx: &egui::Context) {
     if cfg!(target_arch = "wasm32") {
-        WEB_PLATFORM.store(platform_code(platform_of(os)), Ordering::Relaxed);
+        WEB_PLATFORM.store(platform_code(craft_keymap::egui::platform(ctx)), Ordering::Relaxed);
     }
 }
 
@@ -141,7 +131,7 @@ pub fn new_keymap(overrides: Overrides) -> Keymap {
 /// The keymap for `platform`: the system's own chords are reserved, so neither a user edit nor an
 /// imported set can take them.
 pub fn keymap_for(platform: Platform, overrides: Overrides) -> Keymap {
-    Keymap::new(catalogue().to_vec(), Scopes::new().with_context(TEXT_CONTEXT), platform)
+    Keymap::new(catalog().to_vec(), Scopes::new().with_context(TEXT_CONTEXT), platform)
         .with_reserved(craft_keymap::reserved::system(platform))
         .with_overrides(overrides)
 }
@@ -149,12 +139,12 @@ pub fn keymap_for(platform: Platform, overrides: Overrides) -> Keymap {
 /// Every bindable command, in dispatch order: where two share keys the earlier one runs. UI
 /// commands come first (⌘N is the New Document dialog, not a bare `file.new`), then engine
 /// commands, panels and tools.
-pub fn catalogue() -> &'static [Bindable] {
-    static CATALOGUE: OnceLock<Vec<Bindable>> = OnceLock::new();
-    CATALOGUE.get_or_init(build_catalogue)
+pub fn catalog() -> &'static [Bindable] {
+    static CATALOG: OnceLock<Vec<Bindable>> = OnceLock::new();
+    CATALOG.get_or_init(build_catalog)
 }
 
-fn build_catalogue() -> Vec<Bindable> {
+fn build_catalog() -> Vec<Bindable> {
     let paths = menu_paths();
     // An engine command's own menu placement counts only where no menu row stands: a row there
     // runs a UI command in its place (File › Save is the Save dialog when needed), and two
@@ -334,7 +324,7 @@ mod tests {
         for p in PLATFORMS {
             let km = keymap_for(p, Overrides::new());
             let reserved: Vec<String> = km
-                .catalogue()
+                .catalog()
                 .iter()
                 .flat_map(|b| km.default_bindings(&b.command).into_iter().map(move |d| (b.command.key(), d)))
                 .filter(|(_, d)| km.is_reserved(&d.trigger.chord))
@@ -349,7 +339,7 @@ mod tests {
         match p {
             Platform::Mac => "Cmd+Tab",
             Platform::Windows => "Alt+F4",
-            Platform::Linux => "Cmd+Alt+F2",
+            _ => "Cmd+Alt+F2",
         }
     }
 
@@ -379,11 +369,16 @@ mod tests {
         assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Enter"));
     }
 
-    /// The web build follows the operating system in the browser's user agent.
+    /// The web build follows the operating system in the browser's user agent; an iPad counts as a
+    /// Mac.
     #[test]
     fn browser_user_agent_picks_the_platform() {
         use egui::os::OperatingSystem as Os;
-        let of = |ua: &str| platform_of(Os::from_user_agent(ua));
+        let ctx = egui::Context::default();
+        let of = |ua: &str| {
+            ctx.set_os(Os::from_user_agent(ua));
+            craft_keymap::egui::platform(&ctx)
+        };
         let mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
         let ipad = "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
         let windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -394,10 +389,10 @@ mod tests {
         assert_eq!(of(windows), Platform::Windows);
         assert_eq!(of(linux), Platform::Linux);
         assert_eq!(of(android), Platform::Linux);
-        assert_eq!(platform_of(Os::Unknown), Platform::Linux);
         // Native builds keep their own platform whatever egui reports.
         if !cfg!(target_arch = "wasm32") {
-            note_os(Os::Mac);
+            ctx.set_os(Os::Mac);
+            note_platform(&ctx);
             assert_eq!(platform(), Platform::current());
         }
     }

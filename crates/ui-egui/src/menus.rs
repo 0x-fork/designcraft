@@ -2168,7 +2168,7 @@ pub fn tool_shortcut_label(app: &DesignApp, tool: &str) -> Option<String> {
 /// commands come first: where one shares keys with an engine command (⌘N, ⌘O…) it's the one
 /// with the dialog.
 pub fn effective_shortcuts(app: &DesignApp) -> Vec<(String, String)> {
-    app.keymap.catalogue().iter().filter_map(|b| crate::keys::shortcut(&app.keymap, &b.command).map(|s| (b.command.key(), s))).collect()
+    app.keymap.catalog().iter().filter_map(|b| crate::keys::shortcut(&app.keymap, &b.command).map(|s| (b.command.key(), s))).collect()
 }
 
 /// A shortcut as written in this app ("Cmd+Alt+Shift+K") from a key press.

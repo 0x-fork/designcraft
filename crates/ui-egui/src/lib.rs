@@ -1149,7 +1149,7 @@ impl DesignApp {
         if self.egui_ctx.is_none() {
             self.egui_ctx = Some(ctx.clone());
         }
-        keys::note_os(ctx.os());
+        keys::note_platform(ctx);
         self.sync_keymap();
         self.window_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         if !self.color_applied {
