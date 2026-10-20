@@ -708,7 +708,7 @@ pub fn specs() -> Vec<CommandSpec> {
             super::always,
             |s, p| {
                 if let Some(n) = p.get("sides").and_then(Value::as_u64) {
-                    s.prefs.polygon_sides = (n as u32).clamp(3, 100);
+                    s.prefs.polygon_sides = n.clamp(3, 100) as u32;
                 }
                 if let Some(v) = p.get("starInset").and_then(Value::as_f64) {
                     s.prefs.star_inset = (v / 100.0).clamp(0.0, 1.0);
@@ -972,7 +972,7 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
     let text = super::text_param(p, "text");
     let caret = bool_or(p, "caret", content == "text");
     let vertical = bool_or(p, "vertical", false);
-    let sides = p.get("sides").and_then(Value::as_u64).map_or(s.prefs.polygon_sides, |v| v as u32).clamp(3, 100);
+    let sides = p.get("sides").and_then(Value::as_u64).unwrap_or(u64::from(s.prefs.polygon_sides)).clamp(3, 100) as u32;
     let inset = p.get("starInset").and_then(Value::as_f64).map_or(s.prefs.star_inset, |v| v / 100.0).clamp(0.0, 1.0);
     let rect = Rect::new(rect.x0, rect.y0, rect.x1.max(rect.x0 + 0.5), rect.y1.max(rect.y0 + 0.5));
     s.edit(|d, sel| {
@@ -3786,6 +3786,21 @@ mod polygon_tests {
             .as_u64()
             .unwrap();
         assert_eq!(s.doc().unwrap().doc.item(ItemId(id)).unwrap().path.subpaths[0].anchors.len(), 3);
+    }
+
+    #[test]
+    fn polygon_sides_clamp_before_narrowing() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("tool.polygonSettings", &json!({"sides": 4294967301u64})).unwrap();
+        assert_eq!(r["sides"], 100);
+        let r = s.execute("tool.polygonSettings", &json!({"sides": 4294967297u64})).unwrap();
+        assert_eq!(r["sides"], 100);
+        let id =
+            s.execute("frame.create", &json!({"rect": [0, 0, 50, 50], "shape": "polygon", "sides": 4294967301u64, "starInset": 0})).unwrap()["id"]
+                .as_u64()
+                .unwrap();
+        assert_eq!(s.doc().unwrap().doc.item(ItemId(id)).unwrap().path.subpaths[0].anchors.len(), 100);
     }
 }
 
