@@ -14,8 +14,8 @@
 //!   as `/Separation /All`.
 //!   Gradient stops on swatches shade in their inks: one spot with tints of itself or `[Paper]`
 //!   as a `/Separation` shading, a spot with process inks or a second spot as `/DeviceN`
-//!   (process colorants first; not in PDF/A, which goes to process colour with a warning), and in
-//!   print a process gradient to `[Paper]` as DeviceCMYK. Plain-colour stops keep their own
+//!   (process colorants first; not in PDF/A, which goes to process color with a warning), and in
+//!   print a process gradient to `[Paper]` as DeviceCMYK. Plain-color stops keep their own
 //!   space; gradients mixing RGB with CMYK or Gray are converted to RGB with an export warning.
 //! - **Overprint:** Overprint Fill, Stroke and Gap, overprinting text and 100% [Black] (when
 //!   Appearance of Black says so) as `/op` and `/OP` with `/OPM 1`; left out of PDF/A.

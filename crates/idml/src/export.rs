@@ -594,8 +594,8 @@ impl<'a> Ex<'a> {
                 .attr("Visible", "true")
                 .attr("SwatchCreatorID", "7937");
             for (i, stop) in gradient.stops.iter().enumerate() {
-                // A stop on a swatch names it; a plain colour names an equal colour swatch or
-                // an unnamed colour.
+                // A stop on a swatch names it; a plain color names an equal color swatch or
+                // an unnamed color.
                 let named = stop
                     .swatch
                     .as_deref()

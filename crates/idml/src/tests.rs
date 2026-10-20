@@ -708,7 +708,7 @@ fn imports_hand_written_fixture() {
     assert_eq!(gradient.stops[1].color, Color::cmyk(0.1, 0.2, 0.3, 0.4));
     assert!((gradient.stops[0].midpoint - 0.3).abs() < 1e-6);
     assert_eq!(gradient.stops[0].swatch.as_deref(), Some("Brand"), "a stop on a swatch keeps it");
-    assert_eq!(gradient.stops[1].swatch, None, "an unnamed colour stays plain");
+    assert_eq!(gradient.stops[1].swatch, None, "an unnamed color stays plain");
     // The parent rectangle used an unnamed colour → value-named swatch.
     let mr = &d.parents[0].items[0];
     assert_eq!(mr.fill.swatch, "C=10 M=20 Y=30 K=40");
