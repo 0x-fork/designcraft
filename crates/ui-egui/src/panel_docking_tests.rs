@@ -602,6 +602,12 @@ fn collapse_to_icons_shrinks_the_dock_to_its_icons() {
     assert_eq!(app.ui.docking_raise.as_deref(), Some("pages"));
     assert!(showing(&app, "pages"));
     assert!(in_iconic_column(app.ui.docking.as_ref().unwrap(), "pages"));
+    // Choosing it again closes the flyout, and a third time opens it again.
+    app.run("window.panel", json!({"panel":"pages"})).unwrap();
+    assert_eq!(app.ui.docking_flyout, None);
+    assert!(!showing(&app, "pages"));
+    app.run("window.panel", json!({"panel":"pages"})).unwrap();
+    assert_eq!(app.ui.docking_flyout.as_deref(), Some("pages"));
 }
 
 #[test]
