@@ -853,7 +853,7 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                     let mut rgb = [(r * 255.0) as u8, (gg * 255.0) as u8, (bb * 255.0) as u8];
                     if egui::color_picker::color_edit_button_srgb(ui, &mut rgb).changed() {
                         let mut stops = stops_json(&g);
-                        // A picked colour replaces the stop's swatch.
+                        // A picked color replaces the stop's swatch.
                         if let Some(o) = stops.get_mut(i).and_then(serde_json::Value::as_object_mut) {
                             o.remove("swatch");
                         }

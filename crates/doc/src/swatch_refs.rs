@@ -142,8 +142,8 @@ impl Names<'_> {
 }
 
 impl Document {
-    /// Give gradient stops that name a colour swatch that swatch's current colour, after a
-    /// swatch edit. Stops whose swatch is gone or isn't a colour keep the colour they have.
+    /// Give gradient stops that name a color swatch that swatch's current color, after a
+    /// swatch edit. Stops whose swatch is gone or isn't a color keep the color they have.
     pub fn refresh_gradient_stops(&mut self) {
         let mut fresh: Vec<(usize, usize, designcraft_color::Color)> = Vec::new();
         for (wi, w) in self.swatches.iter().enumerate() {
@@ -169,8 +169,8 @@ impl Document {
         }
     }
 
-    /// Turn gradient stops that name swatch `name` into plain colours (the swatch is being
-    /// deleted); each keeps the colour it shows.
+    /// Turn gradient stops that name swatch `name` into plain colors (the swatch is being
+    /// deleted); each keeps the color it shows.
     pub fn forget_gradient_stop_swatch(&mut self, name: &str) {
         for w in &mut self.swatches {
             let SwatchValue::Gradient { gradient } = &mut w.value else { continue };

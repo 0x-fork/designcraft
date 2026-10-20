@@ -28,7 +28,7 @@ impl GradientKind {
 pub struct GradientStop {
     /// 0..=1 along the gradient.
     pub offset: f32,
-    /// The display colour. For a stop with a `swatch`, the swatch's colour when it was last
+    /// The display color. For a stop with a `swatch`, the swatch's color when it was last
     /// resolved ([`GradientStop::swatch`]).
     pub color: Color,
     #[serde(default = "one")]
@@ -36,14 +36,14 @@ pub struct GradientStop {
     /// Midpoint to the next stop, 0.13..=0.87 (InDesign's diamond), default 0.5.
     #[serde(default = "half")]
     pub midpoint: f32,
-    /// The colour swatch the stop takes its ink from: a spot or process colour, a tint of one,
-    /// or `[Paper]`. Print export writes the stop in that swatch's inks; `None` is a plain colour.
+    /// The color swatch the stop takes its ink from: a spot or process color, a tint of one,
+    /// or `[Paper]`. Print export writes the stop in that swatch's inks; `None` is a plain color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swatch: Option<String>,
 }
 
 impl GradientStop {
-    /// A plain-colour stop, opaque, with the midpoint halfway to the next stop.
+    /// A plain-color stop, opaque, with the midpoint halfway to the next stop.
     pub fn new(offset: f32, color: Color) -> Self {
         Self { offset, color, opacity: 1.0, midpoint: 0.5, swatch: None }
     }
@@ -246,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_stops_without_a_swatch_are_plain_colours() {
+    fn saved_stops_without_a_swatch_are_plain_colors() {
         let old = r#"{"offset": 0.0, "color": {"model": "cmyk", "c": 0.0, "m": 0.3, "y": 0.9, "k": 0.1}, "opacity": 1.0, "midpoint": 0.5}"#;
         let stop: GradientStop = serde_json::from_str(old).unwrap();
         assert_eq!(stop, GradientStop::new(0.0, Color::cmyk(0.0, 0.3, 0.9, 0.1)));

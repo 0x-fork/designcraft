@@ -203,7 +203,7 @@ fn overprint_attributes_are_written() {
 }
 
 /// 100% [Black] fills, strokes and text overprint when Appearance of Black says so; tints of
-/// it and other colours don't.
+/// it and other colors don't.
 #[test]
 fn black_overprints_with_the_preference() {
     let black = designcraft_color::swatch::BLACK;

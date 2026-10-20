@@ -979,7 +979,7 @@ impl<'r> Importer<'r> {
                 let r = s.get("StopColor");
                 let c = r.map(|r| self.color_for_ref(r, &order)).unwrap_or(Color::BLACK);
                 // A stop on a named swatch (a spot, a tint, [Paper]) keeps it for its inks;
-                // unnamed colours stay plain. The id becomes the swatch's name below, once
+                // unnamed colors stay plain. The id becomes the swatch's name below, once
                 // repeated names are numbered.
                 let swatch = r.filter(|r| self.swatch_names.get(*r).is_some_and(|n| n != swatch::NONE)).map(str::to_string);
                 let loc = s.num("Location").unwrap_or(0.0) / 100.0;

@@ -17,7 +17,7 @@ fn spot(d: &mut Document, name: &str, color: Color) {
 }
 
 /// A document with spot inks Gold and Silver, a 40 % tint of Gold, and one box filled with a gradient on `stops`
-/// (swatch name or plain colour, location).
+/// (swatch name or plain color, location).
 fn document(stops: &[(Result<&str, Color>, f32)], midpoint: f32) -> Document {
     let mut d = Document::new(&NewDocument { width: 120.0, height: 120.0, facing_pages: false, ..Default::default() });
     spot(&mut d, "Gold", Color::cmyk(0.0, 0.3, 0.9, 0.1));
@@ -48,7 +48,7 @@ fn endpoint(function: &Dict<'_>, first: bool) -> Vec<f32> {
     function.get::<Array<'_>>(if first { b"C0" } else { b"C1" }).unwrap().iter::<f32>().collect()
 }
 
-/// Each shading on the page: its color space family, colorant names, and the colours at its
+/// Each shading on the page: its color space family, colorant names, and the colors at its
 /// two ends.
 struct Shading {
     family: String,
@@ -137,7 +137,7 @@ fn a_spot_to_cyan_gradient_is_a_device_n_shading() {
     assert_eq!(s.family, "DeviceN");
     assert_eq!(s.colorants, ["Cyan", "Gold"]);
     assert!(close(&s.start, &[0.0, 1.0]) && close(&s.end, &[1.0, 0.0]), "{:?} → {:?}", s.start, s.end);
-    // A midpoint stays in the inks: the colours at the ends are unchanged and in DeviceN.
+    // A midpoint stays in the inks: the colors at the ends are unchanged and in DeviceN.
     let (shadings, _) = export(&document(&[(Ok("Gold"), 0.0), (Ok(CYAN), 1.0)], 0.25), Standard::PdfX4);
     assert_eq!(shadings[0].family, "DeviceN");
     assert!(close(&shadings[0].start, &[0.0, 1.0]) && close(&shadings[0].end, &[1.0, 0.0]));
@@ -169,19 +169,19 @@ fn a_process_gradient_to_paper_prints_in_cmyk() {
     assert!(close(&shadings[0].start, &[1.0, 0.0, 0.0, 0.0]) && close(&shadings[0].end, &[0.0, 0.0, 0.0, 0.0]));
 }
 
-/// PDF/A forbids DeviceN's PostScript tint transform: the gradient goes to process colour, with
+/// PDF/A forbids DeviceN's PostScript tint transform: the gradient goes to process color, with
 /// a warning, and the export still succeeds.
 #[test]
-fn pdf_a_writes_mixed_spot_gradients_in_process_colour() {
+fn pdf_a_writes_mixed_spot_gradients_in_process_color() {
     let (shadings, warnings) = export(&document(&[(Ok("Gold"), 0.0), (Ok(CYAN), 1.0)], 0.5), Standard::PdfA2b);
     assert!(warnings.iter().any(|w| w.contains("'Fade'") && w.contains("spot inks printed as process")), "{warnings:?}");
     assert!(shadings.iter().all(|s| s.family != "DeviceN"));
 }
 
-/// Stops with plain colours (every document saved before stops named swatches) export as they
+/// Stops with plain colors (every document saved before stops named swatches) export as they
 /// did: the spot's values in DeviceCMYK.
 #[test]
-fn plain_colour_stops_keep_their_device_space() {
+fn plain_color_stops_keep_their_device_space() {
     let gold = Color::cmyk(0.0, 0.3, 0.9, 0.1);
     let (shadings, warnings) = export(&document(&[(Err(gold), 0.0), (Err(Color::cmyk(1.0, 0.0, 0.0, 0.0)), 1.0)], 0.5), Standard::PdfX4);
     no_conversion(&warnings);

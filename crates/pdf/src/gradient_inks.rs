@@ -23,7 +23,7 @@ enum Ink {
     },
 }
 
-/// Inks of a plain colour: CMYK as it is, grey as black. RGB has none.
+/// Inks of a plain color: CMYK as it is, gray as black. RGB has none.
 fn process_inks(c: Color) -> Option<[f32; 4]> {
     let tint = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
     match c {
@@ -46,7 +46,7 @@ impl Exporter<'_> {
         let Some(mut n) = stop.swatch.as_deref() else { return process_inks(stop.color).map(Ink::Process) };
         let mut t = 1.0f32;
         for _ in 0..8 {
-            // A swatch that's gone leaves the stop's own colour.
+            // A swatch that's gone leaves the stop's own color.
             let Some(sw) = self.doc.swatch(n) else { return process_inks(stop.color).map(Ink::Process) };
             match &sw.value {
                 SwatchValue::Paper { .. } => return Some(Ink::Process([0.0; 4])),
@@ -72,10 +72,10 @@ impl Exporter<'_> {
         None
     }
 
-    /// The gradient's stops in its inks, or `None` to write it in device colours (no spot, or
+    /// The gradient's stops in its inks, or `None` to write it in device colors (no spot, or
     /// inks that can't share one shading space, which is warned about).
     pub(crate) fn ink_gradient_stops(&mut self, g: &Gradient, swatch: &str) -> Option<Vec<Stop>> {
-        // Plain-colour stops (all older documents) keep their device colours.
+        // Plain-color stops (all older documents) keep their device colors.
         if g.stops.iter().all(|s| s.swatch.is_none()) {
             return None;
         }
@@ -184,10 +184,10 @@ impl Exporter<'_> {
         (!stops.is_empty()).then_some(stops)
     }
 
-    /// Falls back to device colours, warning when that loses a spot ink.
+    /// Falls back to device colors, warning when that loses a spot ink.
     fn unshaded(&mut self, swatch: &str, why: &str, has_spot: bool) -> Option<Vec<Stop>> {
         if has_spot {
-            self.warn(format!("gradient '{swatch}': spot inks printed as process colour ({why})"));
+            self.warn(format!("gradient '{swatch}': spot inks printed as process color ({why})"));
         }
         None
     }

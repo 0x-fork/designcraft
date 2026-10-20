@@ -1156,10 +1156,10 @@ impl Exporter<'_> {
         self.swatch_color(swatch, tint).map(Into::into)
     }
 
-    /// A gradient's stops in device colours: CMYK, RGB or Gray, as one space.
+    /// A gradient's stops in device colors: CMYK, RGB or Gray, as one space.
     fn device_gradient_stops(&mut self, g: &designcraft_color::Gradient, swatch: &str) -> Vec<Stop> {
         let mut expanded = g.expanded_stops();
-        // Grey and CMYK stops blend as inks, so a grey stop beside a CMYK one is the K ink.
+        // Gray and CMYK stops blend as inks, so a gray stop beside a CMYK one is the K ink.
         if !self.rgb_only && expanded.iter().any(|(_, c, _)| matches!(c, Color::Cmyk { .. })) {
             for (_, c, _) in &mut expanded {
                 if let Color::Gray { k } = *c {
@@ -1167,7 +1167,7 @@ impl Exporter<'_> {
                 }
             }
         }
-        // A PDF shading needs one colour space. Midpoint expansion can introduce RGB even
+        // A PDF shading needs one color space. Midpoint expansion can introduce RGB even
         // when every authored stop is CMYK/Gray; PDF/A can also change the output space.
         let components = |c: &Color| match c {
             Color::Cmyk { .. } if !self.rgb_only => 4,
@@ -1176,7 +1176,7 @@ impl Exporter<'_> {
         };
         let mixed = expanded.first().is_some_and(|(_, first, _)| expanded.iter().any(|(_, c, _)| components(c) != components(first)));
         if mixed {
-            self.warn(format!("gradient '{swatch}': mixed color spaces converted to RGB (colour appearance and separations may change)"));
+            self.warn(format!("gradient '{swatch}': mixed color spaces converted to RGB (color appearance and separations may change)"));
         }
         let mut stops: Vec<Stop> = Vec::new();
         let mut last = 0.0f32;
@@ -1207,7 +1207,7 @@ impl Exporter<'_> {
             c.into()
         };
         let closed = it.path.is_closed();
-        // Overprint Stroke covers the stroke and its arrowheads, Overprint Gap the gap colour;
+        // Overprint Stroke covers the stroke and its arrowheads, Overprint Gap the gap color;
         // each is pushed around what it paints (a filled outline or a stroked path).
         let stroke_op = self.overprints(&st.swatch, st.tint, st.overprint);
         let gap_op = self.overprints(&st.gap_swatch, st.gap_tint, st.gap_overprint);
