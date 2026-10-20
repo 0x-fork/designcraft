@@ -706,6 +706,20 @@ fn first_page_ref(pdf: &[u8]) -> Option<usize> {
 }
 
 fn export_pdf(s: &mut Session, p: &Value) -> Result<Value> {
+    let r = pdf_export(s, p)?;
+    match str_param(p, "path") {
+        Some(path) => {
+            write_file(path, &r.bytes)?;
+            Ok(json!({"path": path, "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings}))
+        }
+        None => Ok(json!({"base64": super::base64_encode(&r.bytes), "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings})),
+    }
+}
+
+/// The PDF that File › Export PDF writes for `p`, with its warnings: the flattener, placed PDFs
+/// with hidden layers and soft effects as images, the PDF itself and its view options, timings
+/// and transitions. File › Print prints it.
+pub(crate) fn pdf_export(s: &Session, p: &Value) -> Result<designcraft_pdf::ExportReport> {
     let st = s.doc()?;
     let opts = options(p, st.doc.page_count())?;
     // Transparency Flattener presets: High / Medium / Low Resolution, or a ppi.
@@ -803,13 +817,7 @@ fn export_pdf(s: &mut Session, p: &Value) -> Result<Value> {
     {
         r.warnings.push(format!("transparency flattened: {n} region(s) rasterised"));
     }
-    match str_param(p, "path") {
-        Some(path) => {
-            write_file(path, &r.bytes)?;
-            Ok(json!({"path": path, "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings}))
-        }
-        None => Ok(json!({"base64": super::base64_encode(&r.bytes), "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings})),
-    }
+    Ok(r)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
