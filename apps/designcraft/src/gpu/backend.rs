@@ -231,7 +231,10 @@ impl Fallback {
                 choice.backend.name(),
                 choice.record.failed
             ),
-            None => log::info!("graphics: {} (WGPU_BACKEND overrides)", choice.backend.name()),
+            // `begin` returns before this when `WGPU_BACKEND` is set, so reaching here means it is
+            // not: the message said the opposite, which reads in a log as though the user's
+            // environment had chosen the backend (#1343).
+            None => log::info!("graphics: {} (first choice; set WGPU_BACKEND to choose another)", choice.backend.name()),
         }
         let instance = instance_backends(choice.backend, &choice.record.failed);
         Some(Fallback { backend: choice.backend, switched_from: choice.switched_from, instance, path, record: choice.record })
