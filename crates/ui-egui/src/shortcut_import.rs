@@ -189,7 +189,7 @@ fn foreign(set: &ParsedSet) -> ForeignSet {
             entry
         })
         .collect();
-    ForeignSet { name: Some(set.name.clone()), entries }
+    ForeignSet { name: Some(set.name.clone()), entries, truncated: set.dropped }
 }
 
 /// What DesignCraft's contexts take from a set: Default keys bind in the command's home scope; an
@@ -203,14 +203,14 @@ pub fn import_options(remembered: BTreeMap<String, CommandRef>) -> ImportOptions
     }
 }
 
-/// Reads a set's text for craft-keymap's importer. Returns the set and the number of items past
-/// [`MAX_IMPORT_ENTRIES`], which were not read.
-pub fn read_set(text: &str) -> Result<(ForeignSet, usize), String> {
+/// Reads a set's text for craft-keymap's importer. Items past [`MAX_IMPORT_ENTRIES`] are not read;
+/// the set counts them as truncated.
+pub fn read_set(text: &str) -> Result<ForeignSet, String> {
     if text.len() > MAX_BYTES {
         return Err(format!("the set is larger than {} MB", MAX_BYTES >> 20));
     }
     let parsed = parse(text)?;
-    Ok((foreign(&parsed), parsed.dropped))
+    Ok(foreign(&parsed))
 }
 
 /// Imports a set as a new shortcut set, which becomes active: every matched command takes the
@@ -218,13 +218,12 @@ pub fn read_set(text: &str) -> Result<(ForeignSet, usize), String> {
 /// takes (unless they share them as defaults), and the rest keep theirs. Returns the report, with
 /// the new set's name as `shortcutSet`.
 pub fn import(app: &mut DesignApp, text: &str) -> Result<Value, String> {
-    let (set, dropped) = read_set(text)?;
+    let set = read_set(text)?;
     app.sync_keymap();
     let options = import_options(app.shortcut_answers.clone());
     let plan = craft_keymap::plan(&set, &app.keymap, &options);
-    let (name, mut report) =
+    let (name, report) =
         app.ui.shortcut_sets.import_plan(&plan, &app.keymap, None, &crate::shortcuts_dialog::BUILTINS).map_err(|e| e.to_string())?;
-    report.truncated = report.truncated.saturating_add(dropped);
     crate::shortcuts_dialog::load_active_set(app);
     let mut out = report_json(&report);
     out["shortcutSet"] = json!(name);

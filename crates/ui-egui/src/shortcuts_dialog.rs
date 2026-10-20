@@ -51,11 +51,13 @@ impl Host {
 }
 
 /// The owner-approved behavior: live editing with Cancel restoring, conflicts asked about, no
-/// double presses, the US keyboard pane, InDesign sets to import.
+/// double presses, the US keyboard pane, InDesign sets to import, and no rows for the engine
+/// commands only scripts run.
 fn options() -> Options {
     Options::default().with(|o| {
         o.keyboard = true;
         o.import_formats = vec![INDESIGN_FORMAT];
+        o.visible = Some(crate::keys::listed);
     })
 }
 
@@ -185,7 +187,7 @@ fn request_import(app: &mut DesignApp, host: &mut Host) {
         let Some(path) = pick(PURPOSE) else { return };
         match crate::shortcut_import::read_file(&path) {
             Ok(text) => review(app, host, &text),
-            Err(e) => app.status(e),
+            Err(e) => host.state.show_error(e),
         }
         return;
     }
@@ -200,7 +202,7 @@ pub(crate) fn deliver(app: &mut DesignApp, bytes: &[u8]) -> bool {
     let Some(mut host) = app.shortcut_dialog.take() else { return false };
     match crate::shortcut_import::decode(bytes) {
         Ok(text) => review(app, &mut host, &text),
-        Err(e) => app.status(e),
+        Err(e) => host.state.show_error(e),
     }
     app.shortcut_dialog = Some(host);
     true
@@ -218,12 +220,12 @@ fn review(app: &mut DesignApp, host: &mut Host, text: &str) {
         return;
     }
     match crate::shortcut_import::read_set(text) {
-        Ok((set, _)) => {
+        Ok(set) => {
             let options = crate::shortcut_import::import_options(app.shortcut_answers.clone());
             let dialog = ShortcutsDialog::new(&mut app.keymap, &words).options(&host.options).sets(&mut app.ui.shortcut_sets, &BUILTINS);
             dialog.review_import(&mut host.state, set, options);
         }
-        Err(e) => app.status(e),
+        Err(e) => host.state.show_error(e),
     }
 }
 
@@ -460,7 +462,7 @@ mod tests {
         for s in strings() {
             assert_eq!(text.ui(s), s);
         }
-        assert_eq!(craft_keymap::ui::STRINGS.len(), 174);
+        assert_eq!(craft_keymap::ui::STRINGS.len(), 175);
         assert_eq!(craft_keymap::ui::PLURALS.len(), 11);
         assert_eq!(text.plural(2, "{n} command will change", "{n} commands will change"), "2 commands will change");
         assert_eq!(DcText { lang: "fr" }.ui("Cancel"), tr("fr", "Cancel"));
