@@ -250,6 +250,9 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -819,6 +822,14 @@ dependencies = [
 [[package]]
 name = "craft-cms"
 version = "0.1.0"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
+name = "craft-cms"
+version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e#e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e"
 dependencies = [
  "rayon",
@@ -832,10 +843,27 @@ source = "git+https://github.com/storytold/craft-libs?rev=82a24b006eefa036b43c09
 [[package]]
 name = "craft-pdf"
 version = "0.1.0"
-source = "git+https://github.com/aiongg/craft-libs?rev=8fbfea8840f0a0f5a22df18901e9db324894b2ce#8fbfea8840f0a0f5a22df18901e9db324894b2ce"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
 dependencies = [
+ "bytemuck",
+ "hayro",
+ "hayro-interpret",
+ "hayro-syntax",
  "krilla",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "craft-prepress"
+version = "0.1.0"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
+dependencies = [
+ "craft-cms 0.1.0 (git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945)",
+ "craft-pdf",
+ "kurbo",
+ "linesweeper",
+ "thiserror 2.0.21",
+ "ttf-parser",
 ]
 
 [[package]]
@@ -969,7 +997,7 @@ dependencies = [
 name = "designcraft-color"
 version = "0.9.0"
 dependencies = [
- "craft-cms",
+ "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "kurbo",
  "proptest",
  "serde",
@@ -1114,7 +1142,7 @@ dependencies = [
 name = "designcraft-images"
 version = "0.9.0"
 dependencies = [
- "craft-cms",
+ "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "designcraft-color",
  "designcraft-fonts",
  "image",
@@ -1142,8 +1170,9 @@ dependencies = [
 name = "designcraft-pdf"
 version = "0.9.0"
 dependencies = [
- "craft-cms",
+ "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "craft-pdf",
+ "craft-prepress",
  "designcraft-color",
  "designcraft-compose",
  "designcraft-doc",
@@ -2106,7 +2135,7 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -2136,7 +2165,7 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -2154,7 +2183,7 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -2178,7 +2207,7 @@ checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -2542,7 +2571,7 @@ dependencies = [
 [[package]]
 name = "krilla"
 version = "0.8.2"
-source = "git+https://github.com/aiongg/craft-libs?rev=8fbfea8840f0a0f5a22df18901e9db324894b2ce#8fbfea8840f0a0f5a22df18901e9db324894b2ce"
+source = "git+https://github.com/aiongg/craft-libs?rev=d11403fde04311cd50cc9913f3bc43ff6a419945#d11403fde04311cd50cc9913f3bc43ff6a419945"
 dependencies = [
  "base64",
  "bumpalo",
@@ -2641,6 +2670,19 @@ name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
+
+[[package]]
+name = "linesweeper"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a25df1b0c5432893f41bba817150e323703ee5f6d974f3a6808ac7fd7f046d18"
+dependencies = [
+ "arrayvec",
+ "kurbo",
+ "polycool",
+ "rustc-hash 2.1.3",
+ "smallvec",
+]
 
 [[package]]
 name = "linux-raw-sys"
