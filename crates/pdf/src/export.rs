@@ -129,6 +129,13 @@ pub(crate) fn mark_start(opts: &PdfOptions, bleed: [f64; 4]) -> f64 {
     bleed.iter().copied().fold(opts.marks.offset.max(0.0), f64::max)
 }
 
+/// Whether an export is CMYK print output: transparency blends in CMYK and the document's CMYK
+/// working space is the output intent. True when the document blends in CMYK, and always in
+/// PDF/X; PDF/A exports are RGB.
+pub fn print_color(doc: &Document, opts: &PdfOptions) -> bool {
+    opts.standard != Standard::PdfA2b && (doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk || opts.standard == Standard::PdfX4)
+}
+
 /// Like [`export_pdf`], also returning warnings about approximated or dropped features.
 pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) -> Result<ExportReport> {
     write::guard(|| export_pdf_with_report_inner(doc, cache, opts))
@@ -136,14 +143,22 @@ pub fn export_pdf_with_report(doc: &Document, cache: &Cache, opts: &PdfOptions) 
 
 fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions) -> Result<ExportReport> {
     let sheets = sheets(doc, opts)?;
-    let warnings = Vec::new();
     let (version, archival) = match opts.standard {
         Standard::None => (PdfVersion::Pdf17, None),
         Standard::PdfX4 => (PdfVersion::Pdf16, None),
         Standard::PdfA2b => (PdfVersion::Pdf17, Some(Archival::A2_B)),
     };
     let configuration = write::configuration(version, archival)?;
-    let settings = krilla::SerializeSettings { compress_content_streams: opts.compress, configuration, ..Default::default() };
+    let mut warnings = Vec::new();
+    let base = if print_color(doc, opts) {
+        let (settings, warning) = crate::pdfx::print_settings()?;
+        warnings.extend(warning);
+        let pdfx_version = (opts.standard == Standard::PdfX4).then(|| "PDF/X-4".to_string());
+        krilla::SerializeSettings { pdfx_version, ..settings }
+    } else {
+        krilla::SerializeSettings::default()
+    };
+    let settings = krilla::SerializeSettings { compress_content_streams: opts.compress, configuration, ..base };
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
     let created = opts.created.or_else(now_unix);
     let metadata = Metadata {
@@ -228,13 +243,7 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
     }
     ex.check_placed_versions()?;
     let mut bytes = writer.finish().map_err(PdfError::from)?;
-    // Transparency blends in the document's blend space: CMYK for print (and always in PDF/X).
     let mut warnings = ex.warnings;
-    if !ex.rgb_only && (doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk || opts.standard == Standard::PdfX4) {
-        // The rewrite matches krilla's exact output; in PDF/X-4, `check_pdfx4` reports any
-        // group that got past it, with its page.
-        crate::pdfx::cmyk_group_spaces(&mut bytes);
-    }
     // Form fields (Buttons and Forms) and, for interactive PDF, video and sound; not in PDF/X
     // or PDF/A: this update comes after krilla's validator ran, and its NeedAppearances fields and
     // Screen annotations aren't allowed in PDF/A.
@@ -253,10 +262,10 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         }
     }
     if opts.standard == Standard::PdfX4 {
-        // Output intent and PDF/X identification, then check the result.
-        match crate::pdfx::make_pdfx4(&bytes, &title, created) {
+        // The XMP dates krilla doesn't write, then check the result.
+        match crate::pdfx::make_pdfx4(&bytes, created) {
             Some(b) => bytes = b,
-            None => warnings.push("PDF/X-4: the output intent couldn't be added".into()),
+            None => warnings.push("PDF/X-4: the XMP metadata date couldn't be added".into()),
         }
         for issue in crate::pdfx::check_pdfx4(&bytes) {
             warnings.push(format!("PDF/X-4: {issue}"));
@@ -339,7 +348,15 @@ fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) ->
         return Err(PdfError::NoPages);
     }
     let pdf_opts = PdfOptions { title: opts.title.clone(), ..PdfOptions::default() };
-    let settings = krilla::SerializeSettings { compress_content_streams: true, ..Default::default() };
+    let mut warnings = Vec::new();
+    let base = if print_color(doc, &pdf_opts) {
+        let (settings, warning) = crate::pdfx::print_settings()?;
+        warnings.extend(warning);
+        settings
+    } else {
+        krilla::SerializeSettings::default()
+    };
+    let settings = krilla::SerializeSettings { compress_content_streams: true, ..base };
     let title = opts.title.clone().unwrap_or_else(|| doc.title.clone());
     let metadata = Metadata { creator: "DesignCraft".into(), producer: "DesignCraft".into(), title: Some(title), ..Default::default() };
     let mut writer = Writer::new(settings, metadata);
@@ -350,7 +367,7 @@ fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) ->
         cache,
         opts: &pdf_opts,
         clip: Rect::ZERO,
-        warnings: Vec::new(),
+        warnings,
         images: HashMap::new(),
         images_by_content: ImageContentCache::default(),
         #[cfg(test)]
@@ -405,10 +422,7 @@ fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) ->
         page.finish();
     }
     ex.check_placed_versions()?;
-    let mut bytes = writer.finish().map_err(PdfError::from)?;
-    if doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk {
-        crate::pdfx::cmyk_group_spaces(&mut bytes);
-    }
+    let bytes = writer.finish().map_err(PdfError::from)?;
     let mut warnings = ex.warnings;
     warnings.dedup();
     Ok(ExportReport { bytes, pages: pairs.len(), warnings })
