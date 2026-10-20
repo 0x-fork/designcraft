@@ -819,6 +819,14 @@ dependencies = [
 [[package]]
 name = "craft-cms"
 version = "0.1.0"
+source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
+name = "craft-cms"
+version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e#e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e"
 dependencies = [
  "rayon",
@@ -834,7 +842,21 @@ name = "craft-pdf"
 version = "0.1.0"
 source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
 dependencies = [
+ "bytemuck",
+ "hayro",
+ "hayro-interpret",
+ "hayro-syntax",
  "krilla",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "craft-prepress"
+version = "0.1.0"
+source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
+dependencies = [
+ "craft-cms 0.1.0 (git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc)",
+ "craft-pdf",
  "thiserror 2.0.21",
 ]
 
@@ -969,7 +991,7 @@ dependencies = [
 name = "designcraft-color"
 version = "0.9.0"
 dependencies = [
- "craft-cms",
+ "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "kurbo",
  "proptest",
  "serde",
@@ -1016,6 +1038,7 @@ dependencies = [
  "caseless",
  "craft-atomic",
  "craft-docpath",
+ "craft-prepress",
  "craft-print",
  "designcraft-color",
  "designcraft-compose",
@@ -1114,7 +1137,7 @@ dependencies = [
 name = "designcraft-images"
 version = "0.9.0"
 dependencies = [
- "craft-cms",
+ "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "designcraft-color",
  "designcraft-fonts",
  "image",
@@ -1143,6 +1166,7 @@ name = "designcraft-pdf"
 version = "0.9.0"
 dependencies = [
  "craft-pdf",
+ "craft-prepress",
  "designcraft-color",
  "designcraft-compose",
  "designcraft-doc",
@@ -2105,7 +2129,7 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -2135,7 +2159,7 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -2153,7 +2177,7 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -2177,7 +2201,7 @@ checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/pdfcraft?rev=b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9#b5467d93a0ffaa5e5e6658bccdf8655a3ba689c9"
+source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
 dependencies = [
  "flate2",
  "hayro-ccitt",

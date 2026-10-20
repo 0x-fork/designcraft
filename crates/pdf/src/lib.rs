@@ -30,6 +30,7 @@
 #![forbid(unsafe_code)]
 
 mod export;
+pub mod inks;
 mod links;
 mod marks;
 mod text;
