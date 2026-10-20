@@ -234,9 +234,12 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                     }
                     "u" => {
                         if let Some(n) = param {
-                            let unit = if n < 0 { (n + 65536) as u32 } else { n as u32 };
-                            if let Some(ch) = units.push(unit) {
-                                buf.push(ch);
+                            // RTF allows -32768..=65535; anything else is dropped.
+                            if (-32768..=65535).contains(&n) {
+                                let unit = if n < 0 { (n + 65536) as u32 } else { n as u32 };
+                                if let Some(ch) = units.push(unit) {
+                                    buf.push(ch);
+                                }
                             }
                             pending = stack.last().map_or(1, |s| s.uc);
                         }
@@ -281,6 +284,12 @@ fn cp1252(b: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn out_of_range_unicode_escape_is_dropped() {
+        assert_eq!(import(br"{\rtf1 a\u4294967361?b}").unwrap().story.text, "ab");
+        assert_eq!(import(br"{\rtf1 a\u-4294967231?b}").unwrap().story.text, "ab");
+    }
 
     #[test]
     fn imports_rtf_text_and_formatting() {
