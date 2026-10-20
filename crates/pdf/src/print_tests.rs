@@ -87,23 +87,32 @@ fn form_groups(bytes: &[u8]) -> Vec<(Option<String>, bool, bool)> {
         .collect()
 }
 
-/// Print output (a CMYK blend space) blends in DeviceCMYK and carries the CMYK working space
-/// as its output intent; a screen document (RGB blend space) is written as before.
+/// Print output (a CMYK blend space) blends in DeviceCMYK. A plain export carries no output
+/// intent and no `/Trapped`, as in InDesign; PDF/X-4 carries the CMYK working space as its output
+/// intent with `/Trapped /False`. A screen document (RGB blend space) is written as before.
 #[test]
-fn print_output_blends_in_cmyk_with_the_working_space_as_output_intent() {
+fn print_output_blends_in_cmyk_with_an_output_intent_only_in_pdfx() {
     let mut d = transparent_doc();
     let bytes = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
     assert_eq!(page_group_spaces(&bytes), [Some("DeviceCMYK".to_string())]);
+    assert!(!form_groups(&bytes).is_empty());
     assert!(form_groups(&bytes).iter().all(|(cs, ..)| cs.is_none()), "content groups inherit the page group: {:?}", form_groups(&bytes));
     assert!(!crate::has_rgb_groups(&bytes));
-    let intent = output_intent(&bytes).expect("output intent");
+    assert!(output_intent(&bytes).is_none(), "no output intent outside PDF/X");
+    assert!(!String::from_utf8_lossy(&bytes).contains("/OutputIntents"));
+    assert!(!String::from_utf8_lossy(&bytes).contains("/Trapped"));
+
+    let x4 = export_pdf(&d, &Cache::new(), &PdfOptions { standard: crate::Standard::PdfX4, ..PdfOptions::default() }).unwrap();
+    assert_eq!(page_group_spaces(&x4), [Some("DeviceCMYK".to_string())]);
+    let intent = output_intent(&x4).expect("output intent");
     assert_eq!(intent.identifier, "FOGRA39");
     assert_eq!(intent.profile, craft_cms::builtin::COATED_FOGRA39_ICC);
-    assert!(String::from_utf8_lossy(&bytes).contains("/Trapped/False"));
-    // A booklet of a print document too.
+    assert!(String::from_utf8_lossy(&x4).contains("/Trapped/False"));
+
+    // A booklet of a print document blends in CMYK too, without an output intent.
     let booklet = crate::export_booklet(&d, &Cache::new(), &crate::BookletOptions::default()).unwrap();
     assert!(page_group_spaces(&booklet.bytes).contains(&Some("DeviceCMYK".to_string())));
-    assert!(output_intent(&booklet.bytes).is_some());
+    assert!(output_intent(&booklet.bytes).is_none());
 
     d.settings.blend_space = BlendSpace::Rgb;
     let screen = export_pdf(&d, &Cache::new(), &PdfOptions::default()).unwrap();
@@ -117,7 +126,10 @@ fn print_output_blends_in_cmyk_with_the_working_space_as_output_intent() {
 fn output_intent_is_the_cmyk_working_space() {
     use craft_pdf::write::backend as krilla;
     let generic = Cms::new(&ColorSettings { cmyk: cms::GENERIC_CMYK.into(), ..ColorSettings::default() }).unwrap();
-    let (settings, warning) = crate::pdfx::print_settings_with(&generic).unwrap();
+    let (plain, warning) = crate::pdfx::print_settings_with(&generic, false).unwrap();
+    assert_eq!(warning, None);
+    assert!(plain.output_intent.is_none() && plain.trapped.is_none() && plain.cmyk_profile.is_some());
+    let (settings, warning) = crate::pdfx::print_settings_with(&generic, true).unwrap();
     assert_eq!(warning, None);
     let mut pdf = krilla::Document::new_with(settings);
     let mut page = pdf.start_page_with(krilla::page::PageSettings::new(krilla::geom::Size::from_wh(100.0, 100.0).unwrap()));

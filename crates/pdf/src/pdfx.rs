@@ -15,32 +15,32 @@ use craft_pdf::write::print::{self, PrintColor};
 
 use crate::transitions::{find, int_after, object, rfind};
 
-/// The serialization settings for CMYK print output: CMYK blending groups, the document's CMYK
-/// working space as the `GTS_PDFX` output intent (Coated FOGRA39 when it has none or its profile
-/// can't be written) and `/Trapped /False`. The second value is a warning when the working
-/// space's profile was replaced.
-pub(crate) fn print_settings() -> crate::Result<(krilla::SerializeSettings, Option<String>)> {
-    print_settings_with(&designcraft_color::cms::active())
+/// The serialization settings for CMYK print output: DeviceCMYK and CMYK blending groups in the
+/// document's CMYK working space (Coated FOGRA39 when it has none or its profile can't be
+/// written). With `intent` (PDF/X), the working space is also the `GTS_PDFX` output intent, with
+/// `/Trapped /False`. The second value is a warning when the working space's profile was replaced.
+pub(crate) fn print_settings(intent: bool) -> crate::Result<(krilla::SerializeSettings, Option<String>)> {
+    print_settings_with(&designcraft_color::cms::active(), intent)
 }
 
 /// [`print_settings`] for the working spaces of `cms`.
-pub(crate) fn print_settings_with(cms: &designcraft_color::cms::Cms) -> crate::Result<(krilla::SerializeSettings, Option<String>)> {
-    let fogra39 = || print::settings(PrintColor::fogra39(craft_cms::builtin::COATED_FOGRA39_ICC));
-    let Ok(intent) = cms.output_intent() else { return Ok((fogra39()?, None)) };
-    let registered = intent.identifier != "Custom";
+pub(crate) fn print_settings_with(cms: &designcraft_color::cms::Cms, intent: bool) -> crate::Result<(krilla::SerializeSettings, Option<String>)> {
+    let write = |color: PrintColor<'_>| if intent { print::settings(color) } else { print::cmyk_blending(color.profile) };
+    let fogra39 = || write(PrintColor::fogra39(craft_cms::builtin::COATED_FOGRA39_ICC));
+    let Ok(space) = cms.output_intent() else { return Ok((fogra39()?, None)) };
+    let registered = space.identifier != "Custom";
     let color = PrintColor {
-        profile: &intent.icc,
-        condition_identifier: intent.identifier,
-        condition: Some(&intent.condition),
+        profile: &space.icc,
+        condition_identifier: space.identifier,
+        condition: Some(&space.condition),
         registry_name: registered.then_some("http://www.color.org"),
-        info: Some(&intent.condition),
+        info: Some(&space.condition),
     };
-    match print::settings(color) {
+    match write(color) {
         Ok(settings) => Ok((settings, None)),
-        Err(WriteError::InvalidProfile) => Ok((
-            fogra39()?,
-            Some(format!("the CMYK working space `{}` couldn't be written as the output intent; Coated FOGRA39 was used", intent.condition)),
-        )),
+        Err(WriteError::InvalidProfile) => {
+            Ok((fogra39()?, Some(format!("the CMYK working space `{}` couldn't be written to the PDF; Coated FOGRA39 was used", space.condition))))
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -516,8 +516,7 @@ mod tests {
         let rgb: Vec<&String> = r.warnings.iter().filter(|w| w.contains("RGB")).collect();
         assert_eq!(rgb.len(), 1, "{:?}", r.warnings);
         assert!(rgb[0].starts_with("PDF/X-4: an RGB image (object ") && rgb[0].contains("4 × 2 px) on page 1:"), "{}", rgb[0]);
-        // A screen export (RGB blend space) has no output intent to check RGB against.
-        d.settings.blend_space = designcraft_doc::BlendSpace::Rgb;
+        // Without a PDF/X output intent there is nothing to check RGB against.
         let plain = export_pdf_with_report(&d, &Cache::new(), &PdfOptions::default()).unwrap();
         assert!(!check_pdfx4(&plain.bytes).iter().any(|i| i.contains("RGB")));
     }

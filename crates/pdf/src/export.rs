@@ -129,9 +129,9 @@ pub(crate) fn mark_start(opts: &PdfOptions, bleed: [f64; 4]) -> f64 {
     bleed.iter().copied().fold(opts.marks.offset.max(0.0), f64::max)
 }
 
-/// Whether an export is CMYK print output: transparency blends in CMYK and the document's CMYK
-/// working space is the output intent. True when the document blends in CMYK, and always in
-/// PDF/X; PDF/A exports are RGB.
+/// Whether an export is CMYK print output: transparency blends in CMYK, in the document's CMYK
+/// working space (which PDF/X also carries as its output intent). True when the document blends
+/// in CMYK, and always in PDF/X; PDF/A exports are RGB.
 pub fn print_color(doc: &Document, opts: &PdfOptions) -> bool {
     opts.standard != Standard::PdfA2b && (doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk || opts.standard == Standard::PdfX4)
 }
@@ -151,7 +151,8 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
     let configuration = write::configuration(version, archival)?;
     let mut warnings = Vec::new();
     let base = if print_color(doc, opts) {
-        let (settings, warning) = crate::pdfx::print_settings()?;
+        // An output intent only for PDF/X, as in InDesign.
+        let (settings, warning) = crate::pdfx::print_settings(opts.standard == Standard::PdfX4)?;
         warnings.extend(warning);
         let pdfx_version = (opts.standard == Standard::PdfX4).then(|| "PDF/X-4".to_string());
         krilla::SerializeSettings { pdfx_version, ..settings }
@@ -350,7 +351,7 @@ fn export_booklet_inner(doc: &Document, cache: &Cache, opts: &BookletOptions) ->
     let pdf_opts = PdfOptions { title: opts.title.clone(), ..PdfOptions::default() };
     let mut warnings = Vec::new();
     let base = if print_color(doc, &pdf_opts) {
-        let (settings, warning) = crate::pdfx::print_settings()?;
+        let (settings, warning) = crate::pdfx::print_settings(false)?;
         warnings.extend(warning);
         settings
     } else {

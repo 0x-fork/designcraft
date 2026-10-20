@@ -832,7 +832,7 @@ source = "git+https://github.com/storytold/craft-libs?rev=82a24b006eefa036b43c09
 [[package]]
 name = "craft-pdf"
 version = "0.1.0"
-source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
+source = "git+https://github.com/aiongg/craft-libs?rev=8fbfea8840f0a0f5a22df18901e9db324894b2ce#8fbfea8840f0a0f5a22df18901e9db324894b2ce"
 dependencies = [
  "krilla",
  "thiserror 2.0.21",
@@ -2542,7 +2542,7 @@ dependencies = [
 [[package]]
 name = "krilla"
 version = "0.8.2"
-source = "git+https://github.com/aiongg/craft-libs?rev=0fe6156614de2e8780f34612fa6a577c745f35bc#0fe6156614de2e8780f34612fa6a577c745f35bc"
+source = "git+https://github.com/aiongg/craft-libs?rev=8fbfea8840f0a0f5a22df18901e9db324894b2ce#8fbfea8840f0a0f5a22df18901e9db324894b2ce"
 dependencies = [
  "base64",
  "bumpalo",
