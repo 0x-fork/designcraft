@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::panels;
 use crate::theme::{Tokens, semibold};
-use crate::widgets::{caption, measure, number};
+use crate::widgets::{NumField, caption, measure, number};
 use crate::{DesignApp, icons};
 
 /// Height of the application bar (InDesign 2026), then a 7 pt lower band and a 1 pt border. The
@@ -564,6 +564,11 @@ fn control_page(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The Control panel's font sizes (and leadings), as InDesign lists them.
+const SIZES: &[f64] = &[6.0, 8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 18.0, 24.0, 30.0, 36.0, 48.0, 60.0, 72.0];
+/// The Control panel's tracking values (1/1000 em).
+const TRACKING: &[f64] = &[-100.0, -75.0, -50.0, -25.0, -10.0, -5.0, 0.0, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 200.0];
+
 fn control_text(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let attrs = panels::text_attrs(app);
@@ -585,22 +590,36 @@ fn control_text(app: &mut DesignApp, ui: &mut egui::Ui) {
         panels::font_style_picker(app, ui, &fam, &sty, 170.0);
     });
     vsep(ui);
+    // Size, leading and tracking as InDesign's Control panel has them: a spinner on the left and
+    // a list of common values on the right; automatic leading in parentheses.
     egui::Grid::new("ctl_char").num_columns(4).spacing(vec2(4.0, 3.0)).show(ui, |ui| {
-        caption(ui, "𝐓");
-        if let Some(v) = number(ui, "csize", chars["size"].as_f64(), " pt", 54.0, 2) {
+        let (sz, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+        icons::paint(ui.painter(), sz, "font-size", t.icon);
+        if let Some(v) = NumField::number("csize", chars["size"].as_f64(), " pt", 2).width(84.0).spinner().presets(SIZES).range(0.1, 1296.0).show(ui)
+        {
             let _ = app.run("type.char", json!({"attrs": {"size": v}}));
         }
-        caption(ui, crate::i18n::tr(&app.ui.language, "VA"));
-        if let Some(v) = number(ui, "ctrack", chars["tracking"].as_f64(), "", 48.0, 0) {
+        let (tr, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+        icons::paint(ui.painter(), tr, "tracking", t.icon);
+        if let Some(v) = NumField::number("ctrack", chars["tracking"].as_f64(), "", 0)
+            .width(76.0)
+            .spinner()
+            .presets(TRACKING)
+            .step(5.0)
+            .range(-1000.0, 10000.0)
+            .show(ui)
+        {
             let _ = app.run("type.char", json!({"attrs": {"tracking": v}}));
         }
         ui.end_row();
-        caption(ui, "Ā");
-        let lead = match chars["leading"]["kind"].as_str() {
-            Some("points") => chars["leading"]["value"].as_f64(),
-            _ => chars["size"].as_f64().map(|s| s * para["autoLeading"].as_f64().unwrap_or(1.2)),
-        };
-        if let Some(v) = number(ui, "clead", lead, " pt", 54.0, 2) {
+        let (ld, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+        icons::paint(ui.painter(), ld, "leading", t.icon);
+        let auto = chars["leading"]["kind"].as_str() != Some("points");
+        let lead =
+            if auto { chars["size"].as_f64().map(|s| s * para["autoLeading"].as_f64().unwrap_or(1.2)) } else { chars["leading"]["value"].as_f64() };
+        let lead = lead.map(|v| (v * 100.0).round() / 100.0);
+        let key = if auto { "cleadauto" } else { "clead" };
+        if let Some(v) = NumField::number(key, lead, " pt", 2).width(84.0).spinner().presets(SIZES).range(0.0, 5000.0).parens(auto).show(ui) {
             let _ = app.run("type.char", json!({"attrs": {"leading": {"kind": "points", "value": v}}}));
         }
         caption(ui, crate::i18n::tr(&app.ui.language, "IT"));
@@ -1302,6 +1321,55 @@ mod tests {
         }
         let (first, short) = (rect(&h, &latin), rect(&h, "Short"));
         assert!(short.min.x - first.min.x <= 2.0 * super::DOC_TAB_MAX_W, "the last tab {short:?} starts too far right");
+    }
+
+    /// Zero2Graphic's page layout video (0:48): with the Type tool, the Control panel's font size
+    /// has a list of sizes; the instructor picks 72 pt from it. Leading has the same list.
+    #[test]
+    fn the_type_control_panel_lists_font_sizes_and_leadings() {
+        let mut app = app();
+        app.run("file.new", serde_json::json!({})).unwrap();
+        let f = app.run("frame.create", serde_json::json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Headline"})).unwrap();
+        app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 8})).unwrap();
+        app.session.set_tool("type");
+        let mut h = test_window::open(app, vec2(1800.0, 700.0));
+        let bar = test_window::panel_rect(&h, "control_bar");
+        let in_bar = |r: &egui::Rect| bar.y_range().contains(r.center().y);
+        let field = |h: &egui_kittest::Harness<'static, test_window::Window>, value: &str| {
+            h.query_all_by_value(value).map(|n| n.rect()).find(in_bar).unwrap_or_else(|| panic!("no {value:?} field in the Control panel"))
+        };
+        let press = |h: &mut egui_kittest::Harness<'static, test_window::Window>, p: egui::Pos2| {
+            h.hover_at(p);
+            h.drag_at(p);
+            h.drop_at(p);
+        };
+        let size_of = |h: &egui_kittest::Harness<'static, test_window::Window>| {
+            let st = h.state().app.session.doc().unwrap();
+            let sid = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+            st.doc.story(sid).unwrap().format_after(0).over.size
+        };
+        // The ⌄ segment right of the size field opens the list; choosing 72 pt sets the size.
+        let size = field(&h, "12 pt");
+        let chevron = pos2(size.max.x + 1.0 + crate::widgets::SEG_W / 2.0, size.center().y);
+        press(&mut h, chevron);
+        h.run_steps(3);
+        h.get_by_label("72 pt").click();
+        h.run_steps(3);
+        assert_eq!(size_of(&h), Some(72.0));
+        // Auto leading shows in parentheses, with the same list beside it.
+        let lead = field(&h, "(86.4 pt)");
+        press(&mut h, pos2(lead.max.x + 1.0 + crate::widgets::SEG_W / 2.0, lead.center().y));
+        h.run_steps(3);
+        h.get_by_label("60 pt").click();
+        h.run_steps(3);
+        let st = h.state().app.session.doc().unwrap();
+        let sid = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+        assert_eq!(st.doc.story(sid).unwrap().format_after(0).over.leading, Some(designcraft_doc::Leading::Points(60.0)));
+        // The spinner left of the size steps it by a point.
+        let size = field(&h, "72 pt");
+        press(&mut h, pos2(size.min.x - 5.0 - crate::widgets::SEG_W / 2.0, size.min.y + 3.0));
+        h.run_steps(3);
+        assert_eq!(size_of(&h), Some(73.0));
     }
 
     #[test]
