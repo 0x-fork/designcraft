@@ -379,6 +379,32 @@ mod tests {
         assert_eq!(menus::shortcut_of(&app, "app.palette").as_deref(), Some("Cmd+Enter"));
     }
 
+    /// Two keys for one command still save a ui.json that earlier versions read: they deserialize
+    /// `shortcuts` as a map of one text per command and drop the whole file otherwise.
+    #[test]
+    fn a_command_with_two_imported_shortcuts_saves_a_ui_json_older_versions_read() {
+        let mut app = app();
+        let set = "Shortcut Set : Two\r\nProduct area : File Menu\r\n\tClose --- Default: Shift+Ctrl+Num 5, Default: Ctrl+F4\r\n";
+        menus::run_ui(&mut app, "window.importShortcuts", &json!({"text": set})).unwrap().unwrap();
+        let keys = app.ui.shortcuts.get("file.close").unwrap().to_vec();
+        assert_eq!(keys.len(), 2, "{keys:?}");
+        let saved = serde_json::to_vec_pretty(&app.ui).unwrap();
+        let fields: Value = serde_json::from_slice(&saved).unwrap();
+        let old: std::collections::BTreeMap<String, String> = serde_json::from_value(fields["shortcuts"].clone()).unwrap();
+        assert_eq!(old.get("file.close"), Some(&keys[0]));
+        assert_eq!(fields["shortcutsMore"], json!({"file.close": [keys[1]]}));
+        let loaded = crate::UiState::from_preferences_json(&saved).unwrap();
+        assert_eq!(loaded.shortcuts, app.ui.shortcuts);
+        // The array form an earlier build of the shared keymap wrote.
+        let draft = json!({"shortcuts": [{"command": "file.close", "keys": keys}, {"command": "app.palette", "keys": []}]});
+        let loaded = crate::UiState::from_preferences_json(&serde_json::to_vec(&draft).unwrap()).unwrap();
+        assert_eq!(loaded.shortcuts.get("file.close"), Some(keys.as_slice()));
+        assert_eq!(loaded.shortcuts.get("app.palette"), Some(&[][..]));
+        // Extra keys for a command an earlier version reset are left out.
+        let reset = json!({"shortcuts": {}, "shortcutsMore": {"file.close": ["Cmd+F4"]}});
+        assert!(crate::UiState::from_preferences_json(&serde_json::to_vec(&reset).unwrap()).unwrap().shortcuts.is_empty());
+    }
+
     /// A set's key on a chord the system takes is left out and the summary says so.
     #[test]
     fn a_reserved_chord_in_a_set_is_left_out() {

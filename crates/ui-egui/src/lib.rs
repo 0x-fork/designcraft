@@ -251,8 +251,9 @@ pub struct UiState {
     pub rich_black: bool,
     /// View › Overprint Preview.
     pub overprint_preview: bool,
-    /// Edit › Keyboard Shortcuts: the user's changes to the default shortcuts. Older files store a
-    /// map of command id → shortcut ("" = none), which loads unchanged.
+    /// Edit › Keyboard Shortcuts: the user's changes to the default shortcuts. Saved as
+    /// `shortcuts` and `shortcutsMore` (see `prefs::saved_shortcuts`).
+    #[serde(flatten, with = "prefs::saved_shortcuts")]
     pub shortcuts: craft_keymap::Overrides,
     pub control_bar: bool,
     pub tools_double_column: bool,

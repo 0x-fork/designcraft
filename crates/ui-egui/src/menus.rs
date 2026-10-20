@@ -3497,8 +3497,7 @@ mod tests {
         assert_eq!(shortcut_of(&app, "app.palette"), None, "a removed default stays removed");
         assert_eq!(shortcut_of(&app, "file.close"), None);
         assert_eq!(shortcut_of(&app, "app.save").as_deref(), Some("Cmd+S"));
-        // Saved again it reads back the same, and with one key per command it keeps the map form
-        // an older version reads.
+        // Saved again it reads back the same, in the map form an older version reads.
         let resaved = serde_json::to_vec(&app.ui).unwrap();
         assert_eq!(crate::UiState::from_preferences_json(&resaved).unwrap().shortcuts, app.ui.shortcuts);
         let saved: Value = serde_json::from_slice(&resaved).unwrap();
