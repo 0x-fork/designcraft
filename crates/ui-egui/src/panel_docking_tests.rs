@@ -87,8 +87,8 @@ fn ordinary_panel_tab_drag_enters_shared_docking_and_can_redock_into_another_tab
     drag(&mut h, source, egui::pos2(160.0, 140.0));
     let layout = h.state().ui.docking.as_ref().expect("ordinary tab drag starts shared docking");
     assert!(layout.floating.iter().flat_map(|w| &w.groups).any(|g| g.panels.contains(&"layers".into())), "{layout:?}");
-    let source = h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"layers".to_string()))).unwrap().rect.center();
-    let destination = h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"properties".to_string()))).unwrap().rect.center();
+    let source = h.ctx.read_response(tab_id("layers")).unwrap().rect.center();
+    let destination = h.ctx.read_response(tab_id("properties")).unwrap().rect.center();
     drag(&mut h, source, destination);
     let layout = h.state().ui.docking.as_ref().unwrap();
     assert!(!layout.floating.iter().flat_map(|w| &w.groups).any(|g| g.panels.contains(&"layers".into())));
@@ -150,7 +150,7 @@ fn capture_custom_panel_docking_visual_fixtures() {
                     .save(directory.join(format!("designcraft-shared-docking-{}-{language}-{width}-{scale}x.png", theme.id())))
                     .unwrap();
                 if language == "ar" {
-                    let tab = egui::Id::new("designcraft-panel-docking").with(("tab", &"swatches".to_string()));
+                    let tab = tab_id("swatches");
                     let at = harness.ctx.read_response(tab).unwrap().rect.center();
                     harness.input_mut().events.extend([
                         Event::PointerMoved(at),
@@ -277,8 +277,8 @@ fn populated_canvas_keeps_a_real_stroke_edit_after_floating_and_redocking() {
         std::fs::create_dir_all(directory).unwrap();
         h.render().unwrap().save(directory.join("designcraft-populated-stroke-floating.png")).unwrap();
     }
-    let from = h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"stroke".to_string()))).unwrap().rect.center();
-    let to = h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"properties".to_string()))).unwrap().rect.center();
+    let from = h.ctx.read_response(tab_id("stroke")).unwrap().rect.center();
+    let to = h.ctx.read_response(tab_id("properties")).unwrap().rect.center();
     drag(&mut h, from, to);
     assert!(h.state().ui.docking.as_ref().unwrap().floating.is_empty());
     assert_eq!(h.state().session.active().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().stroke.join, designcraft_doc::Join::Bevel);
@@ -439,15 +439,14 @@ fn modal_overlay_blocks_a_real_tab_drag_release() {
     let mut app = app();
     app.run("window.panel.float", json!({"panel":"layers"})).unwrap();
     let mut h = harness(app, vec2(1280.0, 800.0));
-    let area = egui::Id::new("designcraft-panel-docking");
-    let source = h.ctx.read_response(area.with(("tab", &"properties".to_string()))).unwrap().rect.center();
+    let source = h.ctx.read_response(tab_id("properties")).unwrap().rect.center();
     h.event(Event::PointerMoved(source));
     h.run_steps(1);
     h.event(Event::PointerButton { pos: source, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
     h.run_steps(1);
     h.event(Event::PointerMoved(source - vec2(90.0, 0.0)));
     h.run_steps(2);
-    assert_eq!(h.ctx.dragged_id(), Some(area.with(("tab", &"properties".to_string()))), "test must start the owned tab gesture");
+    assert_eq!(h.ctx.dragged_id(), Some(tab_id("properties")), "test must start the owned tab gesture");
     let before = h.state().ui.docking.clone();
     h.state_mut().ui.dialog = Some(crate::dialogs::Dialog::new("newDocument", json!({})));
     let destination = egui::pos2(150.0, 150.0);
@@ -489,7 +488,7 @@ fn first_story_editor_frame_conservatively_blocks_owned_tab_release() {
     app.run("window.panel.float", json!({"panel":"layers"})).unwrap();
     let doc = serde_json::to_value(&app.session.active().unwrap().doc).unwrap();
     let mut h = crate::test_window::open(app, vec2(1440.0, 900.0));
-    let tab = egui::Id::new("designcraft-panel-docking").with(("tab", &"properties".to_string()));
+    let tab = tab_id("properties");
     let from = h.ctx.read_response(tab).unwrap().rect.center();
     h.event(Event::PointerMoved(from));
     h.run_steps(1);
@@ -522,7 +521,7 @@ fn first_story_editor_frame_conservatively_blocks_owned_tab_release() {
         .find(|p| !editor.contains(*p))
         .expect("fixture has space outside editor");
     let before_outside = h.state().app.ui.docking.clone();
-    let tab = egui::Id::new("designcraft-panel-docking").with(("tab", &"layers".to_string()));
+    let tab = tab_id("layers");
     let from = h.ctx.read_response(tab).unwrap().rect.center();
     h.event(Event::PointerMoved(from));
     h.run_steps(1);
@@ -729,7 +728,7 @@ fn group_with<'a>(layout: &'a Layout<String>, panel: &str) -> (bool, &'a [String
 }
 
 fn drag_bar(h: &Harness<'static, DesignApp>, first: &str) -> egui::Rect {
-    h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("drag-bar", Some(&first.to_string())))).expect("the group's drag bar").rect
+    h.ctx.read_response(hit_id(&craft_ui::docking::Hit::DragBar(first.to_string()))).expect("the group's drag bar").rect
 }
 
 /// The docked Character Styles | Paragraph Styles group moves as one by its drag bar: dropped on
@@ -752,7 +751,7 @@ fn dragging_a_docked_group_by_its_bar_moves_every_tab() {
     assert!(valid(layout));
 
     let bar = drag_bar(&h, "characterStyles");
-    let properties = h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"properties".to_string()))).unwrap().rect.center();
+    let properties = h.ctx.read_response(tab_id("properties")).unwrap().rect.center();
     drag(&mut h, bar.center(), properties);
     let layout = h.state().ui.docking.as_ref().unwrap();
     let (floating, panels, active) = group_with(layout, "characterStyles");
@@ -799,9 +798,7 @@ fn default_workspaces_are_the_canvas_beside_an_end_dock() {
 
 #[test]
 fn the_dock_is_at_the_right_in_english_and_the_left_in_arabic() {
-    let tab = |h: &Harness<'static, DesignApp>| {
-        h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"properties".to_string()))).map(|r| r.rect).unwrap()
-    };
+    let tab = |h: &Harness<'static, DesignApp>| h.ctx.read_response(tab_id("properties")).map(|r| r.rect).unwrap();
     let h = harness(app(), vec2(1280.0, 800.0));
     assert!(tab(&h).left() > 640.0, "{:?}", tab(&h));
     let mut arabic = app();
@@ -829,7 +826,7 @@ fn ui_docking_reports_the_layout_and_the_focused_panel() {
     assert!(result["focused"].is_null());
     let layout: Layout<String> = serde_json::from_value(result["layout"].clone()).unwrap();
     assert_eq!(layout, default_layout(&h.state().ui));
-    let at = h.ctx.read_response(egui::Id::new("designcraft-panel-docking").with(("tab", &"layers".to_string()))).unwrap().rect.center();
+    let at = h.ctx.read_response(tab_id("layers")).unwrap().rect.center();
     click(&mut h, at, PointerButton::Primary);
     let v = docking(h.state_mut());
     assert_eq!(v["result"]["focused"], "layers", "{v}");
@@ -877,8 +874,37 @@ fn moving_or_closing_the_focused_panel_by_command_updates_the_panel_state() {
     assert_eq!(app.ui.docking_raise, None);
 }
 
+/// A divider dragged with the pointer gives the keyboard back: the next arrow key nudges the
+/// selection and leaves the dock's size alone.
+#[test]
+fn arrow_after_dragging_a_dock_divider_nudges_the_selection_not_the_dock() {
+    let mut app = app();
+    app.run("file.new", json!({"width":480,"height":360})).unwrap();
+    let id = app.run("frame.create", json!({"rect":[80,70,330,230],"content":"none"})).unwrap()["id"].as_u64().unwrap();
+    let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_ui_state(
+        |ui, app: &mut DesignApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(5);
+    let column = craft_ui::docking::Hit::Divider(craft_ui::docking::Divider::Column("properties".to_string()));
+    let divider = hits(&h).into_iter().find_map(|(hit, rect)| (hit == column).then_some(rect)).expect("the main dock column's divider");
+    drag(&mut h, divider.center(), divider.center() - vec2(40.0, 0.0));
+    let resized = h.state().ui.docking.clone().expect("the drag customizes the layout");
+    let bounds = |h: &Harness<'static, DesignApp>| h.state().session.active().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().bounds();
+    let before = bounds(&h);
+    h.event(Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE });
+    h.run_steps(1);
+    h.event(Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert!(bounds(&h).x0 > before.x0, "the arrow nudges the selection");
+    assert_eq!(h.state().ui.docking.as_ref(), Some(&resized), "the arrow doesn't resize the dock");
+}
+
 fn hits(h: &Harness<'static, DesignApp>) -> Vec<(craft_ui::docking::Hit<String>, egui::Rect)> {
-    craft_ui::docking::DockArea::<String>::hit_rects(&h.ctx, egui::Id::new("designcraft-panel-docking"))
+    craft_ui::docking::DockArea::<String>::hit_rects(&h.ctx, area_id())
 }
 
 /// `window.panel.*` ids and DesignCraft's aliases go through craft-ui's `DockCommand`.
@@ -929,6 +955,10 @@ fn shared_panel_commands_float_dock_and_reject_atomically() {
     assert!(
         matches!(&app.ui.docking.as_ref().unwrap().root, Some(Node::Split { first, .. }) if matches!(&**first, Node::Dock { side: Side::Start, .. }))
     );
+    // Docking it at that side again leaves it where it is.
+    let before = app.ui.docking.clone();
+    app.run("window.panel.dock", json!({"panel": "stroke", "side": "Start"})).unwrap();
+    assert_eq!(app.ui.docking, before, "it already leads the start dock's last column");
     // Close Others and Minimize are shared commands too.
     app.run("window.panel.closeOthers", json!({"panel": "pages"})).unwrap();
     assert_eq!(tab_group(app.ui.docking.as_ref().unwrap(), "pages"), ["pages"]);

@@ -217,7 +217,7 @@ mod visual_regressions {
                     harness.run_steps(4);
                     let stem = format!("designcraft-dock-{}-{width}-{scale}x", brightness.id());
                     harness.render().unwrap().save(directory.join(format!("{stem}.png"))).unwrap();
-                    let tab = egui::Id::new("designcraft-panel-docking").with(("tab", &"properties".to_string()));
+                    let tab = crate::panel_docking::tab_id("properties");
                     let tab = harness.ctx.read_response(tab).unwrap().rect;
                     let region = serde_json::json!({
                         "screen": [width, 640.0], "scale": scale,

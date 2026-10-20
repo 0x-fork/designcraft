@@ -19,6 +19,25 @@ fn area_id() -> egui::Id {
 /// The dock area a headless app floats into, before it ever drew a frame.
 const HEADLESS_AREA: egui::Rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1400.0, 900.0));
 
+/// The egui id of a docking control, for tests that press it or read its response.
+#[cfg(test)]
+pub(crate) fn hit_id(hit: &craft_ui::docking::Hit<String>) -> egui::Id {
+    craft_ui::docking::DockArea::<String>::hit_id(area_id(), hit)
+}
+
+/// The egui id of a panel's tab.
+#[cfg(test)]
+pub(crate) fn tab_id(panel: &str) -> egui::Id {
+    hit_id(&craft_ui::docking::Hit::Tab(panel.to_owned()))
+}
+
+/// The egui layer of the floating window whose first panel is `panel`.
+#[cfg(test)]
+pub(crate) fn floating_layer(panel: &str) -> egui::LayerId {
+    let window = Floating::single(vec![panel.to_owned()], 0, [0.0, 0.0, 1.0, 1.0]);
+    craft_ui::docking::DockArea::<String>::floating_layer(area_id(), &window).unwrap_or_else(egui::LayerId::background)
+}
+
 pub(crate) fn cancel_gesture(ctx: &egui::Context) {
     craft_ui::docking::cancel_drag::<String>(ctx, area_id());
 }
@@ -486,7 +505,7 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
     let mut shown = false;
     if let Some(panel) = shows.as_ref().filter(|p| !txn.workspace.layout.contains(p)) {
         let fallback = first_dock_panel(&txn.workspace.layout, panel);
-        txn.workspace.set_visible(panel.clone(), true, fallback).map_err(|e| e.to_string())?;
+        txn.workspace.set_visible(panel.clone(), true, fallback, model_permissions).map_err(|e| e.to_string())?;
         shown = true;
     }
     let returned = match &command {
@@ -895,19 +914,19 @@ const DOCK_LABELS: &[(&str, &str)] = &[
     ("dock.panels", "Panels"),
     ("dock.resize", "Resize panels"),
     ("dock.resizeWindow", "Resize panel window"),
-    ("dock.moveGroup", "Move Tab Group"),
+    ("dock.moveGroup", "Move tab group"),
     ("dock.closeGroup", "Close Tab Group"),
     ("dock.minimize", "Minimize"),
     ("dock.expand", "Expand"),
     ("dock.floatGroup", "Float Tab Group"),
     ("dock.moveGroupTo", "Group Tab Group with"),
-    ("dock.moveColumn", "Move Panel Column"),
+    ("dock.moveColumn", "Move panel column"),
     ("dock.collapseToIcons", "Collapse to Icons"),
     ("dock.expandPanels", "Expand Panels"),
     ("dock.collapseColumn", "Collapse to Icons"),
     ("dock.expandColumn", "Expand Panels"),
-    ("dock.moveWindow", "Move Panel Window"),
-    ("dock.closeWindow", "Close Panel Window"),
+    ("dock.moveWindow", "Move panel window"),
+    ("dock.closeWindow", "Close panel window"),
     ("dock.undock", "Undock Panel"),
     ("dock.undockGroup", "Undock Panel Group"),
     ("dock.closePanelGroup", "Close Panel Group"),
@@ -1032,7 +1051,7 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     fn bare(&self, id: &String) -> bool {
         id == CANVAS
     }
-    fn group_header_width(&self, _: &[String], _: &String, _: bool) -> f32 {
+    fn group_header_width(&self, _: &[String], _: &String, _: bool, _: f32) -> f32 {
         24.0
     }
     fn group_header(&mut self, ui: &mut egui::Ui, _: &[String], active: &String, _: bool) {

@@ -4002,9 +4002,9 @@ mod tests {
             }
         };
         // The docked panel's tab and a floating panel group.
-        let tab = egui::Id::new("designcraft-panel-docking").with(("tab", &"preflight".to_string()));
+        let tab = crate::panel_docking::tab_id("preflight");
         let docked = || ctx.read_response(tab).is_some();
-        let group = egui::LayerId::new(egui::Order::Middle, egui::Id::new("designcraft-panel-docking").with(("floating", "preflight")));
+        let group = crate::panel_docking::floating_layer("preflight");
         let shown = |layer: egui::LayerId| ctx.memory(|m| m.areas().is_visible(&layer));
         let toggles = [
             ("window.hidePanels", json!({}), json!({})),

@@ -126,4 +126,4 @@ hayro-jbig2 = { git = "https://github.com/storytold/pdfcraft", rev = "b5467d93a0
 
 # Docking trial: craft-ui from the craft-libs `docking` branch.
 [patch."https://github.com/storytold/craft-libs"]
-craft-ui = { git = "https://github.com/aiongg/craft-libs", rev = "13be52fbaa2c4936c8d7b3d2b5abe6ab72892123" }
+craft-ui = { git = "https://github.com/aiongg/craft-libs", rev = "352a8308c5cc53c2ae31326fa38a4a6bcb0ff9eb" }
