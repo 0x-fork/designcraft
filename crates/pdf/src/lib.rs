@@ -12,8 +12,11 @@
 //! - **Colour:** CMYK as DeviceCMYK, RGB as DeviceRGB, Gray as DeviceGray, spot swatches (and their
 //!   tints) as `/Separation` with the swatch's own values as the alternate space, `[Registration]`
 //!   as `/Separation /All`.
-//!   Gradients with mixed output colour spaces are converted to RGB with an export warning;
-//!   homogeneous gradients keep their existing colour space (subject to PDF/A conversion).
+//!   Gradient stops on swatches shade in their inks: one spot with tints of itself or `[Paper]`
+//!   as a `/Separation` shading, a spot with process inks or a second spot as `/DeviceN`
+//!   (process colorants first; not in PDF/A, which goes to process colour with a warning), and in
+//!   print a process gradient to `[Paper]` as DeviceCMYK. Plain-colour stops keep their own
+//!   space; gradients mixing RGB with CMYK or Gray are converted to RGB with an export warning.
 //! - **Images:** clipped to their frame; JPEG data is passed through, PNG/GIF/WebP are embedded
 //!   losslessly (or re-encoded as JPEG with [`PdfOptions::compress_images`]). PDF/X-4 and PDF/A
 //!   images are written without interpolation. In PDF/X-4 an RGB image without a profile of its own
@@ -30,6 +33,7 @@
 #![forbid(unsafe_code)]
 
 mod export;
+mod gradient_inks;
 mod links;
 mod marks;
 mod text;
