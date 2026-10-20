@@ -1105,3 +1105,13 @@ fn panel_icons_are_painted_in_code() {
     assert!(painted && shapes > 0, "{painted} {shapes}");
     assert_eq!(paint(CANVAS), (false, 0));
 }
+
+/// Every docking label in DesignCraft's wording is translated in the shared catalog's languages.
+#[test]
+fn docking_labels_are_translated() {
+    for language in ["de", "fr", "es", "ja", "zh"] {
+        for (key, english) in DOCK_LABELS {
+            assert_ne!(crate::i18n::tr(language, english), *english, "{key} in {language}");
+        }
+    }
+}
