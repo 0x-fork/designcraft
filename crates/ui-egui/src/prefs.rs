@@ -74,6 +74,13 @@ pub(crate) mod saved_shortcuts {
     }
 }
 
+/// `UiState::shortcut_sets`: anything that does not read as shortcut sets (a later format, a
+/// hand edit) loads as none, keeping the rest of ui.json and the `shortcuts` the keymap uses.
+pub(crate) fn lenient_sets<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<craft_keymap::Profiles, D::Error> {
+    let value = <Value as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
 fn recover_docking(saved: &mut Value) {
     let Some(fields) = saved.as_object_mut() else { return };
     if fields.get("docking").is_some_and(|value| serde_json::from_value::<Option<Layout<String>>>(value.clone()).is_err()) {

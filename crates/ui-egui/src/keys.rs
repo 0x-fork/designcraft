@@ -1,12 +1,12 @@
 //! Keyboard shortcuts on `craft-keymap`: the catalog (UI commands, engine commands, panels and
 //! tools with their default keys and menu paths), shortcut text, and the edits that
-//! `window.setShortcut`, the Keyboard Shortcuts dialog and the shortcut-set importer make.
+//! `window.setShortcut` and the shortcut-set importer make.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use craft_keymap::{AssignError, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Overrides, Platform, Policy, Scope, Scopes};
+use craft_keymap::{AssignError, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Overrides, Platform, Policy, Scope, Scopes, Trigger};
 use serde_json::{Value, json};
 
 use crate::DesignApp;
@@ -142,8 +142,8 @@ pub fn keymap_for(platform: Platform, overrides: Overrides) -> Keymap {
 }
 
 /// Every bindable command, in dispatch order: where two share keys the earlier one runs. UI
-/// commands come first (⌘N is the New Document dialog, not a bare `file.new`), then engine
-/// commands, panels and tools.
+/// commands come first (⌘N is the New Document dialog, not a bare `file.new`), then the engine
+/// commands in menus or with default keys, panels and tools.
 pub fn catalog() -> &'static [Bindable] {
     static CATALOG: OnceLock<Vec<Bindable>> = OnceLock::new();
     CATALOG.get_or_init(build_catalog)
@@ -172,9 +172,24 @@ fn build_catalog() -> Vec<Bindable> {
     for (id, label, _, _) in menus::UI_COMMANDS {
         add(CommandRef::new(*id), label, menus::default_shortcut(id).as_slice(), None, Kind::Command);
     }
+    // A UI command's default key runs it, never the engine command it stands in for (⌘S is the
+    // Save dialog when needed, not a bare `file.save`): the engine command does not get that key
+    // too, so the two are not listed as a conflict. Engine commands left with neither a menu row
+    // nor a default key are for scripts and the control channel (`file.save`, `selection.set`):
+    // they take no shortcut and stay out of the Keyboard Shortcuts dialog.
+    let ui_keys: Vec<Trigger> = menus::UI_COMMANDS
+        .iter()
+        .filter_map(|(id, ..)| menus::default_shortcut(id))
+        .filter_map(|d| Binding::parse(d).ok())
+        .map(|b| b.trigger)
+        .collect();
     for c in designcraft_engine::command_specs() {
+        let shortcut = c.shortcut.filter(|d| Binding::parse(d).is_ok_and(|b| !ui_keys.contains(&b.trigger)));
+        if c.menu.is_empty() && shortcut.is_none() && !paths.contains_key(c.id) {
+            continue;
+        }
         let path = (!c.menu.is_empty()).then(|| c.menu.iter().map(|s| s.to_string()).chain([c.label.to_string()]).collect());
-        add(CommandRef::new(c.id), c.label, c.shortcut.as_slice(), path, Kind::Command);
+        add(CommandRef::new(c.id), c.label, shortcut.as_slice(), path, Kind::Command);
     }
     let mut seen = Vec::new();
     for (id, label, _) in crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS) {
@@ -262,11 +277,28 @@ pub fn chord_text(m: egui::Modifiers, key: egui::Key) -> Option<String> {
     Some(Chord::new(Mods::from_egui(&m, platform()), key).to_string())
 }
 
-/// Copies the keymap's overrides to the saved UI state.
+/// Copies the keymap's overrides to the saved UI state and, outside the Keyboard Shortcuts
+/// dialog (which saves sets itself), to the active shortcut set.
 pub fn store(app: &mut DesignApp) {
     if app.ui.shortcuts != *app.keymap.overrides() {
         app.ui.shortcuts = app.keymap.overrides().clone();
     }
+    if app.shortcut_dialog.is_none() {
+        store_in_set(&mut app.ui);
+    }
+}
+
+/// Saves `ui.shortcuts` to the active shortcut set when they differ. Edits of the built-in set go
+/// to a new set, Custom, which becomes active.
+pub fn store_in_set(ui: &mut crate::UiState) {
+    let builtins = &crate::shortcuts_dialog::BUILTINS;
+    if ui.shortcut_sets.active_overrides(builtins) == &ui.shortcuts {
+        return;
+    }
+    let custom = crate::i18n::tr(&ui.language, crate::shortcuts_dialog::CUSTOM_SET);
+    // Refused only with the most sets already made: ui.json still saves the shortcuts themselves,
+    // and the next frame tries again.
+    let _ = ui.shortcut_sets.store(ui.shortcuts.clone(), builtins, custom);
 }
 
 /// Gives a command keys (replacing its others), no keys (`""`), or its defaults back (`None`).
@@ -330,11 +362,6 @@ pub fn conflicts(keymap: &Keymap, cmd: &CommandRef) -> Vec<String> {
         }
     }
     out
-}
-
-/// A command's label, by its key.
-pub fn label(keymap: &Keymap, key: &str) -> String {
-    CommandRef::parse_key(key).and_then(|c| keymap.bindable(&c).map(|b| b.label.clone())).unwrap_or_else(|| key.to_string())
 }
 
 #[cfg(test)]
