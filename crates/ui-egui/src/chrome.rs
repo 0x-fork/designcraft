@@ -1370,6 +1370,19 @@ mod tests {
         press(&mut h, pos2(size.min.x - 5.0 - crate::widgets::SEG_W / 2.0, size.min.y + 3.0));
         h.run_steps(3);
         assert_eq!(size_of(&h), Some(73.0));
+        // Typing the automatic value itself over "(87.6 pt)" fixes the leading at it.
+        h.state_mut().app.run("type.char", serde_json::json!({"attrs": {"leading": {"kind": "auto"}}})).unwrap();
+        h.run_steps(3);
+        let lead = field(&h, "(87.6 pt)");
+        press(&mut h, lead.center());
+        h.run_steps(2);
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        h.event(egui::Event::Text("87.6".into()));
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        let st = h.state().app.session.doc().unwrap();
+        let sid = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+        assert_eq!(st.doc.story(sid).unwrap().format_after(0).over.leading, Some(designcraft_doc::Leading::Points(87.6)));
     }
 
     #[test]
