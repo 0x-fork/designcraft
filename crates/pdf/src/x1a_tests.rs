@@ -109,9 +109,18 @@ fn x1a_export_flattens_transparency_into_inks() {
     let bytes = &r.bytes;
     let text = String::from_utf8_lossy(bytes);
     assert!(bytes.starts_with(b"%PDF-1.4"), "{:?}", text.get(..8));
-    assert_eq!(check_pdfx1a(bytes), Vec::<String>::new());
+    // The only finding: the built-in Coated FOGRA39 output intent is an ICC v4 profile.
+    let v4 = |i: &String| i.contains("ICC v4");
+    let issues = check_pdfx1a(bytes);
+    assert!(issues.iter().all(v4), "{issues:?}");
+    let profile = output_intent(bytes).unwrap().profile;
+    assert_eq!(profile.get(8) == Some(&4), issues.iter().any(v4), "the v4 warning follows the profile");
+    assert_eq!(profile.get(8) == Some(&4), r.warnings.iter().any(|w| w.contains("ICC v4")), "{:?}", r.warnings);
+    if profile == craft_cms::builtin::COATED_FOGRA39_ICC {
+        assert!(r.warnings.iter().any(|w| w.contains("built-in Coated FOGRA39")), "{:?}", r.warnings);
+    }
     assert!(text.contains("/GTS_PDFXVersion(PDF/X-1:2003)"));
-    assert!(text.contains("/GTS_PDFXConformance(PDF/X-1a:2003)"));
+    assert!(!text.contains("/NChannel"), "no PDF 1.6 NChannel attributes at PDF 1.4");
     assert!(text.contains("/Trapped/False"), "Trapped");
     assert!(output_intent(bytes).is_some(), "output intent");
     for f in families(bytes) {
@@ -137,19 +146,26 @@ fn x1a_export_flattens_transparency_into_inks() {
 /// A minimal PDF 1.4 with a CMYK output intent, the X-1a identification and `content` on its
 /// page; `entries` go into the page dictionary.
 fn tiny_x1a(entries: &str, content: &str) -> Vec<u8> {
-    let objects = [
-        "<</Type/Catalog/Pages 2 0 R/OutputIntents[<</Type/OutputIntent/S/GTS_PDFX/DestOutputProfile 4 0 R>>]>>".to_string(),
-        "<</Type/Pages/Kids[3 0 R]/Count 1>>".to_string(),
-        format!("<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/TrimBox[0 0 100 100]{entries}/Contents 5 0 R>>"),
-        "<</N 4/Length 0>>\nstream\n\nendstream".to_string(),
-        format!("<</Length {}>>\nstream\n{content}\nendstream", content.len()),
-        "<</GTS_PDFXVersion(PDF/X-1:2003)/GTS_PDFXConformance(PDF/X-1a:2003)/Trapped/False>>".to_string(),
+    tiny_x1a_with_profile(entries, content, b"")
+}
+
+/// [`tiny_x1a`] whose output intent profile holds `profile`.
+fn tiny_x1a_with_profile(entries: &str, content: &str, profile: &[u8]) -> Vec<u8> {
+    let objects: [Vec<u8>; 6] = [
+        b"<</Type/Catalog/Pages 2 0 R/OutputIntents[<</Type/OutputIntent/S/GTS_PDFX/DestOutputProfile 4 0 R>>]>>".to_vec(),
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>".to_vec(),
+        format!("<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/TrimBox[0 0 100 100]{entries}/Contents 5 0 R>>").into_bytes(),
+        [format!("<</N 4/Length {}>>\nstream\n", profile.len()).as_bytes(), profile, b"\nendstream"].concat(),
+        format!("<</Length {}>>\nstream\n{content}\nendstream", content.len()).into_bytes(),
+        b"<</GTS_PDFXVersion(PDF/X-1:2003)/Trapped/False>>".to_vec(),
     ];
     let mut out = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
     for (i, o) in objects.iter().enumerate() {
         offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+        out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+        out.extend_from_slice(o);
+        out.extend_from_slice(b"\nendobj\n");
     }
     let xref = out.len();
     out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f\r\n", objects.len() + 1).as_bytes());
@@ -181,6 +197,16 @@ fn x1a_checks_refuse_transparency_and_rgb() {
     has("/Resources<<>>/Group<</S/Transparency/CS/DeviceCMYK>>", "0 0 0 1 k", "transparency group");
     has("/Resources<</ColorSpace<</S[/Separation/Gold/DeviceRGB 7 0 R]>>>>", "/S cs 1 scn 0 0 10 10 re f", "alternate space");
     has("/Resources<<>>", "q BI /W 1 /H 1 /CS /RGB /BPC 8 /F /AHx ID ff0000> EI Q", "DeviceRGB");
+    has(
+        "/Resources<</ColorSpace<</N[/DeviceN[/Cyan/Gold]/DeviceCMYK 7 0 R<</Subtype/NChannel/Colorants<<>>>>]>>>>",
+        "/N cs 1 1 scn 0 0 10 10 re f",
+        "NChannel",
+    );
+    // An ICC v4 output intent profile in a PDF 1.4 file is a warning; v2 passes.
+    let header = |major: u8| [&[0u8; 8][..], &[major, 0x20, 0, 0], b"prtrCMYK"].concat();
+    let v4 = check_pdfx1a(&tiny_x1a_with_profile("/Resources<<>>", "0 0 0 1 k", &header(4)));
+    assert!(v4.iter().any(|i| i.starts_with("warning: ") && i.contains("ICC v4")), "{v4:?}");
+    assert_eq!(check_pdfx1a(&tiny_x1a_with_profile("/Resources<<>>", "0 0 0 1 k", &header(2))), Vec::<String>::new());
     // A PDF/X-4 file isn't X-1a.
     let x4 = export_pdf_with_report(
         &Document::new(&NewDocument::default()),

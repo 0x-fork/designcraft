@@ -29,8 +29,8 @@
 //! - **Marks:** crop marks, bleed marks and a page-information line, drawn in `[Registration]`.
 //! - **Standards:** PDF/A-2b through krilla's validator and PDF/X-4 output intent/identification
 //!   with built-in conformance checks. PDF/X-1a:2003 is the PDF/X-4 print file flattened by
-//!   craft-prepress (no transparency, only DeviceCMYK, DeviceGray, Separation and DeviceN), then
-//!   identified as PDF 1.4 and PDF/X-1a. `designcraft-cli validate-pdf` exposes those checks for CI.
+//!   craft-prepress (no transparency, only DeviceCMYK, DeviceGray, Separation and DeviceN) and
+//!   written by krilla as PDF 1.4 with the PDF/X-1a identification. `designcraft-cli validate-pdf` exposes those checks for CI.
 //!
 //! Not yet: tagged PDF, bookmarks, hyperlinks, layers as optional content.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -50,7 +50,7 @@ pub use export::{
     BookletKind, BookletOptions, booklet_pairs, export_booklet, export_pdf, export_pdf_with_report, merge_pdfs, print_color, sheet_spreads,
 };
 pub use pdfx::{check_pdfx4, has_rgb_groups, make_pdfx4};
-pub use pdfx1a::{check_pdfx1a, make_pdfx1a};
+pub use pdfx1a::check_pdfx1a;
 pub use transitions::{add_blend_space, add_catalog_entries, add_page_entries, add_transitions};
 
 /// PDF standard to target.

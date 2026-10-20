@@ -276,7 +276,7 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         }
     }
     if opts.standard == Standard::PdfX1a {
-        bytes = crate::pdfx1a::flatten_x1a(&bytes, opts.flatten_dpi, created, &mut warnings)?;
+        bytes = crate::pdfx1a::flatten_x1a(&bytes, opts.flatten_dpi, &mut warnings)?;
     }
     warnings.dedup();
     Ok(ExportReport { bytes, pages: sheets.len(), warnings })

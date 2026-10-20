@@ -1,9 +1,10 @@
 //! PDF/X-1a:2003: the PDF/X-4 print file flattened by craft-prepress (no transparency left; RGB
 //! and ICC color converted into the output intent's CMYK; inks, overprint and live text kept),
-//! then identified as PDF 1.4 and PDF/X-1a, and checked.
+//! written by krilla as PDF 1.4 with the PDF/X-1a identification, then checked.
 
 use std::collections::HashSet;
 
+use craft_pdf::write::backend::configure::PdfVersion;
 use craft_prepress::flatten::pdf::ReadOptions;
 use craft_prepress::flatten::{FlattenDocumentOptions, FlattenOptions, flatten_document};
 use hayro_syntax::content::UntypedIter;
@@ -12,25 +13,30 @@ use hayro_syntax::page::Resources;
 
 use crate::PdfError;
 use crate::pdfx::{MAX_DEPTH, cmyk_output_intent};
-use crate::transitions::{find, int_after, object, rfind};
 
-/// `GTS_PDFXVersion` of PDF/X-1a:2003.
+/// `GTS_PDFXVersion` of PDF/X-1a:2003 (ISO 15930-4).
 const VERSION: &str = "PDF/X-1:2003";
-/// `GTS_PDFXConformance` of PDF/X-1a:2003.
-const CONFORMANCE: &str = "PDF/X-1a:2003";
 
-/// The PDF/X-1a file for `pdf`, the PDF/X-4 print file: flattened at `dpi`, identified, checked.
-/// Fails when the flattener fails or the result still has transparency or color outside
-/// DeviceCMYK, DeviceGray, Separation and DeviceN; other check findings become warnings.
-pub(crate) fn flatten_x1a(pdf: &[u8], dpi: f32, date: Option<i64>, warnings: &mut Vec<String>) -> crate::Result<Vec<u8>> {
+/// [`check_pdfx1a`]'s finding for an ICC v4 output intent in a file of PDF 1.5 or lower: a
+/// warning, as the file may still pass a given preflight.
+const V4_INTENT: &str = "warning: the output intent's profile is ICC v4, which PDF/X-1a preflight in a PDF 1.4 file may reject: \
+                         choose a CMYK working space with an ICC v2 profile";
+
+/// The PDF/X-1a file for `pdf`, the PDF/X-4 print file: flattened at `dpi`, written at PDF 1.4
+/// with the identification, checked. Fails when the flattener fails or the result still has
+/// transparency or color outside DeviceCMYK, DeviceGray, Separation and DeviceN; other check
+/// findings become warnings.
+pub(crate) fn flatten_x1a(pdf: &[u8], dpi: f32, warnings: &mut Vec<String>) -> crate::Result<Vec<u8>> {
     let dpi = if dpi.is_finite() { dpi.clamp(36.0, 2400.0) } else { 300.0 };
     let opts = FlattenDocumentOptions {
         read: ReadOptions { raster_dpi: dpi, ..ReadOptions::default() },
         flatten: FlattenOptions { raster_dpi: dpi, ..FlattenOptions::default() },
         producer: "DesignCraft".into(),
+        version: PdfVersion::Pdf14,
+        pdfx_version: Some(VERSION.into()),
         ..FlattenDocumentOptions::default()
     };
-    let (flat, report) = flatten_document(pdf, &opts).map_err(|e| PdfError::Write(format!("PDF/X-1a: the transparency flattener failed: {e}")))?;
+    let (bytes, report) = flatten_document(pdf, &opts).map_err(|e| PdfError::Write(format!("PDF/X-1a: the transparency flattener failed: {e}")))?;
     let t = &report.totals;
     if t.complex_regions > 0 || t.complex_groups > 0 {
         let at = t.lowest_dpi.map(|d| format!(", some below {dpi:.0} ppi (lowest {d:.0} ppi)")).unwrap_or_default();
@@ -42,93 +48,24 @@ pub(crate) fn flatten_x1a(pdf: &[u8], dpi: f32, date: Option<i64>, warnings: &mu
     if t.dropped_inks > 0 {
         warnings.push(format!("PDF/X-1a: {} ink(s) past the flattener's limit were converted to process", t.dropped_inks));
     }
-    let bytes = make_pdfx1a(&flat, date).ok_or_else(|| PdfError::Write("PDF/X-1a: the flattened file couldn't be identified as PDF/X-1a".into()))?;
     let (fatal, other) = checks(&bytes);
     if !fatal.is_empty() {
         return Err(PdfError::Write(format!("PDF/X-1a: after flattening, {}", fatal.join("; "))));
     }
-    warnings.extend(other.into_iter().map(|i| format!("PDF/X-1a: {i}")));
+    let fallback =
+        || hayro_syntax::Pdf::new(bytes.clone()).ok().and_then(|f| intent_profile(&f)).is_some_and(|p| p == craft_cms::builtin::COATED_FOGRA39_ICC);
+    for issue in other {
+        if issue == V4_INTENT && fallback() {
+            warnings.push(
+                "PDF/X-1a: the output intent is the built-in Coated FOGRA39, an ICC v4 profile that PDF/X-1a preflight in a PDF 1.4 \
+                 file may reject: choose a CMYK working space with an ICC v2 profile"
+                    .into(),
+            );
+        } else {
+            warnings.push(format!("PDF/X-1a: {}", issue.trim_start_matches("warning: ")));
+        }
+    }
     Ok(bytes)
-}
-
-/// Identify a flattened PDF as PDF/X-1a:2003: the `%PDF-1.4` header, `GTS_PDFXVersion` and
-/// `GTS_PDFXConformance` in the document information and the XMP metadata (with
-/// `pdf:PDFVersion` 1.4, `xmp:MetadataDate` and `xmpMM:VersionID`), as an incremental update.
-/// `date` (Unix seconds, UTC) is the metadata date. `None` back when the file isn't the simple
-/// kind this understands (a classic cross-reference table, an information dictionary, an
-/// uncompressed XMP stream) or is newer than PDF 1.7.
-pub fn make_pdfx1a(pdf: &[u8], date: Option<i64>) -> Option<Vec<u8>> {
-    // Same length, so no offset moves.
-    if !pdf.starts_with(b"%PDF-1.") || !pdf.get(7).is_some_and(|v| (b'3'..=b'7').contains(v)) {
-        return None;
-    }
-    let t_at = rfind(pdf, b"trailer")?;
-    let trailer = String::from_utf8_lossy(pdf.get(t_at..)?).to_string();
-    let size = int_after(&trailer, "/Size")?;
-    let root = int_after(&trailer, "/Root")?;
-    let prev = int_after(&trailer, "startxref")?;
-    let info = int_after(&trailer, "/Info")?;
-    let id = trailer.find("/ID").and_then(|i| trailer.get(i..)?.find(']').and_then(|j| trailer.get(i..i + j + 1)).map(str::to_string));
-    let info_dict = String::from_utf8_lossy(pdf.get(object(pdf, info)?)?).to_string();
-    let close = info_dict.rfind(">>")?;
-    let mut info_body = info_dict.get(..close)?.trim().to_string();
-    for key in ["/GTS_PDFXVersion", "/GTS_PDFXConformance"] {
-        if info_body.contains(key) {
-            return None;
-        }
-    }
-    info_body.push_str(&format!("/GTS_PDFXVersion({VERSION})/GTS_PDFXConformance({CONFORMANCE})>>"));
-    let mut objects = vec![(info, info_body)];
-    let cat = String::from_utf8_lossy(pdf.get(object(pdf, root)?)?).to_string();
-    if let Some(meta) = int_after(&cat, "/Metadata") {
-        let body = pdf.get(object(pdf, meta)?)?;
-        let s0 = find(body, b"stream", 0)? + b"stream".len();
-        let s0 = s0 + body.get(s0..)?.iter().take_while(|c| **c == b'\r' || **c == b'\n').count();
-        let s1 = rfind(body, b"endstream")?;
-        let xml = String::from_utf8_lossy(body.get(s0..s1)?).trim_end().to_string();
-        let dict = String::from_utf8_lossy(body.get(..find(body, b"stream", 0)?)?).to_string();
-        if dict.contains("/Filter") || !xml.contains("</rdf:RDF>") {
-            return None;
-        }
-        let (y, mo, d, h, mi, se) = crate::export::civil(date.unwrap_or(0));
-        let stamp = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}Z");
-        let added = format!(
-            "<rdf:Description rdf:about=\"\" xmlns:pdfxid=\"http://www.npes.org/pdfx/ns/id/\" xmlns:pdfx=\"http://ns.adobe.com/pdfx/1.3/\">\
-             <pdfxid:GTS_PDFXVersion>{VERSION}</pdfxid:GTS_PDFXVersion><pdfx:GTS_PDFXVersion>{VERSION}</pdfx:GTS_PDFXVersion>\
-             <pdfx:GTS_PDFXConformance>{CONFORMANCE}</pdfx:GTS_PDFXConformance></rdf:Description>\
-             <rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:xmpMM=\"http://ns.adobe.com/xap/1.0/mm/\">\
-             <xmp:MetadataDate>{stamp}</xmp:MetadataDate><xmpMM:VersionID>1</xmpMM:VersionID></rdf:Description>"
-        );
-        let mut xml = xml;
-        for v in ["1.5", "1.6", "1.7"] {
-            xml = xml.replace(&format!("<pdf:PDFVersion>{v}</pdf:PDFVersion>"), "<pdf:PDFVersion>1.4</pdf:PDFVersion>");
-            xml = xml.replace(&format!("pdf:PDFVersion=\"{v}\""), "pdf:PDFVersion=\"1.4\"");
-        }
-        let xml = xml.replacen("</rdf:RDF>", &format!("{added}</rdf:RDF>"), 1);
-        let i = dict.find("/Length")?;
-        let rest = dict.get(i + 7..)?.trim_start();
-        let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-        let dict = format!("{}/Length {}{}", dict.get(..i)?, xml.len(), rest.get(end..)?);
-        objects.push((meta, format!("{}\nstream\n{xml}\nendstream", dict.trim())));
-    }
-    let mut out = pdf.to_vec();
-    out.get_mut(..8)?.copy_from_slice(b"%PDF-1.4");
-    if !out.ends_with(b"\n") {
-        out.push(b'\n');
-    }
-    objects.sort_by_key(|(n, _)| *n);
-    let mut xref = String::from("xref\n");
-    for (n, body) in &objects {
-        xref.push_str(&format!("{n} 1\n{:010} 00000 n\r\n", out.len()));
-        out.extend_from_slice(format!("{n} 0 obj\n{body}\nendobj\n").as_bytes());
-    }
-    let xref_at = out.len();
-    let id = id.unwrap_or_default();
-    out.extend_from_slice(xref.as_bytes());
-    out.extend_from_slice(
-        format!("trailer\n<</Size {size}/Root {root} 0 R/Info {info} 0 R{id}/Prev {prev}>>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes(),
-    );
-    Some(out)
 }
 
 /// PDF/X-1a:2003 checks on an exported file (empty = passes them): PDF 1.4 or lower, the
@@ -136,7 +73,8 @@ pub fn make_pdfx1a(pdf: &[u8], date: Option<i64>) -> Option<Vec<u8>> {
 /// encryption or interpolation; no transparency (soft masks, transparency groups, constant
 /// opacity below 1, blend modes other than Normal); only DeviceCMYK, DeviceGray, Separation and
 /// DeviceN (and Indexed and Pattern spaces over them), a spot's alternate space process; every
-/// font embedded and none Type 3.
+/// font embedded and none Type 3. Findings starting `warning: ` don't break conformance by
+/// themselves (an ICC v4 output intent profile in a PDF 1.4 file).
 pub fn check_pdfx1a(pdf: &[u8]) -> Vec<String> {
     let (mut issues, other) = checks(pdf);
     issues.extend(other);
@@ -155,9 +93,6 @@ fn checks(pdf: &[u8]) -> (Vec<String>, Vec<String>) {
     }
     if !text.contains(&format!("/GTS_PDFXVersion({VERSION})")) {
         issues.push(format!("the document information doesn't name {VERSION}"));
-    }
-    if !text.contains(&format!("/GTS_PDFXConformance({CONFORMANCE})")) {
-        issues.push(format!("the document information doesn't name the conformance {CONFORMANCE}"));
     }
     if !text.contains("/Trapped/False") && !text.contains("/Trapped/True") && !text.contains("/Trapped /False") && !text.contains("/Trapped /True") {
         issues.push("the document information needs /Trapped True or False".into());
@@ -188,6 +123,10 @@ fn content(pdf: &[u8]) -> (Vec<String>, Vec<String>) {
     if !cmyk_output_intent(&file) {
         fonts.push("the output intent has no CMYK destination profile".into());
     }
+    let below_16 = pdf.starts_with(b"%PDF-1.") && pdf.get(7).is_some_and(|v| *v <= b'5');
+    if below_16 && intent_profile_major(&file) == Some(4) {
+        fonts.push(V4_INTENT.into());
+    }
     let mut found: Vec<(String, Vec<usize>)> = Vec::new();
     let mut font_found: Vec<(String, Vec<usize>)> = Vec::new();
     for (i, page) in file.pages().iter().enumerate() {
@@ -216,6 +155,20 @@ fn content(pdf: &[u8]) -> (Vec<String>, Vec<String>) {
     };
     fonts.extend(font_found.into_iter().map(on_pages));
     (found.into_iter().map(on_pages).collect(), fonts)
+}
+
+/// The `GTS_PDFX` output intent's destination profile.
+fn intent_profile(file: &hayro_syntax::Pdf) -> Option<Vec<u8>> {
+    let xref = file.xref();
+    let catalog = xref.get::<Dict<'_>>(xref.root_id())?;
+    let intents = catalog.get::<Array<'_>>(b"OutputIntents")?;
+    let oi = intents.iter::<Dict<'_>>().find(|oi| oi.get::<Name<'_>>(b"S").is_some_and(|s| s.as_ref() == b"GTS_PDFX"))?;
+    Some(oi.get::<Stream<'_>>(b"DestOutputProfile")?.decoded().ok()?.into_owned())
+}
+
+/// The ICC major version of the output intent's profile (byte 8 of its header).
+fn intent_profile_major(file: &hayro_syntax::Pdf) -> Option<u8> {
+    intent_profile(file)?.get(8).copied()
 }
 
 /// Why a color space isn't allowed in PDF/X-1a, or `None` when it is.
@@ -251,7 +204,18 @@ fn disallowed(cs: &Object<'_>, res: &Resources<'_>, depth: usize) -> Option<Stri
                 b"Separation" | b"DeviceN" => {
                     let _names = items.next();
                     let alt = items.next()?;
-                    disallowed(&alt, res, depth + 1).map(|why| format!("a spot color whose alternate space is {why}"))
+                    if let Some(why) = disallowed(&alt, res, depth + 1) {
+                        return Some(format!("a spot color whose alternate space is {why}"));
+                    }
+                    let _tint = items.next();
+                    // NChannel attributes are PDF 1.6, past the 1.4 that PDF/X-1a:2003 allows.
+                    let attrs = items.next().and_then(|o| match o {
+                        Object::Dict(d) => Some(d),
+                        _ => None,
+                    });
+                    attrs
+                        .filter(|a| a.get::<Name<'_>>(b"Subtype").is_some_and(|n| n.as_ref() == b"NChannel") || a.contains_key(b"Process"))
+                        .map(|_| "a DeviceN space with NChannel attributes (PDF 1.6)".into())
                 }
                 other => Some(format!("the color space /{}", String::from_utf8_lossy(other))),
             }

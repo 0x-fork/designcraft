@@ -1154,7 +1154,9 @@ mod text_tests {
         let r = s.execute("file.exportPdf", &json!({"standard": "x1a", "flatten": "low"})).unwrap();
         let pdf = super::super::file::base64_decode(r["base64"].as_str().unwrap());
         let text = String::from_utf8_lossy(&pdf).to_string();
-        assert_eq!(designcraft_pdf::check_pdfx1a(&pdf), Vec::<String>::new());
+        // The only finding: the built-in Coated FOGRA39 output intent is an ICC v4 profile.
+        let issues = designcraft_pdf::check_pdfx1a(&pdf);
+        assert!(issues.iter().all(|i| i.contains("ICC v4")), "{issues:?}");
         assert!(pdf.starts_with(b"%PDF-1.4") && text.contains("/GTS_PDFXVersion(PDF/X-1:2003)") && text.contains("/S/GTS_PDFX"));
         let warnings = r["warnings"].to_string();
         assert!(!warnings.contains("soft effects"), "the shadow isn't an RGB image of the object: {warnings}");

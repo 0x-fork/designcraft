@@ -180,8 +180,10 @@ fn validate_pdf(args: &[String]) -> Result<(), String> {
         designcraft_pdf::Standard::PdfX4 => ("PDF/X-4", designcraft_pdf::check_pdfx4(&bytes)),
         _ => return Err(USAGE.into()),
     };
+    let (warnings, issues): (Vec<String>, Vec<String>) = issues.into_iter().partition(|i| i.starts_with("warning: "));
+    let warnings: Vec<&str> = warnings.iter().map(|w| w.trim_start_matches("warning: ")).collect();
     let valid = issues.is_empty();
-    let report = json!({"path": path, "standard": name, "valid": valid, "issues": issues});
+    let report = json!({"path": path, "standard": name, "valid": valid, "issues": issues, "warnings": warnings});
     outln!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
     if valid { Ok(()) } else { Err(format!("{path} failed {name} validation")) }
 }
