@@ -1618,7 +1618,9 @@ impl Exporter<'_> {
 }
 
 /// `paint` through `mask`'s coverage, a luminosity mask: the color's own inks (spot, process),
-/// never an RGB raster.
+/// never an RGB raster. The shadow multiplies with what is beneath it, as InDesign's drop shadow
+/// does by default (the shadow model has no blend mode of its own), so a spot under a black
+/// shadow keeps its full ink.
 fn draw_coverage(s: &mut Surface, mask: &crate::ShadowMask, paint: krilla::color::Color) {
     let r = mask.rect;
     let (Some(size), Some(rect), Some(image)) = (
@@ -1636,11 +1638,13 @@ fn draw_coverage(s: &mut Surface, mask: &crate::ShadowMask, paint: krilla::color
     ms.pop();
     ms.finish();
     let stream = sb.finish();
+    s.push_blend_mode(krilla::blend::BlendMode::Multiply);
     s.push_mask(krilla::mask::Mask::new(stream, krilla::mask::MaskType::Luminosity));
     s.set_stroke(None);
     s.set_fill(Some(Fill { paint: paint.into(), ..Default::default() }));
     s.draw_path(&rect);
     s.set_fill(None);
+    s.pop();
     s.pop();
 }
 

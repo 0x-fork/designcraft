@@ -1099,6 +1099,30 @@ mod text_tests {
             .collect()
     }
 
+    /// The (Black, Gold) samples of every flattened DeviceN image that has both colorants.
+    fn black_and_gold(pdf: &[u8]) -> Vec<(u8, u8)> {
+        use hayro_syntax::object::{Array, Name, Object};
+        let file = hayro_syntax::Pdf::new(pdf.to_vec()).unwrap();
+        let mut out = Vec::new();
+        for st in file.objects().into_iter().filter_map(|o| o.into_stream()) {
+            let d = st.dict();
+            if !d.get::<Name<'_>>(b"Subtype").is_some_and(|n| n.as_ref() == b"Image") || d.get::<i32>(b"BitsPerComponent") != Some(8) {
+                continue;
+            }
+            let Some(cs) = d.get::<Array<'_>>(b"ColorSpace") else { continue };
+            let mut it = cs.iter::<Object<'_>>();
+            if !it.next().and_then(|o| o.into_name()).is_some_and(|n| n.as_ref() == b"DeviceN") {
+                continue;
+            }
+            let Some(Object::Array(names)) = it.next() else { continue };
+            let names: Vec<String> = names.iter::<Name<'_>>().map(|n| n.as_str().to_string()).collect();
+            let (Some(k), Some(g)) = (names.iter().position(|n| n == "Black"), names.iter().position(|n| n == "Gold")) else { continue };
+            let data = st.decoded().unwrap();
+            out.extend(data.chunks(names.len()).filter(|px| px.len() == names.len()).map(|px| (px[k], px[g])));
+        }
+        out
+    }
+
     /// PDF/X-1a through craft-prepress: a soft drop shadow over a spot, a 50% object and a
     /// knockout group leave no transparency and no RGB; the shadow is flattened in the page's
     /// inks (Black over the spot), not exported as an RGB image of the object; text stays text and
@@ -1141,6 +1165,10 @@ mod text_tests {
             spaces.iter().any(|cs| cs.starts_with("DeviceN") && cs.contains("Black") && cs.contains("Gold")),
             "the shadow over the spot: {spaces:?}"
         );
+        // The shadow multiplies: the spot stays at 100% where the shadow's black is.
+        let shadowed: Vec<(u8, u8)> = black_and_gold(&pdf).into_iter().filter(|(k, _)| *k > 100).collect();
+        assert!(!shadowed.is_empty(), "no shadow pixels");
+        assert!(shadowed.iter().all(|(_, gold)| *gold >= 250), "the spot under the shadow: {:?}", &shadowed[..shadowed.len().min(8)]);
         assert!(text.contains("/op true") && text.contains("/OPM 1"), "overprint");
         assert!(text.contains("/FontFile"), "the text is still text");
         // The default resolution.
