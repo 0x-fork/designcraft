@@ -11,6 +11,12 @@ fn invalid() -> PdfError {
     PdfError::Write("the placed PDF's optional-content state could not be preserved safely".into())
 }
 
+/// A layer hidden in Object Layer Options that the placed file doesn't have (relinked, say):
+/// exporting would be a guess at what was meant to stay hidden.
+fn missing_layer() -> PdfError {
+    PdfError::Write("a layer hidden in Object Layer Options is not in the placed PDF; relink it or reset its layer options".into())
+}
+
 fn references(dict: &Dict<'_>, key: &[u8]) -> Result<Vec<ObjectIdentifier>> {
     if !dict.contains_key(key) {
         return Ok(Vec::new());
@@ -128,6 +134,9 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, hidden: &[String]) -> Result<Variant
             .objects()
             .into_iter()
             .any(|object| matches!(object, Object::Dict(dict) if dict.get::<Name<'_>>(b"Type").as_ref().map(AsRef::as_ref) == Some(b"OCG")));
+        if !hidden.is_empty() {
+            return Err(missing_layer());
+        }
         return Ok(Variant { data: bytes.clone(), hidden: Vec::new(), warning: None, has_optional_content });
     }
     let properties = root.get::<Dict<'_>>(b"OCProperties").ok_or_else(invalid)?;
@@ -165,6 +174,7 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, hidden: &[String]) -> Result<Variant
     let mut changes = Vec::new();
     let mut effective = Vec::new();
     let mut renamed = false;
+    let mut found = vec![false; hidden.len()];
     for id in groups {
         let group = xref.get::<Dict<'_>>(id).ok_or_else(invalid)?;
         if group.get::<Name<'_>>(b"Type").as_ref().map(AsRef::as_ref) != Some(b"OCG") {
@@ -175,7 +185,13 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, hidden: &[String]) -> Result<Variant
             (true, _) => !fallback && (off.contains(&id) || (base_off && !on.contains(&id))),
             (false, Some(name)) => {
                 let name = String::from_utf8_lossy(name.as_bytes());
-                hidden.iter().any(|n| n == name.as_ref())
+                let mut is_hidden = false;
+                for (n, found) in hidden.iter().zip(&mut found) {
+                    if n == name.as_ref() {
+                        (*found, is_hidden) = (true, true);
+                    }
+                }
+                is_hidden
             }
             (false, None) => return Err(invalid()),
         };
@@ -199,6 +215,9 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, hidden: &[String]) -> Result<Variant
             }
         };
         changes.push((id, body));
+    }
+    if found.contains(&false) {
+        return Err(missing_layer());
     }
     effective.sort();
     effective.dedup();

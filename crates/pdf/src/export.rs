@@ -1970,7 +1970,15 @@ mod image_content_cache_tests {
         let mut doc = Document::new(&Default::default());
         let cache = Cache::new();
         let opts = PdfOptions::default();
-        let source = export_pdf(&doc, &cache, &opts).unwrap();
+        // One layer, "Hidden", shown by default: hiding it needs a prepared copy, showing it doesn't.
+        let content = "/OC /a BDC 0 0 1 rg 0 0 100 100 re f EMC";
+        let source = registration_tests::assemble(&[
+            "<</Type/Catalog/Pages 2 0 R/OCProperties<</OCGs[5 0 R]>>>>".into(),
+            "<</Type/Pages/Kids[3 0 R]/Count 1>>".into(),
+            "<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Resources<</Properties<</a 5 0 R>>>>/Contents 4 0 R>>".into(),
+            format!("<</Length {}>>\nstream\n{content}\nendstream", content.len()),
+            "<</Type/OCG/Name(Hidden)>>".into(),
+        ]);
         let a = asset(&mut doc, source.clone(), "a.pdf");
         let b = asset(&mut doc, source, "b.pdf");
         let mut ex = exporter(&doc, &cache, &opts);
@@ -1994,7 +2002,8 @@ mod image_content_cache_tests {
             assert_eq!(ex.pdf_preparations, count, "count actual preparations, not writer resource deduplication");
         }
         assert_eq!(ex.variants.len(), 3);
-        assert_eq!(ex.pdfs.len(), 2);
+        // a, b, and a with its layer hidden (a copy of its own).
+        assert_eq!(ex.pdfs.len(), 3);
         let variant = ex.variants.get(&(a, Vec::new())).unwrap();
         assert!(Arc::ptr_eq(&variant.data, &doc.assets[&a].data));
         surface.finish();

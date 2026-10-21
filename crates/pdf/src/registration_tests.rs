@@ -45,7 +45,7 @@ fn unlayered_source() -> Vec<u8> {
     ])
 }
 
-fn assemble(objects: &[String]) -> Vec<u8> {
+pub(super) fn assemble(objects: &[String]) -> Vec<u8> {
     let mut bytes = b"%PDF-1.5\n".to_vec();
     let mut offsets = Vec::new();
     for (index, body) in objects.iter().enumerate() {
