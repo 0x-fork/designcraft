@@ -1046,6 +1046,20 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
                 pen.line(&[(7.5, *y), (if k == 1 { 14.0 } else { 17.0 }, *y)]);
             }
         }
+        // Paragraph shading: a square with a checked fill (the Control panel's Shading).
+        "para-shading" => {
+            pen.w = 1.0;
+            pen.rect(4.0, 4.0, 16.0, 16.0);
+            pen.frect(4.0, 4.0, 10.0, 10.0);
+            pen.frect(10.0, 10.0, 16.0, 16.0);
+        }
+        // Paragraph border: a box with its corner drawn heavy (the Control panel's Border).
+        "para-border" => {
+            pen.w = 1.0;
+            pen.rect(4.0, 4.0, 16.0, 16.0);
+            pen.w = 2.5;
+            pen.line(&[(5.0, 12.0), (5.0, 5.0), (12.0, 5.0)]);
+        }
         "pilcrow-menu" => {
             pen.text(9.0, 10.0, "¶", 14.0);
             pen.fill(&[(14.0, 15.0), (17.0, 15.0), (15.5, 17.0)]);
