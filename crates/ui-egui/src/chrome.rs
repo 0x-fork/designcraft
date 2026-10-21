@@ -1643,6 +1643,22 @@ mod tests {
         h.key_press(egui::Key::Escape);
         h.run_steps(3);
         assert_eq!(h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading, auto, "Escape leaves it automatic");
+        // Escape also reverts a different number, in the leading field and in a plain one. (It
+        // leaves the text too, so each try selects it again.)
+        for (shown, typed) in [("(87.6 pt)", "20"), ("73 pt", "50")] {
+            h.state_mut().app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 8})).unwrap();
+            h.state_mut().app.session.set_tool("type");
+            h.run_steps(3);
+            let r = field(&h, shown);
+            press(&mut h, r.center());
+            h.run_steps(2);
+            h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+            h.event(egui::Event::Text(typed.into()));
+            h.key_press(egui::Key::Escape);
+            h.run_steps(3);
+        }
+        assert_eq!(h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading, auto, "still automatic");
+        assert_eq!(size_of(&h), Some(73.0), "the size is unchanged");
     }
 
     /// The course's chapter 16: the text Control panel has InDesign's two modes. A shows the

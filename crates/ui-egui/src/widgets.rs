@@ -228,10 +228,12 @@ impl<'a> NumField<'a> {
         }
         if r.lost_focus() {
             // An automatic value (in parentheses) typed over commits even when it's the same
-            // number: typing "14.4 pt" over "(14.4 pt)" makes it a fixed value. Escape cancels it.
+            // number: typing "14.4 pt" over "(14.4 pt)" makes it a fixed value. Escape reverts
+            // whatever was typed, as in InDesign.
             let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
-            let typed_over_auto = self.parens && !escaped && !buf.trim_start().starts_with('(');
-            if let Some(v) = self.parse(&buf).map(clamp)
+            let typed_over_auto = self.parens && !buf.trim_start().starts_with('(');
+            if escaped {
+            } else if let Some(v) = self.parse(&buf).map(clamp)
                 && (typed_over_auto || self.value.is_none_or(|old| (old - v).abs() > 1e-9))
             {
                 out = Some(v);
