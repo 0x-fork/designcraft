@@ -888,7 +888,10 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         blocked.push(rect);
     }
     let style = dock_style(ui, &app.ui.language);
-    let mut dock = craft_ui::docking::DockArea::new(area).float_bounds(float_bounds(app, ui.ctx())).blocked_rects(&blocked).auto_collapse_iconic(app.ui.dock_auto_collapse);
+    let mut dock = craft_ui::docking::DockArea::new(area)
+        .float_bounds(float_bounds(app, ui.ctx()))
+        .blocked_rects(&blocked)
+        .auto_collapse_iconic(app.ui.dock_auto_collapse);
     if let Some(panel) = raise {
         dock = dock.raise_panel(panel);
     }
