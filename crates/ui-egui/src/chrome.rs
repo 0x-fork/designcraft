@@ -579,8 +579,9 @@ fn icon_field(ui: &mut egui::Ui, icon: &str, tip: &str, field: NumField) -> Opti
     let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
     icons::paint(ui.painter(), r, icon, t.icon);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tip));
+    let label = resp.id;
     resp.on_hover_text(tip);
-    field.spinner().show(ui)
+    field.spinner().labelled_by(label).show(ui)
 }
 
 /// A column of two rows (the Control panel's two-row groups).
@@ -1367,6 +1368,28 @@ fn community_card(app: &mut DesignApp, ui: &mut egui::Ui) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A Control panel field is labelled by its icon, so assistive technology reads "Tracking"
+    /// (or "Font Size", …) with the value.
+    #[test]
+    fn icon_fields_are_labelled_by_their_icon() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "en");
+        ctx.enable_accesskit();
+        let mut update = None;
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                icon_field(ui, "tracking", "Tracking", NumField::number("tracking_test", Some(0.0), "", 0));
+            });
+            out.textures_delta.clear();
+            update = out.platform_output.accesskit_update;
+        }
+        let update = update.expect("an AccessKit tree");
+        let named = |n: &egui::accesskit::Node| n.label() == Some("Tracking") || n.value() == Some("Tracking");
+        let icon = update.nodes.iter().find(|(_, n)| named(n)).map(|(id, _)| *id).expect("the icon's node");
+        assert!(update.nodes.iter().any(|(_, n)| n.role() == Role::TextInput && n.labelled_by().contains(&icon)), "the editor names its icon");
+    }
     use egui::{pos2, vec2};
     use egui_kittest::kittest::{NodeT, Queryable};
 

@@ -1329,8 +1329,11 @@ fn half_field(ui: &mut Ui, b: Rect, right: bool, y: f32, half: f32, icon: &str, 
     let x = if right { half + 10.0 } else { 0.0 };
     let ir = sub(b, x, y + 1.0, 19.0, 19.0);
     icons::paint(ui.painter(), ir, icon, t.icon);
-    ui.interact(ir, ui.id().with(("half_icon", icon)), Sense::hover()).on_hover_text(tip);
-    place(ui, sub(b, x + 24.0, y, half - 24.0, FIELD_H), |ui| field.width(half - 24.0).show(ui))
+    let resp = ui.interact(ir, ui.id().with(("half_icon", icon)), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tip));
+    let label = resp.id;
+    resp.on_hover_text(tip);
+    place(ui, sub(b, x + 24.0, y, half - 24.0, FIELD_H), |ui| field.width(half - 24.0).labelled_by(label).show(ui))
 }
 
 /// Properties › Character after •••: vertical and horizontal scale, baseline shift and skew,

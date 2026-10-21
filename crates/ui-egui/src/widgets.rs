@@ -80,6 +80,8 @@ pub struct NumField<'a> {
     range: (f64, f64),
     enabled: bool,
     parens: bool,
+    /// The widget naming the field (an icon or caption beside it), for accessibility.
+    label: Option<egui::Id>,
 }
 
 impl<'a> NumField<'a> {
@@ -90,7 +92,19 @@ impl<'a> NumField<'a> {
         Self::new(id, value, NumKind::Number { suffix, decimals })
     }
     fn new(id: &'a str, value: Option<f64>, kind: NumKind<'a>) -> Self {
-        NumField { id, value, kind, width: 72.0, spinner: false, presets: &[], step: None, range: (f64::MIN, f64::MAX), enabled: true, parens: false }
+        NumField {
+            id,
+            value,
+            kind,
+            width: 72.0,
+            spinner: false,
+            presets: &[],
+            step: None,
+            range: (f64::MIN, f64::MAX),
+            enabled: true,
+            parens: false,
+            label: None,
+        }
     }
     /// Total width (spinner and preset segments included).
     pub fn width(mut self, w: f32) -> Self {
@@ -128,6 +142,12 @@ impl<'a> NumField<'a> {
     }
     pub fn enabled(mut self, on: bool) -> Self {
         self.enabled = on;
+        self
+    }
+    /// The editor is labelled by widget `id` (an icon or caption that names the field), so
+    /// assistive technology reads the field's name with its value.
+    pub fn labelled_by(mut self, id: egui::Id) -> Self {
+        self.label = Some(id);
         self
     }
 
@@ -210,6 +230,10 @@ impl<'a> NumField<'a> {
             editor_ui.disable();
         }
         let r = editor_ui.put(value_rect, te);
+        let r = match self.label {
+            Some(id) => r.labelled_by(id),
+            None => r,
+        };
         if r.has_focus() {
             // ↑/↓ step the value while typing.
             let (up, down, shift) = ui.input_mut(|i| {
