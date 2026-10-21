@@ -98,6 +98,9 @@ const TABLE: &[(&str, [&str; 5])] = &[
             "对齐基线网格",
         ],
     ),
+    // Properties › Paragraph (•••).
+    ("Space Before", ["Abstand davor", "Espace avant", "Espacio anterior", "段落前の間隔", "段前间距"]),
+    ("Space After", ["Abstand danach", "Espace après", "Espacio posterior", "段落後の間隔", "段后间距"]),
     // Menus.
     ("File", ["Datei", "Fichier", "Archivo", "ファイル", "文件"]),
     ("Edit", ["Bearbeiten", "Édition", "Edición", "編集", "编辑"]),
