@@ -85,22 +85,18 @@ fn apply_list(s: &mut Session, p: &Value, kind: ListType) -> Result<Value> {
     if targets.is_empty() {
         return Err(bad(name, "select text or a text frame"));
     }
-    let d = &s.doc()?.doc;
     // Off when every selected paragraph already has this list, as the button shows it pressed.
-    let on = on.unwrap_or_else(|| {
-        !targets.iter().all(|t| {
-            d.text_story(t.story, t.cell).is_some_and(|st| {
-                let (a, b) = (st.para_at(t.range.start), st.para_at(t.range.end.max(t.range.start)));
-                st.paras.get(a..=b).is_some_and(|ps| ps.iter().all(|pf| d.styles.resolve_para(pf).0.list_type == kind))
-            })
-        })
-    });
+    let on = on.unwrap_or_else(|| !s.doc().is_ok_and(|st| all_have(&st.doc, &targets, kind)));
     s.edit(|d, _| {
         let styles = d.styles.clone();
         for t in &targets {
             let Some(st) = d.text_story_mut(t.story, t.cell) else { continue };
             st.format_paras(t.range.clone(), |pf| {
                 let (now, _) = styles.resolve_para(pf);
+                // Off takes away this list only: a paragraph with the other list keeps it.
+                if !on && now.list_type != kind {
+                    return;
+                }
                 let (style, _) = styles.resolve_para_style(&pf.style);
                 // A value: left to the style when it gives the same, else set here.
                 let mut set = |key: &str, v: Value, same: bool| {
@@ -119,6 +115,26 @@ fn apply_list(s: &mut Session, p: &Value, kind: ListType) -> Result<Value> {
         }
         Ok(json!({"on": on}))
     })
+}
+
+/// Whether every paragraph of `targets` has list `kind`.
+fn all_have(d: &designcraft_doc::Document, targets: &[super::text::Target], kind: ListType) -> bool {
+    targets.iter().all(|t| {
+        d.text_story(t.story, t.cell).is_some_and(|st| {
+            let (a, b) = (st.para_at(t.range.start), st.para_at(t.range.end.max(t.range.start)));
+            st.paras.get(a..=b).is_some_and(|ps| ps.iter().all(|pf| d.styles.resolve_para(pf).0.list_type == kind))
+        })
+    })
+}
+
+impl Session {
+    /// Whether the Bulleted or Numbered List button (and Type › Apply Bullets or Numbers) shows
+    /// pressed: every paragraph the list commands apply to has list `kind`, through the selected
+    /// text, table cells or text frames.
+    pub fn selection_has_list(&self, kind: ListType) -> bool {
+        let targets = super::text::format_targets_pub(self);
+        !targets.is_empty() && self.doc().is_ok_and(|st| all_have(&st.doc, &targets, kind))
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +189,44 @@ mod tests {
         s.execute("list.bullets", &json!({"on": false})).unwrap();
         assert_eq!(para(&s, 0).0.left_indent, 36.0);
         assert!(s.execute("list.bullets", &json!({"on": "yes"})).is_err());
+    }
+
+    /// Pressed means every targeted paragraph has the list: a selection reaching an unbulleted
+    /// paragraph, or a frame with one, isn't. Explicitly off, a list button takes away its own
+    /// list only: a bulleted paragraph keeps bullets and indent when Numbers go off.
+    #[test]
+    fn a_list_is_pressed_and_turned_off_for_its_own_paragraphs() {
+        use designcraft_doc::ListType;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Eggs\nMilk\nFlour"})).unwrap();
+        let sid = f["story"].as_u64().unwrap();
+        let select = |s: &mut Session, a: usize, b: usize| {
+            s.execute("text.select", &json!({"story": sid, "anchor": a, "focus": b})).unwrap();
+        };
+        select(&mut s, 0, 3);
+        s.execute("list.bullets", &json!({})).unwrap();
+        assert!(s.selection_has_list(ListType::Bullets));
+        assert!(!s.selection_has_list(ListType::Numbers));
+        // From the bulleted Eggs into the plain Milk: not pressed, and a press bullets both.
+        select(&mut s, 0, 7);
+        assert!(!s.selection_has_list(ListType::Bullets));
+        // The frame selected: its whole story, Flour unbulleted.
+        s.execute("selection.set", &json!({"ids": [f["id"]]})).unwrap();
+        assert!(!s.selection_has_list(ListType::Bullets));
+        // Eggs bulleted, Milk numbered; Numbers off over both leaves Eggs' bullets and indent.
+        select(&mut s, 5, 7);
+        s.execute("list.numbers", &json!({"on": true})).unwrap();
+        select(&mut s, 0, 7);
+        s.execute("list.numbers", &json!({"on": false})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let st = d.story(designcraft_doc::StoryId(sid)).unwrap();
+        let p = |i: usize| d.styles.resolve_para(&st.paras[i]).0;
+        assert_eq!((p(0).list_type, p(0).left_indent, p(0).first_line_indent), (ListType::Bullets, 18.0, -18.0));
+        assert_eq!((p(1).list_type, p(1).left_indent), (ListType::None, 0.0));
+        // With no text or frame selected, nothing is pressed.
+        s.execute("selection.set", &json!({"ids": []})).unwrap();
+        assert!(!s.selection_has_list(ListType::Bullets));
     }
 
     /// The digit the story's first line starts with (its list number).

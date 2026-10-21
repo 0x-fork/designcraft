@@ -2380,18 +2380,10 @@ pub fn checked(app: &DesignApp, id: &str, params: &Value) -> Option<bool> {
         "view.hiddenCharacters" => app.ui.hidden_characters,
         "view.taggedFrames" => app.ui.tagged_frames,
         "changes.track" => app.session.active().is_some_and(|d| d.doc.settings.track_changes),
-        // Pressed, as the Bulleted and Numbered List buttons: the selected paragraphs have it.
+        // Pressed, as the Bulleted and Numbered List buttons: every paragraph the command applies
+        // to (selected text, cells or text frames) has it.
         "list.bullets" | "list.numbers" => {
-            let kind = if id == "list.bullets" { designcraft_doc::ListType::Bullets } else { designcraft_doc::ListType::Numbers };
-            app.session
-                .active()
-                .and_then(|st| {
-                    let t = st.selection.text?;
-                    let story = st.doc.text_story(t.story, t.cell)?;
-                    let pf = story.paras.get(story.para_at(t.range().start))?;
-                    Some(st.doc.styles.resolve_para(pf).0.list_type == kind)
-                })
-                .unwrap_or(false)
+            app.session.selection_has_list(if id == "list.bullets" { designcraft_doc::ListType::Bullets } else { designcraft_doc::ListType::Numbers })
         }
         "window.controlBar" => app.ui.control_bar,
         "window.split" => app.split,
