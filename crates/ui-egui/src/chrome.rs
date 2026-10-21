@@ -1383,6 +1383,18 @@ mod tests {
         let st = h.state().app.session.doc().unwrap();
         let sid = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
         assert_eq!(st.doc.story(sid).unwrap().format_after(0).over.leading, Some(designcraft_doc::Leading::Points(87.6)));
+        // Escape cancels: the same typing, then Escape, leaves the leading automatic.
+        h.state_mut().app.run("type.char", serde_json::json!({"attrs": {"leading": {"kind": "auto"}}})).unwrap();
+        h.run_steps(3);
+        let auto = h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading;
+        let lead = field(&h, "(87.6 pt)");
+        press(&mut h, lead.center());
+        h.run_steps(2);
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        h.event(egui::Event::Text("87.6".into()));
+        h.key_press(egui::Key::Escape);
+        h.run_steps(3);
+        assert_eq!(h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading, auto, "Escape leaves it automatic");
     }
 
     #[test]
