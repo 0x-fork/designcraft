@@ -1530,15 +1530,18 @@ fn paragraph_more(app: &mut DesignApp, ui: &mut Ui, p: &Value, fw: f32) {
 }
 
 fn bullets_section(app: &mut DesignApp, ui: &mut Ui) {
-    let Some(a) = text_attrs(app) else { return };
-    let lt = a["para"]["listType"].as_str().unwrap_or("none").to_string();
+    if text_attrs(app).is_none() {
+        return;
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
-        // As InDesign's: a list with the default hanging indent, or (pressed) no list.
+        // As InDesign's: a list with the default hanging indent, or (pressed: every selected
+        // paragraph has it, as Type › Apply Bullets shows) no list.
+        use designcraft_doc::ListType;
         for (icon, kind, cmd, tip) in
-            [("bullets", "bullets", "list.bullets", "Bulleted List"), ("numbering", "numbers", "list.numbers", "Numbered List")]
+            [("bullets", ListType::Bullets, "list.bullets", "Bulleted List"), ("numbering", ListType::Numbers, "list.numbers", "Numbered List")]
         {
-            let on = lt == kind;
+            let on = app.session.selection_has_list(kind);
             if icon_toggle(ui, icon, on, crate::i18n::tr(&app.ui.language, tip)).clicked() {
                 let _ = app.run(cmd, json!({"on": !on}));
             }
