@@ -873,7 +873,8 @@ fn control_paragraph(
                     set = Some((ka, v));
                 }
             } else {
-                let min = if kb == "firstLineIndent" { -10_000.0 } else { 0.0 };
+                // The first and last line indents may be negative (a hanging line), as InDesign's.
+                let min = if matches!(kb, "firstLineIndent" | "lastLineIndent") { -10_000.0 } else { 0.0 };
                 if let Some(v) = icon_field(ui, ib, &tr(tb), NumField::measure(kb, para[kb].as_f64(), units).width(84.0).range(min, 10_000.0)) {
                     set = Some((kb, v));
                 }
@@ -913,16 +914,13 @@ fn control_paragraph(
     }
     vsep(ui);
     // Bulleted List over Numbered List, as InDesign's (a list with the default hanging indent, or,
-    // pressed, none).
-    let lt = para["listType"].as_str().unwrap_or("none").to_string();
+    // pressed, none). Pressed when every selected paragraph has it, as Type › Apply Bullets shows.
+    use designcraft_doc::ListType;
+    let pressed = [ListType::Bullets, ListType::Numbers].map(|k| app.session.selection_has_list(k));
     let mut list = None;
     rows(ui, |ui, row| {
-        let (icon, kind, cmd, tip) = if row == 0 {
-            ("bullets", "bullets", "list.bullets", "Bulleted List")
-        } else {
-            ("numbering", "numbers", "list.numbers", "Numbered List")
-        };
-        let on = lt == kind;
+        let (icon, cmd, tip) = if row == 0 { ("bullets", "list.bullets", "Bulleted List") } else { ("numbering", "list.numbers", "Numbered List") };
+        let on = pressed.get(row).copied().unwrap_or(false);
         if crate::widgets::icon_toggle(ui, icon, on, &tr(tip)).clicked() {
             list = Some((cmd, !on));
         }
@@ -1857,6 +1855,28 @@ mod tests {
         click(&mut h, "Paragraph Borders and Shading…", 1);
         let d = h.state().app.ui.dialog.clone().expect("the dialog");
         assert_eq!((d.id.as_str(), d.s("section").as_str()), ("paragraphLocal", "border"));
+        // The Last Line Right Indent takes a negative value, as the First Line Left Indent does.
+        h.state_mut().app.ui.dialog = None;
+        h.state_mut().app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 15})).unwrap();
+        h.state_mut().app.session.set_tool("type");
+        h.run_steps(3);
+        // The field is labelled by its icon.
+        let at = h
+            .query_all_by_label("Last Line Right Indent")
+            .filter(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
+            .map(|n| n.rect())
+            .find(|r| in_bar(*r))
+            .expect("the last line indent")
+            .center();
+        h.hover_at(at);
+        h.drag_at(at);
+        h.drop_at(at);
+        h.run_steps(2);
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        h.event(egui::Event::Text("-0p6".into()));
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(crate::panels::text_attrs(&mut h.state_mut().app).unwrap()["para"]["lastLineIndent"].as_f64(), Some(-6.0));
     }
 
     #[test]

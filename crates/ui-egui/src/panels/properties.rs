@@ -1497,7 +1497,8 @@ fn paragraph_more(app: &mut DesignApp, ui: &mut Ui, p: &Value, fw: f32) {
     for (i, (l, r)) in rows.into_iter().enumerate() {
         let y = i as f32 * (FIELD_H + 5.0);
         for (right, (icon, tip, key)) in [(false, l), (true, r)] {
-            let min = if key == "firstLineIndent" { -10_000.0 } else { 0.0 };
+            // The first and last line indents may be negative (a hanging line), as InDesign's.
+            let min = if matches!(key, "firstLineIndent" | "lastLineIndent") { -10_000.0 } else { 0.0 };
             let field = NumField::measure(key, p[key].as_f64(), u).spinner().range(min, 10_000.0);
             if let Some(v) = half_field(ui, b, right, y, half, icon, &tr(tip), field) {
                 let _ = app.run("type.para", json!({"attrs": {key: v}}));
