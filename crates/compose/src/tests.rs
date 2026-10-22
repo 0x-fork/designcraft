@@ -1014,6 +1014,45 @@ fn hyphenation_zone_limits_ragged_hyphens() {
 }
 
 #[test]
+fn hyphenate_across_column_off_ends_no_column_with_a_hyphen() {
+    let text = CORPUS.join(" ");
+    // Column-end lines that are hyphenated, over frame heights that end the first column at each
+    // line in turn.
+    let ends = |across: bool, composer: designcraft_doc::Composer| {
+        let mut ends = 0;
+        let mut lines = 0;
+        for h in (30..400).step_by(3) {
+            let para = ParaAttrs {
+                align: Some(Align::Left),
+                hyph_weight: Some(0.0),
+                hyph_across_column: Some(across),
+                composer: Some(composer),
+                ..Default::default()
+            };
+            let (mut d, sid, fid) = doc_with(&text, Rect::new(0.0, 0.0, 240.0, h as f64), para);
+            d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.columns = 2;
+            let cs = compose_story(&d, sid, &ComposeOptions::default());
+            let col0: Vec<&Line> = all_lines(&cs).into_iter().filter(|l| l.column == 0).collect();
+            ends += usize::from(col0.last().is_some_and(|l| l.hyphenated));
+            lines += col0.len();
+            // The frame's last line too, when the text goes on (overset).
+            let last = all_lines(&cs).into_iter().last();
+            ends += usize::from(cs.is_overset() && last.is_some_and(|l| l.hyphenated && !l.last_in_para));
+        }
+        (ends, lines)
+    };
+    for c in [designcraft_doc::Composer::Paragraph, designcraft_doc::Composer::SingleLine] {
+        let (on, lines_on) = ends(true, c);
+        let (off, lines_off) = ends(false, c);
+        // With it on, columns do end in hyphens here; with it off, none does, and the columns
+        // still fill.
+        assert!(on > 3, "{c:?}: {on}");
+        assert_eq!(off, 0, "{c:?}");
+        assert!(lines_off * 10 >= lines_on * 9, "{c:?}: {lines_off} {lines_on}");
+    }
+}
+
+#[test]
 fn discretionary_hyphen_replaces_automatic_points() {
     let text = "aaaa bbbb cccc extraordi\u{AD}narily dddd eeee";
     let para = ParaAttrs { align: Some(Align::Left), ..Default::default() };
