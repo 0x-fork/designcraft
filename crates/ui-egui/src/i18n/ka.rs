@@ -1172,6 +1172,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Load DTD…", "DTD-ის ჩატვირთვა…"),
     ("Location:", "მდებარეობა:"),
     ("Lock Guides", "დამხმარე ხაზების ჩაკეტვა"),
+    ("Lock Column Guides", "სვეტების დამხმარე ხაზების ჩაკეტვა"),
     ("Miter Limit:", "მახვილის ზღვარი:"),
     ("New Article from Selection", "ახალი სტატია მონიშნულიდან"),
     ("New Note at Cursor", "ახალი შენიშვნა კურსორთან"),
