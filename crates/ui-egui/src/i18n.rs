@@ -1000,6 +1000,33 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ],
     ),
     ("Load Styles", ["Formate laden", "Charger les styles", "Cargar estilos", "スタイルを読み込み", "加载样式"]),
+    ("Hyphenation…", ["Silbentrennung …", "Césure…", "Separación por sílabas…", "ハイフネーション…", "连字…"]),
+    (
+        "Hyphenation Settings",
+        ["Silbentrennungseinstellungen", "Paramètres de césure", "Configuración de separación por sílabas", "ハイフネーション設定", "连字设置"],
+    ),
+    ("hyphens", ["Trennstriche", "tirets", "guiones", "ハイフン", "连字符"]),
+    ("Hyphenation Zone:", ["Silbentrennungsbereich:", "Zone de césure :", "Zona de separación:", "ハイフネーション領域 :", "连字区："]),
+    ("Better Spacing", ["Bessere Abstände", "Meilleur espacement", "Mejor espaciado", "スペースを優先", "更好的间距"]),
+    ("Fewer Hyphens", ["Weniger Trennstriche", "Moins de tirets", "Menos guiones", "ハイフンを減らす", "更少的连字符"]),
+    (
+        "Hyphenate Capitalized Words",
+        [
+            "Großgeschriebene Wörter trennen",
+            "Césure des mots en capitales",
+            "Separar palabras en mayúscula",
+            "大文字で始まる単語をハイフネーション",
+            "连字大写的单词",
+        ],
+    ),
+    (
+        "Hyphenate Last Word",
+        ["Letztes Wort trennen", "Césure du dernier mot", "Separar última palabra", "最後の単語をハイフネーション", "连字最后一个单词"],
+    ),
+    (
+        "Hyphenate Across Column",
+        ["Über Spalten trennen", "Césure entre colonnes", "Separar entre columnas", "段をまたいでハイフネーション", "跨栏连字"],
+    ),
     (
         "Differs from this document",
         ["Weicht von diesem Dokument ab", "Diffère de ce document", "Difiere de este documento", "このドキュメントと異なります", "与此文档不同"],
