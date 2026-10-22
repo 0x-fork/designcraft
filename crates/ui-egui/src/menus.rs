@@ -5670,4 +5670,42 @@ mod tests {
         let page = crate::panels::properties::PAGE_PRESETS.iter().find(|p| p.0 == "A6").expect("Properties page-size list has A6");
         assert!((page.1 - a6.width).abs() < 0.01 && (page.2 - a6.height).abs() < 0.01, "{page:?} vs {a6:?}");
     }
+
+    // Regression test for #249: a menu row only reacted over its text, not across the whole row.
+    #[test]
+    fn menu_rows_are_selectable_across_the_full_width() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0));
+        let entries = vec![cmd_item("app.preferences", Value::Null)];
+        let mut tick = 0;
+        let mut frame = |app: &mut DesignApp, events: Vec<egui::Event>| {
+            tick += 1;
+            let mut row = egui::Rect::NOTHING;
+            let mut output =
+                ctx.run_ui(egui::RawInput { screen_rect: Some(screen), time: Some(tick as f64 / 60.0), events, ..Default::default() }, |ui| {
+                    egui::Area::new(egui::Id::new("menu_rows")).fixed_pos(egui::pos2(50.0, 50.0)).show(ui.ctx(), |ui| {
+                        let before = ui.cursor().min;
+                        menu_column(app, ui, &[("Test", entries.clone())]);
+                        row = egui::Rect::from_min_max(before, ui.min_rect().max);
+                    });
+                });
+            output.textures_delta.clear();
+            row
+        };
+        frame(&mut app, vec![]);
+        let row = frame(&mut app, vec![]);
+        assert!(row.width() >= 239.0, "the column is at least 240 wide: {row:?}");
+        let far = egui::pos2(row.right() - 6.0, row.top() + 8.0);
+        for pressed in [true, false] {
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(far),
+                    egui::Event::PointerButton { pos: far, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+                ],
+            );
+        }
+        assert!(app.ui.dialog.is_some(), "clicking the empty end of the Preferences… row must choose it");
+    }
 }
