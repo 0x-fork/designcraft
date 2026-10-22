@@ -5317,7 +5317,7 @@ mod tests {
         let (pen, direct, text) = (shown("pen"), shown("directSelection"), shown("type"));
         let ppp = h.ctx.pixels_per_point();
         let images = &mut h.state_mut().cursors;
-        match crate::cursors::MODE {
+        match crate::cursors::mode() {
             crate::cursors::Mode::Os => {
                 assert_eq!(pen.1, images.get(Cursor::Pen, ppp), "Pen");
                 assert_eq!(direct.1, images.get(Cursor::ArrowHollow, ppp), "Direct Selection");
