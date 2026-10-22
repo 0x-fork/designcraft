@@ -4234,3 +4234,35 @@ fn cell_first_baseline_comes_from_cell_styles_table_regions_and_cells_and_round_
     let s2 = back.styles.cell.iter().find(|c| c.name == "Cap").unwrap();
     assert_eq!(s2.first_baseline, Some(FirstBaseline::CapHeight));
 }
+
+/// Cell Options › Text › Rotation: the angle survives the round trip, and the import says it is
+/// not composed — narrow header columns of vertical labels come in horizontal and wrap mid-word,
+/// and nothing said so (#1468).
+#[test]
+fn rotated_cell_text_round_trips_and_the_import_says_it_is_not_composed() {
+    let mut d = Document::new(&NewDocument::default());
+    let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(0.0, 0.0, 300.0, 300.0), d.default_layer(), "", ParaFormat::default()).unwrap();
+    let mut t = designcraft_doc::Table::new(7, 1, 3, 0, 0, 300.0);
+    t.cell_mut(0, 0).unwrap().rotation = 90.0;
+    t.cell_mut(0, 1).unwrap().rotation = 270.0;
+    d.story_mut(sid).unwrap().insert_table(0, t);
+    let bytes = export_idml(&d);
+    let story = zip_text(&bytes, "Stories/");
+    assert!(story.contains(r#"RotationAngle="90""#) && story.contains(r#"RotationAngle="270""#), "{story}");
+
+    let back = import_idml_report(&bytes, &|_| None).unwrap();
+    let t = back.document.stories.values().find(|st| !st.tables.is_empty()).unwrap().tables.values().next().unwrap().clone();
+    assert_eq!((t.cell(0, 0).unwrap().rotation, t.cell(0, 1).unwrap().rotation, t.cell(0, 2).unwrap().rotation), (90.0, 270.0, 0.0));
+    let about: Vec<&String> = back.warnings.iter().filter(|w| w.contains("rotated text")).collect();
+    assert_eq!(about.len(), 1, "one line for the file, not one per cell: {:?}", back.warnings);
+    assert!(about[0].starts_with("2 table cell(s)"), "{}", about[0]);
+    assert!(about[0].contains("composed horizontally"), "{}", about[0]);
+
+    // A file with no rotated cell says nothing.
+    let mut plain = Document::new(&NewDocument::default());
+    let (_, sid) =
+        plain.add_text_frame(SpreadRef::Doc(0), Rect::new(0.0, 0.0, 300.0, 300.0), plain.default_layer(), "", ParaFormat::default()).unwrap();
+    plain.story_mut(sid).unwrap().insert_table(0, designcraft_doc::Table::new(8, 1, 2, 0, 0, 200.0));
+    let quiet = import_idml_report(&export_idml(&plain), &|_| None).unwrap();
+    assert!(quiet.warnings.iter().all(|w| !w.contains("rotated text")), "{:?}", quiet.warnings);
+}
