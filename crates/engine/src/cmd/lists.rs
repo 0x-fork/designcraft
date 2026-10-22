@@ -99,8 +99,8 @@ fn apply_list(s: &mut Session, p: &Value, kind: ListType) -> Result<Value> {
                     return;
                 }
                 let (style, _) = styles.resolve_para_style(&pf.style);
-                // The hanging indent set on the paragraph itself (by a list button), not by its style.
-                let own_hang = pf.para.left_indent == Some(LIST_HANG) && pf.para.first_line_indent == Some(-LIST_HANG);
+                // The hanging indent this button set (and nothing has changed since).
+                let own_hang = pf.para.list_hang == Some(true) && now.left_indent == LIST_HANG && now.first_line_indent == -LIST_HANG;
                 // A value: left to the style when it gives the same, else set here.
                 let mut set = |key: &str, v: Value, same: bool| {
                     let _ = pf.para.set_json(key, if same { &Value::Null } else { &v });
@@ -110,10 +110,15 @@ fn apply_list(s: &mut Session, p: &Value, kind: ListType) -> Result<Value> {
                 if on && now.left_indent == 0.0 && now.first_line_indent == 0.0 {
                     set("leftIndent", json!(LIST_HANG), style.left_indent == LIST_HANG);
                     set("firstLineIndent", json!(-LIST_HANG), style.first_line_indent == -LIST_HANG);
-                } else if !on && now.list_type == kind && own_hang {
-                    // Only the hanging indent set here: one the paragraph style gives stays.
-                    set("leftIndent", json!(0.0), style.left_indent == 0.0);
-                    set("firstLineIndent", json!(0.0), style.first_line_indent == 0.0);
+                    set("listHang", json!(true), false);
+                } else if !on && now.list_type == kind {
+                    // Only the hanging indent set here: one the paragraph had before, or its style
+                    // gives, stays.
+                    if own_hang {
+                        set("leftIndent", json!(0.0), style.left_indent == 0.0);
+                        set("firstLineIndent", json!(0.0), style.first_line_indent == 0.0);
+                    }
+                    set("listHang", Value::Null, true);
                 }
             });
         }
@@ -318,6 +323,25 @@ Flour
         s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 16})).unwrap();
         s.execute("list.numbers", &json!({"on": true})).unwrap();
         assert_eq!(kinds(&s), [ListType::Numbers; 4]);
+    }
+
+    /// A paragraph's own hanging indent, the same as the button's, stays when the list goes off:
+    /// the button takes away only the indent it set.
+    #[test]
+    fn a_paragraphs_own_hanging_indent_stays_when_the_list_goes_off() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Eggs"})).unwrap();
+        let sid = f["story"].as_u64().unwrap();
+        s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 4})).unwrap();
+        s.execute("type.para", &json!({"attrs": {"leftIndent": 18, "firstLineIndent": -18}})).unwrap();
+        s.execute("list.bullets", &json!({"on": true})).unwrap();
+        s.execute("list.bullets", &json!({"on": false})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let pf = &d.story(designcraft_doc::StoryId(sid)).unwrap().paras[0];
+        let p = d.styles.resolve_para(pf).0;
+        assert_eq!((p.list_type, p.left_indent, p.first_line_indent), (designcraft_doc::ListType::None, 18.0, -18.0));
+        assert_eq!(pf.para.list_hang, None, "nothing of the list left");
     }
 
     /// A hanging indent the paragraph style gives stays when the list goes off.
