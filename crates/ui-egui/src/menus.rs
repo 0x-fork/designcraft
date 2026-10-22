@@ -110,6 +110,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.spanColumnsDialog", "Span Columns…", None, "{} — span or split columns of the selected paragraphs (type.para)"),
     ("app.bulletsNumberingDialog", "Bullets and Numbering…", None, "{} — bullets or numbers of the selected paragraphs (type.para)"),
     (
+        "app.hyphenationDialog",
+        "Hyphenation…",
+        None,
+        "{} — Hyphenation Settings of the selected paragraphs (type.para): limits, zone, Better Spacing ↔ Fewer Hyphens, Preview",
+    ),
+    (
         "app.justificationDialog",
         "Justification…",
         Some("Cmd+Alt+Shift+J"),
@@ -1294,6 +1300,18 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.dialog = Some(crate::dialogs::Dialog::new("paragraphLocal", fields));
             Ok(Value::Null)
         }
+        "app.hyphenationDialog" => {
+            let Some(a) = app.session.execute("type.selectionAttrs", &json!({"mixed": true})).ok().filter(|a| !a.is_null()) else {
+                return Some(Err("select text or a text frame".into()));
+            };
+            let mixed: Vec<&str> = a["paraMixed"].as_array().map(|m| m.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+            let current: serde_json::Map<String, Value> = crate::dialogs::HYPH_ATTRS
+                .iter()
+                .map(|k| (k.to_string(), if mixed.contains(k) { Value::Null } else { a["para"][*k].clone() }))
+                .collect();
+            app.ui.dialog = Some(crate::dialogs::Dialog::new("hyphenation", json!({"current": current})));
+            Ok(Value::Null)
+        }
         "app.justificationDialog" => {
             let Some(a) = app.session.execute("type.selectionAttrs", &json!({"mixed": true})).ok().filter(|a| !a.is_null()) else {
                 return Some(Err("select text or a text frame".into()));
@@ -2446,7 +2464,7 @@ pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
     if is_window_control(id) {
         return window_control_available(app, id);
     }
-    if id == "app.justificationDialog" {
+    if matches!(id, "app.justificationDialog" | "app.hyphenationDialog") {
         return enabled(app, "type.para");
     }
     if id.starts_with("fit.") {

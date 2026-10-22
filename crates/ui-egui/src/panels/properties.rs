@@ -1918,11 +1918,13 @@ pub fn paragraph_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Paragraph")).strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             crate::menus::menu_button(ui, "☰", |ui| {
+                // In the order of InDesign's Paragraph panel menu.
                 for (label, id) in [
-                    ("Paragraph Rules…", "app.paragraphRulesDialog"),
                     ("Justification…", "app.justificationDialog"),
-                    ("Paragraph Borders and Shading…", "app.paragraphBordersDialog"),
                     ("Span Columns…", "app.spanColumnsDialog"),
+                    ("Hyphenation…", "app.hyphenationDialog"),
+                    ("Paragraph Rules…", "app.paragraphRulesDialog"),
+                    ("Paragraph Borders and Shading…", "app.paragraphBordersDialog"),
                     ("Bullets and Numbering…", "app.bulletsNumberingDialog"),
                 ] {
                     if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
