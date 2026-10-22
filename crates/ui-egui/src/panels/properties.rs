@@ -1528,7 +1528,7 @@ fn paragraph_more(app: &mut DesignApp, ui: &mut Ui, p: &Value, fw: f32) {
     for (i, (l, r)) in rows.into_iter().enumerate() {
         let y = i as f32 * (FIELD_H + 5.0);
         for (right, (icon, tip, key)) in [(false, l), (true, r)] {
-            let min = if key == "firstLineIndent" { -10_000.0 } else { 0.0 };
+            let min = para_field_min(key);
             let field = NumField::measure(key, p[key].as_f64(), u).spinner().range(min, 10_000.0);
             if let Some(v) = half_field(ui, b, right, y, half, icon, &tr(tip), field) {
                 let _ = app.run("type.para", json!({"attrs": {key: v}}));
@@ -3068,6 +3068,12 @@ pub fn digit_label(lang: &str, o: (&str, &str, &str)) -> String {
     if o.2.is_empty() { name.to_string() } else { format!("{name}  {}", o.2) }
 }
 
+/// The least value a paragraph field takes: the first and last line indents may be negative (a
+/// hanging line, a last line past the right indent), as in InDesign; the others not.
+pub(crate) fn para_field_min(key: &str) -> f64 {
+    if matches!(key, "firstLineIndent" | "lastLineIndent") { -10_000.0 } else { 0.0 }
+}
+
 #[cfg(test)]
 mod tests {
     use egui_kittest::{Harness, kittest::Queryable};
@@ -3142,6 +3148,18 @@ mod tests {
     }
 
     /// With the caret in text, the Stroke panel offers the text's stroke options, not an empty panel.
+    /// The first and last line indents take negative values, as InDesign's (and the Paragraph
+    /// panel's) do; the left and right indents and the spacing don't.
+    #[test]
+    fn last_line_indent_may_be_negative() {
+        for key in ["firstLineIndent", "lastLineIndent"] {
+            assert!(super::para_field_min(key) < 0.0, "{key}");
+        }
+        for key in ["leftIndent", "rightIndent", "spaceBefore", "spaceAfter"] {
+            assert_eq!(super::para_field_min(key), 0.0, "{key}");
+        }
+    }
+
     #[test]
     fn stroke_panel_shows_the_text_stroke_options_while_text_is_selected() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());

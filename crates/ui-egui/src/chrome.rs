@@ -873,7 +873,7 @@ fn control_paragraph(
                     set = Some((ka, v));
                 }
             } else {
-                let min = if kb == "firstLineIndent" { -10_000.0 } else { 0.0 };
+                let min = crate::panels::properties::para_field_min(kb);
                 if let Some(v) = icon_field(ui, ib, &tr(tb), NumField::measure(kb, para[kb].as_f64(), units).width(84.0).range(min, 10_000.0)) {
                     set = Some((kb, v));
                 }
