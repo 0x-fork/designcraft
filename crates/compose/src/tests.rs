@@ -1053,6 +1053,53 @@ fn hyphenate_across_column_off_ends_no_column_with_a_hyphen() {
 }
 
 #[test]
+fn hyphenate_across_column_off_keeps_nested_line_styles_on_their_lines() {
+    // The first line in a character style of another colour (the same widths): when its hyphen is
+    // left out at a column end, the style still covers exactly the first line as set.
+    let text = CORPUS.join(" ");
+    let compose = |w: f64, h: f64, across: bool| {
+        let para = ParaAttrs {
+            align: Some(Align::Left),
+            hyph_weight: Some(0.0),
+            hyph_across_column: Some(across),
+            nested_line_styles: Some(vec![designcraft_doc::NestedLineStyle { style: "Lead".into(), lines: 1 }]),
+            ..Default::default()
+        };
+        let (mut d, sid, fid) = doc_with(&text, Rect::new(0.0, 0.0, w, h), para);
+        d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.columns = 2;
+        let chars = designcraft_doc::CharAttrs { fill: Some("[Registration]".into()), ..Default::default() };
+        std::sync::Arc::make_mut(&mut d.styles).character.push(designcraft_doc::CharacterStyle {
+            name: "Lead".into(),
+            based_on: None,
+            chars,
+            shortcut: String::new(),
+        });
+        compose_story(&d, sid, &ComposeOptions::default())
+    };
+    let mut checked = 0;
+    for w in (160..320).step_by(10) {
+        for h in (12..40).step_by(2) {
+            // Where, with the setting on, a hyphenated first line ends column 1.
+            let on = compose(w as f64, h as f64, true);
+            let lines = all_lines(&on);
+            if !(lines.iter().filter(|l| l.column == 0).count() == 1 && lines[0].hyphenated) {
+                continue;
+            }
+            let cs = compose(w as f64, h as f64, false);
+            let lines = all_lines(&cs);
+            assert!(!lines[0].hyphenated, "{w}×{h}");
+            let lead = |l: &Line| {
+                l.glyphs.iter().filter(|g| g.len > 0 && g.visible).map(|g| cs.styles[g.style as usize].fill == "[Registration]").collect::<Vec<_>>()
+            };
+            assert!(lead(lines[0]).iter().all(|&r| r), "{w}×{h}: first line");
+            assert!(lead(lines[1]).iter().all(|&r| !r), "{w}×{h}: second line");
+            checked += 1;
+        }
+    }
+    assert!(checked > 3, "{checked}");
+}
+
+#[test]
 fn discretionary_hyphen_replaces_automatic_points() {
     let text = "aaaa bbbb cccc extraordi\u{AD}narily dddd eeee";
     let para = ParaAttrs { align: Some(Align::Left), ..Default::default() };

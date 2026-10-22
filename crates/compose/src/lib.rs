@@ -845,9 +845,12 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
     let mut info: Vec<ParaInfo> = Vec::with_capacity(np);
     let mut force_col = vec![false; np];
     let mut line_cap: Vec<Option<usize>> = vec![None; np];
-    // Hyphenate Across Column off: the hyphenation points (glyph indices) a paragraph is re-laid
-    // without, because a line ending at one of them ended a column or frame.
+    // Hyphenate Across Column off: the hyphenation points (story bytes) a paragraph is re-laid
+    // without, because a line ending at one of them ended a column or frame. Each re-lay leaves
+    // out one more point of the paragraph, so they are bounded by its points; the cap only guards
+    // against keep options clearing them over and over.
     let mut no_hyph: Vec<Vec<usize>> = vec![Vec::new(); np];
+    let mut hyph_relays = 0usize;
     let mut restores = 0usize;
     let mut pi = 0;
     let var_story = vars::has_vars(story);
@@ -1086,7 +1089,8 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 };
                 apply_desired_spacing(&mut gl, &pp);
                 mojikumi::apply(&mut gl, &doc.styles, &pp.mojikumi);
-                let hy = hyphenation_points(&story.text, &gl, &pp, &hyph_exceptions, &foreign_ranges(doc, story, prange.clone(), &base_chars));
+                let mut hy = hyphenation_points(&story.text, &gl, &pp, &hyph_exceptions, &foreign_ranges(doc, story, prange.clone(), &base_chars));
+                suppress_hyphens(&mut hy, &gl, no_hyph.get(pi).map_or(&[], Vec::as_slice));
                 let breaks = if pp.composer.single_line() || gl.iter().any(|g| g.ch == '\t') || gl.len() > 4000 {
                     let tab = |j: usize, x: f64, i: usize| {
                         let ind = pp.left_indent + if j == 0 { pp.first_line_indent } else { 0.0 };
@@ -1223,11 +1227,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         mojikumi::apply(&mut glyphs, &doc.styles, &pp.mojikumi);
         let mut hyph_after =
             hyphenation_points(&story.text, &glyphs, &pp, &hyph_exceptions, &foreign_ranges(doc, story, prange.clone(), &base_chars));
-        for &k in no_hyph.get(pi).into_iter().flatten() {
-            if let Some(h) = hyph_after.get_mut(k) {
-                *h = false;
-            }
-        }
+        suppress_hyphens(&mut hyph_after, &glyphs, no_hyph.get(pi).map_or(&[], Vec::as_slice));
         let base_size = base_chars.size;
         let spacing = spacing_for(&pp, base_size);
         // An empty paragraph takes its height from its paragraph mark's character format.
@@ -1381,7 +1381,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         let mut line_no = 0usize;
         // Paragraph line number of the first line in the current column.
         let mut col_first_line = 0usize;
-        // The glyph after which the last line set ended at an automatic hyphenation point.
+        // The story byte at which the last line set ended at an automatic hyphenation point.
         let mut hyphen_at: Option<usize> = None;
         let has_tabs = glyphs.iter().any(|g| g.ch == '\t');
         let mut first_line_rect: Option<(usize, f64, f64, f64)> = None; // frame, baseline, ascent, x-span
@@ -1631,9 +1631,9 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     && !pp.hyph_across_column
                     && line_no > col_first_line
                     && let Some(at) = hyphen_at
-                    && restores < (4 * np + 64) * (balance_runs + 1)
+                    && hyph_relays < (story.text.len() + 64) * (restores + 1)
                 {
-                    restores += 1;
+                    hyph_relays += 1;
                     no_hyph[pi].push(at);
                     rewind(pi, &snaps, &note_snaps, &mut notes, &mut out, &mut cur, &mut list_counter, &mut force_col, &mut line_cap, &mut no_hyph);
                     continue 'paras;
@@ -1863,7 +1863,8 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 cur.last_descent = desc;
                 cur.pending = 0.0;
                 cur.grid_next = grid_end.map(|end| (baseline, end));
-                hyphen_at = e.checked_sub(1).filter(|&i| b.hyphen && hyph_after.get(i) == Some(&true));
+                hyphen_at =
+                    e.checked_sub(1).filter(|&i| b.hyphen && hyph_after.get(i) == Some(&true)).and_then(|i| glyphs.get(i)).map(|g| g.byte + g.len);
                 line_no += 1;
                 // A column / frame / page break inside the paragraph: the rest of it continues in the
                 // new column/frame/page, re-broken there. (A break that ends the paragraph moves the
@@ -4062,6 +4063,18 @@ fn foreign_ranges(
         .filter(|(_, l)| !is_english(l))
         .map(|(r, l)| (r, hyphen::Lang::for_language(&l)))
         .collect()
+}
+
+/// Leave out the hyphenation points after the glyphs that end at story bytes `at`.
+fn suppress_hyphens(hy: &mut [bool], glyphs: &[Glyph], at: &[usize]) {
+    if at.is_empty() {
+        return;
+    }
+    for (h, g) in hy.iter_mut().zip(glyphs) {
+        if *h && at.contains(&(g.byte + g.len)) {
+            *h = false;
+        }
+    }
 }
 
 fn hyphenation_points(
