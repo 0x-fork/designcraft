@@ -34,7 +34,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Hyphenation Zone:", "Area di sillabazione:"),
     ("Better Spacing", "Spaziatura migliore"),
     ("Fewer Hyphens", "Meno trattini"),
-    ("Hyphenate Capitalized Words", "Sillaba parole maiuscole"),
+    ("Hyphenate Capitalized Words", "Sillaba parole con iniziale maiuscola"),
     ("Hyphenate Last Word", "Sillaba ultima parola"),
     ("Hyphenate Across Column", "Sillaba tra colonne"),
     ("Paste Vector Art", "Incolla grafica vettoriale"),

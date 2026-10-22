@@ -37,7 +37,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Hyphenation Zone:", "Zóna dělení:"),
     ("Better Spacing", "Lepší mezery"),
     ("Fewer Hyphens", "Méně spojovníků"),
-    ("Hyphenate Capitalized Words", "Dělit slova s velkými písmeny"),
+    ("Hyphenate Capitalized Words", "Dělit slova s velkým počátečním písmenem"),
     ("Hyphenate Last Word", "Dělit poslední slovo"),
     ("Hyphenate Across Column", "Dělit přes sloupce"),
     ("Reverse Path", "Obrátit cestu"),
