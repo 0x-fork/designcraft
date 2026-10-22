@@ -2376,6 +2376,10 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                             check(ui, &mut d, "preview", &preview);
                         });
                         hyphenation_preview(app, &mut d);
+                        if let Some(st) = d.fields.get("status").and_then(Value::as_str) {
+                            ui.add_space(6.0);
+                            crate::rtl::label(ui, egui::RichText::new(st).color(ui.visuals().error_fg_color));
+                        }
                     }
                     "insertXref" => insert_xref(app, ui, &mut d),
                     "findFont" => find_font(app, ui, &mut d),
@@ -3194,7 +3198,14 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             if attrs.is_empty() {
                 return Ok(Value::Null);
             }
-            app.run("type.para", json!({"attrs": attrs}))
+            app.run("type.para", json!({"attrs": attrs})).inspect_err(|e| {
+                // The dialog stays open, with the reason, to be corrected.
+                app.status(e.clone());
+                let mut d = d;
+                d.fields.remove(PREVIEWED);
+                d.fields.insert("status".into(), json!(e));
+                app.ui.dialog = Some(d);
+            })
         }
         "justification" => {
             let current = d.fields.get("current").cloned().unwrap_or_default();
@@ -5825,7 +5836,8 @@ fn hyphenation(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, prefix: &str, curr
     };
     let checkbox = |ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str| {
         let v = cur(d, key);
-        let mut on = v.as_bool().unwrap_or(true);
+        // Mixed shows indeterminate and starts off, so the first click turns it on for all.
+        let mut on = v.as_bool().unwrap_or(false);
         if ui.add(egui::Checkbox::new(&mut on, crate::rtl::widget(ui, tr(label))).indeterminate(v.is_null())).changed() {
             d.fields.insert(format!("{prefix}{key}"), json!(on));
         }
@@ -5911,15 +5923,30 @@ fn hyphenation_preview(app: &mut DesignApp, d: &mut Dialog) {
         return;
     }
     let params = json!({"attrs": hyphenation_edits(d)});
-    if shown.as_ref() == Some(&params) {
+    if shown.as_ref() == Some(&params) || d.fields.get(PREVIEW_FAILED) == Some(&params) {
         return;
     }
     if shown.is_none() && app.session.begin_interaction("Hyphenation").is_err() {
         return;
     }
-    let _ = app.session.preview("type.para", params.clone());
-    d.fields.insert(PREVIEWED.into(), params);
+    match app.session.preview("type.para", params.clone()) {
+        Ok(_) => {
+            d.fields.remove("status");
+            d.fields.remove(PREVIEW_FAILED);
+            d.fields.insert(PREVIEWED.into(), params);
+        }
+        // Rejected settings: the paragraphs go back, and the reason shows until they change.
+        Err(e) => {
+            app.session.cancel_interaction();
+            d.fields.remove(PREVIEWED);
+            d.fields.insert("status".into(), json!(e.to_string()));
+            d.fields.insert(PREVIEW_FAILED.into(), params);
+        }
+    }
 }
+
+/// The hyphenation settings a preview was refused for (not tried again until they change).
+const PREVIEW_FAILED: &str = "previewFailed";
 
 fn justification(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, prefix: &str, current: &Value) {
     let cur = |d: &Dialog, k: &str| d.fields.get(&format!("{prefix}{k}")).cloned().unwrap_or_else(|| current[k].clone());
@@ -7816,6 +7843,50 @@ mod tests {
         app.ui.dialog = None;
         app.run("edit.deselectAll", json!({})).unwrap();
         assert!(!crate::menus::menu_enabled(&app, "app.hyphenationDialog"), "no paragraph");
+    }
+
+    /// Hyphenate differs across the selection: it shows mixed, and the first click turns it on for
+    /// all. Settings the command refuses show why: a preview goes back and isn't retried until they
+    /// change, and OK keeps the dialog open.
+    #[test]
+    fn hyphenation_settings_mixed_checkbox_and_refused_settings() {
+        let (mut app, story) = two_paragraphs();
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+        app.run("type.para", json!({"attrs": {"hyphenate": false}})).unwrap();
+        app.run("text.select", json!({"story": story, "anchor": 0, "focus": 7})).unwrap();
+        app.run("app.hyphenationDialog", json!({})).unwrap();
+        assert!(app.ui.dialog.as_ref().unwrap().fields["current"]["hyphenate"].is_null(), "mixed");
+        for _ in 0..3 {
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        let at = labels.iter().find(|(t, _, _)| t == "Hyphenate").map(|(_, r, _)| r.left_center() - egui::vec2(10.0, 0.0)).unwrap();
+        click_dialog(&mut app, &ctx, screen, at);
+        assert_eq!(app.ui.dialog.as_ref().unwrap().fields.get("hyphenate"), Some(&json!(true)), "the first click turns it on");
+        // A refused setting (as a control-channel caller could send it): no preview, the reason.
+        let before = undo_steps(&app);
+        let d = app.ui.dialog.as_mut().unwrap();
+        d.fields.insert("hyphWeight".into(), json!("heavy"));
+        d.fields.insert("preview".into(), json!(true));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        let d = app.ui.dialog.as_ref().unwrap();
+        assert!(!d.fields.contains_key(PREVIEWED) && d.fields.contains_key("status"), "{:?}", d.fields);
+        assert!(app.session.doc().unwrap().interaction.is_none(), "the preview went back");
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        assert!(app.session.doc().unwrap().interaction.is_none(), "not tried again");
+        // OK with it: an error, and the dialog stays open with the reason.
+        assert!(confirm(&mut app).is_err());
+        let d = app.ui.dialog.as_ref().expect("the dialog stays open");
+        assert!(d.fields.contains_key("status"));
+        assert_eq!(undo_steps(&app), before);
+        // Corrected, it previews and applies.
+        app.ui.dialog.as_mut().unwrap().fields.insert("hyphWeight".into(), json!(0.9));
+        dialog_frame(&mut app, &ctx, screen, vec![]);
+        assert!(!app.ui.dialog.as_ref().unwrap().fields.contains_key("status"));
+        confirm(&mut app).unwrap();
+        assert_eq!(para_attr(&mut app, &story, 0, "hyphenate"), true);
+        assert_eq!(para_attr(&mut app, &story, 4, "hyphWeight"), 0.9);
     }
 
     #[test]
