@@ -2057,6 +2057,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             match d.s("section").as_str() {
                 "span" => "Span Columns",
                 "bullets" => "Bullets and Numbering",
+                "keep" => "Keep Options",
+                "nested" => "Drop Caps and Nested Styles",
+                "grep" => "GREP Styles",
                 _ => "Paragraph Borders and Shading",
             },
         ),
@@ -3897,270 +3900,8 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                     text_field(ui, d, "x.class", 160.0);
                 });
             }
-            "nested" => {
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Drop Caps")).font(semibold(12.0)));
-                egui::Grid::new("psdc").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    for (label, key, max) in [
-                        ("Lines:", "dropCapLines", designcraft_compose::MAX_DROP_CAP_LINES),
-                        ("Characters:", "dropCapChars", designcraft_compose::MAX_DROP_CAP_CHARS),
-                    ] {
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, label));
-                        let v = cur(d, &format!("p.{key}"), &pv[key]).as_f64();
-                        if let Some(n) = crate::widgets::number(ui, &format!("ps{key}"), v, "", 60.0, 0) {
-                            d.fields.insert(format!("p.{key}"), json!((n.max(0.0) as u64).min(max as u64)));
-                        }
-                        ui.end_row();
-                    }
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Character Style:"));
-                    let style = cur(d, "p.dropCapStyle", &pv["dropCapStyle"]).as_str().unwrap_or("").to_string();
-                    let style = if style.is_empty() { designcraft_doc::NO_CHAR_STYLE.to_string() } else { style };
-                    egui::ComboBox::from_id_salt("ps_dropcap_style")
-                        .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, &style)))
-                        .width(160.0)
-                        .show_ui(ui, |ui| {
-                            for c in &cnames {
-                                if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, c))).clicked() {
-                                    d.fields.insert("p.dropCapStyle".into(), json!(c));
-                                }
-                            }
-                        });
-                    ui.end_row();
-                });
-                for (label, key) in [("Align Left Edge", "dropCapAlignLeft"), ("Scale for Descenders", "dropCapScaleDescenders")] {
-                    let mut on = cur(d, &format!("p.{key}"), &pv[key]).as_bool().unwrap_or(false);
-                    if ui.checkbox(&mut on, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).changed() {
-                        d.fields.insert(format!("p.{key}"), json!(on));
-                    }
-                }
-                ui.add_space(8.0);
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Nested Styles")).font(semibold(12.0)));
-                let mut list: Vec<Value> = cur(d, "p.nestedStyles", &pv["nestedStyles"]).as_array().cloned().unwrap_or_default();
-                let mut changed = false;
-                let mut remove = None;
-                for (i, ns) in list.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        let style = ns["style"].as_str().unwrap_or("[None]").to_string();
-                        egui::ComboBox::from_id_salt(("ns_style", i))
-                            .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, &style)))
-                            .width(110.0)
-                            .show_ui(ui, |ui| {
-                                for c in &cnames {
-                                    if ui
-                                        .selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, c)))
-                                        .clicked()
-                                    {
-                                        ns["style"] = json!(c);
-                                        changed = true;
-                                    }
-                                }
-                            });
-                        let through = ns["through"].as_bool().unwrap_or(true);
-                        egui::ComboBox::from_id_salt(("ns_thr", i))
-                            .selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, if through { "through" } else { "up to" })))
-                            .width(70.0)
-                            .show_ui(ui, |ui| {
-                                for (v, l) in [(true, "through"), (false, "up to")] {
-                                    if ui.selectable_label(v == through, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, l))).clicked() {
-                                        ns["through"] = json!(v);
-                                        changed = true;
-                                    }
-                                }
-                            });
-                        let mut n = ns["count"].as_u64().unwrap_or(1) as u32;
-                        let mut count_value = |ui: &mut egui::Ui, ns: &mut Value, changed: &mut bool| {
-                            if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
-                                ns["count"] = json!(n);
-                                *changed = true;
-                            }
-                        };
-                        if !crate::i18n::category_first(&app.ui.language) {
-                            count_value(ui, ns, &mut changed);
-                        }
-                        let kind = ns["until"]["kind"].as_str().unwrap_or("words").to_string();
-                        egui::ComboBox::from_id_salt(("ns_until", i))
-                            .selected_text(crate::rtl::widget(
-                                ui,
-                                if crate::i18n::category_first(&app.ui.language) {
-                                    format!("{}:", crate::i18n::tr(&app.ui.language, &kind))
-                                } else {
-                                    crate::i18n::tr(&app.ui.language, &kind).to_owned()
-                                },
-                            ))
-                            .width(100.0)
-                            .show_ui(ui, |ui| {
-                                for k in [
-                                    "sentences",
-                                    "words",
-                                    "characters",
-                                    "letters",
-                                    "digits",
-                                    "tab",
-                                    "forcedLineBreak",
-                                    "emSpace",
-                                    "enSpace",
-                                    "dropcap",
-                                    "chars",
-                                ] {
-                                    if ui.selectable_label(k == kind, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, k))).clicked() {
-                                        ns["until"] = if k == "chars" { json!({"kind": "chars", "chars": ":"}) } else { json!({"kind": k}) };
-                                        changed = true;
-                                    }
-                                }
-                            });
-                        if crate::i18n::category_first(&app.ui.language) {
-                            count_value(ui, ns, &mut changed);
-                        }
-                        if kind == "chars" {
-                            let mut c = ns["until"]["chars"].as_str().unwrap_or("").to_string();
-                            if ui.add(egui::TextEdit::singleline(&mut c).desired_width(40.0)).changed() {
-                                ns["until"]["chars"] = json!(c);
-                                changed = true;
-                            }
-                        }
-                        if ui
-                            .small_button("×")
-                            .on_hover_ui(|ui| {
-                                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Delete"));
-                            })
-                            .clicked()
-                        {
-                            remove = Some(i);
-                        }
-                    });
-                }
-                if let Some(i) = remove {
-                    list.remove(i);
-                    changed = true;
-                }
-                if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "New Nested Style"))).clicked() {
-                    list.push(json!({"style": cnames.get(1).cloned().unwrap_or_default(), "through": true, "count": 1, "until": {"kind": "words"}}));
-                    changed = true;
-                }
-                if changed {
-                    d.fields.insert("p.nestedStyles".into(), Value::Array(list));
-                }
-                ui.add_space(8.0);
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Nested Line Styles")).font(semibold(12.0)));
-                let mut lines: Vec<Value> = cur(d, "p.nestedLineStyles", &pv["nestedLineStyles"]).as_array().cloned().unwrap_or_default();
-                let mut changed = false;
-                let mut remove = None;
-                for (i, l) in lines.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        let style = l["style"].as_str().unwrap_or("").to_string();
-                        egui::ComboBox::from_id_salt(("nls_style", i))
-                            .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, &style)))
-                            .width(130.0)
-                            .show_ui(ui, |ui| {
-                                for c in &cnames {
-                                    if ui
-                                        .selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, c)))
-                                        .clicked()
-                                    {
-                                        l["style"] = json!(c);
-                                        changed = true;
-                                    }
-                                }
-                            });
-                        crate::rtl::label(
-                            ui,
-                            if crate::i18n::category_first(&app.ui.language) {
-                                format!("{}:", crate::i18n::tr(&app.ui.language, "lines"))
-                            } else {
-                                crate::i18n::tr(&app.ui.language, "for").to_owned()
-                            },
-                        );
-                        let mut n = l["lines"].as_u64().unwrap_or(1) as u32;
-                        if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
-                            l["lines"] = json!(n);
-                            changed = true;
-                        }
-                        if !crate::i18n::category_first(&app.ui.language) {
-                            crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, if n == 1 { "line" } else { "lines" }));
-                        }
-                        if ui
-                            .small_button("×")
-                            .on_hover_ui(|ui| {
-                                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Delete"));
-                            })
-                            .clicked()
-                        {
-                            remove = Some(i);
-                        }
-                    });
-                }
-                if let Some(i) = remove {
-                    lines.remove(i);
-                    changed = true;
-                }
-                if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "New Line Style"))).clicked() {
-                    lines.push(json!({"style": cnames.get(1).cloned().unwrap_or_default(), "lines": 1}));
-                    changed = true;
-                }
-                if changed {
-                    d.fields.insert("p.nestedLineStyles".into(), Value::Array(lines));
-                }
-            }
-            "grep" => {
-                crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "GREP Styles")).font(semibold(12.0)));
-                let mut list: Vec<Value> = cur(d, "p.grepStyles", &pv["grepStyles"]).as_array().cloned().unwrap_or_default();
-                let mut changed = false;
-                let mut remove = None;
-                for (i, g) in list.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Apply Style:"));
-                        let style = g["style"].as_str().unwrap_or("").to_string();
-                        egui::ComboBox::from_id_salt(("gs_style", i))
-                            .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, &style)))
-                            .width(110.0)
-                            .show_ui(ui, |ui| {
-                                for c in &cnames {
-                                    if ui
-                                        .selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, c)))
-                                        .clicked()
-                                    {
-                                        g["style"] = json!(c);
-                                        changed = true;
-                                    }
-                                }
-                            });
-                        crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "To Text:"));
-                        let mut pat = g["pattern"].as_str().unwrap_or("").to_string();
-                        let bad = grep_error(&pat).is_some();
-                        let r = ui.add(
-                            egui::TextEdit::singleline(&mut pat)
-                                .desired_width(150.0)
-                                .text_color_opt(bad.then_some(egui::Color32::from_rgb(240, 90, 90))),
-                        );
-                        if r.changed() {
-                            g["pattern"] = json!(pat);
-                            changed = true;
-                        }
-                        if ui
-                            .small_button("×")
-                            .on_hover_ui(|ui| {
-                                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Delete"));
-                            })
-                            .clicked()
-                        {
-                            remove = Some(i);
-                        }
-                    });
-                    if let Some(e) = grep_error(g["pattern"].as_str().unwrap_or("")) {
-                        crate::rtl::label(ui, egui::RichText::new(e).size(11.0).color(egui::Color32::from_rgb(240, 90, 90)));
-                    }
-                }
-                if let Some(i) = remove {
-                    list.remove(i);
-                    changed = true;
-                }
-                if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "New GREP Style"))).clicked() {
-                    list.push(json!({"style": cnames.get(1).cloned().unwrap_or_default(), "pattern": "\\d+"}));
-                    changed = true;
-                }
-                if changed {
-                    d.fields.insert("p.grepStyles".into(), Value::Array(list));
-                }
-            }
+            "nested" => drop_caps_and_nested_styles(&app.ui.language, ui, d, &pv, &cnames),
+            "grep" => grep_styles(&app.ui.language, ui, d, &pv, &cnames),
             "chars" => basic_character_formats(app, ui, d, &CharFields { base: &cv, sparse: false }),
             "indents" => {
                 egui::Grid::new("psi").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
@@ -4693,6 +4434,254 @@ fn border_shading(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, doc
 
 /// Paragraph Style Options › Keep Options: lines kept with the next paragraph, the paragraph's
 /// lines kept together (all of them, or its first and last lines), and where it starts.
+/// Drop Caps and Nested Styles: the drop cap, nested styles and nested line styles (`p.` fields).
+fn drop_caps_and_nested_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames: &[String]) {
+    let cur = |d: &Dialog, k: &str, base: &Value| d.fields.get(k).cloned().unwrap_or_else(|| base.clone());
+    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, "Drop Caps")).font(semibold(12.0)));
+    egui::Grid::new("psdc").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+        for (label, key, max) in [
+            ("Lines:", "dropCapLines", designcraft_compose::MAX_DROP_CAP_LINES),
+            ("Characters:", "dropCapChars", designcraft_compose::MAX_DROP_CAP_CHARS),
+        ] {
+            crate::rtl::label(ui, crate::i18n::tr(lang, label));
+            let v = cur(d, &format!("p.{key}"), &pv[key]).as_f64();
+            if let Some(n) = crate::widgets::number(ui, &format!("ps{key}"), v, "", 60.0, 0) {
+                d.fields.insert(format!("p.{key}"), json!((n.max(0.0) as u64).min(max as u64)));
+            }
+            ui.end_row();
+        }
+        crate::rtl::label(ui, crate::i18n::tr(lang, "Character Style:"));
+        let style = cur(d, "p.dropCapStyle", &pv["dropCapStyle"]).as_str().unwrap_or("").to_string();
+        let style = if style.is_empty() { designcraft_doc::NO_CHAR_STYLE.to_string() } else { style };
+        egui::ComboBox::from_id_salt("ps_dropcap_style")
+            .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style)))
+            .width(160.0)
+            .show_ui(ui, |ui| {
+                for c in cnames {
+                    if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
+                        d.fields.insert("p.dropCapStyle".into(), json!(c));
+                    }
+                }
+            });
+        ui.end_row();
+    });
+    for (label, key) in [("Align Left Edge", "dropCapAlignLeft"), ("Scale for Descenders", "dropCapScaleDescenders")] {
+        let mut on = cur(d, &format!("p.{key}"), &pv[key]).as_bool().unwrap_or(false);
+        if ui.checkbox(&mut on, crate::rtl::widget(ui, crate::i18n::tr(lang, label))).changed() {
+            d.fields.insert(format!("p.{key}"), json!(on));
+        }
+    }
+    ui.add_space(8.0);
+    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, "Nested Styles")).font(semibold(12.0)));
+    let mut list: Vec<Value> = cur(d, "p.nestedStyles", &pv["nestedStyles"]).as_array().cloned().unwrap_or_default();
+    let mut changed = false;
+    let mut remove = None;
+    for (i, ns) in list.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            let style = ns["style"].as_str().unwrap_or("[None]").to_string();
+            egui::ComboBox::from_id_salt(("ns_style", i))
+                .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style)))
+                .width(110.0)
+                .show_ui(ui, |ui| {
+                    for c in cnames {
+                        if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
+                            ns["style"] = json!(c);
+                            changed = true;
+                        }
+                    }
+                });
+            let through = ns["through"].as_bool().unwrap_or(true);
+            egui::ComboBox::from_id_salt(("ns_thr", i))
+                .selected_text(crate::rtl::widget(ui, crate::i18n::tr(lang, if through { "through" } else { "up to" })))
+                .width(70.0)
+                .show_ui(ui, |ui| {
+                    for (v, l) in [(true, "through"), (false, "up to")] {
+                        if ui.selectable_label(v == through, crate::rtl::widget(ui, crate::i18n::tr(lang, l))).clicked() {
+                            ns["through"] = json!(v);
+                            changed = true;
+                        }
+                    }
+                });
+            let mut n = ns["count"].as_u64().unwrap_or(1) as u32;
+            let mut count_value = |ui: &mut egui::Ui, ns: &mut Value, changed: &mut bool| {
+                if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
+                    ns["count"] = json!(n);
+                    *changed = true;
+                }
+            };
+            if !crate::i18n::category_first(lang) {
+                count_value(ui, ns, &mut changed);
+            }
+            let kind = ns["until"]["kind"].as_str().unwrap_or("words").to_string();
+            egui::ComboBox::from_id_salt(("ns_until", i))
+                .selected_text(crate::rtl::widget(
+                    ui,
+                    if crate::i18n::category_first(lang) {
+                        format!("{}:", crate::i18n::tr(lang, &kind))
+                    } else {
+                        crate::i18n::tr(lang, &kind).to_owned()
+                    },
+                ))
+                .width(100.0)
+                .show_ui(ui, |ui| {
+                    for k in
+                        ["sentences", "words", "characters", "letters", "digits", "tab", "forcedLineBreak", "emSpace", "enSpace", "dropcap", "chars"]
+                    {
+                        if ui.selectable_label(k == kind, crate::rtl::widget(ui, crate::i18n::tr(lang, k))).clicked() {
+                            ns["until"] = if k == "chars" { json!({"kind": "chars", "chars": ":"}) } else { json!({"kind": k}) };
+                            changed = true;
+                        }
+                    }
+                });
+            if crate::i18n::category_first(lang) {
+                count_value(ui, ns, &mut changed);
+            }
+            if kind == "chars" {
+                let mut c = ns["until"]["chars"].as_str().unwrap_or("").to_string();
+                if ui.add(egui::TextEdit::singleline(&mut c).desired_width(40.0)).changed() {
+                    ns["until"]["chars"] = json!(c);
+                    changed = true;
+                }
+            }
+            if ui
+                .small_button("×")
+                .on_hover_ui(|ui| {
+                    crate::rtl::label(ui, crate::i18n::tr(lang, "Delete"));
+                })
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some(i) = remove {
+        list.remove(i);
+        changed = true;
+    }
+    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(lang, "New Nested Style"))).clicked() {
+        list.push(json!({"style": cnames.get(1).cloned().unwrap_or_default(), "through": true, "count": 1, "until": {"kind": "words"}}));
+        changed = true;
+    }
+    if changed {
+        d.fields.insert("p.nestedStyles".into(), Value::Array(list));
+    }
+    ui.add_space(8.0);
+    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, "Nested Line Styles")).font(semibold(12.0)));
+    let mut lines: Vec<Value> = cur(d, "p.nestedLineStyles", &pv["nestedLineStyles"]).as_array().cloned().unwrap_or_default();
+    let mut changed = false;
+    let mut remove = None;
+    for (i, l) in lines.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            let style = l["style"].as_str().unwrap_or("").to_string();
+            egui::ComboBox::from_id_salt(("nls_style", i))
+                .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style)))
+                .width(130.0)
+                .show_ui(ui, |ui| {
+                    for c in cnames {
+                        if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
+                            l["style"] = json!(c);
+                            changed = true;
+                        }
+                    }
+                });
+            crate::rtl::label(
+                ui,
+                if crate::i18n::category_first(lang) {
+                    format!("{}:", crate::i18n::tr(lang, "lines"))
+                } else {
+                    crate::i18n::tr(lang, "for").to_owned()
+                },
+            );
+            let mut n = l["lines"].as_u64().unwrap_or(1) as u32;
+            if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
+                l["lines"] = json!(n);
+                changed = true;
+            }
+            if !crate::i18n::category_first(lang) {
+                crate::rtl::label(ui, crate::i18n::tr(lang, if n == 1 { "line" } else { "lines" }));
+            }
+            if ui
+                .small_button("×")
+                .on_hover_ui(|ui| {
+                    crate::rtl::label(ui, crate::i18n::tr(lang, "Delete"));
+                })
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some(i) = remove {
+        lines.remove(i);
+        changed = true;
+    }
+    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(lang, "New Line Style"))).clicked() {
+        lines.push(json!({"style": cnames.get(1).cloned().unwrap_or_default(), "lines": 1}));
+        changed = true;
+    }
+    if changed {
+        d.fields.insert("p.nestedLineStyles".into(), Value::Array(lines));
+    }
+}
+
+/// GREP Styles: a character style applied to text matching each pattern (`p.` fields).
+fn grep_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames: &[String]) {
+    let cur = |d: &Dialog, k: &str, base: &Value| d.fields.get(k).cloned().unwrap_or_else(|| base.clone());
+    crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, "GREP Styles")).font(semibold(12.0)));
+    let mut list: Vec<Value> = cur(d, "p.grepStyles", &pv["grepStyles"]).as_array().cloned().unwrap_or_default();
+    let mut changed = false;
+    let mut remove = None;
+    for (i, g) in list.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            crate::rtl::label(ui, crate::i18n::tr(lang, "Apply Style:"));
+            let style = g["style"].as_str().unwrap_or("").to_string();
+            egui::ComboBox::from_id_salt(("gs_style", i))
+                .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style)))
+                .width(110.0)
+                .show_ui(ui, |ui| {
+                    for c in cnames {
+                        if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
+                            g["style"] = json!(c);
+                            changed = true;
+                        }
+                    }
+                });
+            crate::rtl::label(ui, crate::i18n::tr(lang, "To Text:"));
+            let mut pat = g["pattern"].as_str().unwrap_or("").to_string();
+            let bad = grep_error(&pat).is_some();
+            let r =
+                ui.add(egui::TextEdit::singleline(&mut pat).desired_width(150.0).text_color_opt(bad.then_some(egui::Color32::from_rgb(240, 90, 90))));
+            if r.changed() {
+                g["pattern"] = json!(pat);
+                changed = true;
+            }
+            if ui
+                .small_button("×")
+                .on_hover_ui(|ui| {
+                    crate::rtl::label(ui, crate::i18n::tr(lang, "Delete"));
+                })
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        });
+        if let Some(e) = grep_error(g["pattern"].as_str().unwrap_or("")) {
+            crate::rtl::label(ui, egui::RichText::new(e).size(11.0).color(egui::Color32::from_rgb(240, 90, 90)));
+        }
+    }
+    if let Some(i) = remove {
+        list.remove(i);
+        changed = true;
+    }
+    if ui.button(crate::rtl::widget(ui, crate::i18n::tr(lang, "New GREP Style"))).clicked() {
+        list.push(json!({"style": cnames.get(1).cloned().unwrap_or_default(), "pattern": "\\d+"}));
+        changed = true;
+    }
+    if changed {
+        d.fields.insert("p.grepStyles".into(), Value::Array(list));
+    }
+}
+
 fn keep_options(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value) {
     ui.horizontal(|ui| {
         crate::rtl::label(ui, crate::i18n::tr(lang, "Keep with Next:"));
@@ -5100,6 +5089,15 @@ fn paragraph_local(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     ui.set_min_width(480.0);
     match d.s("section").as_str() {
         "span" => span_columns(&lang, ui, d, &pv, &doc),
+        "keep" => keep_options(&lang, ui, d, &pv),
+        "nested" | "grep" => {
+            let cnames: Vec<String> = doc.styles.character.iter().map(|c| c.name.clone()).collect();
+            if d.s("section") == "nested" {
+                drop_caps_and_nested_styles(&lang, ui, d, &pv, &cnames);
+            } else {
+                grep_styles(&lang, ui, d, &pv, &cnames);
+            }
+        }
         "bullets" => {
             let (char_styles, families, fonts, scope) = ListUi::new_parts(app);
             let (family, style) = (d.s("family"), d.s("style"));

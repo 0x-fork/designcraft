@@ -991,7 +991,7 @@ fn control_paragraph(
 
 /// A swatch field of the Control panel (Shading and Border colours): the swatch's chip and name,
 /// and the document's swatches in its menu. Returns the swatch picked.
-fn swatch_field(ui: &mut egui::Ui, doc: &designcraft_doc::Document, cur: &str, width: f32, label: &str) -> Option<String> {
+pub(crate) fn swatch_field(ui: &mut egui::Ui, doc: &designcraft_doc::Document, cur: &str, width: f32, label: &str) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(width, crate::widgets::FIELD_H), Sense::click());
     let resp = resp.on_hover_text(label);

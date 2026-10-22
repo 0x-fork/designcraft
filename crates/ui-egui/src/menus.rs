@@ -108,6 +108,14 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "{tab?: border|shading} — border and shading of the selected paragraphs (type.para)",
     ),
     ("app.spanColumnsDialog", "Span Columns…", None, "{} — span or split columns of the selected paragraphs (type.para)"),
+    ("app.keepOptionsDialog", "Keep Options…", None, "{} — Keep with Next and Keep Lines Together of the selected paragraphs (type.para)"),
+    (
+        "app.nestedStylesDialog",
+        "Drop Caps and Nested Styles…",
+        None,
+        "{} — drop cap, nested styles and nested line styles of the selected paragraphs (type.para)",
+    ),
+    ("app.grepStylesDialog", "GREP Styles…", None, "{} — GREP styles of the selected paragraphs (type.para)"),
     ("app.bulletsNumberingDialog", "Bullets and Numbering…", None, "{} — bullets or numbers of the selected paragraphs (type.para)"),
     (
         "app.hyphenationDialog",
@@ -1283,11 +1291,19 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.dialog = Some(crate::dialogs::Dialog::new("paragraphRules", json!({"rule": rule, "current": current})));
             Ok(Value::Null)
         }
-        "app.paragraphBordersDialog" | "app.spanColumnsDialog" | "app.bulletsNumberingDialog" => {
+        "app.paragraphBordersDialog"
+        | "app.spanColumnsDialog"
+        | "app.bulletsNumberingDialog"
+        | "app.keepOptionsDialog"
+        | "app.nestedStylesDialog"
+        | "app.grepStylesDialog" => {
             let Some(a) = crate::panels::text_attrs(app) else { return Some(Err("select text or a text frame".into())) };
             let section = match id {
                 "app.spanColumnsDialog" => "span",
                 "app.bulletsNumberingDialog" => "bullets",
+                "app.keepOptionsDialog" => "keep",
+                "app.nestedStylesDialog" => "nested",
+                "app.grepStylesDialog" => "grep",
                 _ if p.get("tab").and_then(Value::as_str) == Some("shading") => "shading",
                 _ => "border",
             };
