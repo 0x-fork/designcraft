@@ -49,7 +49,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Hyphenation Zone:", "Zona de hifenização:"),
     ("Better Spacing", "Melhor espaçamento"),
     ("Fewer Hyphens", "Menos hifens"),
-    ("Hyphenate Capitalized Words", "Hifenizar palavras em maiúsculas"),
+    ("Hyphenate Capitalized Words", "Hifenizar palavras iniciadas por maiúscula"),
     ("Hyphenate Last Word", "Hifenizar última palavra"),
     ("Hyphenate Across Column", "Hifenizar entre colunas"),
     ("Character Formatting Controls", "Controles de formatação de caracteres"),
