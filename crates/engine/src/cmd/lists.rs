@@ -91,13 +91,16 @@ fn apply_list(s: &mut Session, p: &Value, kind: ListType) -> Result<Value> {
         let styles = d.styles.clone();
         for t in &targets {
             let Some(st) = d.text_story_mut(t.story, t.cell) else { continue };
-            st.format_paras(t.range.clone(), |pf| {
+            let span = para_span(&st.text, &t.range);
+            st.format_paras(span, |pf| {
                 let (now, _) = styles.resolve_para(pf);
                 // Off takes away this list only: a paragraph with the other list keeps it.
                 if !on && now.list_type != kind {
                     return;
                 }
                 let (style, _) = styles.resolve_para_style(&pf.style);
+                // The hanging indent set on the paragraph itself (by a list button), not by its style.
+                let own_hang = pf.para.left_indent == Some(LIST_HANG) && pf.para.first_line_indent == Some(-LIST_HANG);
                 // A value: left to the style when it gives the same, else set here.
                 let mut set = |key: &str, v: Value, same: bool| {
                     let _ = pf.para.set_json(key, if same { &Value::Null } else { &v });
@@ -107,7 +110,8 @@ fn apply_list(s: &mut Session, p: &Value, kind: ListType) -> Result<Value> {
                 if on && now.left_indent == 0.0 && now.first_line_indent == 0.0 {
                     set("leftIndent", json!(LIST_HANG), style.left_indent == LIST_HANG);
                     set("firstLineIndent", json!(-LIST_HANG), style.first_line_indent == -LIST_HANG);
-                } else if !on && now.list_type == kind && now.left_indent == LIST_HANG && now.first_line_indent == -LIST_HANG {
+                } else if !on && now.list_type == kind && own_hang {
+                    // Only the hanging indent set here: one the paragraph style gives stays.
                     set("leftIndent", json!(0.0), style.left_indent == 0.0);
                     set("firstLineIndent", json!(0.0), style.first_line_indent == 0.0);
                 }
@@ -117,11 +121,20 @@ fn apply_list(s: &mut Session, p: &Value, kind: ListType) -> Result<Value> {
     })
 }
 
+/// The range whose paragraphs a list applies to: a selection ending where a paragraph starts (after
+/// a return) doesn't reach into that paragraph. The story's last paragraph, empty after a final
+/// return, stays in when the range runs to the end (a whole frame).
+fn para_span(text: &str, range: &std::ops::Range<usize>) -> std::ops::Range<usize> {
+    let end = range.end.max(range.start);
+    if end > range.start && end < text.len() && text.as_bytes().get(end - 1) == Some(&b'\n') { range.start..end - 1 } else { range.start..end }
+}
+
 /// Whether every paragraph of `targets` has list `kind`.
 fn all_have(d: &designcraft_doc::Document, targets: &[super::text::Target], kind: ListType) -> bool {
     targets.iter().all(|t| {
         d.text_story(t.story, t.cell).is_some_and(|st| {
-            let (a, b) = (st.para_at(t.range.start), st.para_at(t.range.end.max(t.range.start)));
+            let span = para_span(&st.text, &t.range);
+            let (a, b) = (st.para_at(span.start), st.para_at(span.end));
             st.paras.get(a..=b).is_some_and(|ps| ps.iter().all(|pf| d.styles.resolve_para(pf).0.list_type == kind))
         })
     })
@@ -273,5 +286,56 @@ mod tests {
         // null removes the override again.
         s.execute("type.para", &json!({"attrs": {"startAt": null}})).unwrap();
         assert_eq!(first_char(&s, stories[1]), '4');
+    }
+
+    /// A selection ending right after a return (the whole first paragraph, as a triple click selects
+    /// it) applies the list to that paragraph only, and the button shows it pressed.
+    #[test]
+    fn a_selection_ending_at_a_paragraph_start_leaves_that_paragraph_out() {
+        use designcraft_doc::ListType;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s
+            .execute(
+                "frame.create",
+                &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Eggs
+Milk
+Flour
+"}),
+            )
+            .unwrap();
+        let sid = f["story"].as_u64().unwrap();
+        let kinds = |s: &Session| {
+            let d = &s.doc().unwrap().doc;
+            d.story(designcraft_doc::StoryId(sid)).unwrap().paras.iter().map(|p| d.styles.resolve_para(p).0.list_type).collect::<Vec<_>>()
+        };
+        s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 5})).unwrap();
+        assert!(!s.selection_has_list(ListType::Bullets));
+        assert_eq!(s.execute("list.bullets", &json!({})).unwrap()["on"], true);
+        assert_eq!(kinds(&s), [ListType::Bullets, ListType::None, ListType::None, ListType::None]);
+        assert!(s.selection_has_list(ListType::Bullets), "pressed for the paragraph selected");
+        // The whole frame still takes in its last, empty paragraph.
+        s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 16})).unwrap();
+        s.execute("list.numbers", &json!({"on": true})).unwrap();
+        assert_eq!(kinds(&s), [ListType::Numbers; 4]);
+    }
+
+    /// A hanging indent the paragraph style gives stays when the list goes off.
+    #[test]
+    fn a_style_hanging_indent_stays_when_the_list_goes_off() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Eggs"})).unwrap();
+        let sid = f["story"].as_u64().unwrap();
+        s.execute("style.paragraph.create", &json!({"name": "Hang", "para": {"leftIndent": 18, "firstLineIndent": -18}})).unwrap();
+        s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 4})).unwrap();
+        s.execute("style.paragraph.apply", &json!({"name": "Hang"})).unwrap();
+        s.execute("list.bullets", &json!({"on": true})).unwrap();
+        s.execute("list.bullets", &json!({"on": false})).unwrap();
+        let d = &s.doc().unwrap().doc;
+        let pf = &d.story(designcraft_doc::StoryId(sid)).unwrap().paras[0];
+        let p = d.styles.resolve_para(pf).0;
+        assert_eq!((p.list_type, p.left_indent, p.first_line_indent), (designcraft_doc::ListType::None, 18.0, -18.0));
+        assert_eq!(pf.para, designcraft_doc::ParaAttrs::default(), "nothing left set on the paragraph");
     }
 }
