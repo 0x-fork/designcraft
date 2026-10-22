@@ -5655,4 +5655,19 @@ mod tests {
         }
         assert!(!menu_enabled(&app, "view.rulers"), "other UI commands still need a document");
     }
+
+    // Regression test for #248: the start screen offered no A6 sheet (it listed only the first ten presets).
+    #[test]
+    fn start_screen_offers_every_print_preset_including_a6() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let texts = start_screen_texts(&mut app);
+        for p in designcraft_doc::build::PRESETS.iter().filter(|p| p.intent == designcraft_doc::Intent::Print) {
+            assert!(texts.iter().any(|t| t == p.name), "start screen lacks the {} card: {texts:?}", p.name);
+        }
+        assert!(texts.iter().any(|t| t == "A6"), "{texts:?}");
+        let a6 = designcraft_doc::build::PRESETS.iter().find(|p| p.name == "A6").unwrap();
+        assert!((a6.width - 105.0 * 72.0 / 25.4).abs() < 0.01 && (a6.height - 148.0 * 72.0 / 25.4).abs() < 0.01, "{a6:?}");
+        let page = crate::panels::properties::PAGE_PRESETS.iter().find(|p| p.0 == "A6").expect("Properties page-size list has A6");
+        assert!((page.1 - a6.width).abs() < 0.01 && (page.2 - a6.height).abs() < 0.01, "{page:?} vs {a6:?}");
+    }
 }
