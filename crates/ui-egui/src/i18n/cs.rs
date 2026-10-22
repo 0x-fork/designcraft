@@ -1443,6 +1443,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Previous Page", "Předchozí stránka"),
     ("First Page", "První stránka"),
     ("Last Page", "Poslední stránka"),
+    ("Go Back", "Přejít zpět"),
+    ("Go Forward", "Přejít vpřed"),
     ("Object Styles", "Styly objektů"),
     ("Row", "Řádek"),
     ("Column", "Sloupec"),

@@ -204,7 +204,7 @@ table is the one summed.
 | Area | Breadth (checklist) | Ready | Hours | Main gaps |
 |---|---|---|---|---|
 | Application shell & workspace | 99% | 55% | 40–60 | context menus not opening on some systems; window controls (#333); System theme (#237); New Window/Arrange; Help menu |
-| Documents, pages, spreads | 100% | 65% | 20–35 | Layout ▸ Pages submenu items, Page Attributes / Color Label, Go Back/Forward, layout grid (CJK) |
+| Documents, pages, spreads | 100% | 65% | 20–35 | Layout ▸ Pages submenu items, Page Attributes / Color Label, layout grid (CJK) |
 | Layers | 100% | 75% | 5–10 | IDML layer order fixed 2026-10-09; Layer panel options depth |
 | Frames, shapes & paths | 100% | 60% | 25–40 | object copy/paste failures, reference point relocation (#337), Join/Reverse Path/Convert Point menu |
 | Transform | 100% | 70% | 10–20 | Rotate 180°; transform panel depth |

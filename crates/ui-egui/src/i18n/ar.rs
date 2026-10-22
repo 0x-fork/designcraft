@@ -170,6 +170,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Previous Page", "الصفحة السابقة"),
     ("First Page", "الصفحة الأولى"),
     ("Last Page", "الصفحة الأخيرة"),
+    ("Go Back", "رجوع"),
+    ("Go Forward", "تقدم"),
     ("Font", "خط"),
     ("Size", "الحجم"),
     ("Character", "حرف"),

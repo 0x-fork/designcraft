@@ -125,6 +125,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Previous Page", ["Vorherige Seite", "Page précédente", "Página anterior", "前のページ", "上一页"]),
     ("Next Page", ["Nächste Seite", "Page suivante", "Página siguiente", "次のページ", "下一页"]),
     ("Last Page", ["Letzte Seite", "Dernière page", "Última página", "最後のページ", "最后一页"]),
+    ("Go Back", ["Zurück gehen", "Revenir", "Retroceder", "前に戻る", "后退"]),
+    ("Go Forward", ["Vorwärts gehen", "Avancer", "Avanzar", "次に進む", "前进"]),
     (
         "Close Tab Group",
         ["Registerkartengruppe schließen", "Fermer le groupe d'onglets", "Cerrar grupo de fichas", "タブグループを閉じる", "关闭选项卡组"],
