@@ -2516,7 +2516,7 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
             let Some(tf) = d.item_mut(*id).and_then(Item::text_frame_mut) else { continue };
             let o = &mut tf.options;
             if let Some(v) = p.get("columns").and_then(Value::as_u64) {
-                o.columns = (v as u32).clamp(1, 40);
+                o.columns = v.clamp(1, 40) as u32;
             }
             if let Some(v) = p.get("gutter").and_then(Value::as_f64) {
                 o.gutter = v.max(0.0);
@@ -4496,6 +4496,21 @@ mod column_rule_tests {
         // One undo step.
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(opts(&s), before);
+    }
+
+    /// A column count past `u32::MAX` was cast to `u32` before the clamp, so
+    /// 2^32 + 1 wrapped to 1 column instead of clamping to the maximum, 40.
+    #[test]
+    fn huge_column_count_clamps_to_the_maximum() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [36, 36, 300, 300], "content": "text"})).unwrap();
+        let id = ItemId(r["id"].as_u64().unwrap());
+        let columns = |s: &Session| s.doc().unwrap().doc.item(id).unwrap().text_frame().unwrap().options.columns;
+        for (given, want) in [(4_294_967_297_u64, 40), (u64::MAX, 40), (0, 1)] {
+            s.execute("object.textFrameOptions", &json!({"ids": [id.0], "columns": given})).unwrap();
+            assert_eq!(columns(&s), want, "columns {given}");
+        }
     }
 }
 
