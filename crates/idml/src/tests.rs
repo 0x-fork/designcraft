@@ -4368,3 +4368,39 @@ fn cell_first_baseline_comes_from_cell_styles_table_regions_and_cells_and_round_
     let s2 = back.styles.cell.iter().find(|c| c.name == "Cap").unwrap();
     assert_eq!(s2.first_baseline, Some(FirstBaseline::CapHeight));
 }
+
+/// Non-finite numbers in colour values, page bounds and item transforms (NaN, infinities and
+/// values like 1e300 that overflow `f32`) never reach the model: JSON would write them as null.
+#[test]
+fn non_finite_number_lists_never_reach_the_model() {
+    let graphic = GRAPHIC.replace(r#"ColorValue="255 0 0""#, r#"ColorValue="NaN 1e300 inf""#);
+    let spread = SPREAD
+        .replace(r#"Self="p2" AppliedMaster="m1" GeometricBounds="0 0 700 500""#, r#"Self="p2" AppliedMaster="m1" GeometricBounds="0 0 NaN 500""#)
+        .replace(r#"ItemTransform="1 0 0 1 50 -300""#, r#"ItemTransform="1 0 0 1 inf -300""#);
+    let bytes = zip_files(&[
+        ("designmap.xml", DESIGNMAP),
+        ("Resources/Graphic.xml", &graphic),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", PREFS),
+        ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+        ("Spreads/Spread_sp1.xml", &spread),
+        ("Stories/Story_s1.xml", STORY),
+    ]);
+    let doc = import_idml(&bytes).unwrap();
+    for s in &doc.swatches {
+        if let SwatchValue::Color { color, .. } | SwatchValue::Paper { color } = &s.value {
+            let parts: Vec<f32> = match *color {
+                Color::Rgb { r, g, b } => vec![r, g, b],
+                Color::Cmyk { c, m, y, k } => vec![c, m, y, k],
+                Color::Gray { k } => vec![k],
+            };
+            assert!(parts.iter().all(|v| v.is_finite()), "swatch {} is not finite: {color:?}", s.name);
+        }
+    }
+    for sp in doc.spreads.iter().chain(&doc.parents) {
+        for p in &sp.pages {
+            assert!(p.width.is_finite() && p.height.is_finite() && p.x.is_finite(), "page {p:?}");
+        }
+    }
+    assert_eq!(doc.non_finite_item(), None);
+}

@@ -387,13 +387,10 @@ fn mojikumi_row(e: &El) -> Result<designcraft_doc::cjk::MojikumiAki> {
     Ok(row)
 }
 
+/// The numbers in a whitespace-separated list; empty when any number is NaN or infinite (JSON
+/// can't store them, and dropping just those would shift the rest).
 fn nums(s: &str) -> Vec<f64> {
-    s.split_whitespace().filter_map(|v| v.parse().ok()).collect()
-}
-
-/// Like [`nums`], but empty when any number is NaN or infinite.
-fn finite_nums(s: &str) -> Vec<f64> {
-    let v = nums(s);
+    let v: Vec<f64> = s.split_whitespace().filter_map(|v| v.parse().ok()).collect();
     if v.iter().all(|x| x.is_finite()) { v } else { Vec::new() }
 }
 
@@ -895,6 +892,15 @@ impl<'r> Importer<'r> {
             _ if v.len() >= 4 => Color::cmyk((v[0] / 100.0) as f32, (v[1] / 100.0) as f32, (v[2] / 100.0) as f32, (v[3] / 100.0) as f32),
             _ => return None,
         };
+        // Huge values (1e300) overflow `f32` to infinity.
+        let parts = match c {
+            Color::Rgb { r, g, b } => [r, g, b, 0.0],
+            Color::Cmyk { c, m, y, k } => [c, m, y, k],
+            Color::Gray { k } => [k, 0.0, 0.0, 0.0],
+        };
+        if !parts.iter().all(|v| v.is_finite()) {
+            return None;
+        }
         let ty = if e.get("Model") == Some("Spot") { ColorType::Spot } else { ColorType::Process };
         Some((c, ty))
     }
@@ -947,14 +953,14 @@ impl<'r> Importer<'r> {
             let (Some(id), Some(name)) = (e.get("Self"), e.get("Name")) else { continue };
             let kind = match e.local() {
                 "StripedStrokeStyle" => designcraft_doc::StrokeType::Stripes {
-                    bands: finite_nums(e.get("StripeArray").unwrap_or(""))
+                    bands: nums(e.get("StripeArray").unwrap_or(""))
                         .as_chunks::<2>()
                         .0
                         .iter()
                         .map(|c| (c[0] / 100.0, (c[1] - c[0]) / 100.0))
                         .collect(),
                 },
-                "DashedStrokeStyle" => designcraft_doc::StrokeType::Dashed { pattern: finite_nums(e.get("DashArray").unwrap_or("")) },
+                "DashedStrokeStyle" => designcraft_doc::StrokeType::Dashed { pattern: nums(e.get("DashArray").unwrap_or("")) },
                 _ => designcraft_doc::StrokeType::Dotted,
             };
             let _ = id;
@@ -2856,7 +2862,7 @@ impl<'r> Importer<'r> {
             {
                 it.fill.gradient_angle = Some(a);
             }
-            let start: Option<Vec<f64>> = e.prop("GradientFillStart").map(|s| finite_nums(&s));
+            let start: Option<Vec<f64>> = e.prop("GradientFillStart").map(|s| nums(&s));
             if let (Some([x, y]), Some(len)) = (start.as_deref().and_then(|v| <[f64; 2]>::try_from(v).ok()), e.num("GradientFillLength"))
                 && len > 0.0
             {
@@ -2874,7 +2880,7 @@ impl<'r> Importer<'r> {
             {
                 it.stroke.gradient_angle = Some(a);
             }
-            let start: Option<Vec<f64>> = e.prop("GradientStrokeStart").map(|s| finite_nums(&s));
+            let start: Option<Vec<f64>> = e.prop("GradientStrokeStart").map(|s| nums(&s));
             if let (Some([x, y]), Some(len)) = (start.as_deref().and_then(|v| <[f64; 2]>::try_from(v).ok()), e.num("GradientStrokeLength"))
                 && len > 0.0
             {
@@ -3702,6 +3708,11 @@ fn path_capped(pg: &El, max: usize) -> PathData {
         let closed = g.get("PathOpen") != Some("true");
         let mut anchors = Vec::new();
         if let Some(arr) = g.find("PathPointArray") {
+            // A NaN or infinite point drops its subpath (JSON can't store it).
+            let non_finite = |s: Option<&str>| s.is_some_and(|s| s.split_whitespace().any(|v| v.parse::<f64>().is_ok_and(|x| !x.is_finite())));
+            if arr.find_all("PathPointType").take(left).any(|p| ["Anchor", "LeftDirection", "RightDirection"].iter().any(|k| non_finite(p.get(k)))) {
+                continue;
+            }
             for p in arr.find_all("PathPointType").take(left) {
                 let Some(a) = parse_point(p.get("Anchor")) else { continue };
                 let hin = parse_point(p.get("LeftDirection")).unwrap_or(a);
