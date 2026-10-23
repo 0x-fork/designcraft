@@ -3337,7 +3337,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 params["title"] = json!(title);
             }
             let name = if title.is_empty() { "Export.pdf".to_string() } else { format!("{title}.pdf") };
-            match app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            match app.pick_save(&name) {
                 Some(path) => {
                     params["path"] = json!(path);
                     crate::menus::export_pdf(app, &params)
