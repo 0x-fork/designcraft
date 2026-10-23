@@ -1033,7 +1033,12 @@ impl Exporter<'_> {
                     for (si, gp) in designcraft_compose::path_glyphs(&cs, ft, &bp, pt) {
                         let st = &cs.styles[si as usize];
                         // A gradient spans the path's box.
-                        let fill = designcraft_doc::Fill { swatch: st.fill.clone(), tint: st.fill_tint, ..designcraft_doc::Fill::none() };
+                        let fill = designcraft_doc::Fill {
+                            swatch: st.fill.clone(),
+                            tint: st.fill_tint,
+                            overprint: st.overprint_fill,
+                            ..designcraft_doc::Fill::none()
+                        };
                         if let (Some(paint), Some(p)) = (self.fill_paint(&fill, bp.bounding_box()), to_path(&gp)) {
                             let op = self.overprints(&st.fill, st.fill_tint, st.overprint_fill);
                             let op = self.push_overprint(s, op, false);
@@ -1130,7 +1135,8 @@ impl Exporter<'_> {
         let (swatch, tint) = (fill.swatch.as_str(), fill.tint);
         if let Some(g) = designcraft_color::swatch::resolve_gradient(&self.doc.swatches, swatch) {
             let kind = g.kind;
-            let stops = match self.ink_gradient_stops(g, swatch) {
+            let overprint = self.overprints(swatch, tint, fill.overprint);
+            let stops = match self.ink_gradient_stops(g, swatch, overprint) {
                 Some(stops) => stops,
                 None => self.device_gradient_stops(g, swatch),
             };

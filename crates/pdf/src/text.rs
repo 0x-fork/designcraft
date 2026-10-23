@@ -32,10 +32,11 @@ use crate::export::{Exporter, solid_fill, tf, to_path};
 
 impl Exporter<'_> {
     /// A text run's paint: solid, or a gradient spanning the frame's box (`area`, text space),
-    /// for glyphs drawn under `origin` (text space ← run space).
-    fn text_paint(&mut self, swatch: &str, tint: f32, origin: Affine, area: Rect) -> Option<Paint> {
+    /// for glyphs drawn under `origin` (text space ← run space). `overprint`: the run's
+    /// overprint attribute for this paint.
+    fn text_paint(&mut self, swatch: &str, tint: f32, overprint: bool, origin: Affine, area: Rect) -> Option<Paint> {
         if designcraft_color::swatch::resolve_gradient(&self.doc.swatches, swatch).is_some() && origin.determinant().abs() > 1e-12 {
-            let fill = designcraft_doc::Fill { swatch: swatch.into(), tint, ..designcraft_doc::Fill::none() };
+            let fill = designcraft_doc::Fill { swatch: swatch.into(), tint, overprint, ..designcraft_doc::Fill::none() };
             return self.fill_paint_in(&fill, self.text_area.unwrap_or(area), origin.inverse());
         }
         self.swatch_color(swatch, tint).map(Into::into)
@@ -474,9 +475,9 @@ impl Exporter<'_> {
         // Outside a frame (no text area), a gradient spans the run.
         let end = glyphs.last().map_or(g0.x, |g| g.x + g.adv);
         let run_area = Rect::new(g0.x, baseline - size, end.max(g0.x + 1.0), baseline + size * 0.25);
-        let fill = self.text_paint(&st.fill, st.fill_tint, origin, run_area);
+        let fill = self.text_paint(&st.fill, st.fill_tint, st.overprint_fill, origin, run_area);
         let stroke = if st.stroke != designcraft_color::swatch::NONE && st.stroke_weight > 0.0 {
-            self.text_paint(&st.stroke, st.stroke_tint, origin, run_area)
+            self.text_paint(&st.stroke, st.stroke_tint, st.overprint_stroke, origin, run_area)
         } else {
             None
         };

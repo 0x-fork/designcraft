@@ -1,7 +1,10 @@
 //! Gradients written in their inks. A gradient whose stops name a spot swatch shades in that
 //! spot: one spot with paper or tints of itself is a Separation shading, a spot with process
 //! inks or a second spot a DeviceN shading (process colorants in CMYK order, then the spots).
-//! In print, a process gradient with a `[Paper]` stop shades in DeviceCMYK.
+//! In print, a process gradient with a `[Paper]` stop shades in DeviceCMYK. An overprinting
+//! gradient of fewer than four process inks is a DeviceN shading of just those inks: nonzero
+//! overprint mode doesn't apply to shadings (ISO 32000-2 §8.6.7), so a DeviceCMYK shading's
+//! zero components would knock out the plates beneath.
 
 use craft_pdf::write::backend as krilla;
 use designcraft_color::swatch::{ColorType, SwatchValue, apply_tint};
@@ -73,16 +76,18 @@ impl Exporter<'_> {
     }
 
     /// The gradient's stops in its inks, or `None` to write it in device colors (no spot, or
-    /// inks that can't share one shading space, which is warned about).
-    pub(crate) fn ink_gradient_stops(&mut self, g: &Gradient, swatch: &str) -> Option<Vec<Stop>> {
+    /// inks that can't share one shading space, which is warned about). `overprint`: the paint
+    /// overprints.
+    pub(crate) fn ink_gradient_stops(&mut self, g: &Gradient, swatch: &str, overprint: bool) -> Option<Vec<Stop>> {
+        let overprint = overprint && !self.rgb_only;
         // Plain-color stops (all older documents) keep their device colors.
-        if g.stops.iter().all(|s| s.swatch.is_none()) {
+        if !overprint && g.stops.iter().all(|s| s.swatch.is_none()) {
             return None;
         }
         let inks: Vec<Option<Ink>> = g.stops.iter().map(|s| self.stop_ink(s)).collect();
         let has_spot = inks.iter().any(|i| matches!(i, Some(Ink::Spot { .. })));
         let on_paper = g.stops.iter().any(|s| s.swatch.as_deref() == Some(designcraft_color::swatch::PAPER));
-        if !has_spot && !(on_paper && self.for_print() && !self.rgb_only) {
+        if !has_spot && !overprint && !(on_paper && self.for_print() && !self.rgb_only) {
             return None;
         }
         let Some(inks) = inks.into_iter().collect::<Option<Vec<Ink>>>() else {
@@ -107,6 +112,14 @@ impl Exporter<'_> {
         }
         let process: Vec<usize> = (0..4).filter(|j| process.get(*j).copied().unwrap_or(false)).collect();
         let space = match (spots.as_slice(), process.is_empty()) {
+            // All four inks are painted either way.
+            ([], false) if overprint && process.len() < 4 => {
+                let colorants: Vec<Colorant> = process.iter().filter_map(|j| Process::ALL.get(*j).copied().map(Colorant::Process)).collect();
+                match DeviceNSpace::new(colorants) {
+                    Some(s) => Some(Space::DeviceN(s)),
+                    None => return self.unshaded(swatch, "its inks don't fit one DeviceN space", false),
+                }
+            }
             ([], _) => None,
             ([(name, alternate)], true) => {
                 Some(Space::Separation(SeparationSpace::new(SeparationColorant::Custom(name.clone()), regular(alternate, self.rgb_only))))
@@ -167,7 +180,8 @@ impl Exporter<'_> {
             let color: krilla::color::Color = match &space {
                 Some(Space::Separation(sp)) => separation::Color::new(q(v.first().copied().unwrap_or(0.0)), sp.clone()).into(),
                 Some(Space::DeviceN(sp)) => device_n::Color::new(v.iter().map(|t| q(*t)).collect(), sp.clone())?.into(),
-                // Process inks only (a gradient to [Paper] in print).
+                // Process inks only (a gradient to [Paper] in print, or an overprinting one of
+                // all four inks).
                 None => {
                     let mut cmyk = [0.0f32; 4];
                     for (t, j) in v.iter().zip(&process) {

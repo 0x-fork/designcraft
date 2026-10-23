@@ -19,6 +19,11 @@ fn spot(d: &mut Document, name: &str, color: Color) {
 /// A document with spot inks Gold and Silver, a 40 % tint of Gold, and one box filled with a gradient on `stops`
 /// (swatch name or plain color, location).
 fn document(stops: &[(Result<&str, Color>, f32)], midpoint: f32) -> Document {
+    document_with(stops, midpoint, false)
+}
+
+/// [`document`], the box's fill overprinting when `overprint`.
+fn document_with(stops: &[(Result<&str, Color>, f32)], midpoint: f32, overprint: bool) -> Document {
     let mut d = Document::new(&NewDocument { width: 120.0, height: 120.0, facing_pages: false, ..Default::default() });
     spot(&mut d, "Gold", Color::cmyk(0.0, 0.3, 0.9, 0.1));
     spot(&mut d, "Silver", Color::cmyk(0.2, 0.15, 0.1, 0.3));
@@ -35,7 +40,7 @@ fn document(stops: &[(Result<&str, Color>, f32)], midpoint: f32) -> Document {
         ..Swatch::color("Fade", Color::BLACK)
     });
     let mut item = Item::new(ItemId(d.alloc()), d.default_layer(), Shape::Rectangle, shapes::rectangle(Rect::new(10.0, 10.0, 110.0, 110.0)));
-    item.fill = Fill::swatch("Fade");
+    item.fill = Fill { overprint, ..Fill::swatch("Fade") };
     d.insert_item(SpreadRef::Doc(0), item, None).unwrap();
     d
 }
@@ -154,6 +159,28 @@ fn a_process_gradient_to_paper_prints_in_cmyk() {
     no_conversion(&warnings);
     assert_eq!(shadings[0].family, "DeviceCMYK");
     assert!(close(&shadings[0].start, &[1.0, 0.0, 0.0, 0.0]) && close(&shadings[0].end, &[0.0, 0.0, 0.0, 0.0]));
+}
+
+/// Nonzero overprint mode doesn't apply to shadings, so an overprinting process gradient names
+/// only the inks it uses and leaves the other plates alone.
+#[test]
+fn an_overprinting_process_gradient_is_a_device_n_shading_of_its_inks() {
+    for standard in [Standard::None, Standard::PdfX4] {
+        let (shadings, warnings) = export(&document_with(&[(Ok(CYAN), 0.0), (Ok("[Paper]"), 1.0)], 0.5, true), standard);
+        no_conversion(&warnings);
+        let s = &shadings[0];
+        assert_eq!((s.family.as_str(), s.colorants.as_slice()), ("DeviceN", &["Cyan".to_string()][..]), "{standard:?}");
+        assert!(close(&s.start, &[1.0]) && close(&s.end, &[0.0]), "{:?} → {:?}", s.start, s.end);
+    }
+    // Plain-color stops too.
+    let c_to_m = [(Err(Color::cmyk(1.0, 0.0, 0.0, 0.0)), 0.0), (Err(Color::cmyk(0.0, 1.0, 0.0, 0.0)), 1.0)];
+    let (shadings, _) = export(&document_with(&c_to_m, 0.5, true), Standard::PdfX4);
+    let s = &shadings[0];
+    assert_eq!((s.family.as_str(), s.colorants.as_slice()), ("DeviceN", &["Cyan".to_string(), "Magenta".to_string()][..]));
+    assert!(close(&s.start, &[1.0, 0.0]) && close(&s.end, &[0.0, 1.0]), "{:?} → {:?}", s.start, s.end);
+    // Without overprint it stays in DeviceCMYK.
+    let (shadings, _) = export(&document(&c_to_m, 0.5), Standard::PdfX4);
+    assert_eq!(shadings[0].family, "DeviceCMYK");
 }
 
 /// PDF/A forbids DeviceN's PostScript tint transform: the gradient goes to process color, with
