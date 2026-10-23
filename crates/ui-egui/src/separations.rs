@@ -1,7 +1,8 @@
 //! View › Separations Preview on the canvas: each visible spread exported as Export PDF prints
 //! it and separated into plates (`designcraft_engine::separations`), drawn over the spread.
 //!
-//! Sheets are kept per spread, keyed by document revision, resolution and print settings, so
+//! Sheets are kept per spread, keyed by document revision, resolution, print settings and color
+//! settings (the CMYK working space is the printing condition plates are separated for), so
 //! panning and redrawing reuse them. Separating runs on a background thread (native); while it
 //! runs the previous sheet of that spread stays on screen. On the web it runs on the UI thread
 //! at a lower resolution.
@@ -40,6 +41,8 @@ pub struct Key {
     pub spread: usize,
     pub dpi: f32,
     pub print: Print,
+    /// The color settings it was separated under ([`designcraft_color::cms::generation`]).
+    pub cms: u64,
 }
 
 struct Entry {
@@ -217,7 +220,7 @@ pub fn dpi_for(zoom: f64, ppp: f64) -> f32 {
 
 fn key(app: &DesignApp, si: usize, dpi: f32) -> Option<(Key, Job)> {
     let st = app.session.active()?;
-    let key = Key { uid: st.uid, revision: st.revision, spread: si, dpi, print: print_settings(app) };
+    let key = Key { uid: st.uid, revision: st.revision, spread: si, dpi, print: print_settings(app), cms: designcraft_color::cms::generation() };
     Some((key.clone(), Job { key, doc: st.doc.clone(), cache: app.session.cache.clone() }))
 }
 
@@ -237,8 +240,10 @@ pub fn current_sheet(app: &mut DesignApp) -> Result<Arc<Sheet>, String> {
     let (key, job) = key(app, si, dpi).ok_or("no document")?;
     let preview = &mut app.canvas.separations;
     preview.poll();
-    if let Some(e) =
-        preview.entries.iter().find(|e| e.key.uid == key.uid && e.key.revision == key.revision && e.key.spread == si && e.key.print == key.print)
+    if let Some(e) = preview
+        .entries
+        .iter()
+        .find(|e| e.key.uid == key.uid && e.key.revision == key.revision && e.key.spread == si && e.key.print == key.print && e.key.cms == key.cms)
     {
         return e.sheet.clone();
     }
@@ -373,5 +378,20 @@ mod tests {
         let r = run_ui(&mut app, "view.separations", &json!({"plate": null, "inkLimit": null})).unwrap().unwrap();
         assert_eq!(r["on"], false);
         assert!(app.ui.separations.is_none() && r.get("inks").is_none_or(Value::is_null));
+    }
+
+    /// Plates separated under other color settings (another CMYK working space) aren't reused.
+    #[test]
+    fn plates_of_other_color_settings_are_separated_again() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let first = super::current_sheet(&mut app).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first, &super::current_sheet(&mut app).unwrap()), "the same settings reuse the sheet");
+        for e in &mut app.canvas.separations.entries {
+            e.key.cms = e.key.cms.wrapping_add(1);
+        }
+        let again = super::current_sheet(&mut app).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&first, &again), "a sheet of other color settings is separated again");
+        assert!(app.canvas.separations.entries.iter().all(|e| e.key.cms == designcraft_color::cms::generation()));
     }
 }
