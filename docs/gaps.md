@@ -165,7 +165,7 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 - **Estimate:** 30–50 h.
 
 ### 16. Menu items still missing (U)
-- **Missing:** 151 of 482 in-scope items of InDesign 21.6's menu dump have no match (measured 2026-10-10; some exist under other labels): Type ▸ Notes
+- **Missing:** 150 of 482 in-scope items of InDesign 21.6's menu dump have no match (measured 2026-10-10; some exist under other labels): Type ▸ Notes
   and Track Changes submenus (the panels and commands exist), hyperlink and cross-reference
   update commands, Convert Bullets/Numbering to Text, Object ▸ Clear
   Effects / Clear All Transparency / Rotate 180° / Reverse Path, Layout ▸ Go Back/Forward,

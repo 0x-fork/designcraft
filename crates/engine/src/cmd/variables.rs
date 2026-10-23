@@ -162,12 +162,13 @@ fn shifted(b: usize, grown: &[(usize, isize)]) -> usize {
 }
 
 /// Replaces every instance of variable `i` in `st`, its table cells and its notes with `value`.
-fn replace_nested(st: &mut designcraft_doc::Story, i: usize, value: &str, depth: usize) {
+/// Returns the growth of `st`'s own text, as [`replace_instances`].
+fn replace_nested(st: &mut designcraft_doc::Story, i: usize, value: &str, depth: usize) -> Vec<(usize, isize)> {
     if depth > MAX_DEPTH {
-        return;
+        return Vec::new();
     }
     let at = instances(&st.text, 0..st.text.len(), Some(i));
-    replace_instances(st, &at, &|_| value.to_string());
+    let grown = replace_instances(st, &at, &|_| value.to_string());
     let mut nested = false;
     for t in st.tables.values_mut() {
         if t.cells.iter().any(|c| holds(&c.text, i, depth + 1)) {
@@ -186,6 +187,7 @@ fn replace_nested(st: &mut designcraft_doc::Story, i: usize, value: &str, depth:
     if nested {
         st.rev = st.rev.wrapping_add(1);
     }
+    grown
 }
 
 /// Whether `st` or text nested in it holds an instance of variable `i`.
@@ -271,6 +273,23 @@ fn convert_all(s: &mut Session, p: &Value) -> Result<Value> {
     };
     s.edit(|d, sel| {
         for plan in &plans {
+            // A selection in a table cell or a footnote keeps its place in that text: it is
+            // converted first, so the loop below finds nothing left there.
+            if let Some(t) = sel.text.as_mut().filter(|t| t.story == plan.sid)
+                && let Some(c) = t.cell
+            {
+                let value = match c.footnote_id() {
+                    Some(id) => d.story(plan.sid).and_then(|st| st.notes.iter().position(|n| n.id == id)).and_then(|k| plan.notes.get(k)),
+                    None => plan.tables.iter().find(|(id, _)| *id == c.table).map(|(_, v)| v),
+                };
+                if let Some(v) = value
+                    && let Some(text) = d.text_story_mut(plan.sid, Some(c))
+                {
+                    let grown = replace_nested(text, i, v, 1);
+                    t.anchor = shifted(t.anchor, &grown);
+                    t.focus = shifted(t.focus, &grown);
+                }
+            }
             let st = d.story_mut(plan.sid).ok_or(designcraft_doc::DocError::NoStory(plan.sid))?;
             let at: Vec<(usize, usize)> = plan.own.iter().map(|(pos, _)| (*pos, i)).collect();
             let grown = replace_instances(st, &at, &|pos| plan.own.iter().find(|(k, _)| *k == pos).map(|(_, v)| v.clone()).unwrap_or_default());
@@ -637,6 +656,34 @@ mod tests {
         assert!(st.notes[0].text.text.ends_with("Epsilon"), "footnote: {:?}", st.notes[0].text.text);
         assert!(st.endnotes[0].text.text.ends_with("Epsilon"), "endnote: {:?}", st.endnotes[0].text.text);
         assert!(d.variable("Chapter Head").is_some(), "the variable stays defined");
+    }
+
+    /// A caret in a table cell or a footnote after an instance stays after the value Convert to
+    /// Text writes there, so typing lands after it.
+    #[test]
+    fn convert_all_keeps_the_caret_in_a_cell_or_a_footnote() {
+        for footnote in [false, true] {
+            let (mut s, ..) = running_heads();
+            let c = var_char(s.doc().unwrap().doc.variable("Chapter Head").unwrap()).unwrap();
+            let sid = threaded(&mut s);
+            let text = format!("{c}|");
+            let at = if footnote {
+                s.execute("footnote.insert", &json!({"text": text})).unwrap();
+                designcraft_doc::CellAddr::footnote(s.doc().unwrap().doc.story(sid).unwrap().notes[0].id)
+            } else {
+                s.execute("table.insert", &json!({"rows": 1, "cols": 1})).unwrap();
+                s.execute("table.setCell", &json!({"row": 0, "col": 0, "text": text})).unwrap();
+                let table = *s.doc().unwrap().doc.story(sid).unwrap().tables.keys().next().unwrap();
+                designcraft_doc::CellAddr { table, row: 0, col: 0 }
+            };
+            let n = s.doc().unwrap().doc.text_story(sid, Some(at)).unwrap().text.len();
+            s.doc_mut().unwrap().selection =
+                designcraft_doc::Selection::text(designcraft_doc::TextSel { story: sid, anchor: n, focus: n, frame: None, cell: Some(at) });
+            s.execute("variables.convertAllToText", &json!({"name": "Chapter Head"})).unwrap();
+            s.execute("text.insert", &json!({"text": "x"})).unwrap();
+            let text = &s.doc().unwrap().doc.text_story(sid, Some(at)).unwrap().text;
+            assert!(text.ends_with("Epsilon|x"), "footnote {footnote}: {text:?}");
+        }
     }
 
     /// Deleting a variable flattens its instances in table cells too and moves the instances of
