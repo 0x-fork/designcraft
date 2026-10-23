@@ -96,7 +96,7 @@ pub fn make_pdfx4(pdf: &[u8], title: &str, date: Option<i64>) -> Option<Vec<u8>>
         let s0 = find(body, b"stream", 0)? + b"stream".len();
         let s0 = s0 + body[s0..].iter().take_while(|c| **c == b'\r' || **c == b'\n').count();
         let s1 = rfind(body, b"endstream")?;
-        let xml = String::from_utf8_lossy(&body[s0..s1]).trim_end().to_string();
+        let xml = String::from_utf8_lossy(body.get(s0..s1)?).trim_end().to_string();
         let dict = String::from_utf8_lossy(&body[..find(body, b"stream", 0)?]).to_string();
         if dict.contains("/Filter") {
             return None;
@@ -674,6 +674,18 @@ mod tests {
         }
         out.extend_from_slice(format!("trailer\n<</Size {}/Root 1 0 R>>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
         out
+    }
+
+    /// A metadata object whose only `stream` is the one inside `endstream` is refused, not a slice panic.
+    #[test]
+    fn metadata_with_only_endstream_does_not_panic() {
+        let objects = ["<</Type/Catalog/Pages 2 0 R/Metadata 3 0 R>>", "<</Type/Pages/Kids[]/Count 0>>", "<</Type/Metadata>>endstream"];
+        let mut out = b"%PDF-1.6\n".to_vec();
+        for (i, o) in objects.iter().enumerate() {
+            out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+        }
+        out.extend_from_slice(b"trailer\n<</Size 4/Root 1 0 R>>\nstartxref\n0\n%%EOF\n");
+        assert!(super::make_pdfx4(&out, "t", None).is_none());
     }
 
     /// DeviceRGB is allowed when a `DefaultRGB` colour space makes it colour-managed.
