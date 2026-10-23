@@ -5642,4 +5642,45 @@ mod tests {
         assert!(texts.iter().any(|t| t == "Recent files"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "gone"), "the card names it without `.designcraft`: {texts:?}");
     }
+
+    /// On a short window (1366 x 768 laptops) the start screen is taller than the window; the part
+    /// below the fold has to be reachable by scrolling instead of being cut off.
+    #[test]
+    fn start_screen_scrolls_when_the_window_is_too_short() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "");
+        let size = egui::vec2(1366.0, 300.0);
+        let mut tile_y = |events: Vec<egui::Event>| {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+            out.shapes.iter().find_map(|s| match &s.shape {
+                // The preset tiles paint their names even when scrolled out of view (labels skip that).
+                egui::Shape::Text(t) if t.galley.text() == "Tabloid" => Some(t.pos.y),
+                _ => None,
+            })
+        };
+        let at = egui::pos2(600.0, 150.0);
+        let mut before = None;
+        for _ in 0..3 {
+            before = tile_y(vec![egui::Event::PointerMoved(at)]);
+        }
+        let before = before.expect("the Tabloid tile is laid out");
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut after = tile_y(vec![egui::Event::PointerMoved(at), wheel]);
+        for _ in 0..30 {
+            after = tile_y(Vec::new());
+        }
+        let after = after.expect("the Tabloid tile is laid out");
+        assert!(after < before - 50.0, "the start screen should scroll: {before} -> {after}");
+    }
 }
