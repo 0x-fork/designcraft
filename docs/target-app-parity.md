@@ -1,6 +1,6 @@
 # DesignCraft parity with Adobe InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (autoflow fills the following pages first; File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; recovery checkpoint retention; cancelable macOS Dock Quit; Based on Parent; object styles carry effects; colour management on craft-cms, Coated FOGRA39 default CMYK; swatches on placed greyscale and bitmap images) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (PDF/X-4 visible unembedded font detection, #909; autoflow fills the following pages first; File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; recovery checkpoint retention; cancelable macOS Dock Quit; Based on Parent; object styles carry effects; colour management on craft-cms, Coated FOGRA39 default CMYK; swatches on placed greyscale and bitmap images) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
 
 The authoritative assessment of how close DesignCraft is to Adobe InDesign. [ROADMAP.md](../ROADMAP.md)
 summarizes it; [gaps.md](gaps.md) lists every known shortfall one at a time; the feature-by-feature
@@ -217,11 +217,18 @@ table is the one summed.
 | Tables | 100% | 55% | 25–40 | anchored objects in cells not drawn (#163); Table ▸ Table Options submenus, Diagonal Lines, Edit Header/Footer |
 | Long documents | 100% | 45% | 30–50 | Books are shallow (sync, book pagination, book PDF/TOC/index); Table of Contents Styles |
 | Interactivity & digital | 100% | 40% | 30–50 | HTML export basic (#314); fixed-layout EPUB is page images; no animation, timing, media playback |
-| Output & production | 92% | 55% | 40–70 | PDF/X-4 only (no X-1a/X-3), no PDF/print presets or `.joboptions`, print via craft-print (CUPS/Windows), no trapping; Output Preview panel |
+| Output & production | 92% | 55% | 40–70 | PDF/X-4 only (no X-1a/X-3), with visible unembedded font detection (below); no PDF/print presets or `.joboptions`, print via craft-print (CUPS/Windows), no trapping; Output Preview panel |
 | XML & automation | 100% | 35% | (ecosystem dimension) | no ExtendScript/UXP; XML structure depth |
 | View & navigation | 100% | 65% | 10–20 | Navigator, display badges, Show/Hide extras (content grabber, live corners) |
 | Undo, history, saving | 100% | 70% | 5–10 | Undo/Redo name the action |
 | Accessibility | 100% | 50% | 15–25 | tagged PDF exists; PDF/UA validation, reading order depth, screen-reader support in the UI |
+
+PDF/X-4 export warnings and `validate-pdf` report unembedded fonts drawing visible text, including
+inside placed PDF forms, with font names and pages (#909). Invisible text (render mode 3) is exempt
+from the font-embedding check. Fonts are not embedded or outlined automatically; embedding,
+substitution or outlining of placed-PDF fonts remains missing ([gap 28](gaps.md#28-placed-pdf-font-repair-for-pdfx-4-ff)).
+A document-wide operation limit and a form-nesting depth limit report incomplete font checks rather
+than traversing pathological nesting. This is detection, not complete external PDF/X certification.
 
 ## Remaining effort and calibration
 
@@ -463,6 +470,7 @@ Task notes that headed ROADMAP.md:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | minor | Output assessment records visible unembedded font detection in PDF/X-4 export and `validate-pdf`, the invisible-text exemption, incomplete-check reporting at the operation and nesting-depth limits, and remaining placed-PDF font repair (#909); readiness and hours unchanged |
 | 2026-10-13 | minor | `.indd` and `.indt` open through storytold/indd-utils; INDD remaining work 10–30 h (real-file corpus); readiness unchanged until it is measured |
 | 2026-10-12 | minor | Text threads by hand; stage note and distance to alpha follow the gate (5–7 h, #165); percentages unchanged |
 | 2026-10-11 | minor | Spring-loaded Zoom navigation added to the working feature inventory (DC-1); readiness estimates unchanged |
