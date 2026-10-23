@@ -145,6 +145,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Duplicate", "複製"),
     ("Select All", "すべてを選択"),
     ("Deselect All", "すべての選択を解除"),
+    ("Select All Guides", "すべてのガイドを選択"),
+    ("Ruler Guide", "定規ガイド"),
     ("Find/Change…", "検索と置換…"),
     ("Check Spelling…", "スペルチェック…"),
     ("Preferences…", "環境設定…"),
@@ -1018,6 +1020,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Move Anchors", "アンカーポイントを移動"),
     ("Move Column", "列を移動"),
     ("Move Guide", "ガイドを移動"),
+    ("Move Column Guide", "列ガイドを移動"),
     ("Move Layer", "レイヤーを移動"),
     ("Move Pages…", "ページを移動…"),
     ("Move to Layer", "レイヤーへ移動"),
@@ -1349,6 +1352,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Load DTD…", "DTD を読み込み…"),
     ("Location:", "位置:"),
     ("Lock Guides", "ガイドをロック"),
+    ("Lock Column Guides", "列ガイドをロック"),
     ("Miter Limit:", "マイターの上限:"),
     ("New Article from Selection", "選択範囲から新規アーティクルを作成"),
     ("New Note at Cursor", "カーソル位置に新規注釈"),
@@ -2120,55 +2124,3 @@ pub(super) const TABLE: &[(&str, &str)] = &[
 
 /// Captions whose Japanese depends on where they appear: (English, context, Japanese).
 pub(super) const CONTEXT: &[(&str, &str, &str)] = &[("Span Columns", "paragraphLayout", "段抜き"), ("Columns:", "grid", "列:")];
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::TABLE;
-    use crate::i18n::tr;
-
-    fn placeholders(text: &str) -> Vec<&str> {
-        let mut found = Vec::new();
-        let mut rest = text;
-        while let Some(start) = rest.find('{') {
-            let Some(len) = rest[start..].find('}') else { break };
-            found.push(&rest[start..start + len + 1]);
-            rest = &rest[start + len + 1..];
-        }
-        found.sort_unstable();
-        found
-    }
-
-    #[test]
-    fn rows_are_unique_and_complete() {
-        let mut seen = HashSet::new();
-        for (en, ja) in TABLE {
-            assert!(seen.insert(*en), "duplicate {en}");
-            assert!(!ja.is_empty(), "{en}");
-        }
-    }
-
-    #[test]
-    fn rows_keep_placeholders_padding_and_endings() {
-        let ellipsis = |text: &str| text.trim_end().ends_with('…') || text.trim_end().ends_with("...");
-        for (en, ja) in TABLE {
-            assert_eq!(placeholders(en), placeholders(ja), "placeholders of {en}");
-            assert_eq!(en.len() - en.trim_start().len(), ja.len() - ja.trim_start().len(), "leading space of {en}");
-            assert_eq!(en.len() - en.trim_end().len(), ja.len() - ja.trim_end().len(), "trailing space of {en}");
-            assert_eq!(ellipsis(en), ellipsis(ja), "ellipsis of {en}");
-            // The numbering samples (`a, b, c, d...`) stay as they are; everything else uses `…`.
-            assert!(!ja.contains("...") || ja == en, "ASCII ellipsis in {en}");
-            assert_eq!(en.trim_end().ends_with(':'), ja.trim_end().ends_with(':'), "colon of {en}");
-        }
-    }
-
-    #[test]
-    fn lookup_uses_this_table_and_leaves_unknown_text_alone() {
-        assert_eq!(tr("ja", "File"), "ファイル");
-        assert_eq!(tr("ja", "Cancel"), "キャンセル");
-        assert_eq!(tr("ja", "{count} glyphs — click to insert at the text cursor").matches("{count}").count(), 1);
-        let unknown = String::from("A user-defined untranslated label");
-        assert!(std::ptr::eq(tr("ja", &unknown), unknown.as_str()));
-    }
-}

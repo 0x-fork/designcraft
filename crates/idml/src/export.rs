@@ -8,7 +8,7 @@ use designcraft_doc::{
     CharAttrs, CharFormat, ColumnsKind, Content, Document, Item, ListType, PageSide, ParaAttrs, ParaFormat, Rule, Shape, SpanColumns, Spread, Story,
     TextFrameOptions, story as st,
 };
-use designcraft_geom::{Affine, PathData, Rect};
+use designcraft_geom::{Affine, PathData};
 
 use crate::names::{self, CHAR_BUILTINS, OBJECT_BUILTINS, PARA_BUILTINS, escape_id, num, pt};
 use crate::xml::{El, Node, document, document_with_pi};
@@ -769,7 +769,7 @@ impl<'a> Ex<'a> {
                     },
                 )
                 .attr("CreatePrimaryTextFrame", bool_s(s.primary_text_frame))
-                .attr("ColumnGuideLocked", "true")
+                .attr("ColumnGuideLocked", bool_s(s.column_guides_locked))
                 .attr("MasterTextFrame", bool_s(s.primary_text_frame))
                 .attr("SnippetImportUsesOriginalLocation", "false"),
         );
@@ -2797,13 +2797,45 @@ impl<'a> Ex<'a> {
                         ce.set(&format!("{side}StrokePriority"), priority);
                     }
                 }
-                for psr in self.story_paras(&cell.text) {
+                let mut paras = self.story_paras(&cell.text);
+                // A graphic cell holds its image as an inline object in the cell's first paragraph.
+                if let Some(g) = &cell.graphic
+                    && let Some(object) = self.cell_graphic_el(g)
+                {
+                    // The cell clips its graphic on screen and in PDF; IDML does so only when asked.
+                    ce.set("ClipContentToCell", bool_s(true));
+                    let mut range = self.csr_el(&CharFormat::default());
+                    range.push(object);
+                    match paras.first_mut() {
+                        Some(first) => first.push(range),
+                        None => {
+                            let mut psr = self.psr_el(&ParaFormat::default());
+                            psr.push(range);
+                            paras.push(psr);
+                        }
+                    }
+                }
+                for psr in paras {
                     ce.push(psr);
                 }
                 el.push(ce);
             }
         }
         el
+    }
+
+    /// The frame of a table cell's graphic: an inline `Rectangle` around the shown image, or `None`
+    /// when the graphic's asset is missing.
+    fn cell_graphic_el(&mut self, g: &designcraft_doc::Graphic) -> Option<El> {
+        self.d.assets.get(&g.asset)?;
+        let shown = g.xf.transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1));
+        let layer = self.d.layers.first().map(|l| l.id).unwrap_or(designcraft_doc::ids::LayerId(0));
+        let mut item = Item::new(designcraft_doc::ids::ItemId(0), layer, Shape::Rectangle, designcraft_geom::shapes::rectangle(shown));
+        item.content = Content::Graphic(g.clone());
+        let mut el = self.item_el(&item, Affine::IDENTITY);
+        el.set("Self", self.fresh());
+        el.push(El::new("AnchoredObjectSetting").attr("AnchoredPosition", "InlinePosition").attr("AnchorYoffset", "0"));
+        Some(el)
     }
 
     fn psr_el(&mut self, pf: &ParaFormat) -> El {
@@ -2901,8 +2933,9 @@ impl Group {
 
 fn margin_el(pg: &designcraft_doc::Page) -> El {
     let m = pg.margin_rect();
-    let cols = designcraft_doc::column_rects(Rect::new(0.0, 0.0, m.width(), m.height()), pg.columns.count.max(1), pg.columns.gutter);
-    let pos: Vec<String> = cols.iter().flat_map(|c| [num(c.x0), num(c.x1)]).collect();
+    // Dragged column guides that still fit the margin box are written as they stand, so they
+    // survive the round trip; otherwise the even split, which InDesign writes for unmoved columns.
+    let pos: Vec<String> = pg.columns.edges(m.width()).into_iter().map(num).collect();
     El::new("MarginPreference")
         .attr("ColumnCount", pg.columns.count.max(1))
         .attr("ColumnGutter", num(pg.columns.gutter))

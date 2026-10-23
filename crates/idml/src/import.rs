@@ -391,13 +391,10 @@ fn mojikumi_row(e: &El) -> Result<designcraft_doc::cjk::MojikumiAki> {
     Ok(row)
 }
 
+/// The numbers in a whitespace-separated list; empty when any number is NaN or infinite (JSON
+/// can't store them, and dropping just those would shift the rest).
 fn nums(s: &str) -> Vec<f64> {
-    s.split_whitespace().filter_map(|v| v.parse().ok()).collect()
-}
-
-/// Like [`nums`], but empty when any number is NaN or infinite.
-fn finite_nums(s: &str) -> Vec<f64> {
-    let v = nums(s);
+    let v: Vec<f64> = s.split_whitespace().filter_map(|v| v.parse().ok()).collect();
     if v.iter().all(|x| x.is_finite()) { v } else { Vec::new() }
 }
 
@@ -861,6 +858,9 @@ impl<'r> Importer<'r> {
         if let Some(v) = e.boolean("CreatePrimaryTextFrame") {
             s.primary_text_frame = v;
         }
+        if let Some(v) = e.boolean("ColumnGuideLocked") {
+            s.column_guides_locked = v;
+        }
     }
 
     fn grid_prefs(&mut self, e: &El) {
@@ -903,6 +903,15 @@ impl<'r> Importer<'r> {
             _ if v.len() >= 4 => Color::cmyk((v[0] / 100.0) as f32, (v[1] / 100.0) as f32, (v[2] / 100.0) as f32, (v[3] / 100.0) as f32),
             _ => return None,
         };
+        // Huge values (1e300) overflow `f32` to infinity.
+        let parts = match c {
+            Color::Rgb { r, g, b } => [r, g, b, 0.0],
+            Color::Cmyk { c, m, y, k } => [c, m, y, k],
+            Color::Gray { k } => [k, 0.0, 0.0, 0.0],
+        };
+        if !parts.iter().all(|v| v.is_finite()) {
+            return None;
+        }
         let ty = if e.get("Model") == Some("Spot") { ColorType::Spot } else { ColorType::Process };
         Some((c, ty))
     }
@@ -955,14 +964,14 @@ impl<'r> Importer<'r> {
             let (Some(id), Some(name)) = (e.get("Self"), e.get("Name")) else { continue };
             let kind = match e.local() {
                 "StripedStrokeStyle" => designcraft_doc::StrokeType::Stripes {
-                    bands: finite_nums(e.get("StripeArray").unwrap_or(""))
+                    bands: nums(e.get("StripeArray").unwrap_or(""))
                         .as_chunks::<2>()
                         .0
                         .iter()
                         .map(|c| (c[0] / 100.0, (c[1] - c[0]) / 100.0))
                         .collect(),
                 },
-                "DashedStrokeStyle" => designcraft_doc::StrokeType::Dashed { pattern: finite_nums(e.get("DashArray").unwrap_or("")) },
+                "DashedStrokeStyle" => designcraft_doc::StrokeType::Dashed { pattern: nums(e.get("DashArray").unwrap_or("")) },
                 _ => designcraft_doc::StrokeType::Dotted,
             };
             let _ = id;
@@ -2178,9 +2187,12 @@ impl<'r> Importer<'r> {
         }
         // Table-local options override the named table style. Cell styles are already
         // materialized independently, so their edges retain their higher precedence.
+        let mut border_unset = style.border.is_none() && style.borders.iter().all(|b| b.is_empty());
         let mut borders = std::array::from_fn::<_, 4, _>(|i| t.options.border_for(i).clone());
         for (side, border) in ["TopBorder", "LeftBorder", "BottomBorder", "RightBorder"].iter().zip(&mut borders) {
-            self.cell_stroke_attrs(e, side).apply_to(border);
+            let attrs = self.cell_stroke_attrs(e, side);
+            border_unset &= attrs.is_empty();
+            attrs.apply_to(border);
         }
         t.options.border = borders[0].clone();
         t.options.borders = borders.map(Some);
@@ -2254,6 +2266,10 @@ impl<'r> Importer<'r> {
                 cell.stroke_priorities[i] = priority;
                 // Preserve style-defined edges and #102's positive-priority local overrides.
                 cell.border_overrides[i] |= priority > 0;
+                // No table or table style border is given anywhere, so the built-in 1 pt default must not
+                // draw over an outer edge the cell explicitly hides (weight 0 or the None swatch), as InDesign draws nothing.
+                let hidden = attrs.weight == Some(0.0) || attrs.color.as_deref() == Some(swatch::NONE);
+                cell.border_overrides[i] |= border_unset && hidden;
             }
             if let Some(slot) = t.cell_mut(r, c) {
                 *slot = cell;
@@ -2548,9 +2564,15 @@ impl<'r> Importer<'r> {
                     .map(|q| (q.margins, q.columns.clone()))
             };
             let (margins, columns) = match (p.find("MarginPreference"), &from_parent) {
-                (Some(m), _) => margins_of(m),
+                (Some(m), _) => {
+                    let (margins, columns) = margins_of(m);
+                    (margins, fit_columns(columns, &margins, r.width()))
+                }
                 (None, Some(own)) => own.clone(),
-                (None, None) => self.default_margins.clone().unwrap_or((Margins::uniform(36.0), Columns::default())),
+                (None, None) => {
+                    let (margins, columns) = self.default_margins.clone().unwrap_or((Margins::uniform(36.0), Columns::default()));
+                    (margins, fit_columns(columns, &margins, r.width()))
+                }
             };
             let local_margins = from_parent.is_some_and(|(m, c)| m != margins || c != columns);
             out_pages.push(Page {
@@ -2861,7 +2883,7 @@ impl<'r> Importer<'r> {
             {
                 it.fill.gradient_angle = Some(a);
             }
-            let start: Option<Vec<f64>> = e.prop("GradientFillStart").map(|s| finite_nums(&s));
+            let start: Option<Vec<f64>> = e.prop("GradientFillStart").map(|s| nums(&s));
             if let (Some([x, y]), Some(len)) = (start.as_deref().and_then(|v| <[f64; 2]>::try_from(v).ok()), e.num("GradientFillLength"))
                 && len > 0.0
             {
@@ -2879,7 +2901,7 @@ impl<'r> Importer<'r> {
             {
                 it.stroke.gradient_angle = Some(a);
             }
-            let start: Option<Vec<f64>> = e.prop("GradientStrokeStart").map(|s| finite_nums(&s));
+            let start: Option<Vec<f64>> = e.prop("GradientStrokeStart").map(|s| nums(&s));
             if let (Some([x, y]), Some(len)) = (start.as_deref().and_then(|v| <[f64; 2]>::try_from(v).ok()), e.num("GradientStrokeLength"))
                 && len > 0.0
             {
@@ -3479,10 +3501,39 @@ fn composer_in(name: &str) -> designcraft_doc::Composer {
 
 fn margins_of(m: &El) -> (Margins, Columns) {
     let g = |k: &str, d: f64| m.num(k).filter(|v| v.is_finite()).unwrap_or(d);
-    (
-        Margins { top: g("Top", 36.0), bottom: g("Bottom", 36.0), inside: g("Left", 36.0), outside: g("Right", 36.0) },
-        Columns { count: g("ColumnCount", 1.0).clamp(1.0, 216.0) as u32, gutter: g("ColumnGutter", 12.0), positions: None },
-    )
+    let margins = Margins { top: g("Top", 36.0), bottom: g("Bottom", 36.0), inside: g("Left", 36.0), outside: g("Right", 36.0) };
+    let count = g("ColumnCount", 1.0).clamp(1.0, f64::from(designcraft_doc::MAX_COLUMNS)) as u32;
+    let gutter = g("ColumnGutter", 12.0);
+    let positions = m.get("ColumnsPositions").and_then(|s| custom_columns(s, count, gutter));
+    (margins, Columns { count, gutter, positions })
+}
+
+/// `ColumnsPositions` when the column guides have been dragged off the even split: `2 × count`
+/// offsets from the margin box's left edge, valid as [`designcraft_doc::valid_column_positions`]
+/// over the box they span. InDesign writes the attribute whether or not they have been moved, so
+/// an even set is dropped: `positions` means "custom", and keeping an even copy would freeze the
+/// columns against a later change of count or gutter. Anything malformed is the even split; at
+/// most one number past `2 × count` is parsed, so a long list costs nothing.
+fn custom_columns(s: &str, count: u32, gutter: f64) -> Option<Vec<f64>> {
+    let want = 2 * count as usize;
+    let pos = s.split_whitespace().take(want + 1).map(|v| v.parse::<f64>().ok()).collect::<Option<Vec<f64>>>()?;
+    let width = *pos.last()?;
+    if !designcraft_doc::valid_column_positions(&pos, count, width) {
+        return None;
+    }
+    let even = Columns { count, gutter, positions: None }.edges(width);
+    // The tolerance only absorbs float noise in InDesign's arithmetic; a dragged guide moves far more.
+    pos.iter().zip(&even).any(|(a, b)| (a - b).abs() > 1e-4).then_some(pos)
+}
+
+/// `columns` with custom positions only when they fit the margin box of a `page_width`-wide page
+/// with these margins (the box's width doesn't depend on which side of the spine it is).
+fn fit_columns(mut columns: Columns, margins: &Margins, page_width: f64) -> Columns {
+    let width = (page_width - margins.inside - margins.outside).max(0.0);
+    if columns.valid_positions(width).is_none() {
+        columns.positions = None;
+    }
+    columns
 }
 
 /// Text Frame Options from `TextFramePreference` elements: each attribute from the first that sets it.
@@ -3678,6 +3729,11 @@ fn path_capped(pg: &El, max: usize) -> PathData {
         let closed = g.get("PathOpen") != Some("true");
         let mut anchors = Vec::new();
         if let Some(arr) = g.find("PathPointArray") {
+            // A NaN or infinite point drops its subpath (JSON can't store it).
+            let non_finite = |s: Option<&str>| s.is_some_and(|s| s.split_whitespace().any(|v| v.parse::<f64>().is_ok_and(|x| !x.is_finite())));
+            if arr.find_all("PathPointType").take(left).any(|p| ["Anchor", "LeftDirection", "RightDirection"].iter().any(|k| non_finite(p.get(k)))) {
+                continue;
+            }
             for p in arr.find_all("PathPointType").take(left) {
                 let Some(a) = parse_point(p.get("Anchor")) else { continue };
                 let hin = parse_point(p.get("LeftDirection")).unwrap_or(a);
@@ -4008,6 +4064,48 @@ mod page_column_import_safety_tests {
             assert_eq!(columns.gutter, 12.);
             assert_eq!(margins, Margins::uniform(36.));
         }
+    }
+
+    /// Hostile `ColumnsPositions` are the even split: never half-read, never a panic, and a long
+    /// list is not parsed past what `ColumnCount` allows (#1096).
+    #[test]
+    fn hostile_column_positions_fall_back_to_the_even_split() {
+        let positions = |count: &str, raw: &str| {
+            let m = El::new("MarginPreference").attr("ColumnCount", count).attr("ColumnGutter", "20").attr("ColumnsPositions", raw);
+            margins_of(&m).1.positions
+        };
+        assert_eq!(positions("2", "0 150 170 450"), Some(vec![0., 150., 170., 450.]));
+        let huge = (0..10_000).map(|i| i.to_string()).collect::<Vec<_>>().join(" ");
+        for (count, raw) in [
+            ("2", "0 215 235 450"),         // the even split
+            ("2", "0 150 170"),             // odd
+            ("2", "0 450"),                 // too few for the count
+            ("2", "0 100 120 200 220 450"), // too many for the count
+            ("2", "0 150 90 450"),          // descending
+            ("2", "0 NaN 170 450"),
+            ("2", "0 inf 170 450"),
+            ("2", "0 150 170 1e309"),
+            ("2", "0 x 170 450"),
+            ("2", "10 150 170 450"), // not from the margin
+            ("2", ""),
+            ("2", huge.as_str()),
+            ("4000000000", huge.as_str()), // the count is capped at 216, so is the list
+            ("216", huge.as_str()),
+            ("NaN", "0 150 170 450"),
+        ] {
+            assert_eq!(positions(count, raw), None, "{count}: {}", raw.get(..raw.len().min(40)).unwrap_or(""));
+        }
+        // The cap itself: 216 one-point columns with no gutter are the even split; one edge moved
+        // makes them custom.
+        let gapless = |raw: &str| {
+            let m = El::new("MarginPreference").attr("ColumnCount", "216").attr("ColumnGutter", "0").attr("ColumnsPositions", raw);
+            margins_of(&m).1.positions
+        };
+        let edges = |first_right: &str| {
+            (0..432).map(|i| if i == 1 { first_right.to_string() } else { ((i + 1) / 2).to_string() }).collect::<Vec<_>>().join(" ")
+        };
+        assert_eq!(gapless(&edges("1")), None);
+        assert_eq!(gapless(&edges("0.5")).map(|p| p.len()), Some(432));
     }
 }
 
