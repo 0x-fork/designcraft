@@ -1676,10 +1676,16 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 }
                 // A drop cap sits at the start-side indent; the first-line indent doesn't move it.
                 let beside = drop_cap.as_ref().filter(|dc| line_no < dc.lines && col_first_line == 0).map(DropCap::indent);
+                let first_line = if line_no == 0 { pp.first_line_indent } else { 0.0 };
                 let (ind_l, ind_r) = match beside {
                     Some(w) if rtl => (pp.left_indent, pp.right_indent + w),
                     Some(w) => (pp.left_indent + w, pp.right_indent),
-                    None => (pp.left_indent + if line_no == 0 { pp.first_line_indent } else { 0.0 }, pp.right_indent),
+                    // The first-line indent is at the paragraph's start side, which is the right
+                    // one in a right-to-left paragraph: applied on the left it moved the line the
+                    // wrong way, out of the frame for the hanging indent a numbered list uses
+                    // (#1448).
+                    None if rtl => (pp.left_indent, pp.right_indent + first_line),
+                    None => (pp.left_indent + first_line, pp.right_indent),
                 };
                 let lx0 = x0 + ind_l;
                 let lx1 = x1 - ind_r;
