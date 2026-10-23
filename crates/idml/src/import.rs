@@ -295,6 +295,10 @@ struct Importer<'r> {
     parents: Vec<Spread>,
     /// Things read but not kept as they were, for the import report.
     warnings: Vec<String>,
+    /// Cells whose text is rotated (Cell Options › Text › Rotation): the angle is kept and
+    /// written back, but only 0 is composed, so a narrow header column of vertical labels comes
+    /// in horizontal and wraps mid-word (#1468).
+    rotated_cells: usize,
     parent_ids: HashMap<String, SpreadId>,
     spreads: Vec<Spread>,
     page_index: HashMap<String, usize>,
@@ -533,6 +537,7 @@ impl<'r> Importer<'r> {
             story_ids: HashMap::new(),
             parents: Vec::new(),
             warnings: Vec::new(),
+            rotated_cells: 0,
             parent_ids: HashMap::new(),
             spreads: Vec::new(),
             page_index: HashMap::new(),
@@ -787,6 +792,12 @@ impl<'r> Importer<'r> {
                 marker: e.get("Marker").unwrap_or("").to_string(),
                 include_prefix: e.get("IncludeSectionPrefix") == Some("true"),
             });
+        }
+        if self.rotated_cells > 0 {
+            let n = self.rotated_cells;
+            self.warnings.push(format!(
+                "{n} table cell(s) have rotated text (Cell Options › Text › Rotation): the angle is kept and written back, but the text is composed horizontally"
+            ));
         }
         self.sections.sort_by_key(|s| s.start);
         self.sections.dedup_by_key(|s| s.start);
@@ -2244,6 +2255,9 @@ impl<'r> Importer<'r> {
                 cell.first_baseline_min = min.clamp(0.0, 8640.0);
             }
             cell.rotation = ce.num("RotationAngle").unwrap_or(cell.rotation);
+            if cell.rotation != 0.0 {
+                self.rotated_cells += 1;
+            }
             for (i, side) in ["TopEdge", "LeftEdge", "BottomEdge", "RightEdge"].iter().enumerate() {
                 let attrs = self.cell_stroke_attrs(ce, side);
                 attrs.apply_to(&mut cell.strokes[i]);
