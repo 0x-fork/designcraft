@@ -682,10 +682,8 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
             (Some(designcraft_doc::SpreadRef::Parent(_)), Some(sp)) => {
                 let prefix = sp.parent.as_ref().map(|p| p.prefix.clone()).unwrap_or_else(|| "A".into());
                 // The side of the parent page under the frame, so a folio there aligns to the spine of its own page.
-                let left = sp
-                    .page_at_x(item.bounds().center().x)
-                    .and_then(|pi| sp.pages.get(pi))
-                    .is_some_and(|p| p.side == designcraft_doc::PageSide::Left);
+                let under = sp.page_at_x(item.bounds().center().x).and_then(|pi| sp.pages.get(pi));
+                let left = under.is_some_and(|p| p.side == designcraft_doc::PageSide::Left);
                 (Some(prefix), None, left)
             }
             _ => (None, None, false),
