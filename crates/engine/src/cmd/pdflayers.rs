@@ -17,11 +17,13 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "object.pdfLayers", "Object Layers", [], None, "{id?} → [{name, visible, default}] — the layers of the selected placed PDF", has_selection, |s, p| {
             let id = super::id_param(p, "id").or_else(|| s.active().and_then(|d| d.selection.items.first().copied())).ok_or_else(|| bad("object.pdfLayers", "no selection"))?;
             let data = placed_pdf(s, id).ok_or_else(|| bad("object.pdfLayers", "not a placed PDF"))?;
-            let hidden = s.doc()?.doc.item(id).map(|i| i.pdf_hidden_layers.clone()).unwrap_or_default();
+            let item = s.doc()?.doc.item(id);
+            let hidden = item.map(|i| i.pdf_hidden_layers.clone()).unwrap_or_default();
+            let overridden = item.is_some_and(|i| i.has_pdf_layer_override());
             Ok(Value::Array(
                 designcraft_render::pdf_layers(&data)
                     .into_iter()
-                    .map(|(name, on)| json!({"visible": if hidden.is_empty() { on } else { !hidden.contains(&name) }, "name": name, "default": on}))
+                    .map(|(name, on)| json!({"visible": if overridden { !hidden.contains(&name) } else { on }, "name": name, "default": on, "overridden": overridden}))
                     .collect(),
             ))
         }),
@@ -30,16 +32,23 @@ pub fn specs() -> Vec<CommandSpec> {
             "Object Layer Options…",
             ["Object"],
             None,
-            "{ids?, hidden: [layer name]} — layers of placed PDFs to hide ([] = the file's own settings)",
+            "{ids?, hidden: [layer name], useDefaults?: bool} — hide layers; useDefaults:false makes [] explicitly all on; legacy [] restores file defaults",
             has_selection,
             |s, p| {
-                let ids = targets(s, p)?;
+                let ids: Vec<_> = targets(s, p)?.into_iter().filter(|id| placed_pdf(s, *id).is_some()).collect();
                 let hidden: Vec<String> = p
                     .get("hidden")
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
                     .unwrap_or_default();
-                if ids.iter().all(|id| placed_pdf(s, *id).is_none()) {
+                let use_defaults = match p.get("useDefaults") {
+                    None => hidden.is_empty(),
+                    Some(v) => v.as_bool().ok_or_else(|| bad("object.layerOptions", "useDefaults must be a boolean"))?,
+                };
+                if use_defaults && !hidden.is_empty() {
+                    return Err(bad("object.layerOptions", "useDefaults cannot be combined with hidden layers"));
+                }
+                if ids.is_empty() {
                     return Err(bad("object.layerOptions", "select a placed PDF"));
                 }
                 // Validate every selected PDF before editing any item or recording undo.
@@ -62,9 +71,10 @@ pub fn specs() -> Vec<CommandSpec> {
                     for id in &ids {
                         if let Some(it) = d.item_mut(*id) {
                             it.pdf_hidden_layers = hidden.clone();
+                            it.pdf_layer_override = !use_defaults;
                         }
                     }
-                    Ok(json!({"hidden": hidden}))
+                    Ok(json!({"hidden": hidden, "useDefaults": use_defaults}))
                 })
             }
         ),
@@ -377,5 +387,67 @@ pub(crate) mod tests {
         // PDF export carries the choice (the graphic goes out as an image).
         let r = s.execute("file.exportPdf", &json!({})).unwrap();
         assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("layer")), "{r}");
+    }
+    #[test]
+    fn placed_pdf_all_on_is_distinct_from_defaults_and_survives_exports() {
+        let pdf = designcraft_render::pdf_hide_layers(&two_layer_pdf(), &["Red".into()]).unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let id = s
+            .execute("file.place", &json!({"base64": super::super::file::base64_encode(&pdf), "name":"off.pdf", "x":100,"y":100,"width":100}))
+            .unwrap()["id"]
+            .clone();
+        let visible = |s: &mut Session| s.execute("object.pdfLayers", &json!({"id": id})).unwrap()[1]["visible"].as_bool().unwrap();
+        let pixel = |s: &Session| {
+            let mut rr = designcraft_render::Renderer::new();
+            rr.threads = 0;
+            rr.render_page(&s.doc().unwrap().doc, &s.cache, 0, 1.0, false, &Default::default()).unwrap().pixel(175, 150)
+        };
+        assert!(!visible(&mut s));
+        assert!(pixel(&s)[1] > 200, "red hidden by default");
+        s.execute("object.layerOptions", &json!({"ids":[id], "hidden":[], "useDefaults":false})).unwrap();
+        assert!(visible(&mut s));
+        assert!(pixel(&s)[0] > 200 && pixel(&s)[1] < 40, "all-on renders red");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(!visible(&mut s));
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert!(visible(&mut s));
+        let bytes = designcraft_format::save(&s.doc().unwrap().doc).unwrap();
+        let roundtrip = designcraft_format::load(&bytes).unwrap();
+        let item = roundtrip.item(designcraft_doc::ItemId(id.as_u64().unwrap())).unwrap();
+        assert!(item.pdf_layer_override && item.pdf_hidden_layers.is_empty());
+        let exported = s.execute("file.exportPdf", &json!({})).unwrap();
+        let bytes = super::super::file::base64_decode(exported["base64"].as_str().unwrap());
+        let raster = designcraft_render::render_pdf_page(&bytes, 0, 842).unwrap();
+        let px = raster.data().get(150 * usize::from(raster.width()) + 175).unwrap();
+        assert!(px.r > 200 && px.g < 40, "PDF export retains red: {px:?}");
+        let idml = s.execute("file.exportIdml", &json!({})).unwrap();
+        let bytes = super::super::file::base64_decode(idml["base64"].as_str().unwrap());
+        let imported = designcraft_idml::import_idml(&bytes).unwrap();
+        let pdf_asset = imported.assets.values().find(|a| designcraft_render::is_pdf(&a.data)).unwrap();
+        assert!(designcraft_render::pdf_layers(&pdf_asset.data).iter().all(|(_, on)| *on));
+        assert!(s.execute("file.exportIdml", &json!({"embedImages":false})).is_err());
+        assert_eq!(s.doc().unwrap().doc.assets.values().find(|a| a.name == "off.pdf").unwrap().data.as_slice(), pdf);
+        s.execute("object.layerOptions", &json!({"ids":[id],"hidden":[]})).unwrap();
+        assert!(!visible(&mut s), "legacy empty list still resets defaults");
+        s.execute("object.layerOptions", &json!({"ids":[id],"hidden":[],"useDefaults":false})).unwrap();
+        s.execute("object.layerOptions", &json!({"ids":[id],"useDefaults":true})).unwrap();
+        assert!(!visible(&mut s), "explicit reset restores defaults");
+    }
+    #[test]
+    fn pdf_layer_options_ignore_non_pdf_targets_in_mixed_selection() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let placed = s
+            .execute(
+                "file.place",
+                &json!({"base64": super::super::file::base64_encode(&two_layer_pdf()), "name":"art.pdf", "x":100,"y":100,"width":100}),
+            )
+            .unwrap();
+        let other = s.execute("frame.create", &json!({"rect":[0,0,20,20]})).unwrap();
+        s.execute("object.layerOptions", &json!({"ids":[placed["id"],other["id"]],"hidden":[],"useDefaults":false})).unwrap();
+        assert!(!s.doc().unwrap().doc.item(designcraft_doc::ItemId(other["id"].as_u64().unwrap())).unwrap().has_pdf_layer_override());
+        assert!(s.execute("object.layerOptions", &json!({"ids":[placed["id"]],"hidden":["Red"],"useDefaults":true})).is_err());
+        assert!(s.execute("object.layerOptions", &json!({"ids":[placed["id"]],"useDefaults":"false"})).is_err());
     }
 }

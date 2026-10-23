@@ -22,10 +22,10 @@ use serde_json::{Value, json};
 
 pub const MIME: &str = "application/vnd.designcraft+zip";
 /// Latest reader capability. Version 2 pinned the Keep Lines Together and drop cap defaults;
-/// version 3 adds rendering of retained EPS source assets; version 4 retains placed graphic layer
-/// options. Version 4 is one capability shared with explicit all-on placed-PDF layer choices
-/// (storytold/designcraft#1671): it must not be released until a reader understands both, and any
-/// later capability needs version 5. [`required_version`] is the only place that picks a version.
+/// version 3 adds rendering of retained EPS source assets; version 4 is one capability covering both
+/// retained placed-graphic layer options and explicit all-on placed-PDF layer choices, so a version 4
+/// reader understands both. Any later capability needs version 5. [`required_version`] is the only
+/// place that picks a version.
 pub const VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
@@ -73,8 +73,10 @@ const LARGE_ENTRY: usize = (u32::MAX as usize).saturating_sub(64 << 20);
 /// The oldest reader capability that keeps everything in `doc`. Documents that need nothing newer
 /// keep their older requirement so existing readers still open them.
 fn required_version(doc: &Document) -> u32 {
-    // Older readers ignore unknown Graphic fields and would silently drop layer choices.
-    if doc.has_graphic_layer_options() {
+    // Version 4 covers both of these: older readers ignore the unknown fields, so they would
+    // silently drop retained graphic layer choices, or read an explicit all-on PDF layer choice
+    // (empty hidden list) as "use the file's defaults". A nonempty hidden list stays readable.
+    if doc.has_graphic_layer_options() || doc.has_explicit_all_on_pdf_layers() {
         return 4;
     }
     // Older readers would silently omit EPS artwork. Preview-only legacy assets and documents
@@ -452,6 +454,36 @@ mod tests {
         }
         z.finish().unwrap();
         buf.into_inner()
+    }
+
+    #[test]
+    fn explicit_all_on_pdf_layers_require_a_capable_reader_only_when_needed() {
+        let mut d = Document::new(&NewDocument::default());
+        let aid = AssetId(d.alloc());
+        d.assets.insert(
+            aid,
+            Arc::new(Asset {
+                id: aid,
+                name: "art.pdf".into(),
+                mime: "application/pdf".into(),
+                data: Arc::new(b"%PDF-1.7".to_vec()),
+                ..Default::default()
+            }),
+        );
+        let id = place(&mut d, aid, 0.0);
+        let version = |d: &Document| {
+            let bytes = save(d).unwrap();
+            let mut z = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+            let mut meta = String::new();
+            z.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
+            serde_json::from_str::<Value>(&meta).unwrap()["version"].as_u64().unwrap()
+        };
+        assert_eq!(version(&d), 2);
+        d.item_mut(id).unwrap().pdf_layer_override = true;
+        assert_eq!(version(&d), 4);
+        assert!(load(&save(&d).unwrap()).unwrap().item(id).unwrap().pdf_layer_override);
+        d.item_mut(id).unwrap().pdf_hidden_layers = vec!["Red".into()];
+        assert_eq!(version(&d), 2, "legacy nonempty overrides remain readable");
     }
 
     #[test]

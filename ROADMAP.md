@@ -12,6 +12,9 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-23** · Placed PDF layers can explicitly all be shown, separately from Use File Defaults.
+  Legacy commands keep their reset behavior; native saves require a capable reader only for
+  the new all-on state, and PDF/embedded IDML exports preserve the choice. No readiness percentage change.
 - **2026-10-23** · IDML graphic-layer export rejects parents in already closed subtrees,
   preserving native-edited layer order through round trips. Synthetic regression added.
 - **2026-10-23** · PDF layer choices now validate before editing all targets; rejected rewrites
