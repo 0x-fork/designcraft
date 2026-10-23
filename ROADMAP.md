@@ -13,7 +13,8 @@ DesignCraft aims at full Adobe InDesign parity — and to be better: faster, ope
 
 - **2026-10-23** · PDF layer visibility variants retain catalog/configuration entries and full
   object references; bounded incremental updates replace the existing catalog. Synthetic
-  regression tests cover metadata, output-intent references and nonzero generations. No readiness percentage change.
+  regression tests cover metadata, output-intent references, nonzero generations and
+  forward Prev links; repeated cross-reference offsets are rejected explicitly. No readiness percentage change.
 
 ## Status (2026-10-01)
 

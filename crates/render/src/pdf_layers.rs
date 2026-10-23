@@ -112,16 +112,17 @@ pub fn pdf_hide_layers(bytes: &[u8], hidden: &[String]) -> Option<Vec<u8>> {
     // Do not copy decrypted dictionaries into an encrypted file, or ignore a hybrid
     // xref table. Follow bounded Prev links because encryption can be inherited.
     let mut offset = Some(prev);
+    let mut visited = std::collections::HashSet::new();
     for _ in 0..32 {
         let Some(at) = offset else { break };
+        if !visited.insert(at) {
+            return None;
+        }
         let t = trailer_at(bytes, at)?;
         if t.contains_key(b"Encrypt") || t.contains_key(b"XRefStm") {
             return None;
         }
         offset = t.get::<usize>(b"Prev");
-        if offset.is_some_and(|n| n >= at) {
-            return None;
-        }
     }
     if offset.is_some() {
         return None;

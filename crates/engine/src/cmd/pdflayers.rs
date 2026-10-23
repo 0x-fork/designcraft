@@ -142,6 +142,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn pdf_layer_update_follows_forward_prev_and_rejects_cycles() {
+        let original = two_layer_pdf();
+        let text = std::str::from_utf8(&original).unwrap();
+        let first = original.len();
+        let link = |prev: usize| format!("xref\n0 1\n0000000000 65535 f\ntrailer<</Size 9/Root 1 0 R/Prev {prev:010}>>\n");
+        let main = first + link(0).len();
+        let mut forward = original.clone();
+        forward.extend_from_slice(link(main).as_bytes());
+        let old: usize = text.rsplit_once("startxref").unwrap().1.split_whitespace().next().unwrap().parse().unwrap();
+        forward.extend_from_slice(text[old..].split("startxref").next().unwrap().as_bytes());
+        forward.extend_from_slice(format!("startxref\n{first}\n%%EOF\n").as_bytes());
+        let updated = designcraft_render::pdf_hide_layers(&forward, &["Red".into()]).unwrap();
+        assert_eq!(designcraft_render::pdf_layers(&updated), vec![("Blue".into(), true), ("Red".into(), false)]);
+        let mut cyclic = original;
+        cyclic.extend_from_slice(link(first).as_bytes());
+        cyclic.extend_from_slice(format!("startxref\n{first}\n%%EOF\n").as_bytes());
+        assert!(designcraft_render::pdf_hide_layers(&cyclic, &[]).is_none());
+    }
+
+    #[test]
     fn placed_pdf_layers_hide() {
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
