@@ -194,6 +194,12 @@ pub struct UiState {
     /// The view (by its `views` key) Presentation was entered from; leaving puts it back.
     #[serde(skip)]
     pub presentation_view: Option<(u64, View)>,
+    /// The page in that view and the place on it, for Go Back after leaving Presentation.
+    #[serde(skip)]
+    pub presentation_page: Option<(designcraft_doc::ids::PageId, designcraft_geom::Vec2)>,
+    /// That view's Go Back / Go Forward history; leaving puts it back with one jump added.
+    #[serde(skip)]
+    pub(crate) presentation_history: Option<page_history::PageHistory>,
     pub frame_edges: bool,
     pub rulers: bool,
     pub guides: bool,
@@ -362,6 +368,8 @@ impl Default for UiState {
             screen_mode: ScreenMode::Normal,
             presentation_return: ScreenMode::Normal,
             presentation_view: None,
+            presentation_page: None,
+            presentation_history: None,
             frame_edges: true,
             rulers: true,
             guides: true,

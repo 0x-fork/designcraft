@@ -262,7 +262,7 @@ fn page_ids(doc: &Document) -> Vec<designcraft_doc::ids::PageId> {
 
 /// The page in view and the view centre's offset from that page's centre. Parent pages have none,
 /// nor has a view still waiting to be fitted (leaving parent pages for a document page).
-fn page_in_view(app: &DesignApp) -> Option<(designcraft_doc::ids::PageId, DVec2)> {
+pub(crate) fn page_in_view(app: &DesignApp) -> Option<(designcraft_doc::ids::PageId, DVec2)> {
     let st = app.session.active().filter(|st| !st.editing_parents)?;
     let (v, r) = (app.view().filter(|v| v.fitted)?, app.canvas_rect?);
     let abs = current_page(app)?;
