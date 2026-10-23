@@ -1071,7 +1071,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "app.saveDialog" => {
             let name = app.session.active().map(|d| format!("{}.designcraft", d.doc.title)).unwrap_or_default();
-            if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            if let Some(path) = app.pick_save(&name) {
                 return Some(app.run("file.saveAs", json!({"path": path})));
             }
             Ok(Value::Null)
@@ -1082,7 +1082,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "app.saveCopyDialog" => {
             let name = app.session.active().map(|d| format!("{} copy.designcraft", d.doc.title)).unwrap_or_default();
-            if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            if let Some(path) = app.pick_save(&name) {
                 return Some(app.run("file.saveACopy", json!({"path": path})));
             }
             Ok(Value::Null)
@@ -1156,7 +1156,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         "app.exportText" => export_bytes(app, p, "rtf", "file.exportText"),
         "app.packageDialog" => {
             let name = app.session.active().map(|d| format!("{} Folder", d.doc.title)).unwrap_or_default();
-            match app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            match app.pick_save(&name) {
                 Some(dir) => {
                     let r = app.run("file.package", json!({"dir": dir}));
                     if let Ok(v) = &r {
@@ -1217,7 +1217,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         "app.saveSwatches" => {
             let path = match p.get("path").and_then(Value::as_str) {
                 Some(s) => Some(s.to_string()),
-                None => app.services.pick_save.as_mut().and_then(|f| f("Swatches.ase")),
+                None => app.pick_save("Swatches.ase"),
             };
             let Some(path) = path else { return Some(Ok(Value::Null)) };
             let r = match app.run("swatch.save", json!({})) {
@@ -2011,7 +2011,7 @@ fn export_png(app: &mut DesignApp, p: &Value) -> Result<Value, String> {
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}-p{}.png", st.doc.title, page + 1);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
@@ -2029,7 +2029,7 @@ fn export_idml(app: &mut DesignApp, p: &Value) -> Result<Value, String> {
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}.idml", st.doc.title);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
@@ -2049,7 +2049,7 @@ fn export_bytes(app: &mut DesignApp, p: &Value, ext: &str, cmd: &str) -> Result<
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}.{ext}", st.doc.title);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
@@ -2077,7 +2077,7 @@ pub(crate) fn export_pdf(app: &mut DesignApp, p: &Value) -> Result<Value, String
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}.pdf", st.doc.title);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
