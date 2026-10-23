@@ -326,16 +326,29 @@ fn present_fit(app: &mut DesignApp, rect: Rect) {
 /// Centre the spread `delta` spreads after (or before) the one in view (keeps zoom); stops at the
 /// first and last spread. Parent spreads while they are being edited.
 pub fn step_spread(app: &mut DesignApp, delta: isize) {
-    note_jump(app, false);
+    // At the first or last spread only the view moves, within the spread: no jump for Go Back.
+    let jump = spread_step(app, delta).is_some_and(|(cur, to)| cur != to);
+    if jump {
+        note_jump(app, false);
+    }
     centre_spread(app, delta);
-    note_jump(app, true);
+    if jump {
+        note_jump(app, true);
+    }
+}
+
+/// The slot in view and the one `delta` spreads after (or before) it, stopping at the ends.
+fn spread_step(app: &DesignApp, delta: isize) -> Option<(usize, usize)> {
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let cur = current_slot(app, &layout)?;
+    Some((cur, cur.saturating_add_signed(delta).min(layout.slots.len().saturating_sub(1))))
 }
 
 fn centre_spread(app: &mut DesignApp, delta: isize) {
+    let Some((_, to)) = spread_step(app, delta) else { return };
     let Some(st) = app.session.active() else { return };
     let layout = CanvasLayout::new(&st.doc, st.editing_parents);
-    let Some(cur) = current_slot(app, &layout) else { return };
-    let to = cur.saturating_add_signed(delta).min(layout.slots.len().saturating_sub(1));
     let Some(b) = layout.slots.get(to).map(|s| s.bounds) else { return };
     let Some(rect) = app.canvas_rect else { return };
     if let Some(v) = app.view_mut() {

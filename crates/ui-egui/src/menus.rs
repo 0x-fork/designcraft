@@ -4290,6 +4290,47 @@ mod tests {
     }
 
     #[test]
+    fn next_spread_at_the_last_spread_is_no_jump() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({"pages": 7, "facingPages": true})).unwrap();
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        let key = |k: egui::Key, modifiers: egui::Modifiers| {
+            vec![
+                egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers },
+                egui::Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers },
+            ]
+        };
+        let page = |app: &crate::DesignApp| crate::canvas::current_page(app).unwrap();
+        let cmd = egui::Modifiers { command: true, ctrl: true, ..Default::default() };
+        let alt = egui::Modifiers::ALT;
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        // Pages 1 | 2-3 | 4-5 | 6-7: page 6 is the left page of the last spread.
+        app.run("view.goToPage", json!({"page": 6})).unwrap();
+        frame(&mut app, vec![]);
+        assert_eq!(page(&app), 5);
+        // Next Spread has no spread to go to; centring the last one moves the view to its fold.
+        frame(&mut app, key(egui::Key::PageDown, alt));
+        frame(&mut app, key(egui::Key::PageDown, alt));
+        assert_ne!(page(&app), 5, "the view moved to the right page");
+        frame(&mut app, key(egui::Key::PageUp, cmd));
+        assert_eq!(page(&app), 0, "Go Back returns to the page before Go to Page");
+        assert!(!menu_enabled(&app, "view.goBack"));
+    }
+
+    #[test]
     fn go_back_returns_to_the_view_a_jump_left_and_scrolling_adds_no_entry() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", &json!({"pages": 7, "facingPages": true})).unwrap();
