@@ -972,7 +972,7 @@ fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let (first_baseline, first_baseline_min) = first_baseline_params(p, ID)?;
     // Cell Options › Text › Rotation. The value is kept and written back to IDML; only 0 is
-    // composed so far, which the import says and preflight reports (#1468).
+    // composed so far, which the IDML import reports (#1468).
     let rotation = match p.get("rotation").filter(|v| !v.is_null()) {
         Some(v) => match v.as_f64().map(|d| d.rem_euclid(360.0)) {
             Some(d) if d == 0.0 || d == 90.0 || d == 180.0 || d == 270.0 => Some(d),
