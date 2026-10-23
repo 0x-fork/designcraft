@@ -679,10 +679,12 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                 let abs = doc.first_page_of_spread(si) + pi;
                 (Some(doc.page_name(abs)), Some(abs), sp.pages.get(pi).is_some_and(|p| p.side == designcraft_doc::PageSide::Left))
             }
-            (Some(designcraft_doc::SpreadRef::Parent(pi)), Some(sp)) => {
+            (Some(designcraft_doc::SpreadRef::Parent(_)), Some(sp)) => {
                 let prefix = sp.parent.as_ref().map(|p| p.prefix.clone()).unwrap_or_else(|| "A".into());
-                let _ = pi;
-                (Some(prefix), None, false)
+                // The side of the parent page under the frame, so a folio there aligns to the spine of its own page.
+                let under = sp.page_at_x(item.bounds().center().x).and_then(|pi| sp.pages.get(pi));
+                let left = under.is_some_and(|p| p.side == designcraft_doc::PageSide::Left);
+                (Some(prefix), None, left)
             }
             _ => (None, None, false),
         };
@@ -1674,10 +1676,16 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 }
                 // A drop cap sits at the start-side indent; the first-line indent doesn't move it.
                 let beside = drop_cap.as_ref().filter(|dc| line_no < dc.lines && col_first_line == 0).map(DropCap::indent);
+                let first_line = if line_no == 0 { pp.first_line_indent } else { 0.0 };
                 let (ind_l, ind_r) = match beside {
                     Some(w) if rtl => (pp.left_indent, pp.right_indent + w),
                     Some(w) => (pp.left_indent + w, pp.right_indent),
-                    None => (pp.left_indent + if line_no == 0 { pp.first_line_indent } else { 0.0 }, pp.right_indent),
+                    // The first-line indent is at the paragraph's start side, which is the right
+                    // one in a right-to-left paragraph: applied on the left it moved the line the
+                    // wrong way, out of the frame for the hanging indent a numbered list uses
+                    // (#1448).
+                    None if rtl => (pp.left_indent, pp.right_indent + first_line),
+                    None => (pp.left_indent + first_line, pp.right_indent),
                 };
                 let lx0 = x0 + ind_l;
                 let lx1 = x1 - ind_r;
