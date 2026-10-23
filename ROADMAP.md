@@ -25,6 +25,10 @@ DesignCraft aims at full Adobe InDesign parity — and to be better: faster, ope
   regression tests cover metadata, output-intent references, nonzero generations and
   forward Prev links; repeated cross-reference offsets are rejected explicitly. No readiness percentage change.
 
+- **2026-10-23** · PDF layer commands reject overrides on layerless files atomically;
+  default layer queries find a placed PDF anywhere in mixed selections. Regression tests cover
+  IDML export after rejection and both selection orders.
+
 ## Status (2026-10-01)
 
 **Working today**

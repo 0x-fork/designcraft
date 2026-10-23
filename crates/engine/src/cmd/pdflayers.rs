@@ -15,7 +15,7 @@ fn placed_pdf(s: &Session, id: designcraft_doc::ItemId) -> Option<std::sync::Arc
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "object.pdfLayers", "Object Layers", [], None, "{id?} → [{name, visible, default}] — the layers of the selected placed PDF", has_selection, |s, p| {
-            let id = super::id_param(p, "id").or_else(|| s.active().and_then(|d| d.selection.items.first().copied())).ok_or_else(|| bad("object.pdfLayers", "no selection"))?;
+            let id = super::id_param(p, "id").or_else(|| s.active().and_then(|d| d.selection.items.iter().copied().find(|id| placed_pdf(s, *id).is_some()))).ok_or_else(|| bad("object.pdfLayers", "no selection"))?;
             let data = placed_pdf(s, id).ok_or_else(|| bad("object.pdfLayers", "not a placed PDF"))?;
             let item = s.doc()?.doc.item(id);
             let hidden = item.map(|i| i.pdf_hidden_layers.clone()).unwrap_or_default();
@@ -50,6 +50,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 if ids.is_empty() {
                     return Err(bad("object.layerOptions", "select a placed PDF"));
+                }
+                // A layerless/unreadable PDF cannot carry a visibility variant. Validate
+                // every target before editing so a mixed request remains atomic.
+                if !use_defaults && ids.iter().any(|id| placed_pdf(s, *id).is_none_or(|data| designcraft_render::pdf_layers(&data).is_empty())) {
+                    return Err(bad("object.layerOptions", "the selected PDF has no readable optional-content layers"));
                 }
                 // Validate every selected PDF before editing any item or recording undo.
                 // Repeated placements of the same source need only one rewrite check.
@@ -435,6 +440,27 @@ pub(crate) mod tests {
         assert!(!visible(&mut s), "explicit reset restores defaults");
     }
     #[test]
+    fn layerless_pdf_rejects_overrides_without_breaking_idml_export() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let pdf = s.execute("file.exportPdf", &json!({})).unwrap()["base64"].clone();
+        let id = s.execute("file.place", &json!({"base64":pdf,"name":"plain.pdf","x":0,"y":0,"width":100})).unwrap()["id"].clone();
+        let layered = s
+            .execute(
+                "file.place",
+                &json!({"base64":super::super::file::base64_encode(&two_layer_pdf()),"name":"layered.pdf","x":120,"y":0,"width":100}),
+            )
+            .unwrap()["id"]
+            .clone();
+        let before = serde_json::to_value(&*s.doc().unwrap().doc).unwrap();
+        assert!(s.execute("object.layerOptions", &json!({"ids":[layered,id],"hidden":[],"useDefaults":false})).is_err());
+        assert_eq!(serde_json::to_value(&*s.doc().unwrap().doc).unwrap(), before);
+        assert!(s.execute("file.exportIdml", &json!({})).is_ok());
+        s.execute("object.layerOptions", &json!({"ids":[id],"hidden":[],"useDefaults":true})).unwrap();
+        assert!(!s.doc().unwrap().doc.item(designcraft_doc::ItemId(id.as_u64().unwrap())).unwrap().has_pdf_layer_override());
+    }
+
+    #[test]
     fn pdf_layer_options_ignore_non_pdf_targets_in_mixed_selection() {
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
@@ -445,6 +471,11 @@ pub(crate) mod tests {
             )
             .unwrap();
         let other = s.execute("frame.create", &json!({"rect":[0,0,20,20]})).unwrap();
+        for ids in [json!([other["id"], placed["id"]]), json!([placed["id"], other["id"]])] {
+            s.execute("selection.set", &json!({"ids":ids})).unwrap();
+            assert_eq!(s.execute("object.pdfLayers", &json!({})).unwrap().as_array().unwrap().len(), 2);
+        }
+        assert!(s.execute("object.pdfLayers", &json!({"id":other["id"]})).is_err(), "explicit non-PDF id remains an error");
         s.execute("object.layerOptions", &json!({"ids":[placed["id"],other["id"]],"hidden":[],"useDefaults":false})).unwrap();
         assert!(!s.doc().unwrap().doc.item(designcraft_doc::ItemId(other["id"].as_u64().unwrap())).unwrap().has_pdf_layer_override());
         assert!(s.execute("object.layerOptions", &json!({"ids":[placed["id"]],"hidden":["Red"],"useDefaults":true})).is_err());
