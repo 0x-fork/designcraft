@@ -983,7 +983,7 @@ fn align_row(app: &mut DesignApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         // A key object switches Align To to Key Object; choosing another target drops the key.
-        let key = app.session.active().and_then(|st| st.selection.key);
+        let key = app.session.active().and_then(|st| st.selection.key.filter(|_| st.selection.items.len() > 1));
         let to = if key.is_some() { "keyObject".to_string() } else { app.ui.align_to.clone() };
         let to_label = match to.as_str() {
             "selection" => "Selection",

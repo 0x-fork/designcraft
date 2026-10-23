@@ -3074,9 +3074,9 @@ fn align_reference(d: &Document, ids: &[ItemId], to: &str, key: Option<ItemId>) 
 fn align(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let edge = str_param(p, "edge").unwrap_or("left").to_string();
-    // A key object counts only while it is one of the items aligned. With one, InDesign's Align
-    // To switches to Key Object, so it is also the default target.
-    let key = s.doc()?.selection.key.filter(|k| ids.contains(k));
+    // A key object counts only while it is one of several items aligned. With one, InDesign's
+    // Align To switches to Key Object, so it is also the default target.
+    let key = s.doc()?.selection.key.filter(|k| ids.len() > 1 && ids.contains(k));
     let to = str_param(p, "to").map(str::to_string).unwrap_or_else(|| {
         if key.is_some() {
             "keyObject".into()

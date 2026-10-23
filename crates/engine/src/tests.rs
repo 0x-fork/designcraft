@@ -1712,3 +1712,33 @@ fn deselecting_the_key_object_drops_the_key() {
     s.execute("selection.toggle", &json!({"id": b})).unwrap();
     assert_eq!(s.doc().unwrap().selection.key, None);
 }
+
+/// With the selection down to the key object alone, Align no longer has a key object: a single
+/// object aligns to the page, as before.
+#[test]
+fn a_lone_key_object_aligns_to_the_page() {
+    let mut s = session();
+    let a = s.execute("frame.create", &json!({"rect": [50.0, 100.0, 100.0, 150.0]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("frame.create", &json!({"rect": [200.0, 120.0, 300.0, 170.0]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"ids": [a, b]})).unwrap();
+    s.execute("selection.key", &json!({"id": b})).unwrap();
+    s.execute("selection.toggle", &json!({"id": a})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.key, None);
+    s.execute("object.align", &json!({"edge": "left"})).unwrap();
+    let x0 = s.doc().unwrap().doc.item(designcraft_doc::ItemId(b)).unwrap().bounds().x0;
+    assert!(x0.abs() < 1e-6, "the object is at {x0}, not at the page's left edge");
+}
+
+/// Aligning one object alone (`ids`) while it is the key object of a larger selection also takes
+/// the page.
+#[test]
+fn aligning_the_key_object_alone_takes_the_page() {
+    let mut s = session();
+    let a = s.execute("frame.create", &json!({"rect": [50.0, 100.0, 100.0, 150.0]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("frame.create", &json!({"rect": [200.0, 120.0, 300.0, 170.0]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"ids": [a, b]})).unwrap();
+    s.execute("selection.key", &json!({"id": b})).unwrap();
+    s.execute("object.align", &json!({"edge": "left", "ids": [b]})).unwrap();
+    let x0 = s.doc().unwrap().doc.item(designcraft_doc::ItemId(b)).unwrap().bounds().x0;
+    assert!(x0.abs() < 1e-6, "the object is at {x0}, not at the page's left edge");
+}

@@ -262,7 +262,8 @@ pub fn specs() -> Vec<CommandSpec> {
             st.selection.cells = None;
             if let Some(i) = st.selection.items.iter().position(|x| *x == id) {
                 st.selection.items.remove(i);
-                if st.selection.key == Some(id) {
+                // A key object needs another object to align to it.
+                if st.selection.key == Some(id) || st.selection.items.len() < 2 {
                     st.selection.key = None;
                 }
             } else {
