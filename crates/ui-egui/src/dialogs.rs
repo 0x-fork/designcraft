@@ -3268,21 +3268,29 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         }
         "pdfImport" => {
             let crop = d.s("crop");
-            if !d.s("page").trim().is_empty() && d.n("page").is_none() {
-                // A range or list ("4-5", "2,5") is not a page number: refuse it rather than place page 1.
-                let e = "Enter a single page number; one page is placed at a time".to_string();
-                let mut d = d;
-                d.fields.insert("status".into(), json!(e));
-                app.ui.dialog = Some(d);
-                return Err(e);
-            }
+            // One page number, 1 or more; a blank field is page 1. A range or list ("4-5", "2,5"), a
+            // fraction or a negative is refused rather than placing some other page.
+            let raw = if d.fields.get("page").is_none_or(Value::is_null) { String::new() } else { d.s("page") };
+            let page = match raw.trim() {
+                "" => 1,
+                t => match t.parse::<u64>() {
+                    Ok(n) if n >= 1 => n,
+                    _ => {
+                        let e = "Enter a single page number; one page is placed at a time".to_string();
+                        let mut d = d;
+                        d.fields.insert("status".into(), json!(e));
+                        app.ui.dialog = Some(d);
+                        return Err(e);
+                    }
+                },
+            };
             if d.b("async") {
-                return app.confirm_pdf_import(d.n("page").unwrap_or(1.0).max(1.0) as u64, if crop.is_empty() { "crop".into() } else { crop });
+                return app.confirm_pdf_import(page, if crop.is_empty() { "crop".into() } else { crop });
             }
             if let Some(target) = d.fields.get("target").and_then(Value::as_u64) {
                 app.activate_import_target(&crate::ImportRequest { purpose: "place".into(), target: Some(target) })?;
             }
-            app.place_file(json!({"path": d.s("path"), "pdfPage": d.n("page").unwrap_or(1.0).max(1.0) as u64, "pdfCrop": if crop.is_empty() { "crop".to_string() } else { crop }}))
+            app.place_file(json!({"path": d.s("path"), "pdfPage": page, "pdfCrop": if crop.is_empty() { "crop".to_string() } else { crop }}))
         }
         "print" => {
             let pages = if d.s("range") == "all" { Value::Null } else { json!(d.s("pages")) };

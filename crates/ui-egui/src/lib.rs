@@ -2953,7 +2953,7 @@ mod browser_import_tests {
 
     #[test]
     fn pdf_options_refuse_a_page_range_instead_of_placing_page_one() {
-        for spec in ["4-5", "2,5", "2-3"] {
+        for spec in ["4-5", "2,5", "2-3", "2.5", "-3", "0", "nan", "inf"] {
             let mut app = app();
             let request = app.import_request("place");
             deliver(&mut app, request, "three.pdf", pdf());
