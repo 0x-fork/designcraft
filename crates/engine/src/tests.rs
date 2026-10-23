@@ -1713,6 +1713,20 @@ fn deselecting_the_key_object_drops_the_key() {
     assert_eq!(s.doc().unwrap().selection.key, None);
 }
 
+/// A key object needs another object to align to: with one object selected there is nothing to key
+/// against, and the stored key would turn that object into the target as soon as a second one joins.
+#[test]
+fn a_single_selected_object_cannot_be_the_key_object() {
+    let mut s = session();
+    let a = s.execute("frame.create", &json!({"rect": [50.0, 100.0, 100.0, 150.0]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("frame.create", &json!({"rect": [200.0, 120.0, 300.0, 170.0]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"ids": [a]})).unwrap();
+    assert!(s.execute("selection.key", &json!({"id": a})).is_err());
+    assert_eq!(s.doc().unwrap().selection.key, None);
+    s.execute("selection.toggle", &json!({"id": b})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.key, None, "the second object joining must not find a key already set");
+}
+
 /// With the selection down to the key object alone, Align no longer has a key object: a single
 /// object aligns to the page, as before.
 #[test]

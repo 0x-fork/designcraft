@@ -278,6 +278,9 @@ pub fn specs() -> Vec<CommandSpec> {
             if !st.selection.items.contains(&id) {
                 return Err(super::bad("selection.key", "the key object must be selected"));
             }
+            if st.selection.items.len() < 2 {
+                return Err(super::bad("selection.key", "a key object needs at least two selected objects"));
+            }
             st.selection.key = if st.selection.key == Some(id) { None } else { Some(id) };
             st.bump_revision();
             ok()
