@@ -63,29 +63,82 @@ pub(crate) mod tests {
 
     /// A one-page PDF (100×100 pt) with two layers: "Blue" (left half) and "Red" (right half).
     pub(crate) fn two_layer_pdf() -> Vec<u8> {
+        two_layer_pdf_generation(0)
+    }
+
+    fn two_layer_pdf_generation(generation: i32) -> Vec<u8> {
         let content = "/OC /a BDC 0 0 1 rg 0 0 50 100 re f EMC /OC /b BDC 1 0 0 rg 50 0 50 100 re f EMC";
         let objs = [
-            "<</Type/Catalog/Pages 2 0 R/OCProperties<</OCGs[5 0 R 6 0 R]/D<</Order[5 0 R 6 0 R]>>>>>>".to_string(),
+            "<</Type/Catalog/Lang(en-GB)/Metadata 7 0 R/OutputIntents[8 0 R]/Pages 2 0 R/OCProperties<</OCGs[5 0 R 6 0 R]/D<</Order[5 0 R 6 0 R]/Name(Default)/Locked[5 0 R]>>>>>>".to_string(),
             "<</Type/Pages/Kids[3 0 R]/Count 1>>".to_string(),
             "<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Resources<</Properties<</a 5 0 R/b 6 0 R>>>>/Contents 4 0 R>>".to_string(),
             format!("<</Length {}>>\nstream\n{content}\nendstream", content.len()),
             "<</Type/OCG/Name(Blue)>>".to_string(),
             "<</Type/OCG/Name(Red)>>".to_string(),
+            "<</Type/Metadata/Subtype/XML/Length 4>>\nstream\n<x/>\nendstream".to_string(),
+            "<</Type/OutputIntent/S/GTS_PDFX/OutputConditionIdentifier(Test)>>".to_string(),
         ];
         let mut out = b"%PDF-1.7\n".to_vec();
         let mut offs = Vec::new();
         for (i, o) in objs.iter().enumerate() {
             offs.push(out.len());
-            out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+            out.extend_from_slice(format!("{} {generation} obj\n{}\nendobj\n", i + 1, o.replace(" 0 R", &format!(" {generation} R"))).as_bytes());
         }
         let x = out.len();
         let mut t = format!("xref\n0 {}\n0000000000 65535 f\r\n", objs.len() + 1);
         for o in offs {
-            t.push_str(&format!("{o:010} 00000 n\r\n"));
+            t.push_str(&format!("{o:010} {generation:05} n\r\n"));
         }
-        t.push_str(&format!("trailer\n<</Size {}/Root 1 0 R>>\nstartxref\n{x}\n%%EOF\n", objs.len() + 1));
+        t.push_str(&format!("trailer\n<</Size {}/Root 1 {generation} R>>\nstartxref\n{x}\n%%EOF\n", objs.len() + 1));
         out.extend_from_slice(t.as_bytes());
         out
+    }
+
+    #[test]
+    fn pdf_layer_update_preserves_catalog_configuration_and_generations() {
+        for generation in [0, 1] {
+            let original = two_layer_pdf_generation(generation);
+            let updated = designcraft_render::pdf_hide_layers(&original, &["Red".into()]).unwrap();
+            assert_eq!(designcraft_render::pdf_layers(&updated), vec![("Blue".into(), true), ("Red".into(), false)]);
+            let appended = std::str::from_utf8(&updated[original.len()..]).unwrap();
+            for token in [
+                "/Lang(en-GB)".to_string(),
+                format!("/Metadata 7 {generation} R"),
+                format!("/OutputIntents[8 {generation} R]"),
+                format!("/Locked[5 {generation} R]"),
+                "/Name(Default)".into(),
+                format!("/Root 1 {generation} R"),
+            ] {
+                assert!(appended.contains(&token), "missing {token}: {appended}");
+            }
+            assert!(!appended.contains("9999000"));
+            let all_on = designcraft_render::pdf_hide_layers(&updated, &[]).unwrap();
+            assert!(designcraft_render::pdf_layers(&all_on).iter().all(|(_, visible)| *visible));
+        }
+    }
+
+    #[test]
+    fn pdf_layer_update_accepts_xref_streams_and_rejects_unsupported_updates() {
+        let original = two_layer_pdf();
+        let text = std::str::from_utf8(&original).unwrap();
+        let offset: usize = text.rsplit_once("startxref").unwrap().1.split_whitespace().next().unwrap().parse().unwrap();
+        let mut stream_pdf = original[..offset].to_vec();
+        let mut entries = vec![0, 0, 0, 0, 0, 255, 255];
+        for number in 1..=9 {
+            let at = if number == 9 { offset } else { text.find(&format!("{number} 0 obj")).unwrap() };
+            entries.push(1);
+            entries.extend_from_slice(&u32::try_from(at).unwrap().to_be_bytes());
+            entries.extend_from_slice(&[0, 0]);
+        }
+        stream_pdf.extend_from_slice(format!("9 0 obj\n<</Type/XRef/Size 10/Root 1 0 R/W[1 4 2]/Length {}>>\nstream\n", entries.len()).as_bytes());
+        stream_pdf.extend_from_slice(&entries);
+        stream_pdf.extend_from_slice(format!("\nendstream\nendobj\nstartxref\n{offset}\n%%EOF\n").as_bytes());
+        let updated = designcraft_render::pdf_hide_layers(&stream_pdf, &["Red".into()]).unwrap();
+        assert_eq!(designcraft_render::pdf_layers(&updated), vec![("Blue".into(), true), ("Red".into(), false)]);
+        for unsupported in ["/Encrypt null", "/XRefStm 0"] {
+            let altered = text.replace("/Size 9", &format!("{unsupported}/Size 9"));
+            assert!(designcraft_render::pdf_hide_layers(altered.as_bytes(), &["Red".into()]).is_none());
+        }
     }
 
     #[test]

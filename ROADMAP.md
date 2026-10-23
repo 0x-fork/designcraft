@@ -11,6 +11,10 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-23** · PDF layer visibility variants retain catalog/configuration entries and full
+  object references; bounded incremental updates replace the existing catalog. Synthetic
+  regression tests cover metadata, output-intent references and nonzero generations. No readiness percentage change.
+
 ## Status (2026-10-01)
 
 **Working today**
