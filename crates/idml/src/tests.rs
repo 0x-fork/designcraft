@@ -4400,4 +4400,5 @@ fn exports_graphic_in_table_cell() {
     let cell = story.split("<Cell ").nth(3).unwrap_or_default();
     let cell = cell.split("</Cell>").next().unwrap_or_default();
     assert!(cell.contains("<Image "), "{story}");
+    assert!(cell.contains("ClipContentToCell=\"true\""), "{story}");
 }

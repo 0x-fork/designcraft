@@ -2802,6 +2802,8 @@ impl<'a> Ex<'a> {
                 if let Some(g) = &cell.graphic
                     && let Some(object) = self.cell_graphic_el(g)
                 {
+                    // The cell clips its graphic on screen and in PDF; IDML does so only when asked.
+                    ce.set("ClipContentToCell", bool_s(true));
                     let mut range = self.csr_el(&CharFormat::default());
                     range.push(object);
                     match paras.first_mut() {
