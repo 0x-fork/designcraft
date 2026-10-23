@@ -7311,6 +7311,19 @@ fn rule_above_offset_is_measured_from_the_baseline() {
     assert!(rule.y0 > first.baseline, "the rule stays below the row above: {rule:?}, its baseline {}", first.baseline);
 }
 
+#[test]
+fn parent_page_frames_know_which_side_of_the_spine_they_are_on() {
+    // Folios on a facing-pages parent: towards/away from spine must differ between its left and right page.
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let w = d.parents[0].pages[0].width;
+    let para = ParaFormat { para: ParaAttrs { align: Some(Align::TowardsSpine), ..Default::default() }, ..Default::default() };
+    let (_, left_story) = d.add_text_frame(SpreadRef::Parent(0), Rect::new(36.0, 700.0, w - 36.0, 730.0), lid, "7", para.clone()).unwrap();
+    let (_, right_story) = d.add_text_frame(SpreadRef::Parent(0), Rect::new(w + 36.0, 700.0, 2.0 * w - 36.0, 730.0), lid, "8", para).unwrap();
+    assert!(frame_specs(&d, left_story)[0].left_page);
+    assert!(!frame_specs(&d, right_story)[0].left_page);
+}
+
 /// A right-to-left paragraph's first-line indent belongs at its start side, the right. Applied on
 /// the left it moved the first line the wrong way — out of the frame for the hanging indent a
 /// numbered list uses (right indent 10 mm, first line −10 mm), while the wrapped lines sat where
