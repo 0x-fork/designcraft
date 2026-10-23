@@ -5683,4 +5683,70 @@ mod tests {
         let after = after.expect("the Tabloid tile is laid out");
         assert!(after < before - 50.0, "the start screen should scroll: {before} -> {after}");
     }
+
+    // Regression test for #329: on the start screen (no document) the Help menu's links were greyed out.
+    #[test]
+    fn help_links_are_enabled_without_a_document() {
+        let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        assert!(app.session.active().is_none());
+        let ids: Vec<&str> = UI_COMMANDS.iter().map(|c| c.0).filter(|id| id.starts_with("help.")).collect();
+        assert!(ids.contains(&"help.discord") && ids.contains(&"help.github"), "{ids:?}");
+        for id in ids {
+            assert!(menu_enabled(&app, id), "{id} must work from the start screen");
+        }
+        assert!(!menu_enabled(&app, "view.rulers"), "other UI commands still need a document");
+    }
+
+    // Regression test for #248: the start screen offered no A6 sheet (it listed only the first ten presets).
+    #[test]
+    fn start_screen_offers_every_print_preset_including_a6() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let texts = start_screen_texts(&mut app);
+        for p in designcraft_doc::build::PRESETS.iter().filter(|p| p.intent == designcraft_doc::Intent::Print) {
+            assert!(texts.iter().any(|t| t == p.name), "start screen lacks the {} card: {texts:?}", p.name);
+        }
+        assert!(texts.iter().any(|t| t == "A6"), "{texts:?}");
+        let a6 = designcraft_doc::build::PRESETS.iter().find(|p| p.name == "A6").unwrap();
+        assert!((a6.width - 105.0 * 72.0 / 25.4).abs() < 0.01 && (a6.height - 148.0 * 72.0 / 25.4).abs() < 0.01, "{a6:?}");
+        let page = crate::panels::properties::PAGE_PRESETS.iter().find(|p| p.0 == "A6").expect("Properties page-size list has A6");
+        assert!((page.1 - a6.width).abs() < 0.01 && (page.2 - a6.height).abs() < 0.01, "{page:?} vs {a6:?}");
+    }
+
+    // Regression test for #249: a menu row only reacted over its text, not across the whole row.
+    #[test]
+    fn menu_rows_are_selectable_across_the_full_width() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0));
+        let entries = vec![cmd_item("app.preferences", Value::Null)];
+        let mut tick = 0;
+        let mut frame = |app: &mut DesignApp, events: Vec<egui::Event>| {
+            tick += 1;
+            let mut row = egui::Rect::NOTHING;
+            let mut output =
+                ctx.run_ui(egui::RawInput { screen_rect: Some(screen), time: Some(tick as f64 / 60.0), events, ..Default::default() }, |ui| {
+                    egui::Area::new(egui::Id::new("menu_rows")).fixed_pos(egui::pos2(50.0, 50.0)).show(ui.ctx(), |ui| {
+                        let before = ui.cursor().min;
+                        menu_column(app, ui, &[("Test", entries.clone())]);
+                        row = egui::Rect::from_min_max(before, ui.min_rect().max);
+                    });
+                });
+            output.textures_delta.clear();
+            row
+        };
+        frame(&mut app, vec![]);
+        let row = frame(&mut app, vec![]);
+        assert!(row.width() >= 239.0, "the column is at least 240 wide: {row:?}");
+        let far = egui::pos2(row.right() - 6.0, row.top() + 8.0);
+        for pressed in [true, false] {
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(far),
+                    egui::Event::PointerButton { pos: far, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+                ],
+            );
+        }
+        assert!(app.ui.dialog.is_some(), "clicking the empty end of the Preferences… row must choose it");
+    }
 }
