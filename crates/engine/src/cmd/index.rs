@@ -105,8 +105,9 @@ fn resolve(s: &Session, d: &Document, skip: Option<StoryId>) -> Vec<(StoryId, us
                 IndexRange::ToEndOfStory => page(st.len().saturating_sub(1)),
                 IndexRange::NextParagraphs(n) => {
                     let ranges = st.para_ranges();
-                    let pi = (st.para_at(pos) + *n as usize).min(ranges.len() - 1);
-                    page(ranges[pi].end.saturating_sub(1).max(ranges[pi].start))
+                    let n = usize::try_from(*n).unwrap_or(usize::MAX);
+                    let pi = st.para_at(pos).saturating_add(n).min(ranges.len().saturating_sub(1));
+                    ranges.get(pi).and_then(|r| page(r.end.saturating_sub(1).max(r.start)))
                 }
                 _ => start,
             };
