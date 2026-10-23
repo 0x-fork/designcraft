@@ -37,14 +37,20 @@ fn escape_value(v: &str) -> String {
     out
 }
 
-/// A tag value with backslash escapes removed.
+/// A tag value with the escapes `escape_value` writes (`\\`, `\<`, `\>`) decoded. Any other
+/// backslash, including a trailing one, stays literal, as older files and InDesign's `\:` expect.
 fn unescape_value(v: &str) -> String {
     let mut out = String::with_capacity(v.len());
-    let mut it = v.chars();
+    let mut it = v.chars().peekable();
     while let Some(c) = it.next() {
-        match c {
-            '\\' => out.extend(it.next()),
-            c => out.push(c),
+        if c == '\\'
+            && let Some(&n) = it.peek()
+            && matches!(n, '\\' | '<' | '>')
+        {
+            out.push(n);
+            it.next();
+        } else {
+            out.push(c);
         }
     }
     out
@@ -310,6 +316,15 @@ mod tests {
             assert_eq!(back.para_styles.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), [name]);
             assert_eq!(back.char_styles.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), [name]);
         }
+    }
+
+    /// A backslash that isn't one of our escapes (older files, InDesign's `\:`) stays literal.
+    #[test]
+    fn unknown_backslashes_in_style_names_stay_literal() {
+        assert_eq!(unescape_value(r"x\y"), r"x\y");
+        assert_eq!(unescape_value(r"a\:b"), r"a\:b");
+        assert_eq!(unescape_value("end\\"), "end\\");
+        assert_eq!(unescape_value(r"\<a\>\\"), r"<a>\");
     }
 
     #[test]
