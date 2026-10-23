@@ -120,7 +120,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 // `0`, `-1` and `1.5` all came out as 1, and 10000 was quietly capped.
                 let count = match p.get("count").filter(|v| !v.is_null()) {
                     None => 1,
-                    Some(v) => match v.as_u64().map(|n| n as usize).filter(|n| (1..=9999).contains(n)) {
+                    Some(v) => match v.as_u64().filter(|n| (1..=9999).contains(n)).map(|n| n as usize) {
                         Some(n) => n,
                         None => return Err(bad(ID, format!("count {v}: 1 to 9999 pages"))),
                     },
