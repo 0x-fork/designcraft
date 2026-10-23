@@ -1,32 +1,46 @@
 //! PDF/X-1a:2003: the PDF/X-4 print file flattened by craft-prepress (no transparency left; RGB
 //! and ICC color converted into the output intent's CMYK; inks, overprint and live text kept),
-//! written by krilla as PDF 1.4 with the PDF/X-1a identification, then checked.
+//! written by krilla as PDF 1.4, given the PDF/X-1a identification and output intent, then
+//! checked.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use craft_pdf::write::backend::configure::PdfVersion;
 use craft_prepress::flatten::pdf::ReadOptions;
-use craft_prepress::flatten::{FlattenDocumentOptions, FlattenOptions, flatten_document};
+use craft_prepress::flatten::{FlattenDocumentOptions, FlattenOptions, FlattenTotals, flatten_document};
 use hayro_syntax::content::UntypedIter;
 use hayro_syntax::object::{Array, Dict, Name, Object, ObjectIdentifier, Stream};
 use hayro_syntax::page::Resources;
 
 use crate::PdfError;
-use crate::pdfx::{MAX_DEPTH, cmyk_output_intent};
+use crate::pdfx::MAX_DEPTH;
+use crate::transitions::{find, int_after, rfind};
 
-/// `GTS_PDFXVersion` of PDF/X-1a:2003 (ISO 15930-4).
+/// `GTS_PDFXVersion` of PDF/X-1a:2003 (ISO 15930-4): the base level, PDF/X-1:2003.
 const VERSION: &str = "PDF/X-1:2003";
 
-/// [`check_pdfx1a`]'s finding for an ICC v4 output intent in a file of PDF 1.5 or lower: a
-/// warning, as the file may still pass a given preflight.
-const V4_INTENT: &str = "warning: the output intent's profile is ICC v4, which PDF/X-1a preflight in a PDF 1.4 file may reject: \
-                         choose a CMYK working space with an ICC v2 profile";
+/// `GTS_PDFXConformance` of PDF/X-1a:2003 (ISO 15930-4): with [`VERSION`], it names the
+/// conformance level.
+const CONFORMANCE: &str = "PDF/X-1a:2003";
 
-/// The PDF/X-1a file for `pdf`, the PDF/X-4 print file: flattened at `dpi`, written at PDF 1.4
-/// with the identification, checked. Fails when the flattener fails or the result still has
-/// transparency or color outside DeviceCMYK, DeviceGray, Separation and DeviceN; other check
-/// findings become warnings.
-pub(crate) fn flatten_x1a(pdf: &[u8], dpi: f32, warnings: &mut Vec<String>) -> crate::Result<Vec<u8>> {
+/// `/RegistryName` of the ICC's registry of characterized printing conditions. An output intent
+/// naming one of them needs no `/DestOutputProfile` in PDF/X.
+const ICC_REGISTRY: &str = "http://www.color.org";
+
+/// The graphics placed on one output page, to name in errors: the page's name and the graphics'
+/// names.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PageGraphics {
+    pub label: String,
+    pub graphics: Vec<String>,
+}
+
+/// The PDF/X-1a file for `pdf`, the PDF/X-4 print file: flattened at `dpi`, written at PDF 1.4,
+/// identified, checked. `pages` names each output page and its graphics for errors. Fails when
+/// the flattener fails or leaves an image out, when the output intent's profile can't go into a
+/// PDF 1.4 file, or when the result still has transparency or color outside DeviceCMYK,
+/// DeviceGray, Separation and DeviceN; other check findings become warnings.
+pub(crate) fn flatten_x1a(pdf: &[u8], dpi: f32, pages: &[PageGraphics], warnings: &mut Vec<String>) -> crate::Result<Vec<u8>> {
     let dpi = if dpi.is_finite() { dpi.clamp(36.0, 2400.0) } else { 300.0 };
     let opts = FlattenDocumentOptions {
         read: ReadOptions { raster_dpi: dpi, ..ReadOptions::default() },
@@ -37,44 +51,61 @@ pub(crate) fn flatten_x1a(pdf: &[u8], dpi: f32, warnings: &mut Vec<String>) -> c
         ..FlattenDocumentOptions::default()
     };
     let (bytes, report) = flatten_document(pdf, &opts).map_err(|e| PdfError::Write(format!("PDF/X-1a: the transparency flattener failed: {e}")))?;
-    let t = &report.totals;
-    if t.complex_regions > 0 || t.complex_groups > 0 {
-        let at = t.lowest_dpi.map(|d| format!(", some below {dpi:.0} ppi (lowest {d:.0} ppi)")).unwrap_or_default();
-        warnings.push(format!("PDF/X-1a: transparency flattened: {} region(s) rasterized at {dpi:.0} ppi{at}", t.complex_regions + t.complex_groups));
+    let unread: Vec<String> = report
+        .pages
+        .iter()
+        .filter(|(_, r)| r.read.unreadable_images > 0)
+        .map(|(page, r)| {
+            let n = r.read.unreadable_images;
+            let images = if n == 1 { "1 image".to_string() } else { format!("{n} images") };
+            let fallback = PageGraphics { label: page.saturating_add(1).to_string(), graphics: Vec::new() };
+            let at = pages.get(*page).unwrap_or(&fallback);
+            let names: Vec<String> = at.graphics.iter().take(5).map(|g| format!("`{g}`")).collect();
+            let more = if at.graphics.len() > 5 { ", …" } else { "" };
+            let placed = if names.is_empty() { String::new() } else { format!(" (graphics on it: {}{more})", names.join(", ")) };
+            format!("{images} on page {}{placed}", at.label)
+        })
+        .collect();
+    if !unread.is_empty() {
+        return Err(PdfError::Write(format!(
+            "PDF/X-1a: the transparency flattener couldn't read {}, and a PDF/X file can't leave images out: replace the graphic, or export without PDF/X-1a",
+            unread.join("; ")
+        )));
     }
-    if t.unreadable_images > 0 {
-        warnings.push(format!("PDF/X-1a: {} image(s) couldn't be read by the flattener and were left out", t.unreadable_images));
-    }
-    if t.dropped_inks > 0 {
-        warnings.push(format!("PDF/X-1a: {} ink(s) past the flattener's limit were converted to process", t.dropped_inks));
-    }
+    warnings.extend(flatten_warnings(&report.totals, dpi));
+    let bytes = finish(&bytes).map_err(|e| PdfError::Write(format!("PDF/X-1a: {e}")))?;
     let (fatal, other) = checks(&bytes);
     if !fatal.is_empty() {
         return Err(PdfError::Write(format!("PDF/X-1a: after flattening, {}", fatal.join("; "))));
     }
-    let fallback =
-        || hayro_syntax::Pdf::new(bytes.clone()).ok().and_then(|f| intent_profile(&f)).is_some_and(|p| p == craft_cms::builtin::COATED_FOGRA39_ICC);
-    for issue in other {
-        if issue == V4_INTENT && fallback() {
-            warnings.push(
-                "PDF/X-1a: the output intent is the built-in Coated FOGRA39, an ICC v4 profile that PDF/X-1a preflight in a PDF 1.4 \
-                 file may reject: choose a CMYK working space with an ICC v2 profile"
-                    .into(),
-            );
-        } else {
-            warnings.push(format!("PDF/X-1a: {}", issue.trim_start_matches("warning: ")));
-        }
-    }
+    warnings.extend(other.into_iter().map(|issue| format!("PDF/X-1a: {issue}")));
     Ok(bytes)
 }
 
+/// What the flattener's `t` (at `dpi`) tells the user: rasterized transparency, and spot inks past
+/// the ink set's capacity, whose tints the flattener drops.
+pub(crate) fn flatten_warnings(t: &FlattenTotals, dpi: f32) -> Vec<String> {
+    let mut out = Vec::new();
+    if t.complex_regions > 0 || t.complex_groups > 0 {
+        let at = t.lowest_dpi.map(|d| format!(", some below {dpi:.0} ppi (lowest {d:.0} ppi)")).unwrap_or_default();
+        out.push(format!("PDF/X-1a: transparency flattened: {} region(s) rasterized at {dpi:.0} ppi{at}", t.complex_regions + t.complex_groups));
+    }
+    if t.dropped_inks > 0 {
+        out.push(format!(
+            "PDF/X-1a: the document has more spot inks than the flattener can separate: {} tint(s) in the inks past its limit were dropped and won't print",
+            t.dropped_inks
+        ));
+    }
+    out
+}
+
 /// PDF/X-1a:2003 checks on an exported file (empty = passes them): PDF 1.4 or lower, the
-/// identification, a CMYK `GTS_PDFX` output intent, `/Trapped` True or False, trim boxes, no
-/// encryption or interpolation; no transparency (soft masks, transparency groups, constant
-/// opacity below 1, blend modes other than Normal); only DeviceCMYK, DeviceGray, Separation and
-/// DeviceN (and Indexed and Pattern spaces over them), a spot's alternate space process; every
-/// font embedded and none Type 3. Findings starting `warning: ` don't break conformance by
-/// themselves (an ICC v4 output intent profile in a PDF 1.4 file).
+/// identification (`GTS_PDFXVersion` and `GTS_PDFXConformance`), a CMYK `GTS_PDFX` output intent
+/// whose profile, when it has one, is ICC v2 (and without one, names a registered printing
+/// condition), `/Trapped` True or False, trim boxes, no encryption or interpolation; no
+/// transparency (soft masks, transparency groups, constant opacity below 1, blend modes other
+/// than Normal); only DeviceCMYK, DeviceGray, Separation and DeviceN (and Indexed and Pattern
+/// spaces over them), a spot's alternate space process; every font embedded.
 pub fn check_pdfx1a(pdf: &[u8]) -> Vec<String> {
     let (mut issues, other) = checks(pdf);
     issues.extend(other);
@@ -93,6 +124,9 @@ fn checks(pdf: &[u8]) -> (Vec<String>, Vec<String>) {
     }
     if !text.contains(&format!("/GTS_PDFXVersion({VERSION})")) {
         issues.push(format!("the document information doesn't name {VERSION}"));
+    }
+    if !text.contains(&format!("/GTS_PDFXConformance({CONFORMANCE})")) {
+        issues.push(format!("the document information doesn't name the conformance level {CONFORMANCE}"));
     }
     if !text.contains("/Trapped/False") && !text.contains("/Trapped/True") && !text.contains("/Trapped /False") && !text.contains("/Trapped /True") {
         issues.push("the document information needs /Trapped True or False".into());
@@ -113,20 +147,13 @@ fn checks(pdf: &[u8]) -> (Vec<String>, Vec<String>) {
     (content, issues)
 }
 
-/// Transparency and color spaces, then fonts, walked through every page's content and what it
-/// uses.
+/// Transparency and color spaces, then the output intent and fonts, walked through every page's
+/// content and what it uses.
 fn content(pdf: &[u8]) -> (Vec<String>, Vec<String>) {
     let Ok(file) = hayro_syntax::Pdf::new(pdf.to_vec()) else {
         return (vec!["the file couldn't be read to check its transparency and color spaces".into()], Vec::new());
     };
-    let mut fonts = Vec::new();
-    if !cmyk_output_intent(&file) {
-        fonts.push("the output intent has no CMYK destination profile".into());
-    }
-    let below_16 = pdf.starts_with(b"%PDF-1.") && pdf.get(7).is_some_and(|v| *v <= b'5');
-    if below_16 && intent_profile_major(&file) == Some(4) {
-        fonts.push(V4_INTENT.into());
-    }
+    let mut fonts = intent_issues(&file);
     let mut found: Vec<(String, Vec<usize>)> = Vec::new();
     let mut font_found: Vec<(String, Vec<usize>)> = Vec::new();
     for (i, page) in file.pages().iter().enumerate() {
@@ -157,18 +184,286 @@ fn content(pdf: &[u8]) -> (Vec<String>, Vec<String>) {
     (found.into_iter().map(on_pages).collect(), fonts)
 }
 
-/// The `GTS_PDFX` output intent's destination profile.
-fn intent_profile(file: &hayro_syntax::Pdf) -> Option<Vec<u8>> {
-    let xref = file.xref();
-    let catalog = xref.get::<Dict<'_>>(xref.root_id())?;
-    let intents = catalog.get::<Array<'_>>(b"OutputIntents")?;
-    let oi = intents.iter::<Dict<'_>>().find(|oi| oi.get::<Name<'_>>(b"S").is_some_and(|s| s.as_ref() == b"GTS_PDFX"))?;
-    Some(oi.get::<Stream<'_>>(b"DestOutputProfile")?.decoded().ok()?.into_owned())
+/// A `GTS_PDFX` output intent, as PDF/X-1a judges it.
+struct Intent {
+    /// Its object number, when it is an indirect object.
+    obj: Option<usize>,
+    /// `/OutputCondition`, else `/OutputConditionIdentifier`, for messages.
+    name: String,
+    /// An `/OutputConditionIdentifier` other than `Custom` in the ICC registry.
+    registered: bool,
+    /// Whether it has a `/DestOutputProfile`, and the profile's object number.
+    has_profile: bool,
+    profile_obj: Option<usize>,
+    /// The profile's `/N` and decoded bytes.
+    channels: Option<i32>,
+    profile: Option<Vec<u8>>,
 }
 
-/// The ICC major version of the output intent's profile (byte 8 of its header).
-fn intent_profile_major(file: &hayro_syntax::Pdf) -> Option<u8> {
-    intent_profile(file)?.get(8).copied()
+impl Intent {
+    /// The profile's ICC major version (byte 8 of its header).
+    fn major(&self) -> Option<u8> {
+        self.profile.as_deref()?.get(8).copied()
+    }
+
+    /// "ICC v4", or what keeps the version from being read.
+    fn version(&self) -> String {
+        self.major().map_or_else(|| "unreadable".to_string(), |v| format!("ICC v{v}"))
+    }
+}
+
+/// The catalog's `GTS_PDFX` output intents.
+fn pdfx_intents(file: &hayro_syntax::Pdf) -> Vec<Intent> {
+    let xref = file.xref();
+    let Some(catalog) = xref.get::<Dict<'_>>(xref.root_id()) else { return Vec::new() };
+    let Some(intents) = catalog.get::<Array<'_>>(b"OutputIntents") else { return Vec::new() };
+    let number = |n: i32| usize::try_from(n).ok();
+    intents
+        .iter::<Dict<'_>>()
+        .filter(|oi| oi.get::<Name<'_>>(b"S").is_some_and(|s| s.as_ref() == b"GTS_PDFX"))
+        .map(|oi| {
+            let text = |key: &[u8]| {
+                oi.get::<hayro_syntax::object::String<'_>>(key)
+                    .map(|s| String::from_utf8_lossy(s.as_bytes()).trim().to_string())
+                    .filter(|s| !s.is_empty())
+            };
+            let identifier = text(b"OutputConditionIdentifier");
+            let registry = text(b"RegistryName");
+            let profile = oi.get::<Stream<'_>>(b"DestOutputProfile");
+            Intent {
+                obj: oi.obj_id().and_then(|id| number(id.obj_number)),
+                name: text(b"OutputCondition").or_else(|| identifier.clone()).unwrap_or_else(|| "?".into()),
+                registered: registry.is_some_and(|r| r.trim_end_matches('/') == ICC_REGISTRY) && identifier.as_deref().is_some_and(|i| i != "Custom"),
+                has_profile: oi.contains_key(b"DestOutputProfile"),
+                profile_obj: oi.get_ref(b"DestOutputProfile").and_then(|r| number(r.obj_number)),
+                channels: profile.as_ref().and_then(|p| p.dict().get::<i32>(b"N")),
+                profile: profile.and_then(|p| p.decoded().ok()).map(|b| b.into_owned()),
+            }
+        })
+        .collect()
+}
+
+/// What PDF/X-1a finds wrong with the file's output intent: a CMYK profile, ICC v2 (PDF 1.4
+/// allows no later version), or none for a registered printing condition.
+fn intent_issues(file: &hayro_syntax::Pdf) -> Vec<String> {
+    let Some(oi) = pdfx_intents(file).into_iter().next() else { return Vec::new() };
+    let mut issues = Vec::new();
+    if oi.has_profile {
+        if oi.channels != Some(4) {
+            issues.push("the output intent has no CMYK destination profile".into());
+        }
+        if oi.major() != Some(2) {
+            issues.push(format!("the output intent's profile is {}, and PDF/X-1a (PDF 1.4) allows only ICC v2 profiles", oi.version()));
+        }
+    } else if !oi.registered {
+        issues
+            .push(format!("the output intent has no destination profile and doesn't name a printing condition in the ICC registry ({ICC_REGISTRY})"));
+    }
+    issues
+}
+
+/// krilla's PDF 1.4 file with what PDF/X-1a needs and krilla doesn't write, rewritten as one
+/// revision: `GTS_PDFXConformance` in the document information and the XMP, and the output intent
+/// of a registered printing condition without `/DestOutputProfile` (its profile is left out of
+/// the file). An unregistered condition keeps its profile, which must then be ICC v2.
+pub(crate) fn finish(pdf: &[u8]) -> Result<Vec<u8>, String> {
+    let unreadable = || "the flattened file couldn't be read to add the PDF/X-1a identification".to_string();
+    let layout = Layout::read(pdf).ok_or_else(unreadable)?;
+    let file = hayro_syntax::Pdf::new(pdf.to_vec()).map_err(|_| unreadable())?;
+    let mut bodies: HashMap<usize, Vec<u8>> = HashMap::new();
+    let info = int_after(&layout.trailer, "/Info").ok_or_else(unreadable)?;
+    let body = layout.body(pdf, info).ok_or_else(unreadable)?;
+    let (head, close) = body.split_at_checked(rfind(body, b">>").ok_or_else(unreadable)?).ok_or_else(unreadable)?;
+    bodies.insert(info, [head, format!("/GTS_PDFXConformance({CONFORMANCE})").as_bytes(), close].concat());
+    let xref = file.xref();
+    if let Some(meta) = xref.get::<Dict<'_>>(xref.root_id()).and_then(|c| c.get_ref(b"Metadata")).and_then(|r| usize::try_from(r.obj_number).ok())
+        && let Some(xmp) = layout.body(pdf, meta).and_then(xmp_with_conformance)
+    {
+        bodies.insert(meta, xmp);
+    }
+    let mut stripped: Vec<usize> = Vec::new();
+    for oi in pdfx_intents(&file) {
+        if !oi.has_profile {
+            continue;
+        }
+        if !oi.registered {
+            if oi.major() != Some(2) {
+                return Err(format!(
+                    "the output intent's profile `{}` is {}, and PDF/X-1a (PDF 1.4) allows only ICC v2 profiles: choose a CMYK working space with an ICC v2 profile, or Coated FOGRA39",
+                    oi.name,
+                    oi.version()
+                ));
+            }
+            continue;
+        }
+        let (Some(obj), Some(profile)) = (oi.obj, oi.profile_obj) else { return Err(unreadable()) };
+        let body = match bodies.get(&obj) {
+            Some(b) => b.clone(),
+            None => layout.body(pdf, obj).ok_or_else(unreadable)?.to_vec(),
+        };
+        let key = format!("/DestOutputProfile {profile} 0 R");
+        let at = find(&body, key.as_bytes(), 0).ok_or_else(unreadable)?;
+        let (before, rest) = body.split_at_checked(at).ok_or_else(unreadable)?;
+        let after = rest.get(key.len()..).ok_or_else(unreadable)?;
+        bodies.insert(obj, [before, after].concat());
+        stripped.push(profile);
+    }
+    // A profile only the stripped intents named goes too.
+    let dropped: HashSet<usize> = stripped.iter().copied().filter(|p| references(pdf, *p) == stripped.iter().filter(|q| *q == p).count()).collect();
+    layout.write(pdf, &bodies, &dropped).ok_or_else(unreadable)
+}
+
+/// How often `n 0 R` appears in `pdf` (a stream that happens to hold those bytes counts too, which
+/// only ever keeps an object).
+fn references(pdf: &[u8], n: usize) -> usize {
+    let needle = format!("{n} 0 R");
+    let mut count = 0;
+    let mut from = 0;
+    while let Some(at) = find(pdf, needle.as_bytes(), from) {
+        let before = at.checked_sub(1).and_then(|i| pdf.get(i)).is_none_or(|c| !c.is_ascii_digit());
+        let after = pdf.get(at + needle.len()).is_none_or(|c| !c.is_ascii_alphanumeric());
+        if before && after {
+            count += 1;
+        }
+        from = at + needle.len();
+    }
+    count
+}
+
+/// The body of an uncompressed XMP metadata stream object with the Adobe `pdfx` properties of
+/// the identification (`GTS_PDFXVersion`, `GTS_PDFXConformance`) added and its `/Length` updated;
+/// `None` when the stream is filtered or isn't XMP.
+fn xmp_with_conformance(body: &[u8]) -> Option<Vec<u8>> {
+    let s0 = find(body, b"stream", 0)?;
+    let dict = String::from_utf8_lossy(body.get(..s0)?).to_string();
+    let s0 = s0 + b"stream".len();
+    let s0 = s0 + body.get(s0..)?.iter().take_while(|c| **c == b'\r' || **c == b'\n').count();
+    let s1 = rfind(body, b"endstream")?;
+    let xml = String::from_utf8_lossy(body.get(s0..s1)?).trim_end().to_string();
+    if dict.contains("/Filter") || !xml.contains("</rdf:RDF>") {
+        return None;
+    }
+    let ids = format!(
+        "<rdf:Description rdf:about=\"\" xmlns:pdfx=\"http://ns.adobe.com/pdfx/1.3/\"><pdfx:GTS_PDFXVersion>{VERSION}</pdfx:GTS_PDFXVersion>\
+         <pdfx:GTS_PDFXConformance>{CONFORMANCE}</pdfx:GTS_PDFXConformance></rdf:Description>"
+    );
+    let xml = xml.replacen("</rdf:RDF>", &format!("{ids}</rdf:RDF>"), 1);
+    let i = dict.find("/Length")?;
+    let rest = dict.get(i + 7..)?.trim_start();
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let dict = format!("{}/Length {}{}", dict.get(..i)?, xml.len(), rest.get(end..)?);
+    Some(format!("\n{}\nstream\n{xml}\nendstream\n", dict.trim()).into_bytes())
+}
+
+/// Where the objects of a single-revision file with a classic cross-reference table are.
+struct Layout {
+    /// (object number, start, end), by start: from `n 0 obj` up to the next object or the table.
+    objects: Vec<(usize, usize, usize)>,
+    /// Where the cross-reference table starts.
+    table: usize,
+    /// The trailer dictionary.
+    trailer: String,
+    size: usize,
+}
+
+impl Layout {
+    fn read(pdf: &[u8]) -> Option<Layout> {
+        let sx = rfind(pdf, b"startxref")?;
+        let table: usize = std::str::from_utf8(pdf.get(sx + b"startxref".len()..)?).ok()?.split_whitespace().next()?.parse().ok()?;
+        let section = pdf.get(table..sx)?;
+        let t = find(section, b"trailer", 0)?;
+        let trailer = String::from_utf8_lossy(section.get(t + b"trailer".len()..)?).trim().to_string();
+        if trailer.contains("/Prev") || trailer.contains("/XRefStm") {
+            return None;
+        }
+        let size = int_after(&trailer, "/Size")?;
+        let mut tokens = std::str::from_utf8(section.get(..t)?).ok()?.split_whitespace();
+        if tokens.next()? != "xref" {
+            return None;
+        }
+        let mut starts: Vec<(usize, usize)> = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(first) = tokens.next() {
+            let first: usize = first.parse().ok()?;
+            let count: usize = tokens.next()?.parse().ok()?;
+            for i in 0..count {
+                let (offset, generation, kind) = (tokens.next()?, tokens.next()?, tokens.next()?);
+                if kind != "n" {
+                    continue;
+                }
+                let n = first.checked_add(i)?;
+                let offset: usize = offset.parse().ok()?;
+                if generation != "00000" || offset >= table || n >= size || !seen.insert(n) {
+                    return None;
+                }
+                starts.push((n, offset));
+            }
+        }
+        // Free entries past the objects would only make the rewritten table longer.
+        let max = starts.iter().map(|(n, _)| *n).max().unwrap_or(0);
+        if size > max.saturating_mul(2).saturating_add(16) {
+            return None;
+        }
+        starts.sort_by_key(|(_, offset)| *offset);
+        let mut objects = Vec::with_capacity(starts.len());
+        for (i, &(n, start)) in starts.iter().enumerate() {
+            let end = starts.get(i + 1).map_or(table, |(_, s)| *s);
+            if !pdf.get(start..end)?.starts_with(format!("{n} 0 obj").as_bytes()) {
+                return None;
+            }
+            objects.push((n, start, end));
+        }
+        Some(Layout { objects, table, trailer, size })
+    }
+
+    /// Object `n` between `n 0 obj` and `endobj`.
+    fn body<'p>(&self, pdf: &'p [u8], n: usize) -> Option<&'p [u8]> {
+        let &(_, start, end) = self.objects.iter().find(|(m, _, _)| *m == n)?;
+        let obj = pdf.get(start..end)?;
+        obj.get(format!("{n} 0 obj").len()..rfind(obj, b"endobj")?)
+    }
+
+    /// The file with the objects in `bodies` replaced and those in `dropped` left out, and a new
+    /// cross-reference table.
+    fn write(&self, pdf: &[u8], bodies: &HashMap<usize, Vec<u8>>, dropped: &HashSet<usize>) -> Option<Vec<u8>> {
+        let first = self.objects.first().map_or(self.table, |o| o.1);
+        let mut out = pdf.get(..first)?.to_vec();
+        let mut offsets = HashMap::new();
+        for &(n, start, end) in &self.objects {
+            if dropped.contains(&n) {
+                continue;
+            }
+            offsets.insert(n, out.len());
+            match bodies.get(&n) {
+                Some(body) => {
+                    out.extend_from_slice(format!("{n} 0 obj").as_bytes());
+                    out.extend_from_slice(body);
+                    out.extend_from_slice(b"endobj\n");
+                }
+                None => out.extend_from_slice(pdf.get(start..end)?),
+            }
+        }
+        if !out.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+        let table = out.len();
+        // The free entries, each pointing at the next.
+        let free: Vec<usize> = (1..self.size).filter(|n| !offsets.contains_key(n)).collect();
+        let next: HashMap<usize, usize> = free.iter().copied().zip(free.iter().skip(1).copied().chain([0])).collect();
+        out.extend_from_slice(format!("xref\n0 {}\n{:010} 65535 f\r\n", self.size, free.first().copied().unwrap_or(0)).as_bytes());
+        for n in 1..self.size {
+            let next = next.get(&n).copied().unwrap_or(0);
+            let entry = match offsets.get(&n) {
+                Some(offset) => format!("{offset:010} 00000 n\r\n"),
+                // A dropped object's number could be used again, at the next generation.
+                None if dropped.contains(&n) => format!("{next:010} 00001 f\r\n"),
+                None => format!("{next:010} 65535 f\r\n"),
+            };
+            out.extend_from_slice(entry.as_bytes());
+        }
+        out.extend_from_slice(format!("trailer\n{}\nstartxref\n{table}\n%%EOF\n", self.trailer).as_bytes());
+        Some(out)
+    }
 }
 
 /// Why a color space isn't allowed in PDF/X-1a, or `None` when it is.
@@ -280,7 +575,7 @@ impl Scan {
                 b"Tf" => {
                     let font = op.operands().next().cloned().and_then(Object::into_name).and_then(|n| res.get_font(&n));
                     if let Some(font) = font {
-                        self.font(&font);
+                        self.font(&font, res, depth);
                     }
                 }
                 b"Do" => {
@@ -406,9 +701,9 @@ impl Scan {
         }
     }
 
-    /// Embedded and not Type 3: a simple font's descriptor, or a Type 0 font's descendant's,
-    /// has a font file.
-    fn font(&mut self, font: &Dict<'_>) {
+    /// Embedded: a simple font's descriptor, or a Type 0 font's descendant's, has a font file. A
+    /// Type 3 font's glyphs are content streams in the file, scanned like the page's.
+    fn font(&mut self, font: &Dict<'_>, parent: &Resources<'_>, depth: usize) {
         if let Some(id) = font.obj_id()
             && !self.fonts.insert(id)
         {
@@ -417,7 +712,7 @@ impl Scan {
         let name = font.get::<Name<'_>>(b"BaseFont").map(|n| String::from_utf8_lossy(n.as_ref()).to_string()).unwrap_or_else(|| "?".into());
         let subtype = font.get::<Name<'_>>(b"Subtype");
         let descriptor = match subtype.as_deref() {
-            Some(b"Type3") => return self.font_issues.push(format!("the Type 3 font {name}")),
+            Some(b"Type3") => return self.type3(font, parent, depth),
             Some(b"Type0") => {
                 font.get::<Array<'_>>(b"DescendantFonts").and_then(|a| a.iter::<Dict<'_>>().next()).and_then(|d| d.get::<Dict<'_>>(b"FontDescriptor"))
             }
@@ -426,6 +721,23 @@ impl Scan {
         let embedded = descriptor.is_some_and(|d| [&b"FontFile"[..], b"FontFile2", b"FontFile3"].iter().any(|k| d.get::<Stream<'_>>(k).is_some()));
         if !embedded {
             self.font_issues.push(format!("the font {name} isn't embedded"));
+        }
+    }
+
+    /// A Type 3 font's glyph procedures, with the font's resources over `parent`'s.
+    fn type3(&mut self, font: &Dict<'_>, parent: &Resources<'_>, depth: usize) {
+        if depth >= MAX_DEPTH {
+            return;
+        }
+        let res = Resources::from_parent(font.get::<Dict<'_>>(b"Resources").unwrap_or_default(), parent.clone());
+        let Some(procs) = font.get::<Dict<'_>>(b"CharProcs") else { return };
+        for key in procs.keys() {
+            if let Some(glyph) = procs.get::<Stream<'_>>(key.as_ref())
+                && self.seen.insert(glyph.obj_id())
+                && let Ok(data) = glyph.decoded()
+            {
+                self.content(&data, &res, depth + 1);
+            }
         }
     }
 }

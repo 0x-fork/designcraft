@@ -276,10 +276,28 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
         }
     }
     if opts.standard == Standard::PdfX1a {
-        bytes = crate::pdfx1a::flatten_x1a(&bytes, opts.flatten_dpi, &mut warnings)?;
+        bytes = crate::pdfx1a::flatten_x1a(&bytes, opts.flatten_dpi, &page_graphics(doc, &sheets), &mut warnings)?;
     }
     warnings.dedup();
     Ok(ExportReport { bytes, pages: sheets.len(), warnings })
+}
+
+/// Each sheet's name and the names of the graphics placed on it, for PDF/X-1a's errors.
+fn page_graphics(doc: &Document, sheets: &[Sheet]) -> Vec<crate::pdfx1a::PageGraphics> {
+    sheets
+        .iter()
+        .map(|sh| {
+            let mut graphics: Vec<String> = Vec::new();
+            for (xf, it) in exported_items(doc, sh.spread) {
+                let Some(asset) = it.graphic().and_then(|g| doc.assets.get(&g.asset)) else { continue };
+                let shown = xf.transform_rect_bbox(it.bounds()).intersect(sh.media);
+                if shown.width() > 0.0 && shown.height() > 0.0 && !graphics.contains(&asset.name) {
+                    graphics.push(asset.name.clone());
+                }
+            }
+            crate::pdfx1a::PageGraphics { label: sh.label.clone(), graphics }
+        })
+        .collect()
 }
 
 /// One PDF from several (a book's documents), every page carried over as vectors; each part

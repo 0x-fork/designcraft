@@ -555,9 +555,9 @@ fn shadow_only(it: &designcraft_doc::Item) -> bool {
 /// the shadow in its own swatch's inks through a mask (which craft-prepress flattens per ink)
 /// instead of an RGB image of the object. Objects whose only soft effect is the drop shadow.
 ///
-/// The coverage is the object drawn alone with its shadow minus the object without it (alpha),
-/// at full opacity and Normal blending: what of the shadow shows past the object, its opacity
-/// included. The object's own opacity and blend mode stay on the object's group in the PDF.
+/// The coverage comes from the object drawn alone, at full opacity and Normal blending, with its
+/// shadow and without it ([`shadow_coverage`]): the shadow's own alpha, its opacity included. The
+/// object's own opacity and blend mode stay on the object's group in the PDF.
 fn shadow_masks(
     d: &designcraft_doc::Document,
     cache: &designcraft_compose::Cache,
@@ -610,10 +610,22 @@ fn shadow_masks(
         if with.len() != n || without.len() != n {
             continue;
         }
-        let coverage: Vec<u8> = with.iter().zip(&without).map(|(a, b)| a.saturating_sub(*b)).collect();
+        let coverage: Vec<u8> = with.iter().zip(&without).map(|(a, b)| shadow_coverage(*a, *b)).collect();
         out.insert(id, designcraft_pdf::ShadowMask { rect: reach, width: w, height: h, coverage: std::sync::Arc::new(coverage) });
     }
     out
+}
+
+/// The shadow's alpha `s` at a pixel where the object alone has alpha `without` and the object
+/// over its shadow `with`: `with = a + s(1 − a)` for the object's alpha `a`, so the PDF, which
+/// draws the object over the shadow, gets the same pixel back. 0 where the object is opaque.
+fn shadow_coverage(with: u8, without: u8) -> u8 {
+    let rest = 255 - u32::from(without);
+    if rest == 0 {
+        return 0;
+    }
+    let shown = u32::from(with.saturating_sub(without));
+    u8::try_from(((shown * 255 + rest / 2) / rest).min(255)).unwrap_or(u8::MAX)
 }
 
 /// A copy of `d` where the spread-level objects `pred` picks are images of their appearance at
@@ -1124,6 +1136,22 @@ mod text_tests {
         out
     }
 
+    /// The shadow coverage gives the rendered pixel back when the PDF draws the object over the
+    /// shadow, also under a partly transparent object (an anti-aliased edge, a soft-alpha image).
+    #[test]
+    fn shadow_coverage_composites_back() {
+        for a in (0..=255u32).step_by(15) {
+            for s in (0..=255u32).step_by(15) {
+                let over = |c: u32| a + (c * (255 - a) + 127) / 255;
+                let with = over(s) as u8;
+                let c = u32::from(super::shadow_coverage(with, a as u8));
+                assert!(over(c).abs_diff(u32::from(with)) <= 1, "object {a}, shadow {s}: coverage {c}");
+            }
+        }
+        assert_eq!(super::shadow_coverage(255, 255), 0);
+        assert_eq!(super::shadow_coverage(10, 20), 0);
+    }
+
     /// PDF/X-1a through craft-prepress: a soft drop shadow over a spot, a 50% object and a
     /// knockout group leave no transparency and no RGB; the shadow is flattened in the page's
     /// inks (Black over the spot), not exported as an RGB image of the object; text stays text and
@@ -1155,10 +1183,9 @@ mod text_tests {
         let r = s.execute("file.exportPdf", &json!({"standard": "x1a", "flatten": "low"})).unwrap();
         let pdf = super::super::file::base64_decode(r["base64"].as_str().unwrap());
         let text = String::from_utf8_lossy(&pdf).to_string();
-        // The only finding: the built-in Coated FOGRA39 output intent is an ICC v4 profile.
-        let issues = designcraft_pdf::check_pdfx1a(&pdf);
-        assert!(issues.iter().all(|i| i.contains("ICC v4")), "{issues:?}");
+        assert_eq!(designcraft_pdf::check_pdfx1a(&pdf), Vec::<String>::new());
         assert!(pdf.starts_with(b"%PDF-1.4") && text.contains("/GTS_PDFXVersion(PDF/X-1:2003)") && text.contains("/S/GTS_PDFX"));
+        assert!(text.contains("/GTS_PDFXConformance(PDF/X-1a:2003)"), "the conformance level");
         let warnings = r["warnings"].to_string();
         assert!(!warnings.contains("soft effects"), "the shadow isn't an RGB image of the object: {warnings}");
         assert!(warnings.contains("at 72 ppi"), "{warnings}");
