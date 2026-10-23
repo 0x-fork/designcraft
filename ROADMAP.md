@@ -12,6 +12,8 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-23** · IDML graphic-layer export rejects parents in already closed subtrees,
+  preserving native-edited layer order through round trips. Synthetic regression added.
 - **2026-10-23** · PDF layer choices now validate before editing all targets; rejected rewrites
   leave document/undo state intact. Null trailer entries remain unencrypted, and unsupported
   all-content crops retain the whole page rather than silently clipping hidden layers.

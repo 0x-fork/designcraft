@@ -2077,14 +2077,20 @@ impl<'a> Ex<'a> {
                     option.set(key, value);
                 }
             }
-            // Parent indices must precede their children. Ignore invalid parents and bound DOM depth
-            // even when a native file has been edited independently of the IDML importer.
-            let mut depths = Vec::with_capacity(options.layers.len());
+            // Only an ancestor whose subtree is still open can parent the next layer.
+            // Reopening a closed subtree would reorder native-edited lists on roundtrip.
+            let mut open = Vec::new();
             let mut parents = Vec::with_capacity(options.layers.len());
             for i in 0..options.layers.len() {
-                let parent = options.parents.get(i).copied().flatten().filter(|p| *p < i && depths.get(*p).is_some_and(|d| *d < 240));
-                depths.push(parent.and_then(|p| depths.get(p)).copied().unwrap_or(0) + 1);
-                parents.push(parent);
+                let parent = options.parents.get(i).copied().flatten();
+                if let Some(at) = parent.and_then(|p| open.iter().position(|id| *id == p)).filter(|at| *at < 239) {
+                    open.truncate(at + 1);
+                    parents.push(parent);
+                } else {
+                    open.clear();
+                    parents.push(None);
+                }
+                open.push(i);
             }
             let mut children: Vec<Vec<El>> = vec![Vec::new(); options.layers.len()];
             let mut roots = Vec::new();

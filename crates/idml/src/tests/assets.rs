@@ -156,6 +156,23 @@ fn malformed_native_graphic_layer_parents_cannot_cycle_or_overflow_xml_depth() {
 }
 
 #[test]
+fn closed_graphic_layer_subtrees_cannot_reorder_native_layers() {
+    let mut d = import_idml(&package(&[frame(1, 0.0, 0.0, &image(1, PHOTO, None))])).unwrap();
+    let Content::Graphic(g) = &mut std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut d.spreads[0]).items[0]).content else {
+        panic!("graphic")
+    };
+    g.layer_options = Some(designcraft_doc::GraphicLayerOptions {
+        layers: ["A", "B", "C", "D"].into_iter().map(|name| std::collections::BTreeMap::from([("Name".into(), name.into())])).collect(),
+        parents: vec![None, None, Some(0), Some(2)],
+        ..Default::default()
+    });
+    let reopened = import_idml(&export_idml(&d)).unwrap();
+    let options = reopened.spreads[0].items[0].graphic().unwrap().layer_options.as_ref().unwrap();
+    assert_eq!(options.layers.iter().map(|a| a["Name"].as_str()).collect::<Vec<_>>(), ["A", "B", "C", "D"]);
+    assert_eq!(options.parents, [None, None, None, Some(2)]);
+}
+
+#[test]
 fn graphic_layer_attributes_from_native_data_cannot_inject_xml_or_self_ids() {
     let mut d = import_idml(&package(&[frame(1, 0.0, 0.0, &image(1, PHOTO, None))])).unwrap();
     let Content::Graphic(g) = &mut std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut d.spreads[0]).items[0]).content else {

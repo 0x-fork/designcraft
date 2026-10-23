@@ -8,7 +8,7 @@ visibility, link-update policy and view/export/print flags survive import,
 native save/reopen and IDML export. XML Self IDs are regenerated. Native-edited
 attribute maps cannot inject XML syntax, declare namespaces or override those Self IDs.
 Parent indices are optional in native files; missing entries retain the older
-flat representation. Invalid/cyclic parent indices and over-budget nesting
+flat representation. Invalid/cyclic parent indices, parents in closed subtrees and over-budget nesting
 are emitted as top-level layers, retaining their scalar metadata without
 unbounded XML recursion.
 
