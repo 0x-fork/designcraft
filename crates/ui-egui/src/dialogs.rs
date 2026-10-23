@@ -2839,6 +2839,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             if matches!(d.id.as_str(), "paragraphStyleOptions" | "characterStyleOptions") && !d.b("new") {
                 check(ui, &mut d, "preview", crate::i18n::tr(&app.ui.language, "Preview"));
+                app.ui.style_preview = d.b("preview");
                 style_options_preview(app, &mut d);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -5157,7 +5158,7 @@ pub fn open_style_options(app: &mut DesignApp, para: bool, name: &str) {
         return;
     }
     let id = if para { "paragraphStyleOptions" } else { "characterStyleOptions" };
-    app.ui.dialog = Some(Dialog::new(id, json!({"name": name})));
+    app.ui.dialog = Some(Dialog::new(id, json!({"name": name, "preview": app.ui.style_preview})));
 }
 
 /// New Paragraph Style… / New Character Style…: the style options for a style made on OK, named
@@ -7771,6 +7772,33 @@ mod tests {
         let dialog = app.ui.dialog.as_ref().unwrap();
         assert_eq!(dialog.fields["width"], 0);
         assert!(dialog.fields["status"].as_str().unwrap().contains("page size out of range"));
+    }
+
+    #[test]
+    fn style_options_preview_choice_is_remembered_on_reopen() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("style.paragraph.create", json!({"name":"Tutorial","chars":{"size":10}})).unwrap();
+        open_style_options(&mut app, true, "Tutorial");
+        let mut h = Harness::builder().with_size(egui::vec2(1000.0, 800.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let key = egui::Id::new("style_preview_remember_fonts");
+                if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(key, true));
+                    return;
+                }
+                show(app, ui.ctx());
+            },
+            app,
+        );
+        h.run_steps(3);
+        h.get_by_label("Preview").click();
+        h.run_steps(3);
+        cancel(h.state_mut());
+        open_style_options(h.state_mut(), true, "Tutorial");
+        assert!(h.state().ui.dialog.as_ref().unwrap().b("preview"), "Preview stays checked on reopen");
     }
 
     #[test]

@@ -240,6 +240,8 @@ pub struct UiState {
     pub flattener: String,
     /// File › Export PDF… options (persisted; see `PdfExportSettings`).
     pub pdf_export: PdfExportSettings,
+    /// The Preview checkbox of Paragraph/Character Style Options, remembered between openings.
+    pub style_preview: bool,
     /// View › Separations Preview: a process plate (0–3) and/or an ink limit (total, 0–4).
     #[serde(skip)]
     pub separation: Option<u8>,
@@ -398,6 +400,7 @@ impl Default for UiState {
             language: String::new(),
             flattener: String::new(),
             pdf_export: PdfExportSettings::default(),
+            style_preview: false,
             separation: None,
             ink_limit: None,
             display_quality: designcraft_render::DisplayQuality::High,
