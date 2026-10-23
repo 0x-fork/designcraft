@@ -959,7 +959,7 @@ fn dock_style(ui: &egui::Ui, language: &str) -> craft_ui::docking::DockStyle {
 }
 
 /// DesignCraft's wording of craft-ui's docking labels, translated through `i18n::tr`.
-const DOCK_LABELS: &[(&str, &str)] = &[
+pub(crate) const DOCK_LABELS: &[(&str, &str)] = &[
     ("dock.float", "Float Panel"),
     ("dock.close", "Close"),
     ("dock.movePanelTo", "Group with"),
