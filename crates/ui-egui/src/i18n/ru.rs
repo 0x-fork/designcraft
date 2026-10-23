@@ -547,6 +547,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Insert Math Expression…", "Вставить математическое выражение…"),
     ("Insert Pages…", "Вставить страницы…"),
     ("Insert Variable", "Вставить переменную"),
+    ("Convert Variable to Text", "Преобразовать переменную в текст"),
     ("Inspect Document", "Проверить документ"),
     ("Interface Color Theme", "Цветовая тема интерфейса"),
     ("Join the ArtCraft Discord…", "Присоединиться к Discord ArtCraft…"),

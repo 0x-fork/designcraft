@@ -803,6 +803,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Insert Math Expression…", "数式を挿入…"),
     ("Insert Pages…", "ページを挿入…"),
     ("Insert Variable", "変数を挿入"),
+    ("Convert Variable to Text", "変数をテキストに変換"),
     ("Inspect Document", "ドキュメントを調査"),
     ("Interface Color Theme", "インターフェイスのカラーテーマ"),
     ("Join the ArtCraft Discord…", "ArtCraft の Discord に参加…"),

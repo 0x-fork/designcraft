@@ -1544,6 +1544,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Insert Cross-Reference…", "Inserir referência cruzada…"),
     ("Insert Math Expression…", "Inserir expressão matemática…"),
     ("Insert Variable", "Inserir variável"),
+    ("Convert Variable to Text", "Converter variável em texto"),
     ("Inspect Document", "Inspecionar documento"),
     ("Interface Color Theme", "Tema de cores da interface"),
     ("Join the ArtCraft Discord…", "Entrar no Discord do ArtCraft…"),
