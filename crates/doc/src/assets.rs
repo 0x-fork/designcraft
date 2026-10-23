@@ -39,6 +39,12 @@ impl Document {
             || self.stories.values().any(|story| story_layer_options(story, 0, false))
     }
 
+    /// Placements outside the ordinary document-spread frame walk used by preflight.
+    pub fn has_unwalked_graphic_layer_visibility_overrides(&self) -> bool {
+        self.parents.iter().flat_map(|spread| &spread.items).any(|item| item_layer_options(item, 0, true))
+            || self.stories.values().any(|story| story_layer_options(story, 0, true))
+    }
+
     /// Includes parent items, anchored objects, graphic cells and nested notes.
     pub fn has_graphic_layer_visibility_overrides(&self) -> bool {
         self.spreads.iter().chain(&self.parents).flat_map(|spread| &spread.items).any(|item| item_layer_options(item, 0, true))

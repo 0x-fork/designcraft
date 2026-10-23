@@ -71,6 +71,23 @@ fn package(frames: &[String]) -> Vec<u8> {
 }
 
 #[test]
+fn nested_graphic_layers_preserve_hierarchy_on_roundtrip() {
+    let option = r#"<GraphicLayerOption UpdateLinkOption="KeepOverrides">
+      <GraphicLayer Self="a" Id="1" Name="Group"><GraphicLayer Self="b" Id="2" Name="Nested" OriginalVisibility="true" CurrentVisibility="false"/></GraphicLayer>
+      <GraphicLayer Self="c" Id="3" Name="Sibling"/>
+    </GraphicLayerOption>"#;
+    let image = image(1, PHOTO, None).replace("</Image>", &format!("{option}</Image>"));
+    let d = import_idml(&package(&[frame(1, 0.0, 0.0, &image)])).unwrap();
+    let options = |d: &Document| d.spreads[0].items[0].graphic().unwrap().layer_options.clone().unwrap();
+    let expected = options(&d);
+    assert_eq!(expected.layers.len(), 3);
+    assert_eq!(expected.parents, [None, Some(0), None]);
+    assert!(expected.has_visibility_overrides());
+    let reopened = import_idml(&export_idml(&d)).unwrap();
+    assert_eq!(options(&reopened), expected);
+}
+
+#[test]
 fn graphic_layer_options_survive_for_each_placement_of_a_shared_asset() {
     let option = |n: usize, visible: &str| {
         format!(
@@ -122,6 +139,23 @@ fn graphic_layer_options_survive_for_each_placement_of_a_shared_asset() {
 }
 
 #[test]
+fn malformed_native_graphic_layer_parents_cannot_cycle_or_overflow_xml_depth() {
+    let mut d = import_idml(&package(&[frame(1, 0.0, 0.0, &image(1, PHOTO, None))])).unwrap();
+    let Content::Graphic(g) = &mut std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut d.spreads[0]).items[0]).content else {
+        panic!("graphic")
+    };
+    let mut options = designcraft_doc::GraphicLayerOptions::default();
+    for i in 0..300usize {
+        options.layers.push(std::collections::BTreeMap::from([("Name".into(), format!("Layer {i}"))]));
+        options.parents.push(Some(i.saturating_sub(1)));
+    }
+    options.parents[1] = Some(usize::MAX);
+    g.layer_options = Some(options);
+    let reopened = import_idml(&export_idml(&d)).unwrap();
+    assert_eq!(reopened.spreads[0].items[0].graphic().unwrap().layer_options.as_ref().unwrap().layers.len(), 300);
+}
+
+#[test]
 fn graphic_layer_attributes_from_native_data_cannot_inject_xml_or_self_ids() {
     let mut d = import_idml(&package(&[frame(1, 0.0, 0.0, &image(1, PHOTO, None))])).unwrap();
     let Content::Graphic(g) = &mut std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut d.spreads[0]).items[0]).content else {
@@ -130,12 +164,13 @@ fn graphic_layer_attributes_from_native_data_cannot_inject_xml_or_self_ids() {
     let attributes = std::collections::BTreeMap::from([
         ("Name".into(), "A < B & C".into()),
         ("Self".into(), "injected-id".into()),
+        ("xmlns".into(), "urn:injected".into()),
         ("bad\" injected=\"true".into(), "invalid".into()),
     ]);
-    g.layer_options = Some(designcraft_doc::GraphicLayerOptions { attributes: attributes.clone(), layers: vec![attributes] });
+    g.layer_options = Some(designcraft_doc::GraphicLayerOptions { attributes: attributes.clone(), layers: vec![attributes], ..Default::default() });
     let out = export_idml(&d);
     let xml = zip_text(&out, "Spreads/");
-    assert!(!xml.contains("injected-id") && !xml.contains("injected="));
+    assert!(!xml.contains("injected-id") && !xml.contains("injected=") && !xml.contains("urn:injected"));
     let back = import_idml(&out).unwrap();
     let Content::Graphic(g) = &back.spreads[0].items[0].content else { panic!("graphic") };
     assert_eq!(g.layer_options.as_ref().unwrap().layers[0]["Name"], "A < B & C");

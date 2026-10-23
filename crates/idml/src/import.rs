@@ -3045,7 +3045,20 @@ impl<'r> Importer<'r> {
     fn graphic(&mut self, g: &El) -> Content {
         let layer_options = g.find("GraphicLayerOption").map(|options| {
             let attrs = |e: &El| e.attrs.iter().filter(|(key, _)| key != "Self").cloned().collect();
-            designcraft_doc::GraphicLayerOptions { attributes: attrs(options), layers: options.find_all("GraphicLayer").map(attrs).collect() }
+            let mut out = designcraft_doc::GraphicLayerOptions { attributes: attrs(options), ..Default::default() };
+            let mut pending: Vec<_> = options.find_all("GraphicLayer").map(|e| (e, None)).collect();
+            pending.reverse();
+            while let Some((layer, parent)) = pending.pop() {
+                let index = out.layers.len();
+                out.layers.push(attrs(layer));
+                out.parents.push(parent);
+                let children: Vec<_> = layer.find_all("GraphicLayer").collect();
+                pending.extend(children.into_iter().rev().map(|e| (e, Some(index))));
+            }
+            if out.parents.iter().all(Option::is_none) {
+                out.parents.clear();
+            }
+            out
         });
         if layer_options.as_ref().is_some_and(designcraft_doc::GraphicLayerOptions::has_visibility_overrides) {
             self.warnings.push(format!("graphic {}: {}", g.get("Self").unwrap_or("(unnamed)"), designcraft_doc::GRAPHIC_LAYER_RENDERING_WARNING));

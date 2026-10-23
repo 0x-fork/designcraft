@@ -604,6 +604,9 @@ pub enum Fitting {
 pub struct GraphicLayerOptions {
     pub attributes: std::collections::BTreeMap<String, String>,
     pub layers: Vec<std::collections::BTreeMap<String, String>>,
+    /// Parent indices in pre-order; absent entries are top-level layers (older native files).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<Option<usize>>,
 }
 
 pub const GRAPHIC_LAYER_RENDERING_WARNING: &str =

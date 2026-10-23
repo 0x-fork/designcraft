@@ -25,6 +25,7 @@ const NO_CHAR_ID: &str = "CharacterStyle/$ID/[No character style]";
 fn graphic_layer_attribute_name(key: &str) -> bool {
     !key.is_empty()
         && key != "Self"
+        && key != "xmlns"
         && key.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || matches!(b, b'.' | b'-'))))
 }
 
@@ -2076,13 +2077,36 @@ impl<'a> Ex<'a> {
                     option.set(key, value);
                 }
             }
-            for attributes in &options.layers {
+            // Parent indices must precede their children. Ignore invalid parents and bound DOM depth
+            // even when a native file has been edited independently of the IDML importer.
+            let mut depths = Vec::with_capacity(options.layers.len());
+            let mut parents = Vec::with_capacity(options.layers.len());
+            for i in 0..options.layers.len() {
+                let parent = options.parents.get(i).copied().flatten().filter(|p| *p < i && depths.get(*p).is_some_and(|d| *d < 240));
+                depths.push(parent.and_then(|p| depths.get(p)).copied().unwrap_or(0) + 1);
+                parents.push(parent);
+            }
+            let mut children: Vec<Vec<El>> = vec![Vec::new(); options.layers.len()];
+            let mut roots = Vec::new();
+            for (i, attributes) in options.layers.iter().enumerate().rev() {
                 let mut layer = El::new("GraphicLayer").attr("Self", self.fresh());
                 for (key, value) in attributes {
                     if graphic_layer_attribute_name(key) {
                         layer.set(key, value);
                     }
                 }
+                if let Some(nested) = children.get_mut(i) {
+                    for child in std::mem::take(nested).into_iter().rev() {
+                        layer.push(child);
+                    }
+                }
+                if let Some(nested) = parents.get(i).copied().flatten().and_then(|parent| children.get_mut(parent)) {
+                    nested.push(layer);
+                } else {
+                    roots.push(layer);
+                }
+            }
+            for layer in roots.into_iter().rev() {
                 option.push(layer);
             }
             el.push(option);

@@ -745,6 +745,10 @@ fn export_pdf(s: &mut Session, p: &Value) -> Result<Value> {
     let doc: &designcraft_doc::Document = &boxed;
     let r = designcraft_pdf::export_pdf_with_report(doc, &s.cache, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
     let mut r = r;
+    // Flattening and effect rasterization replace placements, so inspect the source too.
+    if st.doc.has_graphic_layer_visibility_overrides() && !r.warnings.iter().any(|w| w == designcraft_doc::GRAPHIC_LAYER_RENDERING_WARNING) {
+        r.warnings.push(designcraft_doc::GRAPHIC_LAYER_RENDERING_WARNING.into());
+    }
     // Transparency Blend Space: the page group of pages with transparency.
     let spreads = designcraft_pdf::sheet_spreads(doc, &opts);
     let blended: Vec<bool> = spreads.iter().map(|si| doc.spreads.get(*si).is_some_and(|sp| sp.items.iter().any(|it| transparent(it)))).collect();

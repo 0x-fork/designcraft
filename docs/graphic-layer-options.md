@@ -3,17 +3,23 @@
 IDML `GraphicLayerOption` / `GraphicLayer` settings are retained on each
 `Graphic.layer_options`, not on the shared asset. Two placements of one linked
 file can therefore keep different layer choices while sharing image bytes.
-Scalar option/layer attributes, layer order, layer IDs/names, original/current
+Scalar option/layer attributes, layer order and parent-child relationships, layer IDs/names, original/current
 visibility, link-update policy and view/export/print flags survive import,
 native save/reopen and IDML export. XML Self IDs are regenerated. Native-edited
-attribute maps cannot inject XML syntax or override those Self IDs.
+attribute maps cannot inject XML syntax, declare namespaces or override those Self IDs.
+Parent indices are optional in native files; missing entries retain the older
+flat representation. Invalid/cyclic parent indices and over-budget nesting
+are emitted as top-level layers, retaining their scalar metadata without
+unbounded XML recursion.
 
 This is preservation, **not layer-aware rendering**. The current renderer and
 PDF exporter use the asset's composite/default appearance and do not apply
 these per-placement choices. Changed visibility and explicit view/export/print
 states produce an import warning, a persistent `unsupportedGraphicLayers`
 preflight issue, and a PDF export warning. Nested graphic cells, anchored
-objects and parent items remain detectable after native reopening.
+objects and parent items remain detectable after native reopening, including
+when spread items also produce warnings. PDF warnings inspect the source
+document so effect rasterization and transparency flattening cannot hide them.
 
 Native files containing these settings require format version 4. Earlier
 readers reject that version instead of loading and silently discarding the new
@@ -23,7 +29,8 @@ requirements. Older graphics without `layerOptions` still deserialize with
 
 Synthetic regressions cover independent overrides on two placements sharing
 one asset, metadata round trips, native reader requirements, nested cells,
-preflight/PDF warnings and invalid native attribute names. Private originals
+nested layer hierarchy, preflight/PDF warnings after rasterization and flattening,
+and invalid native attribute names and parent indices. Private originals
 and artwork are not repository fixtures; any collection results are local
 metadata checks, not an independent reference-rendering or fidelity oracle.
 

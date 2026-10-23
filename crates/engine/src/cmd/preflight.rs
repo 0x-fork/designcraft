@@ -320,7 +320,7 @@ pub fn check(s: &Session, min_ppi: f64) -> Vec<Issue> {
     }
     // Nested graphic cells and anchored/parent items may not have a page frame
     // in the walk above. Keep the warning visible after a native save/reopen.
-    if !out.iter().any(|issue| issue.kind == "unsupportedGraphicLayers") && d.has_graphic_layer_visibility_overrides() {
+    if d.has_unwalked_graphic_layer_visibility_overrides() {
         out.push(Issue {
             severity: "warning",
             kind: "unsupportedGraphicLayers",

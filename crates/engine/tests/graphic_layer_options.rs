@@ -13,7 +13,7 @@ fn fixture() -> Vec<u8> {
       <Properties><GraphicBounds Left="0" Top="0" Right="20" Bottom="20"/></Properties>
       <Link Self="lk" LinkResourceURI="file:/definitely-missing/synthetic.psd"/>
       <GraphicLayerOption UpdateLinkOption="KeepOverrides">
-        <GraphicLayer Self="g1" Id="1" Name="Hidden" OriginalVisibility="true" CurrentVisibility="false"/>
+        <GraphicLayer Self="g0" Id="0" Name="Group"><GraphicLayer Self="g1" Id="1" Name="Hidden" OriginalVisibility="true" CurrentVisibility="false"/></GraphicLayer>
         <GraphicLayer Self="g2" Id="2" Name="Shown" OriginalVisibility="false" CurrentVisibility="true"/>
       </GraphicLayerOption></Image></Rectangle></Spread></Document>"#;
     let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -64,7 +64,7 @@ fn graphic_layer_options_in_cells_require_the_new_native_reader() {
             _ => None,
         })
         .unwrap();
-    std::sync::Arc::make_mut(&mut doc.spreads[0]).items.clear();
+    // Keep the original spread graphic too: its warning must not hide the cell warning.
     let layer = doc.default_layer();
     let (_, story) = doc
         .add_text_frame(designcraft_doc::SpreadRef::Doc(0), designcraft_geom::Rect::new(0.0, 0.0, 80.0, 80.0), layer, "Body", Default::default())
@@ -78,5 +78,20 @@ fn graphic_layer_options_in_cells_require_the_new_native_reader() {
     let mut s = Session::new();
     s.add_document(DocState::new(reopened, None));
     let preflight = s.execute("preflight.run", &json!({})).unwrap();
-    assert!(preflight["issues"].as_array().unwrap().iter().any(|i| i["kind"] == "unsupportedGraphicLayers"));
+    let warnings: Vec<_> = preflight["issues"].as_array().unwrap().iter().filter(|i| i["kind"] == "unsupportedGraphicLayers").collect();
+    assert!(warnings.iter().any(|i| i["item"].is_null()), "the cell needs an independent document-level warning");
+    assert!(warnings.iter().any(|i| !i["item"].is_null()), "the spread retains its item warning");
+}
+
+#[test]
+fn pdf_layer_warning_survives_soft_effects_and_flattening() {
+    for flatten in [false, true] {
+        let doc = designcraft_idml::import_idml(&fixture()).unwrap();
+        let id = doc.spreads[0].items.iter().find(|i| i.graphic().is_some()).unwrap().id.0;
+        let mut session = Session::new();
+        session.add_document(DocState::new(doc, None));
+        session.execute("object.feather", &json!({"ids":[id], "width":2})).unwrap();
+        let out = session.execute("file.exportPdf", &json!({"flatten":flatten})).unwrap();
+        assert!(out["warnings"].as_array().unwrap().iter().any(|w| w == GRAPHIC_LAYER_RENDERING_WARNING), "{out}");
+    }
 }
