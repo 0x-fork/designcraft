@@ -95,6 +95,8 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                     stack.push(top);
                 }
                 first = false;
+                // A group is not a character: the `\uN` fallback skip ends here too.
+                pending = 0;
                 // `{\*\dest …}`: an ignorable destination.
                 if chars.get(i + 1) == Some(&'\\')
                     && chars.get(i + 2) == Some(&'*')
@@ -336,6 +338,8 @@ Caf\'e9 \u8364? price\tab tab\line next\par
         let i = import(br"{\rtf1 \u8220\ldblquote Hi\u8221\rdblquote  x\u8212\emdash y}").unwrap();
         assert_eq!(i.story.text, "\u{201C}Hi\u{201D} x\u{2014}y");
         let i = import(br"{\rtf1 \u8220\{Hi}").unwrap();
+        assert_eq!(i.story.text, "\u{201C}Hi");
+        let i = import(br"{\rtf1 \u8220{\b Hi}}").unwrap();
         assert_eq!(i.story.text, "\u{201C}Hi");
     }
 
