@@ -95,6 +95,8 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                     stack.push(top);
                 }
                 first = false;
+                // A group is not a character: the `\uN` fallback skip ends here too.
+                pending = 0;
                 // `{\*\dest …}`: an ignorable destination.
                 if chars.get(i + 1) == Some(&'\\')
                     && chars.get(i + 2) == Some(&'*')
@@ -134,6 +136,11 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                 }
                 if !next.is_ascii_alphabetic() {
                     // Control symbols: \\ \{ \} \~ (nbsp) \- (soft hyphen) \_ (nb hyphen).
+                    i += 2;
+                    if pending > 0 {
+                        pending -= 1;
+                        continue;
+                    }
                     let skip = stack.last().is_some_and(|s| s.skip);
                     if !skip {
                         match next {
@@ -149,7 +156,6 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                             _ => {}
                         }
                     }
-                    i += 2;
                     continue;
                 }
                 // A control word with an optional numeric parameter and one delimiting space.
@@ -172,6 +178,11 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
                     k += 1;
                 }
                 i = k;
+                // A control word is one character of the `\uN` fallback (a following `\u` is not).
+                if pending > 0 && word != "u" {
+                    pending -= 1;
+                    continue;
+                }
                 let skip = stack.last().is_some_and(|s| s.skip);
                 if SKIP.contains(&word.as_str()) {
                     flush(&mut st, &mut buf, &fmt);
@@ -318,6 +329,18 @@ Caf\'e9 \u8364? price\tab tab\line next\par
     fn hyphen_after_control_word_without_digits_is_text() {
         let i = import(br"{\rtf1\ansi Rock\emdash-roll, x\tab-y, a\li-720 b}").unwrap();
         assert_eq!(i.story.text, "Rock\u{2014}-roll, x\t-y, ab");
+    }
+
+    /// A control word or control symbol is one character of the `\uN` fallback, so it is skipped
+    /// like a plain character and does not eat the text after it.
+    #[test]
+    fn control_fallback_after_unicode_is_skipped() {
+        let i = import(br"{\rtf1 \u8220\ldblquote Hi\u8221\rdblquote  x\u8212\emdash y}").unwrap();
+        assert_eq!(i.story.text, "\u{201C}Hi\u{201D} x\u{2014}y");
+        let i = import(br"{\rtf1 \u8220\{Hi}").unwrap();
+        assert_eq!(i.story.text, "\u{201C}Hi");
+        let i = import(br"{\rtf1 \u8220{\b Hi}}").unwrap();
+        assert_eq!(i.story.text, "\u{201C}Hi");
     }
 
     /// Characters past U+FFFF are written as two `\uN` words, a UTF-16 surrogate pair (the form
