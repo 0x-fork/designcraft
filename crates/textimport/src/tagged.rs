@@ -72,7 +72,7 @@ pub fn tagged_text(doc: &Document, story: &Story) -> String {
 }
 
 /// Text of a Tagged Text file (ASCII, UTF-8 or UTF-16 by byte-order mark).
-fn decode(bytes: &[u8]) -> String {
+pub(crate) fn decode(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
         let le = bytes[0] == 0xFF;
         let units: Vec<u16> = bytes[2..]

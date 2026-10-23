@@ -2456,6 +2456,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         {
                             match app.session.execute("color.loadProfile", &json!({"path": path})) {
                                 Ok(_) => {
+                                    // Replayed in load order at start-up, so the latest load of a path comes last.
+                                    app.ui.color_profiles.retain(|p| p != &path);
+                                    app.ui.color_profiles.push(path);
                                     let f = app.session.execute("color.settings", &json!({})).unwrap_or_default();
                                     d.fields.insert("profiles".into(), f["profiles"].clone());
                                 }
@@ -3337,7 +3340,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 params["title"] = json!(title);
             }
             let name = if title.is_empty() { "Export.pdf".to_string() } else { format!("{title}.pdf") };
-            match app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            match app.pick_save(&name) {
                 Some(path) => {
                     params["path"] = json!(path);
                     crate::menus::export_pdf(app, &params)
