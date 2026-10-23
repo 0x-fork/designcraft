@@ -769,7 +769,13 @@ impl DesignApp {
             .and_then(|d| d.path.as_deref())
             .and_then(folder_of)
             .or_else(|| self.ui.last_save_folder.as_ref().map(PathBuf::from));
-        let suggested = folder.map_or_else(|| name.to_string(), |f| f.join(name).to_string_lossy().to_string());
+        // Only the last part of a name goes after the folder: a title may hold a slash, and an
+        // empty name would make the folder itself the suggested file.
+        let file = Path::new(name).file_name();
+        let suggested = match (folder, file) {
+            (Some(f), Some(file)) => f.join(file).to_string_lossy().to_string(),
+            _ => name.to_string(),
+        };
         let picked = self.services.pick_save.as_mut().and_then(|f| f(&suggested))?;
         if let Some(folder) = folder_of(&picked) {
             self.ui.last_save_folder = Some(folder.to_string_lossy().to_string());
@@ -1903,6 +1909,25 @@ mod tests {
         let untitled = format!("{}.designcraft", app.session.active().unwrap().doc.title);
         app.run("app.saveDialog", json!({})).unwrap();
         assert_eq!(last(&asked), elsewhere.path().join(untitled).to_string_lossy(), "a new document starts in the last folder used");
+    }
+
+    /// No name (Save with no document) suggested the remembered folder itself as the file, and a
+    /// title with a slash moved the suggestion out of the document's folder.
+    #[test]
+    fn save_dialog_suggestions_keep_the_folder_and_only_a_file_name() {
+        use std::{cell::RefCell, rc::Rc};
+        let folder = tempfile::tempdir().unwrap();
+        let asked: Rc<RefCell<Vec<String>>> = Rc::default();
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Services::default());
+        let seen = asked.clone();
+        app.services.pick_save = Some(Box::new(move |name: &str| {
+            seen.borrow_mut().push(name.to_string());
+            None
+        }));
+        app.ui.last_save_folder = Some(folder.path().join("Docs").to_string_lossy().to_string());
+        app.pick_save("");
+        app.pick_save("Q1/Q2.pdf");
+        assert_eq!(*asked.borrow(), ["".to_string(), folder.path().join("Docs").join("Q2.pdf").to_string_lossy().to_string()]);
     }
 
     /// An app with one document that has an unsaved edit.
