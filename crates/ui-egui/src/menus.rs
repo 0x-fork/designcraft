@@ -4290,6 +4290,33 @@ mod tests {
     }
 
     #[test]
+    fn go_back_waits_for_the_view_to_be_fitted() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({"pages": 7, "facingPages": true})).unwrap();
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::DesignApp| {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        frame(&mut app);
+        frame(&mut app);
+        app.run("view.goToPage", json!({"page": 5})).unwrap();
+        frame(&mut app);
+        assert!(menu_enabled(&app, "view.goBack"));
+        // Leaving parent pages through the Pages panel: the canvas refits on the next frame.
+        app.view_mut().unwrap().fitted = false;
+        assert!(!menu_enabled(&app, "view.goBack"), "the refit would replace where Go Back went");
+        crate::canvas::go_through_history(&mut app, -1);
+        frame(&mut app);
+        assert!(menu_enabled(&app, "view.goBack"), "the unfitted Go Back used no history entry");
+    }
+
+    #[test]
     fn next_spread_at_the_last_spread_is_no_jump() {
         let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", &json!({"pages": 7, "facingPages": true})).unwrap();

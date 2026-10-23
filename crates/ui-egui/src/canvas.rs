@@ -284,6 +284,10 @@ fn note_jump(app: &mut DesignApp, to: bool) {
 /// Whether Layout ▸ Go Back (`step` < 0) or Go Forward has a page to go to from the view as it is.
 pub fn can_go_through_history(app: &DesignApp, step: isize) -> bool {
     let Some(st) = app.session.active().filter(|st| !st.editing_parents) else { return false };
+    // A view still waiting to be fitted is refitted next frame, which would replace the destination.
+    if !app.view().is_some_and(|v| v.fitted) {
+        return false;
+    }
     let ids = page_ids(&st.doc);
     let Some(mut h) = app.page_history().cloned() else { return false };
     if let Some((id, offset)) = page_in_view(app) {
@@ -295,6 +299,9 @@ pub fn can_go_through_history(app: &DesignApp, step: isize) -> bool {
 /// Layout ▸ Go Back (`step` < 0) or Go Forward: show the page viewed before or after this one, where
 /// the view was on it (zoom kept).
 pub fn go_through_history(app: &mut DesignApp, step: isize) {
+    if !app.view().is_some_and(|v| v.fitted) {
+        return;
+    }
     note_jump(app, false);
     let Some(ids) = app.session.active().filter(|st| !st.editing_parents).map(|st| page_ids(&st.doc)) else { return };
     let Some((id, offset)) = app.page_history_mut().and_then(|h| h.go(step, |id| ids.contains(&id))) else { return };
