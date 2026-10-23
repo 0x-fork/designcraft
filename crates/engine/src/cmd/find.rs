@@ -270,7 +270,7 @@ fn scope(s: &Session, p: &Value) -> Result<FindContext> {
             .stories
             .values()
             .flat_map(|x| {
-                let cells = x.tables.iter().flat_map(|(id, t)| {
+                let cells = x.tables.iter().flat_map(move |(id, t)| {
                     let cols = t.ncols().max(1);
                     t.cells.iter().enumerate().map(move |(i, c)| (x.id, Some(CellAddr { table: *id, row: i / cols, col: i % cols }), 0..c.text.len()))
                 });
