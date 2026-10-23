@@ -9149,7 +9149,11 @@ mod tests {
             for _ in 0..3 {
                 dialog_frame(&mut app, &ctx, screen, vec![]);
             }
-            let height = visible_label(&dialog_frame(&mut app, &ctx, screen, vec![]), screen, "66p1");
+            // With craft-fonts' Noto Sans Arabic the rows above are taller, so at the smallest size the
+            // Height field starts partly below the body's clip: scroll to it like the other fields.
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            let (_, _, body) = labels.iter().find(|(text, _, _)| text.trim() == "66p1").expect("66p1 is painted");
+            let height = scroll_to_label(&mut app, &ctx, screen, body.center(), "66p1");
             click_dialog(&mut app, &ctx, screen, height.center());
             dialog_frame(
                 &mut app,
