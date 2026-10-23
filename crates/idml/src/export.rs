@@ -20,6 +20,14 @@ const TOC_STYLE_ID: &str = "TOCStyle/Table of Contents";
 const TOC_STYLE_NAME: &str = "Table of Contents";
 const NO_CHAR_ID: &str = "CharacterStyle/$ID/[No character style]";
 
+// Retained IDML attributes have unprefixed ASCII names. Native JSON can be
+// edited independently: never let its map keys become XML syntax or Self IDs.
+fn graphic_layer_attribute_name(key: &str) -> bool {
+    !key.is_empty()
+        && key != "Self"
+        && key.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || matches!(b, b'.' | b'-'))))
+}
+
 /// Export options.
 #[derive(Clone, Debug)]
 pub struct ExportOptions {
@@ -2060,6 +2068,24 @@ impl<'a> Ex<'a> {
         }
         if let Some(c) = &g.clip {
             el.push(clipping_settings(c));
+        }
+        if let Some(options) = &g.layer_options {
+            let mut option = El::new("GraphicLayerOption");
+            for (key, value) in &options.attributes {
+                if graphic_layer_attribute_name(key) {
+                    option.set(key, value);
+                }
+            }
+            for attributes in &options.layers {
+                let mut layer = El::new("GraphicLayer").attr("Self", self.fresh());
+                for (key, value) in attributes {
+                    if graphic_layer_attribute_name(key) {
+                        layer.set(key, value);
+                    }
+                }
+                option.push(layer);
+            }
+            el.push(option);
         }
         let uri = match &asset.link {
             Some(l) => path_to_uri(l),

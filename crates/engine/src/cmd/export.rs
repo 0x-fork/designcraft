@@ -434,6 +434,7 @@ fn flatten(d: &designcraft_doc::Document, cache: &designcraft_compose::Cache, pp
             );
             let mut it = Item::new(ItemId(out.alloc()), layer, Shape::Rectangle, designcraft_geom::shapes::rectangle(r));
             it.content = Content::Graphic(Graphic {
+                layer_options: None,
                 asset: aid,
                 size: (w as f64, h as f64),
                 xf: designcraft_geom::Affine::translate((r.x0, r.y0))
@@ -604,6 +605,7 @@ fn rasterize_where(
         );
         let mut img_item = Item::new(ItemId(out.alloc()), it.layer, Shape::Rectangle, designcraft_geom::shapes::rectangle(reach));
         img_item.content = Content::Graphic(Graphic {
+            layer_options: None,
             asset: aid,
             size: (w as f64, h as f64),
             xf: designcraft_geom::Affine::translate((reach.x0, reach.y0)) * designcraft_geom::Affine::scale(1.0 / k),

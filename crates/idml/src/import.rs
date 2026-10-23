@@ -3043,6 +3043,13 @@ impl<'r> Importer<'r> {
     }
 
     fn graphic(&mut self, g: &El) -> Content {
+        let layer_options = g.find("GraphicLayerOption").map(|options| {
+            let attrs = |e: &El| e.attrs.iter().filter(|(key, _)| key != "Self").cloned().collect();
+            designcraft_doc::GraphicLayerOptions { attributes: attrs(options), layers: options.find_all("GraphicLayer").map(attrs).collect() }
+        });
+        if layer_options.as_ref().is_some_and(designcraft_doc::GraphicLayerOptions::has_visibility_overrides) {
+            self.warnings.push(format!("graphic {}: {}", g.get("Self").unwrap_or("(unnamed)"), designcraft_doc::GRAPHIC_LAYER_RENDERING_WARNING));
+        }
         let gxf = parse_affine(g.get("ItemTransform"));
         let (l, t, r, b) = match g.prop_el("GraphicBounds") {
             Some(gb) => {
@@ -3059,6 +3066,7 @@ impl<'r> Importer<'r> {
         let uri = link.and_then(|k| k.get("LinkResourceURI")).map(uri_to_path);
         let graphic = |asset, size| {
             Content::Graphic(designcraft_doc::Graphic {
+                layer_options: layer_options.clone(),
                 asset,
                 size,
                 xf: gxf * Affine::translate((l, t)),

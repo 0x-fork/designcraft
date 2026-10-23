@@ -22,8 +22,8 @@ use serde_json::{Value, json};
 
 pub const MIME: &str = "application/vnd.designcraft+zip";
 /// Latest reader capability. Version 2 pinned the Keep Lines Together and drop cap defaults;
-/// version 3 adds rendering of retained EPS source assets.
-pub const VERSION: u32 = 3;
+/// version 3 adds rendering of retained EPS source assets; version 4 retains placed graphic layer options.
+pub const VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
@@ -87,7 +87,14 @@ fn save_with_large_entries_from(doc: &Document, preview: Option<&[u8]>, large_en
         // Older readers would silently omit EPS artwork. Preview-only legacy assets and
         // documents without EPS stay at 2 so their existing readers keep working; writing 1
         // would make a reader re-run the version 2 paragraph upgrade over current defaults.
-        let version = if doc.assets.values().any(|a| designcraft_images::is_eps(&a.data)) { VERSION } else { 2 };
+        // Older readers ignore unknown Graphic fields and would silently drop layer choices.
+        let version = if doc.has_graphic_layer_options() {
+            4
+        } else if doc.assets.values().any(|a| designcraft_images::is_eps(&a.data)) {
+            3
+        } else {
+            2
+        };
         let meta = json!({"format": "designcraft", "version": version, "generator": concat!("DesignCraft ", env!("CARGO_PKG_VERSION"))});
         z.write_all(meta.to_string().as_bytes()).map_err(|e| FormatError::Io(e.to_string()))?;
         if let Some(png) = preview {
@@ -404,6 +411,7 @@ mod tests {
         let id = ItemId(d.alloc());
         let mut it = Item::new(id, d.default_layer(), Shape::Rectangle, shapes::rectangle(Rect::new(0.0, 0.0, 50.0, 50.0)));
         it.content = Content::Graphic(Graphic {
+            layer_options: None,
             asset,
             size: (1.0, 1.0),
             xf: Affine::translate((crop, crop)),
