@@ -2176,9 +2176,12 @@ impl<'r> Importer<'r> {
         }
         // Table-local options override the named table style. Cell styles are already
         // materialized independently, so their edges retain their higher precedence.
+        let mut border_unset = style.border.is_none() && style.borders.iter().all(|b| b.is_empty());
         let mut borders = std::array::from_fn::<_, 4, _>(|i| t.options.border_for(i).clone());
         for (side, border) in ["TopBorder", "LeftBorder", "BottomBorder", "RightBorder"].iter().zip(&mut borders) {
-            self.cell_stroke_attrs(e, side).apply_to(border);
+            let attrs = self.cell_stroke_attrs(e, side);
+            border_unset &= attrs.is_empty();
+            attrs.apply_to(border);
         }
         t.options.border = borders[0].clone();
         t.options.borders = borders.map(Some);
@@ -2249,6 +2252,10 @@ impl<'r> Importer<'r> {
                 cell.stroke_priorities[i] = priority;
                 // Preserve style-defined edges and #102's positive-priority local overrides.
                 cell.border_overrides[i] |= priority > 0;
+                // No table or table style border is given anywhere, so the built-in 1 pt default must not
+                // draw over an outer edge the cell explicitly hides (weight 0 or the None swatch), as InDesign draws nothing.
+                let hidden = attrs.weight == Some(0.0) || attrs.color.as_deref() == Some(swatch::NONE);
+                cell.border_overrides[i] |= border_unset && hidden;
             }
             if let Some(slot) = t.cell_mut(r, c) {
                 *slot = cell;

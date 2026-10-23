@@ -1101,6 +1101,35 @@ fn imports_and_round_trips_explicit_cell_border_overrides() {
 }
 
 #[test]
+fn explicitly_hidden_cell_edges_hide_the_default_table_border() {
+    // No table border or table style is given, and every cell edge is explicitly hidden (issue #1623):
+    // the first cell by weight 0, the second by the None swatch.
+    let cell = |name: &str, attr: &str, value: &str| {
+        format!(
+            r#"<Cell Name="{name}" LeftEdge{attr}="{value}" RightEdge{attr}="{value}" TopEdge{attr}="{value}" BottomEdge{attr}="{value}">
+    <ParagraphStyleRange><CharacterStyleRange><Content>X</Content></CharacterStyleRange></ParagraphStyleRange></Cell>"#
+        )
+    };
+    let story = format!(
+        r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+<Story Self="s1"><ParagraphStyleRange><CharacterStyleRange>
+<Table HeaderRowCount="0" FooterRowCount="0">
+  <Row Name="0" MinimumHeight="24"/>
+  <Column Name="0" SingleColumnWidth="60"/><Column Name="1" SingleColumnWidth="60"/>
+  {}{}
+</Table></CharacterStyleRange></ParagraphStyleRange></Story></idPkg:Story>"#,
+        cell("0:0", "StrokeWeight", "0"),
+        cell("1:0", "StrokeColor", "Swatch/None")
+    );
+    let d = import_idml(&fixture_with_story(&story)).unwrap();
+    d.check().unwrap();
+    let table = d.stories.values().flat_map(|s| s.tables.values()).next().unwrap();
+    for c in 0..2 {
+        assert_eq!(table.cell(0, c).unwrap().border_overrides, [true; 4], "cell {c} suppresses the table border");
+    }
+}
+
+#[test]
 fn round_trips_footnotes_and_options() {
     let mut d = Document::new(&NewDocument::default());
     let lid = d.default_layer();
