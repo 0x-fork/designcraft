@@ -4368,3 +4368,37 @@ fn cell_first_baseline_comes_from_cell_styles_table_regions_and_cells_and_round_
     let s2 = back.styles.cell.iter().find(|c| c.name == "Cap").unwrap();
     assert_eq!(s2.first_baseline, Some(FirstBaseline::CapHeight));
 }
+
+/// A graphic placed in a table cell is written into the cell, not dropped.
+#[test]
+fn exports_graphic_in_table_cell() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(40.0, 40.0, 400.0, 400.0), lid, "Intro", ParaFormat::default()).unwrap();
+    let asset = designcraft_doc::AssetId(d.alloc());
+    let id = d.add_asset(designcraft_doc::Asset {
+        id: asset,
+        name: "tick.png".into(),
+        mime: "image/png".into(),
+        data: std::sync::Arc::new(vec![1, 2, 3]),
+        ..Default::default()
+    });
+    let mut t = designcraft_doc::Table::new(d.alloc(), 2, 2, 0, 0, 200.0);
+    t.cell_mut(1, 0).unwrap().graphic = Some(designcraft_doc::Graphic {
+        asset: id,
+        size: (24.0, 24.0),
+        xf: designcraft_geom::Affine::IDENTITY,
+        clip: None,
+        auto_fit: Default::default(),
+        fit_align: 4,
+        crop: [0.0; 4],
+        wrap: Default::default(),
+        fill: Default::default(),
+    });
+    d.story_mut(sid).unwrap().insert_table(5, t);
+    let story = zip_text(&export_idml(&d), "Stories/");
+    let cell = story.split("<Cell ").nth(3).unwrap_or_default();
+    let cell = cell.split("</Cell>").next().unwrap_or_default();
+    assert!(cell.contains("<Image "), "{story}");
+    assert!(cell.contains("ClipContentToCell=\"true\""), "{story}");
+}
