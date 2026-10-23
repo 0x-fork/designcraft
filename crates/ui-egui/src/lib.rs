@@ -224,6 +224,9 @@ pub struct UiState {
     pub pages_panel: panels::pages::PanelOptions,
     /// Edit › Color Settings (re-applied at start).
     pub color_settings: Option<designcraft_color::cms::ColorSettings>,
+    /// ICC files loaded with Edit › Color Settings › Load Profile… (loaded again at start, before
+    /// `color_settings`, so a loaded working space stays chosen).
+    pub color_profiles: Vec<String>,
     /// View › Proof Colors and View › Proof Setup.
     pub proof_colors: bool,
     pub proof_setup: designcraft_color::cms::ProofSetup,
@@ -388,6 +391,7 @@ impl Default for UiState {
             pages_parents_height: None,
             pages_panel: Default::default(),
             color_settings: None,
+            color_profiles: Vec::new(),
             proof_colors: false,
             proof_setup: Default::default(),
             dynamic_spelling: false,
@@ -1138,8 +1142,22 @@ impl DesignApp {
         self.window_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         if !self.color_applied {
             self.color_applied = true;
+            for path in self.ui.color_profiles.clone() {
+                if let Err(e) = self.session.execute("color.loadProfile", &json!({"path": path})) {
+                    log::warn!("Color Settings: {e}");
+                    self.status_error("Color Settings", e);
+                }
+            }
             if let Some(cs) = self.ui.color_settings.clone() {
-                let _ = designcraft_color::cms::set_active(&cs.with_known_profiles());
+                let known = cs.with_known_profiles();
+                for (saved, used) in [(&cs.rgb, &known.rgb), (&cs.cmyk, &known.cmyk)] {
+                    if saved != used {
+                        let e = format!("saved profile {saved} is not available; using {used}");
+                        log::warn!("Color Settings: {e}");
+                        self.status_error("Color Settings", e);
+                    }
+                }
+                let _ = designcraft_color::cms::set_active(&known);
             }
         }
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
