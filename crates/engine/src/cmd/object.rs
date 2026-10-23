@@ -686,7 +686,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Align",
             ["Window", "Object & Layout", "Align"],
             None,
-            "{edge: left|hcenter|right|top|vcenter|bottom, to?: selection|keyObject|margins|page|spread, ids?}",
+            "{edge: left|hcenter|right|top|vcenter|bottom, to?: selection|keyObject|margins|page|spread (default: keyObject while a key object is set), ids?}",
             has_selection,
             align
         ),
@@ -3074,8 +3074,18 @@ fn align_reference(d: &Document, ids: &[ItemId], to: &str, key: Option<ItemId>) 
 fn align(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let edge = str_param(p, "edge").unwrap_or("left").to_string();
-    let to = str_param(p, "to").map(str::to_string).unwrap_or_else(|| if ids.len() > 1 { "selection".into() } else { "page".into() });
-    let key = s.doc()?.selection.key;
+    // A key object counts only while it is one of the items aligned. With one, InDesign's Align
+    // To switches to Key Object, so it is also the default target.
+    let key = s.doc()?.selection.key.filter(|k| ids.contains(k));
+    let to = str_param(p, "to").map(str::to_string).unwrap_or_else(|| {
+        if key.is_some() {
+            "keyObject".into()
+        } else if ids.len() > 1 {
+            "selection".into()
+        } else {
+            "page".into()
+        }
+    });
     s.edit(|d, _| {
         let r = align_reference(d, &ids, &to, key).ok_or_else(|| bad("object.align", "nothing to align"))?;
         for id in &ids {

@@ -262,9 +262,22 @@ pub fn specs() -> Vec<CommandSpec> {
             st.selection.cells = None;
             if let Some(i) = st.selection.items.iter().position(|x| *x == id) {
                 st.selection.items.remove(i);
+                if st.selection.key == Some(id) {
+                    st.selection.key = None;
+                }
             } else {
                 st.selection.items.push(id);
             }
+            st.bump_revision();
+            ok()
+        }),
+        cmd!(noundo "selection.key", "Key Object", [], None, "{id} — make a selected item the key object for Align; the current key object drops the key", has_doc, |s, p| {
+            let id = super::id_param(p, "id").ok_or_else(|| super::bad("selection.key", "missing id"))?;
+            let st = s.doc_mut()?;
+            if !st.selection.items.contains(&id) {
+                return Err(super::bad("selection.key", "the key object must be selected"));
+            }
+            st.selection.key = if st.selection.key == Some(id) { None } else { Some(id) };
             st.bump_revision();
             ok()
         }),
