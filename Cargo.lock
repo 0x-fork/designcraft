@@ -687,6 +687,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chrono"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -957,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "arboard",
  "designcraft-engine",
@@ -979,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-cli"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -995,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-color"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "kurbo",
@@ -1007,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-compose"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-color",
  "designcraft-doc",
@@ -1027,8 +1036,9 @@ dependencies = [
 
 [[package]]
 name = "designcraft-doc"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
+ "chrono",
  "designcraft-color",
  "designcraft-geom",
  "proptest",
@@ -1039,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-engine"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "caseless",
  "craft-atomic",
@@ -1078,8 +1088,9 @@ dependencies = [
 
 [[package]]
 name = "designcraft-epub"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
+ "chrono",
  "designcraft-color",
  "designcraft-doc",
  "zip",
@@ -1087,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-fonts"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "core-text",
  "harfrust 0.13.3",
@@ -1100,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-format"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-doc",
  "designcraft-images",
@@ -1112,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-geom"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "flo_curves",
  "kurbo",
@@ -1125,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-idml"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1140,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-images"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "designcraft-color",
@@ -1155,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-mcp"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-engine",
  "designcraft-geom",
@@ -1168,8 +1179,9 @@ dependencies = [
 
 [[package]]
 name = "designcraft-pdf"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
+ "chrono",
  "craft-cms 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e9546e191dd62f2bc1d61eca45dbdc2f1b3c1d8e)",
  "craft-pdf",
  "craft-prepress",
@@ -1192,8 +1204,9 @@ dependencies = [
 
 [[package]]
 name = "designcraft-pptx"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
+ "chrono",
  "designcraft-color",
  "designcraft-compose",
  "designcraft-doc",
@@ -1209,25 +1222,26 @@ dependencies = [
 
 [[package]]
 name = "designcraft-render"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
+ "craft-pdf",
  "designcraft-color",
  "designcraft-compose",
  "designcraft-doc",
  "designcraft-fonts",
  "designcraft-geom",
  "designcraft-images",
- "hayro",
  "image",
  "log",
  "serde",
+ "thiserror 2.0.21",
  "vello_common 0.2.0",
  "vello_cpu 0.2.0",
 ]
 
 [[package]]
 name = "designcraft-textimport"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-doc",
  "quick-xml",
@@ -1236,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-tools"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1248,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-ui-egui"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "craft-ui",
  "designcraft-color",
@@ -1275,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-web"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "designcraft-engine",
  "designcraft-format",
@@ -5665,7 +5679,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/skylartaylor/winit.git?rev=3d51077fd1a966f84df9ef287839dc84fd5b4ca7#3d51077fd1a966f84df9ef287839dc84fd5b4ca7"
+source = "git+https://github.com/storytold/winit.git?rev=3d51077fd1a966f84df9ef287839dc84fd5b4ca7#3d51077fd1a966f84df9ef287839dc84fd5b4ca7"
 dependencies = [
  "ahash",
  "android-activity",
@@ -5839,7 +5853,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "serde_json",
 ]
