@@ -477,6 +477,32 @@ pub fn control_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
         });
 }
 
+/// Page-size preset menu and the portrait / landscape toggles of the Control panel.
+fn page_preset_and_orientation(app: &mut DesignApp, ui: &mut egui::Ui, lang: &str, size: (f64, f64), n: usize, anchor: u8) {
+    let landscape = size.0 > size.1;
+    ui.vertical(|ui| {
+        let cur = panels::properties::preset_name(size.0, size.1);
+        egui::ComboBox::from_id_salt("ctl_page_preset").selected_text(crate::rtl::widget(ui, crate::i18n::tr(lang, cur))).width(130.0).show_ui(
+            ui,
+            |ui| {
+                for (name, w, h) in panels::properties::PAGE_PRESETS {
+                    if ui.selectable_label(cur == *name, crate::rtl::widget(ui, crate::i18n::tr(lang, name))).clicked() {
+                        let (w, h) = if landscape { (h, w) } else { (w, h) };
+                        let _ = app.run("layout.pageSize", json!({"pages": [n], "width": w, "height": h, "anchor": anchor}));
+                    }
+                }
+            },
+        );
+        ui.horizontal(|ui| {
+            for (icon, tip, want) in [("orient-portrait", "Portrait", false), ("orient-landscape", "Landscape", true)] {
+                if crate::widgets::icon_toggle(ui, icon, landscape == want, crate::i18n::tr(lang, tip)).clicked() && landscape != want {
+                    let _ = app.run("layout.pageSize", json!({"pages": [n], "width": size.1, "height": size.0, "anchor": anchor}));
+                }
+            }
+        });
+    });
+}
+
 /// The Control panel with the Page tool, as InDesign's: reference point, X/Y, W/H, page-size
 /// preset, orientation, Liquid Page Rule and Show Parent Page Overlay, for
 /// the page the Page tool selected (else the page in view). W/H keep the reference point in place.
@@ -518,28 +544,7 @@ fn control_page(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
     vsep(ui);
     // Page-size preset and orientation.
-    let landscape = pg.width > pg.height;
-    ui.vertical(|ui| {
-        let cur = panels::properties::preset_name(pg.width, pg.height);
-        egui::ComboBox::from_id_salt("ctl_page_preset").selected_text(crate::rtl::widget(ui, crate::i18n::tr(&lang, cur))).width(130.0).show_ui(
-            ui,
-            |ui| {
-                for (name, w, h) in panels::properties::PAGE_PRESETS {
-                    if ui.selectable_label(cur == *name, crate::rtl::widget(ui, crate::i18n::tr(&lang, name))).clicked() {
-                        let (w, h) = if landscape { (h, w) } else { (w, h) };
-                        let _ = app.run("layout.pageSize", json!({"pages": [n], "width": w, "height": h, "anchor": anchor}));
-                    }
-                }
-            },
-        );
-        ui.horizontal(|ui| {
-            for (icon, tip, want) in [("orient-portrait", "Portrait", false), ("orient-landscape", "Landscape", true)] {
-                if crate::widgets::icon_toggle(ui, icon, landscape == want, crate::i18n::tr(&lang, tip)).clicked() && landscape != want {
-                    let _ = app.run("layout.pageSize", json!({"pages": [n], "width": pg.height, "height": pg.width, "anchor": anchor}));
-                }
-            }
-        });
-    });
+    page_preset_and_orientation(app, ui, &lang, (pg.width, pg.height), n, anchor);
     vsep(ui);
     ui.vertical(|ui| {
         caption(ui, crate::i18n::tr(&lang, "Liquid Page Rule:"));
