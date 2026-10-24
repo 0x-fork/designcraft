@@ -1086,8 +1086,19 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     if let Some(panel) = focused.filter(|panel| panel == CANVAS || layout_of(app).contains(panel)) {
         app.ui.docking_focused = Some(panel);
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    open_window_drops(app, &output.window_files);
     // Keys pressed in a floating panel's own OS window run the main window's shortcuts.
     crate::menus::forwarded_shortcuts(app, ui.ctx(), output.forwarded_events, output.forwarded_modifiers.unwrap_or_default());
+}
+
+/// Files dropped on a floating panel's own OS window open or place as drops on the main window
+/// do. The pointer there is in that window's coordinates, so a placed file gets no canvas point.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_window_drops(app: &mut DesignApp, windows: &[craft_ui::docking::WindowFiles<String>]) {
+    for window in windows {
+        app.open_dropped_files(&window.dropped, None);
+    }
 }
 
 /// Whether a modal (a dialog, About or Quick Apply) is open. Floating panels in their own OS

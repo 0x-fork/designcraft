@@ -1242,3 +1242,36 @@ fn dialogs_about_and_quick_apply_block_native_floating_windows() {
     app.ui.palette = None;
     assert!(!modal_open(&app));
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_document_dropped_on_a_floating_panel_window_opens() {
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dropped.designcraft");
+    let mut saved = app();
+    saved.run("file.new", json!({})).unwrap();
+    saved.run("file.save", json!({"path": path})).unwrap();
+
+    let mut app = app();
+    assert!(app.session.documents().is_empty());
+    let files = craft_ui::docking::WindowFiles {
+        window: 1,
+        viewport: egui::ViewportId::from_hash_of("float"),
+        panel: "layers".to_owned(),
+        pos: None,
+        hovered: Vec::new(),
+        dropped: vec![std::sync::Arc::new(Dropped(path.clone())) as egui::DroppedFileHandle],
+    };
+    open_window_drops(&mut app, &[files]);
+    assert_eq!(app.session.documents().len(), 1, "the dropped document opens");
+}

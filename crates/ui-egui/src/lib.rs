@@ -1320,12 +1320,7 @@ impl DesignApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (dropped, pointer) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.hover_pos()));
-            for f in dropped {
-                let p = f.path().to_string_lossy().to_string();
-                if !p.is_empty() {
-                    let _ = self.open_dropped_at(&p, pointer);
-                }
-            }
+            self.open_dropped_files(&dropped, pointer);
         }
         self.handle_quit(ctx);
     }
@@ -1480,6 +1475,18 @@ impl DesignApp {
     /// IDML document.
     pub fn open_dropped(&mut self, path: &str) -> Result<Value, String> {
         self.open_dropped_at(path, None)
+    }
+
+    /// Open or place each file dropped on the main window or on a floating panel's own window.
+    /// `pointer` is in the main window's coordinates.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_dropped_files(&mut self, files: &[egui::DroppedFileHandle], pointer: Option<egui::Pos2>) {
+        for f in files {
+            let p = f.path().to_string_lossy().to_string();
+            if !p.is_empty() {
+                let _ = self.open_dropped_at(&p, pointer);
+            }
+        }
     }
 
     /// [`Self::open_dropped`] at the pointer: a graphic's top left lands where the file was
