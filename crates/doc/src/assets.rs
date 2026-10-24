@@ -59,6 +59,15 @@ impl Document {
             || self.stories.values().any(|story| story_any(story, 0, &all_on))
     }
 
+    /// Whether any placed PDF, on document or parent spreads, in groups or anchored, has an
+    /// Object Layer Options choice (hidden layers or explicit all-on). Exceeding the traversal
+    /// budget conservatively says yes.
+    pub fn has_pdf_layer_overrides(&self) -> bool {
+        let chosen = |it: &Item| it.has_pdf_layer_override();
+        self.spreads.iter().chain(&self.parents).flat_map(|spread| &spread.items).any(|item| item_any(item, 0, &chosen))
+            || self.stories.values().any(|story| story_any(story, 0, &chosen))
+    }
+
     /// Placements outside the ordinary document-spread frame walk used by preflight.
     pub fn has_unwalked_graphic_layer_visibility_overrides(&self) -> bool {
         self.parents.iter().flat_map(|spread| &spread.items).any(|item| item_layer_options(item, 0, true))

@@ -42,28 +42,29 @@ fn export_idml(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Each placement gets its own embedded variant so two frames sharing a PDF can
 /// choose different layers. The live document and original linked bytes stay untouched.
+///
+/// Every placement counts, including parent-page and anchored ones: a choice that the copy
+/// cannot carry is rejected rather than exported as the file's defaults.
 fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Document>> {
-    let ids: Vec<_> = doc
-        .all_items()
+    let choices: Vec<_> = doc
+        .placed_items()
         .into_iter()
-        .filter(|id| {
-            doc.item(*id).is_some_and(|it| {
-                it.has_pdf_layer_override()
-                    && it.graphic().and_then(|g| doc.assets.get(&g.asset)).is_some_and(|a| designcraft_render::is_pdf(&a.data))
-            })
+        .filter(|it| it.has_pdf_layer_override())
+        .filter_map(|it| {
+            let asset = it.graphic().and_then(|g| doc.assets.get(&g.asset)).filter(|a| designcraft_render::is_pdf(&a.data))?;
+            Some((it.id, asset, it.pdf_hidden_layers.clone()))
         })
         .collect();
-    if ids.is_empty() {
+    if choices.is_empty() {
         return Ok(None);
     }
     if !embed {
         return Err(EngineError::Other("PDF layer choices require embedded images in IDML export".into()));
     }
     let mut out = doc.clone();
-    for id in ids {
-        let Some(it) = doc.item(id) else { continue };
-        let Some(asset) = it.graphic().and_then(|g| doc.assets.get(&g.asset)) else { continue };
-        let bytes = designcraft_render::pdf_hide_layers(&asset.data, &it.pdf_hidden_layers)
+    let mut variants = std::collections::HashMap::new();
+    for (id, asset, hidden) in choices {
+        let bytes = designcraft_render::pdf_hide_layers(&asset.data, &hidden)
             .ok_or_else(|| EngineError::Other(format!("{}: PDF layer choices could not be applied", asset.name)))?;
         let mut variant = (**asset).clone();
         variant.id = designcraft_doc::AssetId(out.alloc());
@@ -71,14 +72,22 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
         variant.link = None;
         let aid = variant.id;
         out.assets.insert(aid, std::sync::Arc::new(variant));
-        if let Some(it) = out.item_mut(id) {
-            if let designcraft_doc::Content::Graphic(g) = &mut it.content {
-                g.asset = aid;
+        variants.insert(id, aid);
+    }
+    // Anchored objects live in stories, and parent pages outside the document-spread walk, so
+    // the choice is cleared where the placement actually is.
+    out.update_items(
+        |it| variants.contains_key(&it.id),
+        |it| {
+            if let designcraft_doc::Content::Graphic(g) = &mut it.content
+                && let Some(aid) = variants.get(&it.id)
+            {
+                g.asset = *aid;
             }
             it.pdf_layer_override = false;
             it.pdf_hidden_layers.clear();
-        }
-    }
+        },
+    );
     Ok(Some(out))
 }
 

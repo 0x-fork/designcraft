@@ -481,6 +481,38 @@ pub(crate) mod tests {
         assert!(!visible(&mut s), "explicit reset restores defaults");
     }
     #[test]
+    fn parent_page_choices_reach_idml_variants_and_raster_export() {
+        // Red is hidden by the file itself, so "show every layer" is a visible difference.
+        let pdf = designcraft_render::pdf_hide_layers(&two_layer_pdf(), &["Red".into()]).unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 100, "height": 100, "pages": 1})).unwrap();
+        let id = s
+            .execute(
+                "file.place",
+                &json!({"base64": super::super::file::base64_encode(&pdf), "name": "on-parent.pdf", "spread": {"kind": "parent", "index": 0}, "x": 0.0, "y": 0.0, "width": 100}),
+            )
+            .unwrap()["id"]
+            .clone();
+        let item = designcraft_doc::ItemId(id.as_u64().unwrap());
+        assert!(
+            matches!(s.doc().unwrap().doc.find(item).unwrap().spread, designcraft_doc::SpreadRef::Parent(0)),
+            "the placement sits on a parent page"
+        );
+        s.execute("object.layerOptions", &json!({"ids": [id], "hidden": [], "useDefaults": false})).unwrap();
+        // Embedded IDML: the parent-page placement gets its own variant, like a document one.
+        let idml = s.execute("file.exportIdml", &json!({})).unwrap();
+        let imported = designcraft_idml::import_idml(&super::super::file::base64_decode(idml["base64"].as_str().unwrap())).unwrap();
+        let asset = imported.assets.values().find(|a| designcraft_render::is_pdf(&a.data)).unwrap();
+        assert!(designcraft_render::pdf_layers(&asset.data).iter().all(|(_, on)| *on), "the embedded copy shows every layer");
+        // An external-only copy would keep the original file's defaults: the choice is rejected.
+        let err = s.execute("file.exportIdml", &json!({"embedImages": false})).unwrap_err().to_string();
+        assert!(err.contains("embedded images"), "{err}");
+        // PDF/A-2b rasterises a placement with a choice wherever it sits, warnings included.
+        let a2b = s.execute("file.exportPdf", &json!({"standard": "a2b"})).unwrap();
+        assert!(a2b["warnings"].as_array().unwrap().iter().any(|w| w.as_str().is_some_and(|w| w.contains("exported as images"))), "{a2b}");
+    }
+
+    #[test]
     fn layerless_pdf_rejects_overrides_without_breaking_idml_export() {
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();

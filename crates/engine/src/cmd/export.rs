@@ -671,20 +671,27 @@ fn wrap_stand_in(it: &designcraft_doc::Item, depth: usize) -> designcraft_doc::I
 }
 
 /// A copy of `d` where placed PDFs with Object Layer Options hidden layers are 300 ppi images.
+///
+/// Every placement counts, including parent-page and anchored ones, so a choice is never
+/// silently replaced by the file's defaults.
 fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraft_doc::Document>, usize)> {
-    let ids: Vec<designcraft_doc::ItemId> =
-        d.all_items().into_iter().filter(|id| d.item(*id).is_some_and(|it| it.has_pdf_layer_override() && it.graphic().is_some())).collect();
-    if ids.is_empty() {
+    let choices: Vec<_> = d
+        .placed_items()
+        .into_iter()
+        .filter(|it| it.has_pdf_layer_override())
+        .filter_map(|it| {
+            let g = it.graphic()?;
+            let a = d.assets.get(&g.asset).filter(|a| designcraft_render::is_pdf(&a.data))?;
+            Some((it.id, g.clone(), a.clone(), it.pdf_hidden_layers.clone()))
+        })
+        .collect();
+    if choices.is_empty() {
         return Ok((None, 0));
     }
     let mut out = d.clone();
+    let mut images = std::collections::HashMap::new();
     let mut n = 0;
-    for id in ids {
-        let Some((g, hidden)) = out.item(id).and_then(|it| Some((it.graphic()?.clone(), it.pdf_hidden_layers.clone()))) else { continue };
-        let Some(a) = out.assets.get(&g.asset).cloned() else { continue };
-        if !designcraft_render::is_pdf(&a.data) {
-            continue;
-        }
+    for (id, g, a, hidden) in choices {
         // The whole page at 300 ppi (the graphic may show only a box of it).
         let shown = designcraft_render::shown_box(&a);
         let [l, t, r, b] = shown.unwrap_or([0.0, 0.0, 1.0, 1.0]);
@@ -705,11 +712,19 @@ fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraf
                 ..Default::default()
             }),
         );
-        if let Some(designcraft_doc::Content::Graphic(gg)) = out.item_mut(id).map(|it| &mut it.content) {
-            gg.asset = aid;
-        }
+        images.insert(id, aid);
         n += 1;
     }
+    out.update_items(
+        |it| images.contains_key(&it.id),
+        |it| {
+            if let designcraft_doc::Content::Graphic(gg) = &mut it.content
+                && let Some(aid) = images.get(&it.id)
+            {
+                gg.asset = *aid;
+            }
+        },
+    );
     Ok((Some(out), n))
 }
 
