@@ -1274,7 +1274,13 @@ attr_set! {
         /// again with the list (an indent the paragraph had before stays).
         list_hang: bool = false,
         balance_ragged: bool = false,
+        /// Hang punctuation outside the measure in this paragraph, at each character's own size
+        /// (DesignCraft's own per-paragraph switch; a story with Optical Margin Alignment on
+        /// overrides it with the story's size).
         optical_margin: bool = false,
+        /// Ignore Optical Margin: no hang in this paragraph, whatever the story or
+        /// `optical_margin` say.
+        ignore_optical_margin: bool = false,
         /// None uses the legacy built-in rules; an empty set explicitly disables kinsoku.
         kinsoku: Option<crate::cjk::Kinsoku> = None => "deserialize_explicit_value",
         /// Preserved spacing-table reference; compatibility audit reports unsupported composition.
