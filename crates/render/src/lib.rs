@@ -875,7 +875,13 @@ impl Renderer {
         let on_screen = (f.view * xf * g.xf).determinant().abs().sqrt();
         let on_screen = if f.opts.quality == DisplayQuality::Typical { on_screen.min(1.0) } else { on_screen };
         let hidden = HIDDEN_LAYERS.with(|h| h.borrow().clone());
-        let data = if !hidden.is_empty() && is_pdf(&asset.data) { pdf_layers::layered(&asset.data, &hidden) } else { asset.data.clone() };
+        let data = if !hidden.is_empty() && is_pdf(&asset.data) {
+            // Stale persisted/relinked choices must not reveal hidden source content.
+            let Some(variant) = pdf_layers::layered(&asset.data, &hidden) else { return };
+            variant
+        } else {
+            asset.data.clone()
+        };
         // A placed PDF cropped to a box: the whole page, placed so that the box spans graphic space.
         let [l, t, r, b] = shown_box(asset).unwrap_or([0.0, 0.0, 1.0, 1.0]);
         let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
@@ -1392,8 +1398,13 @@ pub fn pdf_crop_box(bytes: &[u8], page: usize, crop: designcraft_doc::PdfCrop) -
         PdfCrop::Crop => WHOLE,
         PdfCrop::ContentVisible => pdf_bounds::page_content_bounds(bytes, page).unwrap_or(WHOLE),
         PdfCrop::ContentAll => {
-            let all_on = pdf_hide_layers(bytes, &[]);
-            pdf_bounds::page_content_bounds(all_on.as_deref().unwrap_or(bytes), page).unwrap_or(WHOLE)
+            if pdf_layers::has_optional_content(&pdf) {
+                // If all-on rewriting is unsupported, a visible-only box could cut
+                // off hidden content. Keep the entire page conservatively instead.
+                pdf_hide_layers(bytes, &[]).and_then(|all_on| pdf_bounds::page_content_bounds(&all_on, page)).unwrap_or(WHOLE)
+            } else {
+                pdf_bounds::page_content_bounds(bytes, page).unwrap_or(WHOLE)
+            }
         }
         PdfCrop::Art | PdfCrop::Trim | PdfCrop::Bleed | PdfCrop::Media => {
             let media = p.media_box();
