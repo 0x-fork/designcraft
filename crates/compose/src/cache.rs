@@ -350,6 +350,7 @@ fn signature(doc: &Document, story: &Arc<Story>) -> (Vec<usize>, Vec<Arc<Item>>)
         doc.font_scope as usize,
         g.start.to_bits() as usize,
         g.increment.to_bits() as usize,
+        usize::from(g.relative_to == designcraft_doc::GridRelative::TopMargin),
     ];
     let mut keep = Vec::new();
     let mut spreads = Vec::new();
@@ -373,6 +374,8 @@ fn signature(doc: &Document, story: &Arc<Story>) -> (Vec<usize>, Vec<Arc<Item>>)
             sig.push(loc.top());
             if !spreads.contains(&loc.spread) {
                 spreads.push(loc.spread);
+                // A grid relative to the top margin starts at each page's own margin.
+                sig.extend(sp.pages.iter().map(|p| p.margins.top.to_bits() as usize));
                 for it in &sp.items {
                     let mut wraps = false;
                     it.walk(&mut |i| wraps |= i.has_wrap());

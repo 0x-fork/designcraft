@@ -709,16 +709,11 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
         let left_page = side == Some(designcraft_doc::PageSide::Left);
         let right_page = side == Some(designcraft_doc::PageSide::Right);
         let section_marker = page.map(|abs| section_marker(doc, abs));
-        // The page under the frame and its margins, in inner space (bounding boxes).
-        let page_rect = match (spread_ref, spread) {
-            (_, Some(sp)) => sp
-                .page_at_x(center_x)
-                .and_then(|pi| sp.pages.get(pi))
-                .map(|pg| (inv.transform_rect_bbox(pg.bounds()), inv.transform_rect_bbox(pg.margin_rect()))),
-            _ => None,
-        };
+        // The page under the frame, and its bounds and margins in inner space (bounding boxes).
+        let under = spread.and_then(|sp| sp.page_at_x(center_x).and_then(|pi| sp.pages.get(pi)));
+        let page_rect = under.map(|pg| (inv.transform_rect_bbox(pg.bounds()), inv.transform_rect_bbox(pg.margin_rect())));
         let g = &doc.settings.baseline_grid;
-        let (inc, start) = tf.options.baseline_grid.unwrap_or((g.increment, g.start));
+        let (inc, start) = tf.options.baseline_grid.unwrap_or((g.increment, under.map_or(g.start, |pg| g.origin(pg))));
         // Grid lines are at spread y = start + n·inc (page tops are y = 0); map into inner space (translation only).
         let ty = xf.translation().y;
         let grid = (inc > 0.0).then_some((start - ty, inc));

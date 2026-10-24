@@ -7266,6 +7266,103 @@ fn cache_recomposes_when_the_baseline_grid_changes() {
     assert!((la.baseline - lb.baseline).abs() > 1.0, "{} {}", la.baseline, lb.baseline);
 }
 
+/// Two single pages 618 pt tall, top margins 36 and 48, each with an overset 11/13 story aligned
+/// to a baseline grid (start 0, increment 13) and a frame filling its margin box (bottom 582).
+fn grid_margin_doc(relative_to: designcraft_doc::GridRelative) -> (Document, [StoryId; 2]) {
+    let mut d = Document::new(&NewDocument {
+        height: 618.0,
+        pages: 2,
+        facing_pages: false,
+        margins: designcraft_doc::Margins::uniform(36.0),
+        ..Default::default()
+    });
+    Arc::make_mut(&mut d.spreads[1]).pages[0].margins.top = 48.0;
+    Arc::make_mut(&mut d.spreads[1]).pages[0].local_margins = true;
+    d.settings.baseline_grid.start = 0.0;
+    d.settings.baseline_grid.increment = 13.0;
+    d.settings.baseline_grid.relative_to = relative_to;
+    let lid = d.default_layer();
+    let para = ParaFormat { para: ParaAttrs { grid_align: Some(GridAlign::AllLines), ..Default::default() }, ..Default::default() };
+    let text = [LOREM; 12].join(" ");
+    let mut sids = Vec::new();
+    for (si, top) in [(0, 36.0), (1, 48.0)] {
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(si), Rect::new(36.0, top, 336.0, 582.0), lid, &text, para.clone()).unwrap();
+        let st = d.story_mut(sid).unwrap();
+        st.paras[0].chars =
+            designcraft_doc::CharAttrs { size: Some(11.0), leading: Some(designcraft_doc::Leading::Points(13.0)), ..Default::default() };
+        sids.push(sid);
+    }
+    (d, [sids[0], sids[1]])
+}
+
+/// Page y of a frame's baselines (the frame's inner space is its page's: it has no transform).
+fn page_baselines(d: &Document, sid: StoryId) -> Vec<f64> {
+    let cs = compose_story(d, sid, &ComposeOptions::default());
+    assert!(cs.is_overset());
+    cs.frames[0].lines.iter().map(|l| l.baseline).collect()
+}
+
+#[test]
+fn baseline_grid_relative_to_the_top_margin_starts_at_each_pages_margin() {
+    use designcraft_doc::GridRelative;
+    let (d, [p1, p2]) = grid_margin_doc(GridRelative::TopMargin);
+    // Grid lines at 36 + 13n on page 1: 42 lines from 49 to 582.
+    let lines = page_baselines(&d, p1);
+    assert!((lines[0] - 49.0).abs() < 1e-6, "{lines:?}");
+    assert!(lines.iter().enumerate().all(|(n, y)| (y - (49.0 + 13.0 * n as f64)).abs() < 1e-6), "{lines:?}");
+    assert_eq!(lines.len(), 42);
+    // Page 2's own margin: lines at 48 + 13n.
+    let lines = page_baselines(&d, p2);
+    assert!((lines[0] - 61.0).abs() < 1e-6, "{lines:?}");
+    // From the top of the page the lines are at 13n: the first at 52, and one line fewer.
+    let (d, [p1, _]) = grid_margin_doc(GridRelative::TopOfPage);
+    let lines = page_baselines(&d, p1);
+    assert!((lines[0] - 52.0).abs() < 1e-6, "{lines:?}");
+    assert_eq!(lines.len(), 41);
+}
+
+/// A group's transform moves a frame from the left page of a spread to the right one: the grid
+/// starts at the right page's top margin.
+#[test]
+fn baseline_grid_follows_a_grouped_frame_to_its_page() {
+    use designcraft_doc::{Content, GridRelative, Item, ItemId, Shape};
+    let mut d = Document::new(&NewDocument { pages: 3, facing_pages: true, margins: designcraft_doc::Margins::uniform(36.0), ..Default::default() });
+    Arc::make_mut(&mut d.spreads[1]).pages[1].margins.top = 48.0;
+    d.settings.baseline_grid.start = 0.0;
+    d.settings.baseline_grid.increment = 13.0;
+    d.settings.baseline_grid.relative_to = GridRelative::TopMargin;
+    let lid = d.default_layer();
+    let para = ParaFormat { para: ParaAttrs { grid_align: Some(GridAlign::AllLines), ..Default::default() }, ..Default::default() };
+    let (fid, sid) = d.add_text_frame(SpreadRef::Doc(1), Rect::new(36.0, 36.0, 336.0, 582.0), lid, LOREM, para).unwrap();
+    let sp = Arc::make_mut(&mut d.spreads[1]);
+    let at = sp.items.iter().position(|it| it.id == fid).unwrap();
+    let frame = sp.items.remove(at);
+    let right = sp.pages[1].x;
+    let mut g = Item::new(ItemId(d.alloc()), lid, Shape::Group, designcraft_geom::PathData::default());
+    g.content = Content::Group { items: vec![frame] };
+    g.xf = designcraft_geom::Affine::translate((right, 0.0));
+    Arc::make_mut(&mut d.spreads[1]).items.push(Arc::new(g));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let first = cs.frames[0].lines[0].baseline;
+    assert!((first - 61.0).abs() < 1e-6, "{first}");
+}
+
+#[test]
+fn cache_recomposes_when_the_grid_reference_or_a_top_margin_changes() {
+    use designcraft_doc::GridRelative;
+    let (mut d, [p1, _]) = grid_margin_doc(GridRelative::TopOfPage);
+    let cache = Cache::new();
+    let a = cache.get(&d, p1, None);
+    d.settings.baseline_grid.relative_to = GridRelative::TopMargin;
+    let b = cache.get(&d, p1, None);
+    assert!(!Arc::ptr_eq(&a, &b));
+    assert!((a.frames[0].lines[0].baseline - b.frames[0].lines[0].baseline).abs() > 1.0);
+    Arc::make_mut(&mut d.spreads[0]).pages[0].margins.top = 40.0;
+    let c = cache.get(&d, p1, None);
+    assert!(!Arc::ptr_eq(&b, &c));
+    assert!((b.frames[0].lines[0].baseline - c.frames[0].lines[0].baseline).abs() > 1.0);
+}
+
 #[test]
 fn cache_recomposes_when_a_wrap_layer_is_hidden() {
     let (mut d, sid, _) = doc_with(&[LOREM; 2].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
