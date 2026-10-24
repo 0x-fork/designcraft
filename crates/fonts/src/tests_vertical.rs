@@ -5,7 +5,7 @@
 
 use skrifa::raw::TableProvider;
 
-use super::*;
+use super::{Arc, FontBytes, FontDb, FontFace, FontSource, GlyphId, LocationRef, Size, make_face};
 use crate::testing::{font_mapping, font_with, with_base, with_code_pages, with_table_len, with_table_u16, with_vmtx, with_vorg};
 use crate::{ShapeContext, feature, shape_vertical, shape_with_context};
 

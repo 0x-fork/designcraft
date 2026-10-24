@@ -4,7 +4,7 @@
 use egui::{Event, Modifiers, PointerButton};
 use egui_kittest::Harness;
 
-use super::*;
+use super::{CanvasLayout, Mods, Overlay, Point, Pos2, RULER, SpreadRef, ToolKey, Xf, json, pos2, vec2};
 
 fn harness(app: DesignApp) -> Harness<'static, DesignApp> {
     let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).build_ui_state(
