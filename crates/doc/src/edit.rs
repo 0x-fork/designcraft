@@ -917,8 +917,8 @@ mod placed_item_tests {
         let mut table = crate::Table::new(1, 1, 1, 0, 0, 20.0);
         table.cells[0].text.insert_object(0, crate::anchored::AnchoredObject::default());
         d.story_mut(story).unwrap().insert_table(0, table);
-        let spreads: Vec<_> = d.spreads.iter().cloned().collect();
-        let parents: Vec<_> = d.parents.iter().cloned().collect();
+        let spreads = d.spreads.to_vec();
+        let parents = d.parents.to_vec();
         let stories: Vec<_> = d.stories.values().cloned().collect();
         let seen = d.update_placed_items(|_| false, |_| panic!("nothing matches"));
         assert_eq!(seen, 0);
