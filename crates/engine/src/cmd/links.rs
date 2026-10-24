@@ -600,6 +600,7 @@ mod tests {
     }
 
     /// A linked file's size is the document's choice, so a link is read under a cap (#1596).
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn a_linked_file_over_the_cap_is_refused_instead_of_read() {
         let dir = std::env::temp_dir().join(format!("dc-link-cap-{}", std::process::id()));
