@@ -264,6 +264,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn unreadable_non_null_prev_entries_refuse_layer_rewrites() {
+        for prev in ["7 0 R", "-1", "false", "<<>>", "[]", "/Unknown", "(unknown)"] {
+            let bytes = two_layer_pdf_options(0, "", &format!("/Prev {prev}"));
+            assert_eq!(designcraft_render::pdf_layers(&bytes).len(), 2, "reader control: {prev}");
+            assert!(designcraft_render::pdf_hide_layers(&bytes, &["Red".into()]).is_none(), "must not truncate unknown history: {prev}");
+        }
+        for trailer in ["", "/Prev null"] {
+            let bytes = two_layer_pdf_options(0, "", trailer);
+            assert!(designcraft_render::pdf_hide_layers(&bytes, &["Red".into()]).is_some(), "end-of-chain control: {trailer}");
+        }
+        let mut revised = two_layer_pdf();
+        let prev =
+            std::str::from_utf8(&revised).unwrap().rsplit_once("startxref").unwrap().1.split_whitespace().next().unwrap().parse::<usize>().unwrap();
+        add_pdf_revision(&mut revised);
+        let real_prev = std::str::from_utf8(&revised).unwrap().replace(&format!("/Prev {prev}>>"), &format!("/Prev {prev}.0>>"));
+        assert!(real_prev.contains(&format!("/Prev {prev}.0>>")));
+        for bytes in [revised, real_prev.into_bytes()] {
+            assert!(designcraft_render::pdf_hide_layers(&bytes, &["Red".into()]).is_some(), "readable integer/real history must still work");
+        }
+    }
+
+    #[test]
     fn fake_null_trailer_cannot_bypass_hybrid_rejection() {
         for real_guard in ["", "/XRefStm 0"] {
             let bytes = two_layer_pdf_options(0, "", real_guard);

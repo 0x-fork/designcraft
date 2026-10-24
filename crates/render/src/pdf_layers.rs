@@ -176,6 +176,9 @@ pub fn pdf_hide_layers(bytes: &[u8], hidden: &[String]) -> Option<Vec<u8>> {
             return None;
         }
         offset = t.get::<usize>(b"Prev");
+        if offset.is_none() && has_non_null_entry(&t, b"Prev") {
+            return None;
+        }
     }
     if offset.is_some() {
         return None;
