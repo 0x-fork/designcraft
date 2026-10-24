@@ -507,6 +507,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Convert Text to Table", "Převést text na tabulku"),
     ("Convert to Button", "Převést na tlačítko"),
     ("Convert to Form Field", "Převést na pole formuláře"),
+    ("Convert to Note", "Převést na poznámku"),
     ("Conveyor", "Dopravník"),
     ("Copy Link(s) To…", "Kopírovat propojení do…"),
     ("Corner Options…", "Možnosti rohů…"),

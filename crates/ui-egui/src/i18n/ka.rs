@@ -562,6 +562,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Convert Text to Table", "ტექსტის ცხრილად გარდაქმნა"),
     ("Convert to Button", "ღილაკად გარდაქმნა"),
     ("Convert to Form Field", "ფორმის ველად გარდაქმნა"),
+    ("Convert to Note", "შენიშვნად გარდაქმნა"),
     ("Conveyor", "კონვეიერი"),
     ("Copy Link(s) To…", "ბმული ფაილების კოპირება…"),
     ("Corner Options…", "კუთხეების პარამეტრები…"),

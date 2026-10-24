@@ -498,6 +498,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "-",
             ">Notes",
             "cmd:note.new",
+            "cmd:note.convertFromText",
             "ui:window.panel|Notes|{\"panel\": \"notes\"}",
             "<",
             ">Track Changes",
