@@ -623,7 +623,9 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
         shown = true;
     }
     let returned = match &command {
-        DockCommand::Dock { panel, anchor: None, side: None, group: false, column: false, .. } if !shown => txn.dock_back(panel)?,
+        DockCommand::Dock { panel, anchor: None, side: None, group, column: false, .. } if !shown => {
+            txn.dock_group_back(panel)? || (!group && txn.dock_back(panel)?)
+        }
         _ => false,
     };
     let actions = match &command {
@@ -728,8 +730,56 @@ impl Transaction {
         Ok(true)
     }
 
+    /// Dock Panel for a panel of a floating group that floated from the dock as one: the whole
+    /// group back to that place, in the same column beside the same neighbour, while that
+    /// neighbour is still docked. True when it went back.
+    fn dock_group_back(&mut self, panel: &String) -> Result<bool, String> {
+        let layout = &self.workspace.layout;
+        let Some(group) = layout.floating.iter().flat_map(window_groups).find(|g| g.panels.contains(panel)) else {
+            return Ok(false);
+        };
+        let Some(location) = self.returns.get(panel).cloned() else {
+            return Ok(false);
+        };
+        // A group of one docks back as a panel. Every member keeps the same group place only
+        // while the group is the one that floated.
+        if group.panels.len() < 2 || !group.panels.iter().all(|p| self.returns.get(p) == Some(&location)) {
+            return Ok(false);
+        }
+        let docked = Layout { root: layout.root.clone(), floating: Vec::new() };
+        let Some(anchor) = location.anchor.clone().filter(|anchor| docked.contains(anchor)) else {
+            return Ok(false);
+        };
+        if !matches!(location.placement, Placement::Group { .. } | Placement::Column { .. }) {
+            return Ok(false);
+        }
+        let mut candidate = layout.clone();
+        let to = Target::At { anchor, placement: location.placement.clone() };
+        if apply(&mut candidate, Action::MoveGroup { panel: panel.clone(), to }).is_err() {
+            return Ok(false);
+        }
+        let mut state = Vec::new();
+        if let Some(saved) = &location.group {
+            state.push(Action::ResizeGroup { panel: panel.clone(), height: saved.height });
+            state.push(Action::SetMinimized { panel: panel.clone(), minimized: saved.minimized });
+            // A group that had a column of its own gets that column back as it was.
+            if let (Placement::Column { .. }, Some(column)) = (&location.placement, saved.column) {
+                state.push(Action::ResizeColumn { panel: panel.clone(), width: column.width });
+                state.push(Action::SetIconic { panel: panel.clone(), iconic: column.iconic });
+            }
+        }
+        for action in state {
+            apply(&mut candidate, action)?;
+        }
+        self.workspace.layout = candidate;
+        for member in &group.panels {
+            self.returns.remove(member);
+        }
+        Ok(true)
+    }
+
     /// One action from a command or the renderer, for registered panels only. Floating a
-    /// docked panel remembers its place for Dock Panel.
+    /// docked panel, or its whole group, remembers its place for Dock Panel.
     fn apply(&mut self, action: Action<String>) -> Result<Vec<String>, String> {
         if !known(&action) {
             return Err("docking action contains an unknown panel or an excessive split path".into());
@@ -739,6 +789,13 @@ impl Transaction {
             && location.floating.is_none()
         {
             self.returns.insert(panel.clone(), location);
+        }
+        if let Action::MoveGroup { panel, to: Target::Float { .. } } = &action
+            && let Some((members, location)) = docked_group_place(&self.workspace.layout, panel)
+        {
+            for member in members {
+                self.returns.insert(member, location.clone());
+            }
         }
         self.workspace.apply(action, model_permissions).map_err(|e| e.to_string())
     }
@@ -778,6 +835,20 @@ impl Transaction {
         app.ui.open_panel = None;
         json!({"layout": app.ui.docking, "closed": closed, "floating": floating_panels(app)})
     }
+}
+
+/// The panels of the docked group holding `panel`, and that group's place as a whole: beside
+/// the group or column next to it, with its group and column state. None when `panel` is not
+/// in a dock.
+fn docked_group_place(layout: &Layout<String>, panel: &String) -> Option<(Vec<String>, craft_ui::docking::Location<String>)> {
+    let members = dock_columns(layout).into_iter().flat_map(|c| &c.groups).find(|g| g.panels.contains(panel))?.panels.clone();
+    // The place of the group's last panel left in it is the group's own place.
+    let mut alone = layout.clone();
+    for other in members.iter().filter(|p| *p != panel) {
+        apply(&mut alone, Action::Close { panel: other.clone() }).ok()?;
+    }
+    let location = alone.location(panel).ok().filter(|l| l.floating.is_none())?;
+    Some((members, location))
 }
 
 /// Whether every panel an action names is registered (and a split path is not excessive).

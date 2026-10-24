@@ -684,6 +684,30 @@ fn paragraph_styles_open_floating_with_character_styles() {
     assert_eq!(layout.panels().iter().filter(|p| p.as_str() == "characterStyles").count(), 1);
 }
 
+/// Window › Styles floats the styles icon group out of the iconic column; Dock Panel puts the
+/// group back as one, at the same place in that column.
+#[test]
+fn dock_panel_returns_the_floated_styles_group_to_its_icon_group() {
+    let mut app = app();
+    let docked = app.ui.docking.clone().unwrap_or_else(|| default_layout(&app.ui));
+    let styles = ["characterStyles", "paragraphStyles"].map(String::from).to_vec();
+    let icon_groups = |layout: &Layout<String>| -> Vec<Vec<String>> {
+        dock_columns(layout).into_iter().filter(|c| c.iconic).flat_map(|c| &c.groups).map(|g| g.panels.clone()).collect()
+    };
+    let before = icon_groups(&docked);
+    let at = before.iter().position(|g| *g == styles).expect("the styles are an icon group");
+    app.run("window.panel", json!({"panel":"paragraphStyles"})).unwrap();
+    let layout = app.ui.docking.clone().unwrap();
+    assert!(layout.floating.iter().flat_map(window_groups).any(|g| g.panels == styles), "{:?}", layout.floating);
+    assert!(!icon_groups(&layout).contains(&styles));
+    app.run("window.panel.dock", json!({"panel":"paragraphStyles"})).unwrap();
+    let layout = app.ui.docking.clone().unwrap();
+    assert!(layout.floating.is_empty(), "{:?}", layout.floating);
+    assert_eq!(icon_groups(&layout), before, "both styles are back in their icon group, at the same place");
+    assert_eq!(icon_groups(&layout).get(at), Some(&styles));
+    assert!(valid(&layout));
+}
+
 /// Style panels the user docked and then closed come back in the dock, not floating.
 #[test]
 fn paragraph_styles_closed_from_the_dock_reopen_there() {
