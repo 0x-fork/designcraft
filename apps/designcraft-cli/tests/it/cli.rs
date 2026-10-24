@@ -411,8 +411,14 @@ fn mcp_automation_roots_take_several_folders() {
     for d in ["in", "shared", "out", "scratch", "outside", "in2", "scratch2"] {
         std::fs::create_dir_all(base.join(d)).unwrap();
     }
-    // Resolved, as the server shows the roots (`/var` is `/private/var` on macOS).
+    // Resolved, as the server shows the roots (`/var` is `/private/var` on macOS), and without the
+    // `\\?\` prefix that `canonicalize` adds on Windows: the server shows the roots without it, and
+    // Windows does not resolve `..` in a path that has it.
     let base = std::fs::canonicalize(base).unwrap();
+    let base = match base.to_str().and_then(|t| t.strip_prefix(r"\\?\")) {
+        Some(rest) => std::path::PathBuf::from(rest),
+        None => base,
+    };
     for f in ["in/a.designcraft", "shared/b.designcraft", "outside/secret.designcraft", "parent.designcraft", "in2/c.designcraft"] {
         make_document(&base.join(f));
     }
