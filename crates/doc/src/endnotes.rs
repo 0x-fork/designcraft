@@ -147,7 +147,7 @@ impl crate::Document {
             if st.id == sid {
                 break;
             }
-            n += st.endnotes.len() as u32;
+            n = n.saturating_add(st.endnotes.len() as u32);
         }
         n
     }
