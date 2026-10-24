@@ -2143,8 +2143,9 @@ fn paragraph_panel_menu(app: &mut DesignApp, ui: &mut Ui, p: &Value) {
     if let Some(attrs) = attrs {
         let _ = app.run("type.para", json!({"attrs": attrs}));
     }
+    // As a menu choice: Define Lists… and the other commands open their dialogs.
     if let Some(id) = command {
-        crate::menus::activate(app, id, &json!({}));
+        crate::menus::activate(app, id, &Value::Null);
     }
 }
 
@@ -3431,6 +3432,34 @@ mod tests {
         h.get_all_by_label("More Options").next().unwrap().click();
         h.run_steps(3);
         assert!(h.query_by_label("Small Caps").is_none());
+    }
+
+    /// The Paragraph panel on a First Line Only paragraph: Align to Baseline Grid shows pressed
+    /// and keeps First Line Only, and the panel menu checks Only Align First Line to Grid.
+    #[test]
+    fn paragraph_panel_keeps_first_line_only() {
+        let mut app = text_app();
+        app.run("type.para", json!({"attrs": {"gridAlign": "firstLineOnly"}})).unwrap();
+        let mut h = panel_harness(app, paragraph_panel);
+        h.run_steps(3);
+        assert_eq!(h.get_by_label("Align to Baseline Grid").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+        h.get_by_label("Align to Baseline Grid").click();
+        h.run_steps(3);
+        assert_eq!(text_attrs(h.state_mut()).unwrap()["para"]["gridAlign"], "firstLineOnly");
+        h.get_by_label("☰").click();
+        h.run_steps(3);
+        let _ = h.get_by_label("✓ Only Align First Line to Grid");
+    }
+
+    #[test]
+    fn paragraph_panel_menu_define_lists_opens_its_dialog() {
+        let mut h = panel_harness(text_app(), paragraph_panel);
+        h.run_steps(3);
+        h.get_by_label("☰").click();
+        h.run_steps(3);
+        h.get_by_label("Define Lists…").click();
+        h.run_steps(3);
+        assert!(h.state_mut().ui.dialog.is_some(), "Define Lists");
     }
 
     #[test]
