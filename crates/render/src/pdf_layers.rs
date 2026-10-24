@@ -34,6 +34,16 @@ fn ocgs(pdf: &Pdf) -> Vec<(ObjRef, String, bool)> {
         .collect()
 }
 
+/// Whether interpreting this file can depend on optional-content state. Empty/stub
+/// properties are layerless, but malformed group references with state overrides
+/// still require a conservative all-content crop when rewriting is unavailable.
+pub(crate) fn has_optional_content(pdf: &Pdf) -> bool {
+    let Some(cat) = pdf.xref().get::<Dict<'_>>(pdf.xref().root_id()) else { return false };
+    let Some(ocp) = cat.get::<Dict<'_>>(b"OCProperties") else { return false };
+    let nonempty = |dict: &Dict<'_>, key: &[u8]| dict.get::<Array<'_>>(key).is_some_and(|a| a.raw_iter().next().is_some());
+    nonempty(&ocp, b"OCGs") || ocp.get::<Dict<'_>>(b"D").is_some_and(|cfg| nonempty(&cfg, b"ON") || nonempty(&cfg, b"OFF"))
+}
+
 /// The layers of a placed PDF: (name, visible by default).
 pub fn pdf_layers(bytes: &[u8]) -> Vec<(String, bool)> {
     craft_pdf::open_slice(bytes, None).map(|p| ocgs(&p).into_iter().map(|(_, n, v)| (n, v)).collect()).unwrap_or_default()
@@ -83,17 +93,60 @@ fn patch_dict(dict: &Dict<'_>, updates: &[(&[u8], &[u8])]) -> Option<Vec<u8>> {
 
 fn trailer_at(bytes: &[u8], offset: usize) -> Option<Dict<'_>> {
     use craft_pdf::syntax::reader::{Reader, ReaderExt};
+    const MAX_TABLE_BYTES: usize = 4 * 1024 * 1024;
     let data = bytes.get(offset..)?;
-    let mut reader = Reader::new(data);
-    if data.starts_with(b"xref") {
-        let pos = data.get(..data.len().min(4 * 1024 * 1024))?.windows(7).position(|w| w == b"trailer")?;
-        reader.skip_bytes(pos.checked_add(7)?)?;
+    // Bound even whitespace/comment scanning and context-free dictionary parsing.
+    let mut reader = Reader::new(data.get(..data.len().min(MAX_TABLE_BYTES))?);
+    reader.skip_white_spaces_and_comments();
+    if reader.forward_tag(b"xref").is_some() {
+        // Walk table syntax, never a raw substring: a repairable file may contain
+        // a fake "trailer" in a comment. Such a comment must not hide real guards.
+        let mut ended = false;
+        for _ in 0..100_000 {
+            if reader.offset() > MAX_TABLE_BYTES {
+                return None;
+            }
+            reader.skip_white_spaces();
+            if reader.forward_tag(b"trailer").is_some() {
+                ended = true;
+                break;
+            }
+            reader.read_without_context::<u32>()?; // first object number
+            reader.skip_white_spaces();
+            let count = reader.read_without_context::<usize>()?;
+            if count > MAX_TABLE_BYTES / 18 {
+                return None;
+            }
+            for _ in 0..count {
+                reader.skip_white_spaces();
+                reader.read_without_context::<u32>()?; // offset or next free object
+                reader.skip_white_spaces();
+                if reader.read_without_context::<u32>()? > 65535 {
+                    return None;
+                }
+                reader.skip_white_spaces();
+                reader.forward_tag(b"n").or_else(|| reader.forward_tag(b"f"))?;
+                if reader.offset() > MAX_TABLE_BYTES {
+                    return None;
+                }
+            }
+        }
+        if !ended {
+            return None;
+        }
+        reader.skip_white_spaces();
     } else {
         // An xref stream's dictionary also holds the trailer entries.
         reader.read_without_context::<ObjectIdentifier>()?;
+        reader.skip_white_spaces_and_comments();
     }
-    reader.skip_white_spaces_and_comments();
     reader.read_without_context::<Dict<'_>>()
+}
+
+// Null dictionary entries are absent in PDF. Keep references and malformed values
+// fail-closed: trailer_at's dictionaries have no context for resolving references.
+fn has_non_null_entry(dict: &Dict<'_>, key: &[u8]) -> bool {
+    dict.contains_key(key) && !matches!(dict.get_raw::<Object<'_>>(key), Some(MaybeRef::NotRef(Object::Null(_))))
 }
 
 /// `bytes` with exactly the layers named in `hidden` off (the others on).
@@ -119,7 +172,7 @@ pub fn pdf_hide_layers(bytes: &[u8], hidden: &[String]) -> Option<Vec<u8>> {
             return None;
         }
         let t = trailer_at(bytes, at)?;
-        if t.contains_key(b"Encrypt") || t.contains_key(b"XRefStm") {
+        if has_non_null_entry(&t, b"Encrypt") || has_non_null_entry(&t, b"XRefStm") {
             return None;
         }
         offset = t.get::<usize>(b"Prev");
@@ -176,9 +229,9 @@ pub fn pdf_hide_layers(bytes: &[u8], hidden: &[String]) -> Option<Vec<u8>> {
 }
 
 /// Shared copies of layer variants (by source address and hidden set).
-pub(crate) fn layered(data: &Arc<Vec<u8>>, hidden: &[String]) -> Arc<Vec<u8>> {
+pub(crate) fn layered(data: &Arc<Vec<u8>>, hidden: &[String]) -> Option<Arc<Vec<u8>>> {
     type Key = (usize, Vec<String>);
-    static CACHE: Mutex<Option<HashMap<Key, (Arc<Vec<u8>>, Arc<Vec<u8>>)>>> = Mutex::new(None);
+    static CACHE: Mutex<Option<HashMap<Key, (Arc<Vec<u8>>, Option<Arc<Vec<u8>>>)>>> = Mutex::new(None);
     let key = (Arc::as_ptr(data) as usize, hidden.to_vec());
     let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let map = c.get_or_insert_with(HashMap::new);
@@ -188,7 +241,7 @@ pub(crate) fn layered(data: &Arc<Vec<u8>>, hidden: &[String]) -> Arc<Vec<u8>> {
     if map.len() > 64 {
         map.clear();
     }
-    let v = pdf_hide_layers(data, hidden).map(Arc::new).unwrap_or_else(|| data.clone());
+    let v = pdf_hide_layers(data, hidden).map(Arc::new);
     map.insert(key, (data.clone(), v.clone()));
     v
 }
@@ -197,6 +250,42 @@ pub(crate) fn layered(data: &Arc<Vec<u8>>, hidden: &[String]) -> Arc<Vec<u8>> {
 mod tests {
     use super::*;
     use craft_pdf::syntax::reader::{Reader, ReaderExt};
+
+    #[test]
+    fn trailer_lookup_does_not_take_guard_values_from_xref_comments() {
+        for guard in ["/Encrypt 12 0 R", "/XRefStm 123"] {
+            let bytes = format!("xref\n% trailer <</Size 9/Encrypt null>>\n0 1\n0000000000 65535 f\r\ntrailer\n<</Size 9{guard}>>");
+            assert!(trailer_at(bytes.as_bytes(), 0).is_none(), "repair-only table must fail closed: {guard}");
+        }
+    }
+
+    #[test]
+    fn trailer_lookup_accepts_whitespace_and_bounded_table_layouts() {
+        for eol in ["\n", "\r\n"] {
+            let bytes = format!(" \r\nxref{eol}0 1{eol}0000000000 65535 f{eol}7 1{eol}0000000123 00001 n{eol}trailer{eol}<</Size 9/Root 1 0 R>>");
+            assert_eq!(trailer_at(bytes.as_bytes(), 0).unwrap().get::<usize>(b"Size"), Some(9));
+        }
+        assert!(trailer_at(b"xref\n0 1\n0000000000 65535 f\ntrailer% comment\n<< /Size 1 >>", 0).is_none());
+        let mut whitespace = vec![b' '; 4 * 1024 * 1024];
+        whitespace.extend_from_slice(b"xref\n0 0\ntrailer<<>>");
+        assert!(trailer_at(&whitespace, 0).is_none());
+        for bytes in [b"xref\n0 999999999\n".as_slice(), b"xref\n0 1\n0000000000 99999 f\ntrailer<<>>", b"xref\n0 1\n0000000000 65535 x\ntrailer<<>>"]
+        {
+            assert!(trailer_at(bytes, 0).is_none());
+        }
+    }
+
+    #[test]
+    fn null_trailer_entries_are_absent_but_references_stay_unsupported() {
+        for key in ["Encrypt", "XRefStm"] {
+            assert!(!has_non_null_entry(&Dict::empty(), key.as_bytes()));
+            for (value, allowed) in [("null", true), ("12 0 R", false), ("<< /Filter /Standard >>", false), ("false", false)] {
+                let input = format!("<</{key} {value}>>");
+                let dict = Reader::new(input.as_bytes()).read_without_context::<Dict<'_>>().unwrap();
+                assert_eq!(!has_non_null_entry(&dict, key.as_bytes()), allowed, "{key}: {value}");
+            }
+        }
+    }
 
     #[test]
     fn dictionary_patch_preserves_raw_values_and_bounds_updates() {

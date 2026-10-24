@@ -2414,6 +2414,7 @@ impl<'a> Ex<'a> {
                                     object_point,
                                     ref_point,
                                     keep_within_column,
+                                    spine_relative,
                                 } => El::new("AnchoredObjectSetting")
                                     .attr("AnchoredPosition", "Anchored")
                                     .attr("AnchorPoint", names::anchor_out(*object_point))
@@ -2424,7 +2425,8 @@ impl<'a> Ex<'a> {
                                     // IDML measures a left-aligned object's X offset leftwards.
                                     .attr("AnchorXoffset", num(if *ref_point % 3 == 0 { 0.0 - *x_offset } else { *x_offset }))
                                     .attr("AnchorYoffset", num(*y_offset))
-                                    .attr("PinPosition", bool_s(*keep_within_column)),
+                                    .attr("PinPosition", bool_s(*keep_within_column))
+                                    .attr("SpineRelative", bool_s(*spine_relative)),
                             };
                             e.push(setting);
                             out.push(Node::El(e));
@@ -2797,13 +2799,45 @@ impl<'a> Ex<'a> {
                         ce.set(&format!("{side}StrokePriority"), priority);
                     }
                 }
-                for psr in self.story_paras(&cell.text) {
+                let mut paras = self.story_paras(&cell.text);
+                // A graphic cell holds its image as an inline object in the cell's first paragraph.
+                if let Some(g) = &cell.graphic
+                    && let Some(object) = self.cell_graphic_el(g)
+                {
+                    // The cell clips its graphic on screen and in PDF; IDML does so only when asked.
+                    ce.set("ClipContentToCell", bool_s(true));
+                    let mut range = self.csr_el(&CharFormat::default());
+                    range.push(object);
+                    match paras.first_mut() {
+                        Some(first) => first.push(range),
+                        None => {
+                            let mut psr = self.psr_el(&ParaFormat::default());
+                            psr.push(range);
+                            paras.push(psr);
+                        }
+                    }
+                }
+                for psr in paras {
                     ce.push(psr);
                 }
                 el.push(ce);
             }
         }
         el
+    }
+
+    /// The frame of a table cell's graphic: an inline `Rectangle` around the shown image, or `None`
+    /// when the graphic's asset is missing.
+    fn cell_graphic_el(&mut self, g: &designcraft_doc::Graphic) -> Option<El> {
+        self.d.assets.get(&g.asset)?;
+        let shown = g.xf.transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1));
+        let layer = self.d.layers.first().map(|l| l.id).unwrap_or(designcraft_doc::ids::LayerId(0));
+        let mut item = Item::new(designcraft_doc::ids::ItemId(0), layer, Shape::Rectangle, designcraft_geom::shapes::rectangle(shown));
+        item.content = Content::Graphic(g.clone());
+        let mut el = self.item_el(&item, Affine::IDENTITY);
+        el.set("Self", self.fresh());
+        el.push(El::new("AnchoredObjectSetting").attr("AnchoredPosition", "InlinePosition").attr("AnchorYoffset", "0"));
+        Some(el)
     }
 
     fn psr_el(&mut self, pf: &ParaFormat) -> El {
