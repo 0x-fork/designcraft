@@ -51,23 +51,20 @@ pub fn specs() -> Vec<CommandSpec> {
                 if ids.is_empty() {
                     return Err(bad("object.layerOptions", "select a placed PDF"));
                 }
-                // A layerless/unreadable PDF cannot carry a visibility variant. Validate
-                // every target before editing so a mixed request remains atomic.
-                if !use_defaults && ids.iter().any(|id| placed_pdf(s, *id).is_none_or(|data| designcraft_render::pdf_layers(&data).is_empty())) {
-                    return Err(bad("object.layerOptions", "the selected PDF has no readable optional-content layers"));
-                }
-                // Validate every selected PDF before editing any item or recording undo.
-                // Repeated placements of the same source need only one rewrite check.
-                if !hidden.is_empty() {
+                // Validate every selected PDF before editing any item or recording undo, so a
+                // mixed request stays atomic. Any explicit choice, including all-on
+                // (useDefaults:false with no hidden names), needs one actual rewrite per distinct
+                // source: a PDF can list readable layers and still fail the rewrite, and a
+                // layerless PDF cannot be rewritten at all. Resetting to the file defaults needs no
+                // variant and is always allowed.
+                if !use_defaults {
                     let mut checked = std::collections::HashSet::new();
                     for id in &ids {
-                        if let Some(data) = placed_pdf(s, *id)
-                            && checked.insert(std::sync::Arc::as_ptr(&data))
-                            && designcraft_render::pdf_hide_layers(&data, &hidden).is_none()
-                        {
+                        let Some(data) = placed_pdf(s, *id) else { continue };
+                        if checked.insert(std::sync::Arc::as_ptr(&data)) && designcraft_render::pdf_hide_layers(&data, &hidden).is_none() {
                             return Err(bad(
                                 "object.layerOptions",
-                                "the selected PDF layers could not be hidden; use the file defaults or replace the unsupported PDF",
+                                "the selected PDF layers could not be changed (no readable optional-content layers, or an unsupported file); use the file defaults or replace the PDF",
                             ));
                         }
                     }
@@ -258,7 +255,7 @@ pub(crate) mod tests {
         let redo = s.doc().unwrap().history.redo.len();
         for ids in [json!([good, bad]), json!([bad, good])] {
             let err = s.execute("object.layerOptions", &json!({"ids": ids, "hidden": ["Red"]})).unwrap_err();
-            assert!(err.to_string().contains("could not be hidden"));
+            assert!(err.to_string().contains("could not be changed"));
             assert_eq!(s.execute("file.serialize", &json!({})).unwrap(), before);
             assert_eq!(s.doc().unwrap().history.undo.len(), undo);
             assert_eq!(s.doc().unwrap().history.redo.len(), redo);
@@ -276,6 +273,46 @@ pub(crate) mod tests {
         s.execute("object.layerOptions", &json!({"ids": [good, bad], "hidden": []})).unwrap();
         assert_eq!(s.execute("object.pdfLayers", &json!({"id": bad})).unwrap()[1]["visible"], true);
         s.execute("file.exportPdf", &json!({})).unwrap();
+    }
+
+    #[test]
+    fn explicit_all_on_validates_an_actual_rewrite_before_editing() {
+        // 33 xref sections: the layers stay readable, but the visibility rewrite refuses the history.
+        let mut unsupported = two_layer_pdf();
+        for _ in 0..32 {
+            add_pdf_revision(&mut unsupported);
+        }
+        assert_eq!(designcraft_render::pdf_layers(&unsupported).len(), 2);
+        assert!(designcraft_render::pdf_hide_layers(&unsupported, &[]).is_none());
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 200, "height": 100, "pages": 1})).unwrap();
+        let good = place(&mut s, &two_layer_pdf(), 0.0);
+        let bad = place(&mut s, &unsupported, 100.0);
+        let before = s.execute("file.serialize", &json!({})).unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        for ids in [json!([good, bad]), json!([bad, good]), json!([bad])] {
+            let err = s.execute("object.layerOptions", &json!({"ids": ids, "hidden": [], "useDefaults": false})).unwrap_err();
+            assert!(err.to_string().contains("could not be changed"), "{err}");
+            assert_eq!(s.execute("file.serialize", &json!({})).unwrap(), before, "rejected all-on must not edit any target");
+            assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+        }
+        assert_eq!(pixel(&s, 175), [255, 0, 0, 255], "the unsupported source keeps showing its file defaults");
+        s.execute("file.exportPdf", &json!({})).unwrap();
+        // The supported source alone still accepts the explicit all-on choice.
+        s.execute("object.layerOptions", &json!({"ids": [good], "hidden": [], "useDefaults": false})).unwrap();
+        assert_eq!(s.execute("object.pdfLayers", &json!({"id": good})).unwrap()[1]["overridden"], true);
+        // Resetting to file defaults needs no variant, so it bypasses the rewrite check.
+        for reset in [json!({"ids": [good, bad], "hidden": []}), json!({"ids": [good, bad], "useDefaults": true})] {
+            s.execute("object.layerOptions", &reset).unwrap();
+            for id in [&good, &bad] {
+                assert_eq!(s.execute("object.pdfLayers", &json!({"id": id})).unwrap()[1]["overridden"], false);
+            }
+        }
+        // A stale explicit all-on choice that outlived its rewritable source still fails closed.
+        let bad_id = serde_json::from_value(bad.clone()).unwrap();
+        std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(bad_id).unwrap().pdf_layer_override = true;
+        assert_eq!(pixel(&s, 175), [255, 255, 255, 255], "unrewritable explicit choice must not draw the unmodified source");
+        assert!(s.execute("file.exportPdf", &json!({})).is_err());
     }
 
     #[test]

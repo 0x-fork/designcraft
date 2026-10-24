@@ -12,6 +12,9 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-24** · Explicit PDF layer choices, including all-on, are checked with one actual
+  rewrite per distinct source before editing; reset to file defaults bypasses the check. Native
+  format 4 covers both explicit all-on PDF layers and retained graphic-layer options. No readiness percentage change.
 - **2026-10-23** · Placed PDF layers can explicitly all be shown, separately from Use File Defaults.
   Legacy commands keep their reset behavior; native saves require a capable reader only for
   the new all-on state, and PDF/embedded IDML exports preserve the choice. No readiness percentage change.
