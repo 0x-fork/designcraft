@@ -204,7 +204,7 @@ table is the one summed.
 | Area | Breadth (checklist) | Ready | Hours | Main gaps |
 |---|---|---|---|---|
 | Application shell & workspace | 99% | 55% | 40–60 | context menus not opening on some systems; window controls (#333); System theme (#237); New Window/Arrange; Help menu |
-| Documents, pages, spreads | 100% | 65% | 20–35 | Layout ▸ Pages submenu items, Page Attributes / Color Label, Go Back/Forward, layout grid (CJK) |
+| Documents, pages, spreads | 100% | 65% | 20–35 | Layout ▸ Pages submenu items, Page Attributes / Color Label, layout grid (CJK) |
 | Layers | 100% | 75% | 5–10 | IDML layer order fixed 2026-10-09; Layer panel options depth |
 | Frames, shapes & paths | 100% | 60% | 25–40 | object copy/paste failures, reference point relocation (#337), Join/Reverse Path/Convert Point menu |
 | Transform | 100% | 70% | 10–20 | Rotate 180°; transform panel depth |
@@ -324,7 +324,7 @@ It is evidence of breadth: each item exists. It is not a claim of InDesign-level
 - Object ▸ Generate QR Code (`object.qrCode`: web link, text, SMS, email, business card; vector modules as a compound path, into a frame or re-encoded in place).
 - Conditional text (`condition.new/options/delete/apply/list`, Conditional Text panel): hidden conditions drop their text from layout and exports, indicators underline on screen, IDML Condition/AppliedConditions.
 - Endnotes (`endnote.insert/edit/delete/list/options`, Type ▸ Insert Endnote): references number through the document, the endnote frame on a new last page lists them under a heading; IDML keeps the listed text only.
-- Editorial notes (`note.new/edit/delete/convertToText/list`, Notes panel): anchored in text, flagged on screen, never printed or exported.
+- Editorial notes (`note.new/edit/delete/convertToText/convertFromText/list`, Notes panel, Type › Notes › Convert to Note): anchored in text, flagged on screen, never printed or exported.
 - File ▸ Print Booklet (`file.printBooklet`): saddle-stitch or 2-up consecutive printer spreads as PDF, padded with blanks, with a gap between pages.
 - Edit ▸ Transparency Blend Space (`edit.transparencyBlendSpace`; RGB for web/mobile documents; IDML TransparencyPreference) — exported PDFs give pages with transparency a DeviceCMYK or DeviceRGB page group, so viewers and RIPs blend in that space. On screen, CMYK spreads with separable blend modes use two ink-channel passes through the working colour settings. Parent-page items, nested groups, effects and pasteboard share that path; 100% K in Color Dodge whitens coloured areas while paper stays outside the blend backdrop. Effect blend layers sit outside their clips and offscreen filters, preserving their backdrop in RGB too. The pass count is independent of blended-object count, and unchanged viewports reuse one cached raster (64 MiB cap). Spreads containing Hue, Saturation, Color or Luminosity still use the existing RGB blend followed by a CMYK proof approximation; full nonseparable CMYK blending remains open.
 - High Contrast interface theme (fifth Interface Color Theme: black chrome, white text, yellow selection).
