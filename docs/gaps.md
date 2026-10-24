@@ -211,7 +211,9 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   references, redefining the existing catalog rather than choosing an arbitrary object number.
   Encrypted, hybrid-reference and over-budget rewrites are rejected; no print-fidelity claim.
 - **Layer choices:** placed PDFs distinguish explicit all-on visibility from file defaults;
-  choices survive native saves, raster/PDF output and embedded IDML export. IDML layer
+  choices survive native saves, raster/PDF output and embedded IDML export for the placements the
+  export walks reach: document and parent spreads, groups, and objects anchored in a story. A
+  placement anchored inside table-cell or footnote/endnote text is not reached yet. IDML layer
   variants are embedded copies; external-only export is rejected when choices would be lost.
 - **Missing:** EPS is shown through its preview only (no PostScript interpreter); PSD layer
   comps beyond visibility; the Clipping Path Options dialog (tracing into a clip that keeps the
