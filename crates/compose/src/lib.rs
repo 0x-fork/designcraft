@@ -1649,7 +1649,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     && !pp.hyph_across_column
                     && line_no > col_first_line
                     && let Some(at) = hyphen_at
-                    && hyph_relays < (story.text.len() + 64) * (restores + 1)
+                    && hyph_relays < story.text.len().saturating_add(64).saturating_mul(restores.saturating_add(1))
                 {
                     hyph_relays += 1;
                     no_hyph[pi].push(at);
