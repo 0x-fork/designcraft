@@ -65,10 +65,11 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
         })
         .collect();
     if choices.is_empty() {
-        // A choice the walk cannot reach would silently become the file's defaults (a newer nesting
-        // construct, say), so the copy is refused instead. The predicate matches the walk above:
-        // both ask for a graphic whose asset is a PDF, so stale fields on a relinked image never
-        // block an export.
+        // A tripwire, not live behaviour: the walk and this predicate cover the same placements, so
+        // they can only disagree if a future nesting construct slips past the walk, and that would
+        // silently become the file's defaults. Do not narrow the walk to match this check. The
+        // predicate asks for a graphic whose asset is a PDF, like the walk, so stale fields left on a
+        // relinked image never block an export.
         if has_applicable_pdf_layer_overrides(doc) {
             return Err(EngineError::Other("a placed PDF's layer choice sits where this IDML export cannot apply it".into()));
         }

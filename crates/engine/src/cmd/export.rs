@@ -686,8 +686,9 @@ fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraf
         })
         .collect();
     if choices.is_empty() {
-        // Fail closed, with the same predicate as the walk: a stale choice on an item that is no
-        // longer a placed PDF must not block the export.
+        // Fail closed, with the same predicate as the walk. As in the IDML pass this is a tripwire
+        // for a future construct the walk misses, not live behaviour; a stale choice on an item that
+        // is no longer a placed PDF must not block the export.
         if super::interchange::has_applicable_pdf_layer_overrides(d) {
             return Err(EngineError::Other("a placed PDF's layer choice sits where this raster export cannot apply it".into()));
         }
