@@ -590,36 +590,28 @@ pub(crate) mod tests {
 
     /// Relinking a placed PDF to an image leaves the item's layer fields behind. They are no longer a
     /// placed-PDF choice, so they must not block an export: the refusal guard asks for a graphic whose
-    /// asset is a PDF, the same thing the export walks ask for.
+    /// asset is a PDF, the same thing the export walks ask for. The user path (a real relink to a PNG)
+    /// is covered in `tests/pdf_optional_content.rs`, where the file guard allows a test fixture on disk.
     #[test]
-    fn a_stale_choice_on_a_relinked_image_does_not_block_exports() {
-        let pdf = designcraft_render::pdf_hide_layers(&two_layer_pdf(), &["Red".into()]).unwrap();
+    fn a_stale_choice_on_a_non_pdf_placement_does_not_block_exports() {
+        let png = designcraft_render::Rendered { width: 4, height: 3, pixels: [30, 90, 180, 255].repeat(12) }.to_png();
         let mut s = Session::new();
         s.execute("file.new", &json!({"width": 200, "height": 200})).unwrap();
         let id = s
-            .execute("file.place", &json!({"base64": super::super::file::base64_encode(&pdf), "name": "art.pdf", "x": 0, "y": 0, "width": 100}))
+            .execute("file.place", &json!({"base64": super::super::file::base64_encode(&png), "name": "photo.png", "x": 0, "y": 0, "width": 100}))
             .unwrap()["id"]
             .clone();
-        s.execute("object.layerOptions", &json!({"ids": [id], "hidden": ["Red"]})).unwrap();
-        let asset = s.doc().unwrap().doc.item(designcraft_doc::ItemId(id.as_u64().unwrap())).unwrap().graphic().unwrap().asset;
-        let png = designcraft_render::Rendered { width: 4, height: 3, pixels: [30, 90, 180, 255].repeat(12) }.to_png();
-        let path = std::env::temp_dir().join(format!(
-            "dc-relinked-{}-{}.png",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::write(&path, &png).unwrap();
-        s.execute("links.relink", &json!({"asset": asset.0, "path": path.to_string_lossy()})).unwrap();
+        let item = designcraft_doc::ItemId(id.as_u64().unwrap());
+        // The state a relink from a PDF leaves behind: fields set, asset no longer a PDF.
+        std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).item_mut(item).unwrap().pdf_hidden_layers = vec!["Red".into()];
         let d = &s.doc().unwrap().doc;
-        assert!(!designcraft_render::is_pdf(&d.assets[&asset].data), "the placement is an image now");
-        assert!(d.item(designcraft_doc::ItemId(id.as_u64().unwrap())).unwrap().has_pdf_layer_override(), "the stale field is still on the item");
+        assert!(d.item(item).unwrap().has_pdf_layer_override(), "the stale field is on the item");
         assert!(d.has_pdf_layer_overrides(), "the field is there");
         assert!(!super::super::interchange::has_applicable_pdf_layer_overrides(d), "but it is not a placed-PDF choice");
         // Both exports still run: nothing is dropped, and there is no choice to refuse.
         s.execute("file.exportIdml", &json!({})).unwrap();
         s.execute("file.exportPdf", &json!({"standard": "a2b"})).unwrap();
         s.execute("file.exportPdf", &json!({})).unwrap();
-        std::fs::remove_file(&path).ok();
     }
 
     #[test]
