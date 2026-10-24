@@ -713,6 +713,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Convert Text to Table", "テキストを表に変換"),
     ("Convert to Button", "ボタンに変換"),
     ("Convert to Form Field", "フォームフィールドに変換"),
+    ("Convert to Note", "注釈に変換"),
     ("Conveyor", "コンベヤー"),
     ("Copy Link(s) To…", "リンクを指定先にコピー…"),
     ("Corner Options…", "角のオプション…"),

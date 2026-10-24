@@ -457,6 +457,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Convert Text to Table", "Преобразовать текст в таблицу"),
     ("Convert to Button", "Преобразовать в кнопку"),
     ("Convert to Form Field", "Преобразовать в поле формы"),
+    ("Convert to Note", "Преобразовать в заметку"),
     ("Conveyor", "Конвейер"),
     ("Copy Link(s) To…", "Копировать связанные файлы в…"),
     ("Corner Options…", "Параметры углов…"),
