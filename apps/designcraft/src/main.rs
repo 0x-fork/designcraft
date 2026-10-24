@@ -51,39 +51,45 @@ struct App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.startup.enter();
-        if let Some(note) = self.startup.take_notice() {
-            self.app.status(note);
-        }
-        // The third call: two frames went through `ui`, so the first was presented and the driver
-        // survived it (a fault at the first present is what the fallback in `gpu` is for).
-        if self.frames == 2 {
-            self.startup.presented();
-        }
-        self.frames = self.frames.saturating_add(1);
-        if u64::from(self.frames) >= gpu::STARTUP_FRAMES
-            && let Some(device) = self.log_errors_after_startup.take()
-        {
-            gpu_limits::log_uncaptured_errors(&device);
-        }
-        #[cfg(target_os = "macos")]
-        {
-            if self.menu.is_none() && std::env::var_os("DESIGNCRAFT_NO_NATIVE_MENU").is_none() {
-                self.menu = Some(native_menu::NativeMenu::install(&mut self.app, ctx));
-            }
-            if let Some(m) = &mut self.menu {
-                m.poll(&mut self.app, ctx);
-            }
-            // Noted for a start again after a graphics failure, which reopens them (`gpu::restart`).
-            self.startup.opening(apple_events::poll(&self.apple_events, &mut self.app, ctx));
-        }
+        // Queue/deadline work only. A hidden `run_logic` tick also reports pass index zero, so
+        // startup counters and native-menu polling must not live here.
         self.app.logic(ctx);
         self.startup.leave();
     }
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.app.raw_input_hook(raw);
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        self.app.raw_input_hook(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.startup.enter();
+        // `App::ui` is the only signal that a real layout pass ran. A discarded multipass first
+        // pass reports index 0 once, so these once-per-frame counters/menu polls still run once.
+        if ui.ctx().current_pass_index() == 0 {
+            if let Some(note) = self.startup.take_notice() {
+                self.app.status(note);
+            }
+            // The third UI callback: two frames went through `ui`, so the first was presented and
+            // the driver survived it (a fault at the first present is what `gpu` falls back for).
+            if self.frames == 2 {
+                self.startup.presented();
+            }
+            self.frames = self.frames.saturating_add(1);
+            if u64::from(self.frames) >= gpu::STARTUP_FRAMES
+                && let Some(device) = self.log_errors_after_startup.take()
+            {
+                gpu_limits::log_uncaptured_errors(&device);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                if self.menu.is_none() && std::env::var_os("DESIGNCRAFT_NO_NATIVE_MENU").is_none() {
+                    self.menu = Some(native_menu::NativeMenu::install(&mut self.app, ui.ctx()));
+                }
+                if let Some(m) = &mut self.menu {
+                    m.poll(&mut self.app, ui.ctx());
+                }
+                // Noted for a start again after a graphics failure, which reopens them (`gpu::restart`).
+                self.startup.opening(apple_events::poll(&self.apple_events, &mut self.app, ui.ctx()));
+            }
+        }
         self.app.ui(ui);
         self.startup.leave();
         #[cfg(target_os = "macos")]
@@ -256,7 +262,7 @@ const ALL_FILES: &str = if cfg!(target_os = "macos") { "public.data" } else { "*
 /// The extension of the file name a save dialog suggests (`Brochure.designcraft`), if it has one.
 /// The dialog filters on it, so the macOS and Windows dialogs add it to a name typed without it.
 fn suggested_extension(name: &str) -> Option<&str> {
-    std::path::Path::new(name).extension().and_then(|e| e.to_str()).filter(|e| !e.is_empty() && !e.contains(char::is_whitespace))
+    std::path::Path::new(name).extension().and_then(std::ffi::OsStr::to_str).filter(|e| !e.is_empty() && !e.contains(char::is_whitespace))
 }
 
 /// The file a save dialog's answer writes: `picked` with the suggested extension added when it has
@@ -407,6 +413,9 @@ fn main() -> std::process::ExitCode {
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
             .with_title_shown(false),
+        // DesignCraft's own FontDb supplies script-specific system fallbacks; egui's system-font
+        // provider would put its discovery ahead of that order and change line metrics.
+        system_font_fallback: false,
         ..Default::default()
     };
     options.viewport = options.viewport.with_app_id(APP_ID);

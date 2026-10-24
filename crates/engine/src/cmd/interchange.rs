@@ -512,7 +512,10 @@ mod tests {
             let (idml, _) = linked_idml(link, false).unwrap();
             let (doc, seen) = crate::io::touched(|| import(&idml, Some(&package)).unwrap());
             // Beside the package, and the link itself where it is on this computer.
-            assert!(seen.iter().all(|p| p.starts_with(&dir) || p == std::path::Path::new(link)), "{link}: {seen:?}");
+            // A rooted local path such as /dev/zero acquires the package's drive on Windows.
+            let local = std::path::Path::new(link);
+            let external = (local.has_root() && !link.starts_with(r"\\")).then(|| std::path::absolute(dir.join(local)).unwrap());
+            assert!(seen.iter().all(|p| p.starts_with(&dir) || Some(p) == external.as_ref()), "{link}: {seen:?}");
             let asset = doc.assets.values().next().unwrap();
             assert!(asset.data.is_empty(), "{link}");
             assert_eq!(super::super::links::status(asset, None), "missing", "{link}");

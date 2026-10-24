@@ -10,6 +10,8 @@ use super::*;
 mod assets;
 mod clipping;
 mod decorations;
+mod facing_ltr;
+mod frame_grid;
 mod index_sort;
 mod liquid_guides;
 mod object_styles;
@@ -298,6 +300,7 @@ fn indesign_text_defaults() -> Vec<AttrRow> {
         "HyphenateLadderLimit": "3" => 3, "0" => 0, |r| r.0.hyph_limit;
         "HyphenationZone": "36" => 36.0, "18" => 18.0, |r| r.0.hyph_zone;
         "HyphenateCapitalizedWords": "true" => true, "false" => false, |r| r.0.hyph_capitalized;
+        "IgnoreEdgeAlignment": "false" => false, "true" => true, |r| r.0.ignore_optical_margin;
         "HyphenateLastWord": "true" => true, "false" => false, |r| r.0.hyph_last_word;
         "HyphenateAcrossColumns": "true" => true, "false" => false, |r| r.0.hyph_across_column;
         "HyphenWeight": "5" => 0.5, "9" => 0.9, |r| r.0.hyph_weight;
@@ -480,6 +483,57 @@ fn text_color_rules_round_trip() {
     let p = &back.stories.values().find(|s| s.text == "Ruled").unwrap().paras[0];
     assert_eq!((p.para.rule_above.as_ref(), p.para.rule_below.as_ref()), (para.rule_above.as_ref(), para.rule_below.as_ref()));
     assert_eq!(p.para.kashidas, Some(false));
+}
+
+fn optical_story(pref: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="16.0">
+  <Story Self="s1">
+    <StoryPreference {pref} StoryOrientation="Horizontal" StoryDirection="LeftToRightDirection"/>
+    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+      <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>“Hung” here.</Content><Br/></CharacterStyleRange>
+    </ParagraphStyleRange>
+    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body" IgnoreEdgeAlignment="true">
+      <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>“Flush” here.</Content></CharacterStyleRange>
+    </ParagraphStyleRange>
+  </Story>
+</idPkg:Story>"#
+    )
+}
+
+/// Story ▸ Optical Margin Alignment and its size, and Ignore Optical Margin on paragraphs and
+/// paragraph styles, survive import and export.
+#[test]
+fn story_optical_margin_round_trips() {
+    let story = |d: &Document| d.stories.values().find(|s| s.text.starts_with("“Hung”")).cloned().unwrap();
+    let d = import_idml_with(&fixture_with_story(&optical_story(r#"OpticalMarginAlignment="true" OpticalMarginSize="18""#)), &|_| None).unwrap();
+    let s = story(&d);
+    assert_eq!(s.optical_margin, designcraft_doc::OpticalMargin { on: true, size: 18.0 });
+    assert_eq!((s.paras[0].para.ignore_optical_margin, s.paras[1].para.ignore_optical_margin), (None, Some(true)));
+    let bytes = export_idml(&d);
+    let text = zip_text(&bytes, "Stories/");
+    assert!(text.contains(r#"OpticalMarginAlignment="true" OpticalMarginSize="18""#), "{text}");
+    assert!(text.contains(r#"IgnoreEdgeAlignment="true""#), "{text}");
+    let back = story(&import_idml(&bytes).unwrap());
+    assert_eq!(back.optical_margin, s.optical_margin);
+    assert_eq!(back.paras[1].para.ignore_optical_margin, Some(true));
+    // Sizes outside InDesign's range are clamped; malformed ones and an absent preference are the default.
+    for (pref, want) in [
+        (r#"OpticalMarginAlignment="true" OpticalMarginSize="1e9""#, (true, 1296.0)),
+        (r#"OpticalMarginAlignment="true" OpticalMarginSize="0""#, (true, 0.1)),
+        (r#"OpticalMarginAlignment="true" OpticalMarginSize="NaN""#, (true, 12.0)),
+        (r#"OpticalMarginAlignment="false""#, (false, 12.0)),
+    ] {
+        let d = import_idml_with(&fixture_with_story(&optical_story(pref)), &|_| None).unwrap();
+        let om = story(&d).optical_margin;
+        assert_eq!((om.on, om.size), want, "{pref}");
+    }
+    // On a paragraph style.
+    let d = import_idml_with(&fixture_with_styles(&keep_styles(r#"IgnoreEdgeAlignment="true""#)), &|_| None).unwrap();
+    assert!(d.styles.resolve_para_style("Body").0.ignore_optical_margin);
+    let styles = zip_text(&export_idml(&d), "Resources/Styles.xml");
+    assert!(styles.contains(r#"IgnoreEdgeAlignment="true""#), "{styles}");
 }
 
 /// `[Basic Paragraph]` is InDesign's `$ID/NormalParagraphStyle`, both ways.
@@ -1354,6 +1408,7 @@ fn anchored_objects_take_unset_settings_from_object_styles() {
         object_point,
         ref_point: 6,
         keep_within_column,
+        spine_relative: false,
     };
     let positions: Vec<_> = s.objects.iter().map(|o| o.position.clone()).collect();
     assert_eq!(
@@ -1364,6 +1419,44 @@ fn anchored_objects_take_unset_settings_from_object_styles() {
             custom(R::PageMargin, R::Anchor, -2.0, 0.0, 8, false),
         ]
     );
+}
+
+/// Relative to Spine comes from the object style chain like the other anchored settings, an
+/// item's own setting wins, and export writes it back.
+#[test]
+fn anchored_spine_relative_comes_from_object_styles_and_round_trips() {
+    use designcraft_doc::AnchorPosition;
+    let styles = STYLES.replace(
+        r#"<ObjectStyle Self="ObjectStyle/$ID/[None]" Name="$ID/[None]"/>"#,
+        r#"<ObjectStyle Self="ObjectStyle/$ID/[None]" Name="$ID/[None]"/>
+        <ObjectStyle Self="ObjectStyle/Side" Name="Side"><AnchoredObjectSetting SpineRelative="true"/></ObjectStyle>
+        <ObjectStyle Self="ObjectStyle/Note" Name="Note"><Properties><BasedOn type="object">ObjectStyle/Side</BasedOn></Properties></ObjectStyle>"#,
+    );
+    let rect = |style: &str, setting: &str| {
+        format!(
+            r#"<Rectangle Self="r{style}" AppliedObjectStyle="ObjectStyle/{style}" ItemTransform="1 0 0 1 0 0">
+              <Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>
+                <PathPointType Anchor="0 0"/><PathPointType Anchor="0 10"/><PathPointType Anchor="10 10"/><PathPointType Anchor="10 0"/>
+              </PathPointArray></GeometryPathType></PathGeometry></Properties>
+              <AnchoredObjectSetting AnchoredPosition="Anchored" {setting}/>
+            </Rectangle>"#
+        )
+    };
+    let story = format!(
+        r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">
+          <ParagraphStyleRange><CharacterStyleRange><Content>a</Content>{}{}{}</CharacterStyleRange></ParagraphStyleRange>
+        </Story></idPkg:Story>"#,
+        rect("Note", ""),
+        rect("Note", r#"SpineRelative="false""#),
+        rect("$ID/[None]", ""),
+    );
+    let spine = |d: &Document| -> Vec<bool> {
+        let s = d.stories.values().find(|s| !s.objects.is_empty()).unwrap();
+        s.objects.iter().map(|o| matches!(o.position, AnchorPosition::Custom { spine_relative: true, .. })).collect()
+    };
+    let d = import_idml(&fixture_with_table_styles(&styles, &story)).unwrap();
+    assert_eq!(spine(&d), [true, false, false]);
+    assert_eq!(spine(&import_idml(&export_idml(&d)).unwrap()), [true, false, false]);
 }
 
 /// IDML measures a left-aligned anchored object's X offset leftwards; the document model and

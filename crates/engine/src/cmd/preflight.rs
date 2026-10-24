@@ -348,17 +348,19 @@ mod placed_vector_tests {
     /// file is still missing.
     #[test]
     fn a_missing_link_shown_by_its_preview_is_still_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_path = dir.path().join("missing dir").join("photo.jpg");
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
         let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
         s.execute("file.place", &json!({"base64": base64_encode(&png), "name": "photo.jpg", "x": 72, "y": 72, "width": 20})).unwrap();
         let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
         let asset = doc.assets.values_mut().next().unwrap();
-        std::sync::Arc::make_mut(asset).link = Some("/definitely/missing dir/photo.jpg".into());
+        std::sync::Arc::make_mut(asset).link = Some(missing_path.to_str().unwrap().into());
         let r = s.execute("preflight.run", &json!({})).unwrap();
         let missing: Vec<&str> =
             r["issues"].as_array().unwrap().iter().filter(|i| i["kind"] == "missingLink").map(|i| i["message"].as_str().unwrap()).collect();
-        assert_eq!(missing, ["Missing link: /definitely/missing dir/photo.jpg"]);
+        assert_eq!(missing, [format!("Missing link: {}", missing_path.display())]);
     }
 }
 

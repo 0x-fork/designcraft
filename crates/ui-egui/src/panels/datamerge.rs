@@ -97,7 +97,9 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     ui.separator();
 
     crate::rtl::label(ui, egui::RichText::new(tr(&lang, "Merge options")).strong().color(t.text_strong));
-    if let Some(records) = choice(ui, "dm_records", &options.records, &[("all", "All records"), ("one", "One record"), ("range", "Range")], &lang) {
+    let records_name = tr(&lang, "Merge options");
+    let record_options = [("all", "All records"), ("one", "One record"), ("range", "Range")];
+    if let Some(records) = choice(ui, "dm_records", &options.records, &record_options, &lang, records_name) {
         let _ = app.run("data.options", json!({"records": records}));
     }
     if options.records == "one" {
@@ -113,11 +115,14 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         }
     }
     crate::rtl::label(ui, egui::RichText::new(tr(&lang, "Records per page")).color(t.text));
-    if let Some(per_page) = choice(ui, "dm_per_page", &options.per_page, &[("single", "Single record"), ("multiple", "Multiple records")], &lang) {
+    let per_page_name = tr(&lang, "Records per page");
+    let per_page_options = [("single", "Single record"), ("multiple", "Multiple records")];
+    if let Some(per_page) = choice(ui, "dm_per_page", &options.per_page, &per_page_options, &lang, per_page_name) {
         let _ = app.run("data.options", json!({"perPage": per_page}));
     }
     if options.per_page == "multiple" {
-        if let Some(arrange) = choice(ui, "dm_arrange", &options.arrange, &[("rows", "Rows first"), ("columns", "Columns first")], &lang) {
+        let arrange_options = [("rows", "Rows first"), ("columns", "Columns first")];
+        if let Some(arrange) = choice(ui, "dm_arrange", &options.arrange, &arrange_options, &lang, records_name) {
             let _ = app.run("data.options", json!({"arrange": arrange}));
         }
         let labels = ["Top", "Right", "Bottom", "Left"];
@@ -154,6 +159,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             ("none", "None"),
         ],
         &lang,
+        "Image Fitting",
     ) {
         let _ = app.run("data.options", json!({"fitting": fitting}));
     }
@@ -184,16 +190,17 @@ fn select_source(app: &mut DesignApp) {
     let _ = app.run("data.source.select", json!({"path": path}));
 }
 
-fn choice(ui: &mut egui::Ui, id: &str, current: &str, options: &[(&str, &str)], lang: &str) -> Option<String> {
+fn choice(ui: &mut egui::Ui, id: &str, current: &str, options: &[(&str, &str)], lang: &str, name: &str) -> Option<String> {
     let label = options.iter().find(|(value, _)| *value == current).map(|(_, text)| tr(lang, text)).unwrap_or(current);
     let mut picked = None;
-    egui::ComboBox::from_id_salt(id).selected_text(label).width(ui.available_width().min(200.0)).show_ui(ui, |ui| {
+    let combo = egui::ComboBox::from_id_salt(id).selected_text(label).width(ui.available_width().min(200.0)).show_ui(ui, |ui| {
         for (value, text) in options {
             if ui.selectable_label(*value == current, tr(lang, text)).clicked() {
                 picked = Some((*value).to_string());
             }
         }
     });
+    let _ = crate::widgets::name_combo(combo, name.to_owned());
     picked.filter(|value| value != current)
 }
 
