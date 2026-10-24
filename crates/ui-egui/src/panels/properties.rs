@@ -1549,7 +1549,8 @@ fn paragraph_more(app: &mut DesignApp, ui: &mut Ui, p: &Value, fw: f32) {
     }
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let grid = p["gridAlign"].as_str() == Some("allLines");
+        // First Line Only is aligned too: the button shows it pressed, and a click turns alignment off.
+        let grid = matches!(p["gridAlign"].as_str(), Some("allLines" | "firstLineOnly"));
         if widgets::icon_toggle(ui, "grid-baseline", grid, &tr("Align to Baseline Grid")).clicked() {
             let _ = app.run("type.para", json!({"attrs": {"gridAlign": if grid { "none" } else { "allLines" }}}));
         }
@@ -3080,7 +3081,10 @@ pub(crate) fn para_field_min(key: &str) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::{Harness, kittest::Queryable};
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
 
     use super::*;
 
@@ -3292,6 +3296,26 @@ mod tests {
     /// Properties › Character and Paragraph •••, as in InDesign: the sections expand in place,
     /// with the scales, baseline shift, skew, language, OpenType and the case buttons, and the
     /// indents, spacing and drop caps.
+    /// Properties › Paragraph ••• on a First Line Only paragraph: Align to Baseline Grid shows
+    /// pressed, and a click turns alignment off instead of making it All Lines.
+    #[test]
+    fn more_options_grid_button_keeps_first_line_only() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "If fine plants", "caret": true})).unwrap();
+        app.run("edit.selectAll", json!({})).unwrap();
+        app.run("type.para", json!({"attrs": {"gridAlign": "firstLineOnly"}})).unwrap();
+        let mut h = panel_harness(app, show);
+        h.run_steps(3);
+        h.get_all_by_label("More Options").nth(1).unwrap().click();
+        h.run_steps(3);
+        assert_eq!(h.get_by_label("Align to Baseline Grid").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+        assert_eq!(text_attrs(h.state_mut()).unwrap()["para"]["gridAlign"], "firstLineOnly");
+        h.get_by_label("Align to Baseline Grid").click();
+        h.run_steps(3);
+        assert_eq!(text_attrs(h.state_mut()).unwrap()["para"]["gridAlign"], "none");
+    }
+
     #[test]
     fn more_options_expand_character_and_paragraph_in_place() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
