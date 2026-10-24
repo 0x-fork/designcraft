@@ -654,6 +654,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Insert Math Expression…", "მათემატიკური გამოსახულების ჩასმა…"),
     ("Insert Pages…", "გვერდების ჩასმა…"),
     ("Insert Variable", "ცვლადის ჩასმა"),
+    ("Convert Variable to Text", "ცვლადის ტექსტად გარდაქმნა"),
     ("Inspect Document", "დოკუმენტის შემოწმება"),
     ("Interface Color Theme", "ინტერფეისის ფერთა თემა"),
     ("Join the ArtCraft Discord…", "შემოუერთდით ArtCraft-ის Discord-ს…"),

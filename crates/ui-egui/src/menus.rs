@@ -529,6 +529,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             ">Text Variables",
             "cmd:variables.define",
             "cmd:variables.insert",
+            "cmd:variables.convertToText",
             "<",
             "-",
             ">Bulleted & Numbered Lists",

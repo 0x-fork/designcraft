@@ -2028,6 +2028,16 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     ("Insert Pages…", ["Insert Pages…", "Insérer des pages…", "Insert Pages…", "Insert Pages…", "插入页面…"]),
     ("Insert Variable", ["Insert Variable", "Insérer une variable", "Insert Variable", "Insert Variable", "插入变量"]),
+    (
+        "Convert Variable to Text",
+        [
+            "Variable in Text konvertieren",
+            "Convertir la variable en texte",
+            "Convertir variable en texto",
+            "変数をテキストに変換",
+            "将变量转换为文本",
+        ],
+    ),
     ("Inspect Document", ["Inspect Document", "Inspecter le document", "Inspect Document", "Inspect Document", "检查文档"]),
     (
         "Interface Color Theme",

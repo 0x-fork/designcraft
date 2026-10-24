@@ -598,6 +598,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Insert Math Expression…", "Vložit matematický výraz…"),
     ("Insert Pages…", "Vložit stránky…"),
     ("Insert Variable", "Vložit proměnnou"),
+    ("Convert Variable to Text", "Převést proměnnou na text"),
     ("Inspect Document", "Prozkoumat dokument"),
     ("Interface Color Theme", "Barevný motiv rozhraní"),
     ("Join the ArtCraft Discord…", "Připojit se k Discordu ArtCraft…"),
