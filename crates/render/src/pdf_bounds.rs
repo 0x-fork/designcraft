@@ -105,7 +105,8 @@ impl<'a> Device<'a> for Bounds {
 
     fn draw_glyph(&mut self, glyph: &Glyph<'a>, transform: Affine, glyph_transform: Affine, paint: &Paint<'a>, mode: &GlyphDrawMode) {
         let mode = match mode {
-            GlyphDrawMode::Invisible => return,
+            // Clip text paints nothing; its clip comes through `push_clip_path`.
+            GlyphDrawMode::Invisible | GlyphDrawMode::Clip => return,
             GlyphDrawMode::Fill => PathDrawMode::Fill(FillRule::NonZero),
             GlyphDrawMode::Stroke(s) => PathDrawMode::Stroke(s.clone()),
         };
