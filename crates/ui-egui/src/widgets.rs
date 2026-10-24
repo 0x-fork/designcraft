@@ -82,6 +82,8 @@ pub struct NumField<'a> {
     parens: bool,
     /// The widget naming the field (an icon or caption beside it), for accessibility.
     label: Option<egui::Id>,
+    /// What an unset value shows (InDesign's "Ignore"), and the first of the presets.
+    empty: Option<&'a str>,
 }
 
 impl<'a> NumField<'a> {
@@ -104,6 +106,7 @@ impl<'a> NumField<'a> {
             enabled: true,
             parens: false,
             label: None,
+            empty: None,
         }
     }
     /// Total width (spinner and preset segments included).
@@ -148,6 +151,13 @@ impl<'a> NumField<'a> {
     /// assistive technology reads the field's name with its value.
     pub fn labelled_by(mut self, id: egui::Id) -> Self {
         self.label = Some(id);
+        self
+    }
+
+    /// An unset value shows `text` (dimmed), and the preset menu offers it first: picking it, or
+    /// emptying the field, commits `Some(None)` from [`NumField::show_or_clear`].
+    pub fn empty_text(mut self, text: &'a str) -> Self {
+        self.empty = Some(text);
         self
     }
 
@@ -214,13 +224,16 @@ impl<'a> NumField<'a> {
         // Value.
         ui.painter().rect_filled(text_rect, 0.0, bg);
         let mut buf: String = ui.data(|d| d.get_temp::<String>(key)).unwrap_or_else(|| self.value.map(|v| self.fmt(v)).unwrap_or_default());
-        let te = egui::TextEdit::singleline(&mut buf)
+        let mut te = egui::TextEdit::singleline(&mut buf)
             .id(focused_id)
             .frame(egui::Frame::NONE)
             .font(label_font())
             .text_color(fg)
             .margin(egui::Margin::ZERO)
             .vertical_align(egui::Align::Center);
+        if let Some(empty) = self.empty {
+            te = te.hint_text(egui::RichText::new(empty).font(label_font()).color(t.text_dim));
+        }
         // The field already allocated its slot. A scoped allocation here would consume another
         // grid cell and enlarge toolbar rows; the value editor must stay inside that same slot.
         let value_rect = Rect::from_min_max(text_rect.min + vec2(5.0, 1.0), text_rect.max - vec2(1.0, 1.0));
@@ -283,6 +296,12 @@ impl<'a> NumField<'a> {
         if let Some(resp) = preset_resp {
             egui::Popup::menu(&resp).show(|ui| {
                 ui.set_min_width(self.width);
+                if let Some(empty) = self.empty
+                    && ui.selectable_label(self.value.is_none(), empty).clicked()
+                {
+                    cleared = self.value.is_some();
+                    ui.close();
+                }
                 for v in self.presets {
                     if ui.selectable_label(self.value.is_some_and(|c| (c - v).abs() < 1e-9), self.kind.format(*v)).clicked() {
                         out = Some(*v);

@@ -1075,6 +1075,75 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ],
     ),
     ("Load Styles", ["Formate laden", "Charger les styles", "Cargar estilos", "スタイルを読み込み", "加载样式"]),
+    ("Restart Numbering", ["Nummerierung neu beginnen", "Recommencer la numérotation", "Reiniciar numeración", "番号の振り直し", "重新开始编号"]),
+    ("Continue Numbering", ["Nummerierung fortführen", "Poursuivre la numérotation", "Continuar numeración", "番号の継続", "继续编号"]),
+    ("Keep Options…", ["Umbruchoptionen …", "Options d'enchaînement…", "Opciones de separación…", "段落分離禁止オプション…", "保持选项…"]),
+    (
+        "Space Between Paragraphs Using Same Style",
+        [
+            "Abstand zwischen Absätzen mit gleichem Format",
+            "Espace entre les paragraphes de même style",
+            "Espacio entre párrafos con el mismo estilo",
+            "同じスタイルの段落間のスペース",
+            "使用相同样式的段落间距",
+        ],
+    ),
+    ("Ignore", ["Ignorieren", "Ignorer", "Ignorar", "無視", "忽略"]),
+    (
+        "Do Not Align to Baseline Grid",
+        [
+            "Nicht am Grundlinienraster ausrichten",
+            "Ne pas aligner sur la grille de ligne de base",
+            "No alinear con cuadrícula base",
+            "ベースライングリッドに揃えない",
+            "不对齐基线网格",
+        ],
+    ),
+    (
+        "Only Align First Line to Grid",
+        [
+            "Nur erste Zeile am Raster ausrichten",
+            "Aligner uniquement la première ligne sur la grille",
+            "Alinear solo primera línea con cuadrícula",
+            "最初の行のみグリッドに揃える",
+            "仅首行对齐网格",
+        ],
+    ),
+    (
+        "Balance Ragged Lines",
+        ["Unausgeglichene Zeilen ausgleichen", "Équilibrer les lignes irrégulières", "Equilibrar líneas desiguales", "行末を調整", "平衡未对齐的行"],
+    ),
+    (
+        "Drop Caps and Nested Styles…",
+        [
+            "Initialen und verschachtelte Formate …",
+            "Lettrines et styles imbriqués…",
+            "Capitulares y estilos anidados…",
+            "ドロップキャップと先頭文字スタイル…",
+            "首字下沉和嵌套样式…",
+        ],
+    ),
+    ("GREP Styles…", ["GREP-Stile …", "Styles GREP…", "Estilos GREP…", "正規表現スタイル…", "GREP 样式…"]),
+    (
+        "Restart/Continue Numbering",
+        [
+            "Nummerierung neu beginnen/fortführen",
+            "Recommencer/Poursuivre la numérotation",
+            "Reiniciar/Continuar numeración",
+            "番号の振り直し/継続",
+            "重新开始/继续编号",
+        ],
+    ),
+    (
+        "Convert Bullets and Numbering to Text",
+        [
+            "Aufzählungszeichen und Nummerierung in Text konvertieren",
+            "Convertir les puces et la numérotation en texte",
+            "Convertir viñetas y numeración en texto",
+            "箇条書きと段落番号をテキストに変換",
+            "将项目符号和编号转换为文本",
+        ],
+    ),
     ("Hyphenation…", ["Silbentrennung …", "Césure…", "Separación por sílabas…", "ハイフネーション…", "连字…"]),
     (
         "Hyphenation Settings",

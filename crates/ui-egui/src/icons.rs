@@ -798,6 +798,12 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
                 pen.line(&[(3.0, v), (5.0, v)]);
             }
         }
+        // Do Not Align to Baseline Grid: ragged lines of text, free of any grid.
+        "grid-none" => {
+            for (y, x1) in [(5.0, 17.0), (8.5, 12.0), (12.0, 17.0), (15.5, 14.0)] {
+                pen.line(&[(3.0, y), (x1, y)]);
+            }
+        }
         "grid-baseline" => {
             pen.rect(3.0, 3.0, 17.0, 17.0);
             for y in [6.5, 10.0, 13.5] {
@@ -997,6 +1003,15 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32) {
             pen.line(&[(4.0, a), (4.0, z)]);
             pen.line(&[(2.5, a + 1.5), (4.0, a), (5.5, a + 1.5)]);
             pen.line(&[(2.5, z - 1.5), (4.0, z), (5.5, z - 1.5)]);
+        }
+        // Space Between Paragraphs Using Same Style: two paragraphs and the space between them.
+        "space-same" => {
+            for y in [2.0, 5.0, 15.0, 18.0] {
+                pen.line(&[(8.0, y), (18.0, y)]);
+            }
+            pen.line(&[(4.0, 6.5), (4.0, 13.5)]);
+            pen.line(&[(2.5, 8.0), (4.0, 6.5), (5.5, 8.0)]);
+            pen.line(&[(2.5, 12.0), (4.0, 13.5), (5.5, 12.0)]);
         }
         "drop-lines" | "drop-chars" => {
             pen.text(5.5, 8.0, "A", 14.0);
