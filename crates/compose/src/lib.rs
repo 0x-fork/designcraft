@@ -686,17 +686,18 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                 r.is_finite() && r.x0 < a.x1 && r.x1 > a.x0 && r.y0 < a.y1 && r.y1 > a.y0
             });
         }
+        // The frame's center on its spread: a group around it can move it to another page.
+        let center_x = loc.as_ref().map_or(item.bounds(), |l| doc.parent_xf(l).transform_rect_bbox(item.bounds())).center().x;
         let (page_name, page, left_page) = match (spread_ref, spread) {
             (Some(designcraft_doc::SpreadRef::Doc(si)), Some(sp)) => {
-                let c = item.bounds().center();
-                let pi = sp.page_at_x(c.x).unwrap_or(0);
+                let pi = sp.page_at_x(center_x).unwrap_or(0);
                 let abs = doc.first_page_of_spread(si) + pi;
                 (Some(doc.page_name(abs)), Some(abs), sp.pages.get(pi).is_some_and(|p| p.side == designcraft_doc::PageSide::Left))
             }
             (Some(designcraft_doc::SpreadRef::Parent(_)), Some(sp)) => {
                 let prefix = sp.parent.as_ref().map(|p| p.prefix.clone()).unwrap_or_else(|| "A".into());
                 // The side of the parent page under the frame, so a folio there aligns to the spine of its own page.
-                let under = sp.page_at_x(item.bounds().center().x).and_then(|pi| sp.pages.get(pi));
+                let under = sp.page_at_x(center_x).and_then(|pi| sp.pages.get(pi));
                 let left = under.is_some_and(|p| p.side == designcraft_doc::PageSide::Left);
                 (Some(prefix), None, left)
             }
@@ -704,7 +705,7 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
         };
         let section_marker = page.map(|abs| section_marker(doc, abs));
         // The page under the frame, and its bounds and margins in inner space (bounding boxes).
-        let under = spread.and_then(|sp| sp.page_at_x(item.bounds().center().x).and_then(|pi| sp.pages.get(pi)));
+        let under = spread.and_then(|sp| sp.page_at_x(center_x).and_then(|pi| sp.pages.get(pi)));
         let page_rect = under.map(|pg| (inv.transform_rect_bbox(pg.bounds()), inv.transform_rect_bbox(pg.margin_rect())));
         let g = &doc.settings.baseline_grid;
         let (inc, start) = tf.options.baseline_grid.unwrap_or((g.increment, under.map_or(g.start, |pg| g.origin(pg))));

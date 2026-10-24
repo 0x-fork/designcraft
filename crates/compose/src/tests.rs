@@ -7254,6 +7254,32 @@ fn baseline_grid_relative_to_the_top_margin_starts_at_each_pages_margin() {
     assert_eq!(lines.len(), 41);
 }
 
+/// A group's transform moves a frame from the left page of a spread to the right one: the grid
+/// starts at the right page's top margin.
+#[test]
+fn baseline_grid_follows_a_grouped_frame_to_its_page() {
+    use designcraft_doc::{Content, GridRelative, Item, ItemId, Shape};
+    let mut d = Document::new(&NewDocument { pages: 3, facing_pages: true, margins: designcraft_doc::Margins::uniform(36.0), ..Default::default() });
+    Arc::make_mut(&mut d.spreads[1]).pages[1].margins.top = 48.0;
+    d.settings.baseline_grid.start = 0.0;
+    d.settings.baseline_grid.increment = 13.0;
+    d.settings.baseline_grid.relative_to = GridRelative::TopMargin;
+    let lid = d.default_layer();
+    let para = ParaFormat { para: ParaAttrs { grid_align: Some(GridAlign::AllLines), ..Default::default() }, ..Default::default() };
+    let (fid, sid) = d.add_text_frame(SpreadRef::Doc(1), Rect::new(36.0, 36.0, 336.0, 582.0), lid, LOREM, para).unwrap();
+    let sp = Arc::make_mut(&mut d.spreads[1]);
+    let at = sp.items.iter().position(|it| it.id == fid).unwrap();
+    let frame = sp.items.remove(at);
+    let right = sp.pages[1].x;
+    let mut g = Item::new(ItemId(d.alloc()), lid, Shape::Group, designcraft_geom::PathData::default());
+    g.content = Content::Group { items: vec![frame] };
+    g.xf = designcraft_geom::Affine::translate((right, 0.0));
+    Arc::make_mut(&mut d.spreads[1]).items.push(Arc::new(g));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let first = cs.frames[0].lines[0].baseline;
+    assert!((first - 61.0).abs() < 1e-6, "{first}");
+}
+
 #[test]
 fn cache_recomposes_when_the_grid_reference_or_a_top_margin_changes() {
     use designcraft_doc::GridRelative;
