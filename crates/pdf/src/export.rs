@@ -1008,7 +1008,10 @@ impl Exporter<'_> {
                 let g = &if it.media.is_some() { it.drawn_graphic(&self.doc.assets).unwrap_or_else(|| g.clone()) } else { g.clone() };
                 if let Some(p) = &path {
                     s.push_clip_path(p, &FillRule::NonZero);
-                    self.graphic(s, g, (!it.pdf_hidden_layers.is_empty()).then_some(it.pdf_hidden_layers.as_slice()));
+                    // An explicit all-on choice is `Some(&[])`, not the file's defaults: passing
+                    // `None` would embed the source's default-hidden layers and skip the rewrite
+                    // error that a stale choice must raise.
+                    self.graphic(s, g, it.has_pdf_layer_override().then_some(it.pdf_hidden_layers.as_slice()));
                     s.pop();
                 }
             }
