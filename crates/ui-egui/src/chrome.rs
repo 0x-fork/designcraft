@@ -912,6 +912,63 @@ fn control_paragraph(
         let _ = app.run("type.para", json!({"attrs": {k: v.max(0.0) as u64}}));
     }
     vsep(ui);
+    // Bulleted List over Numbered List, as InDesign's (a list with the default hanging indent, or,
+    // pressed, none). Pressed when every selected paragraph has it, as Type › Apply Bullets shows.
+    use designcraft_doc::ListType;
+    let pressed = [ListType::Bullets, ListType::Numbers].map(|k| app.session.selection_has_list(k));
+    let mut list = None;
+    rows(ui, |ui, row| {
+        let (icon, cmd, tip) = if row == 0 { ("bullets", "list.bullets", "Bulleted List") } else { ("numbering", "list.numbers", "Numbered List") };
+        let on = pressed.get(row).copied().unwrap_or(false);
+        if crate::widgets::icon_toggle(ui, icon, on, &tr(tip)).clicked() {
+            list = Some((cmd, !on));
+        }
+    });
+    if let Some((cmd, on)) = list {
+        let _ = app.run(cmd, json!({"on": on}));
+    }
+    vsep(ui);
+    // Shading over Border: on or off, the Paragraph Borders and Shading dialog on its tab, and the
+    // colour, as InDesign's.
+    let doc = app.session.active().map(|d| d.doc.clone());
+    let mut shade = None;
+    let mut dialog = None;
+    // Both checkboxes as wide as the wider label, so the icons and colours line up in columns.
+    let check_w = ["Shading", "Border"]
+        .iter()
+        .map(|l| ui.fonts_mut(|f| f.layout_no_wrap(tr(l), egui::FontId::proportional(11.5), Color32::WHITE).size().x))
+        .fold(0.0, f32::max)
+        + 28.0;
+    rows(ui, |ui, row| {
+        let (on_key, color_key, label, icon, tab) = if row == 0 {
+            ("shadingOn", "shadingColor", "Shading", "para-shading", "shading")
+        } else {
+            ("borderOn", "borderColor", "Border", "para-border", "border")
+        };
+        let mut on = para[on_key].as_bool().unwrap_or(false);
+        ui.allocate_ui_with_layout(vec2(check_w, crate::widgets::FIELD_H), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_min_width(check_w);
+            if crate::widgets::checkbox(ui, &mut on, &tr(label)).changed() {
+                shade = Some(json!({ on_key: on }));
+            }
+        });
+        if crate::widgets::icon_toggle(ui, icon, false, &tr("Paragraph Borders and Shading…")).clicked() {
+            dialog = Some(tab);
+        }
+        if let Some(doc) = &doc {
+            let cur = para[color_key].as_str().unwrap_or("[Black]").to_string();
+            if let Some(w) = swatch_field(ui, doc, &cur, 96.0, &tr(if row == 0 { "Paragraph Shading" } else { "Paragraph Border" })) {
+                shade = Some(json!({ color_key: w }));
+            }
+        }
+    });
+    if let Some(attrs) = shade {
+        let _ = app.run("type.para", json!({ "attrs": attrs }));
+    }
+    if let Some(tab) = dialog {
+        let _ = app.run("app.paragraphBordersDialog", json!({ "tab": tab }));
+    }
+    vsep(ui);
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 3.0;
         let ps = attrs.as_ref().and_then(|a| a["paragraphStyle"].as_str()).unwrap_or("").to_string();
@@ -930,6 +987,35 @@ fn control_paragraph(
             }
         });
     });
+}
+
+/// A swatch field of the Control panel (Shading and Border colours): the swatch's chip and name,
+/// and the document's swatches in its menu. Returns the swatch picked.
+fn swatch_field(ui: &mut egui::Ui, doc: &designcraft_doc::Document, cur: &str, width: f32, label: &str) -> Option<String> {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(width, crate::widgets::FIELD_H), Sense::click());
+    let resp = resp.on_hover_text(label);
+    resp.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label);
+        info.current_text_value = Some(cur.to_string());
+        info
+    });
+    let p = ui.painter();
+    p.rect_filled(r, 0.0, if resp.hovered() { t.hover } else { t.input });
+    p.rect_stroke(r, 0.0, Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
+    let seg = egui::Rect::from_min_max(egui::pos2(r.max.x - crate::widgets::SEG_W, r.min.y), r.max);
+    p.line_segment([seg.left_top(), seg.left_bottom()], Stroke::new(1.0, t.field_border));
+    icons::paint(p, egui::Rect::from_center_size(seg.center(), vec2(12.0, 12.0)), "chevron-down", t.icon);
+    let (c, g) = crate::widgets::swatch_colors(doc, cur, 1.0);
+    let chip = egui::Rect::from_min_size(egui::pos2(r.min.x + 4.0, r.center().y - 6.0), vec2(12.0, 12.0));
+    crate::widgets::paint_chip(p, chip, c, g);
+    let clip = egui::Rect::from_min_max(r.min, egui::pos2(seg.min.x - 2.0, r.max.y));
+    p.with_clip_rect(clip).text(egui::pos2(chip.max.x + 5.0, r.center().y), egui::Align2::LEFT_CENTER, cur, egui::FontId::proportional(11.5), t.text);
+    let mut picked = None;
+    egui::Popup::menu(&resp).show(|ui| {
+        picked = crate::panels::swatch_list(ui, doc, cur);
+    });
+    picked
 }
 
 /// The widest a document tab grows: a longer name is shortened so its close button and the
@@ -1761,6 +1847,79 @@ mod tests {
         assert_eq!(a["para"]["align"], "center");
         click(&mut h, "Character Formatting Controls");
         assert!(has(&h, "Small Caps"));
+    }
+
+    /// The course's chapter 21: the ¶ Control panel has InDesign's Bulleted and Numbered List
+    /// buttons (with the default hanging indent), and Shading and Border with their colours and
+    /// the Paragraph Borders and Shading dialog.
+    #[test]
+    fn the_paragraph_control_panel_has_lists_shading_and_border() {
+        let mut app = app();
+        app.run("file.new", serde_json::json!({})).unwrap();
+        let f = app
+            .run(
+                "frame.create",
+                serde_json::json!({"rect": [72, 72, 400, 300], "content": "text", "text": "4 eggs
+1 cup milk"}),
+            )
+            .unwrap();
+        app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 15})).unwrap();
+        app.session.set_tool("type");
+        let mut h = test_window::open(app, vec2(2400.0, 700.0));
+        let bar = test_window::panel_rect(&h, "control_bar");
+        let in_bar = move |r: egui::Rect| bar.y_range().contains(r.center().y);
+        let click = |h: &mut egui_kittest::Harness<'static, test_window::Window>, label: &str, nth: usize| {
+            let r = h
+                .query_all_by_label(label)
+                .map(|n| n.rect())
+                .filter(|r| in_bar(*r))
+                .nth(nth)
+                .unwrap_or_else(|| panic!("no {label:?} in the Control panel"));
+            h.hover_at(r.center());
+            h.drag_at(r.center());
+            h.drop_at(r.center());
+            h.run_steps(3);
+        };
+        click(&mut h, "Paragraph Formatting Controls", 0);
+        click(&mut h, "Bulleted List", 0);
+        let a = crate::panels::text_attrs(&mut h.state_mut().app).unwrap();
+        assert_eq!(
+            (a["para"]["listType"].as_str(), a["para"]["leftIndent"].as_f64(), a["para"]["firstLineIndent"].as_f64()),
+            (Some("bullets"), Some(18.0), Some(-18.0))
+        );
+        click(&mut h, "Numbered List", 0);
+        assert_eq!(crate::panels::text_attrs(&mut h.state_mut().app).unwrap()["para"]["listType"], "numbers");
+        click(&mut h, "Shading", 0);
+        click(&mut h, "Border", 0);
+        let a = crate::panels::text_attrs(&mut h.state_mut().app).unwrap();
+        assert_eq!((a["para"]["shadingOn"].as_bool(), a["para"]["borderOn"].as_bool()), (Some(true), Some(true)));
+        assert!(h.query_all_by_label("Paragraph Shading").any(|n| in_bar(n.rect())), "the shading colour");
+        // The icon beside Border opens the dialog on its Border tab.
+        click(&mut h, "Paragraph Borders and Shading…", 1);
+        let d = h.state().app.ui.dialog.clone().expect("the dialog");
+        assert_eq!((d.id.as_str(), d.s("section").as_str()), ("paragraphLocal", "border"));
+        // The Last Line Right Indent takes a negative value, as the First Line Left Indent does.
+        h.state_mut().app.ui.dialog = None;
+        h.state_mut().app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 15})).unwrap();
+        h.state_mut().app.session.set_tool("type");
+        h.run_steps(3);
+        // The field is labelled by its icon.
+        let at = h
+            .query_all_by_label("Last Line Right Indent")
+            .filter(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
+            .map(|n| n.rect())
+            .find(|r| in_bar(*r))
+            .expect("the last line indent")
+            .center();
+        h.hover_at(at);
+        h.drag_at(at);
+        h.drop_at(at);
+        h.run_steps(2);
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        h.event(egui::Event::Text("-0p6".into()));
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(crate::panels::text_attrs(&mut h.state_mut().app).unwrap()["para"]["lastLineIndent"].as_f64(), Some(-6.0));
     }
 
     #[test]
