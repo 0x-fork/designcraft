@@ -23,6 +23,13 @@ use designcraft_doc::story;
 pub const MAX_PATTERN: usize = 4096;
 /// Backtracking steps one search may take before it gives up.
 pub const BACKTRACK_LIMIT: usize = 200_000;
+/// Matches one GREP style may contribute to one paragraph.
+///
+/// [`BACKTRACK_LIMIT`] bounds a single search, not a scan: `find_all` pays it again for every
+/// match, so a pattern tuned just under the limit cost `BACKTRACK_LIMIT × matches` per paragraph
+/// on every relayout (#1598). A paragraph cannot usefully carry more styled runs than this, and
+/// a scan that reaches it stops with what it has.
+pub const MAX_MATCHES_PER_PARAGRAPH: usize = 4096;
 /// Compiled program size cap (bytes) for the underlying regex engine.
 const SIZE_LIMIT: usize = 4 << 20;
 
