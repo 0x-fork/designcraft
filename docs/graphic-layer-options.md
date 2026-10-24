@@ -27,6 +27,11 @@ field. Documents without layer settings retain their existing version 2/3
 requirements. Older graphics without `layerOptions` still deserialize with
 `None`, and their JSON representation is unchanged.
 
+Version 4 is a single reader capability shared with explicit all-on placed-PDF
+layer choices (#1671): a version 4 reader must understand both, so the two
+changes ship in the same release. One function in the format crate,
+`required_version`, chooses the version for every save.
+
 Synthetic regressions cover independent overrides on two placements sharing
 one asset, metadata round trips, native reader requirements, nested cells,
 nested layer hierarchy, preflight/PDF warnings after rasterization and flattening,
