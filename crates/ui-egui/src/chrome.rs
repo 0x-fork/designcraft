@@ -923,7 +923,8 @@ fn control_paragraph(
             if crate::widgets::checkbox(ui, &mut h, &tr("Hyphenate")).changed() {
                 let _ = app.run("type.para", json!({"attrs": {"hyphenate": h}}));
             }
-            let grid = para["gridAlign"].as_str() == Some("allLines");
+            // First Line Only is aligned too: the button shows it pressed, and a click turns alignment off.
+            let grid = matches!(para["gridAlign"].as_str(), Some("allLines" | "firstLineOnly"));
             if crate::widgets::icon_toggle(ui, "grid-baseline", grid, &tr("Align to Baseline Grid")).clicked() {
                 let _ = app.run("type.para", json!({"attrs": {"gridAlign": if grid { "none" } else { "allLines" }}}));
             }
@@ -1696,6 +1697,35 @@ mod tests {
         }
         assert_eq!(h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading, auto, "still automatic");
         assert_eq!(size_of(&h), Some(73.0), "the size is unchanged");
+    }
+
+    /// The Control panel's ¶ mode on a First Line Only paragraph: Align to Baseline Grid shows
+    /// pressed, and a click turns alignment off instead of making it All Lines.
+    #[test]
+    fn the_control_panel_grid_button_keeps_first_line_only() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+        let mut app = app();
+        app.run("file.new", serde_json::json!({})).unwrap();
+        let f = app.run("frame.create", serde_json::json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Bulbs"})).unwrap();
+        app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 5})).unwrap();
+        app.run("type.para", serde_json::json!({"attrs": {"gridAlign": "firstLineOnly"}})).unwrap();
+        app.session.set_tool("type");
+        let mut h = test_window::open(app, vec2(2400.0, 700.0));
+        let bar = test_window::panel_rect(&h, "control_bar");
+        let in_bar = move |r: egui::Rect| bar.y_range().contains(r.center().y);
+        let click = |h: &mut egui_kittest::Harness<'static, test_window::Window>, label: &str| {
+            let r = h.query_all_by_label(label).map(|n| n.rect()).find(|r| in_bar(*r)).unwrap_or_else(|| panic!("no {label:?} in the Control panel"));
+            h.hover_at(r.center());
+            h.drag_at(r.center());
+            h.drop_at(r.center());
+            h.run_steps(3);
+        };
+        click(&mut h, "Paragraph Formatting Controls");
+        let pressed = h.query_all_by_label("Align to Baseline Grid").find(|n| in_bar(n.rect())).map(|n| n.accesskit_node().toggled());
+        assert_eq!(pressed, Some(Some(egui::accesskit::Toggled::True)));
+        assert_eq!(crate::panels::text_attrs(&mut h.state_mut().app).unwrap()["para"]["gridAlign"], "firstLineOnly");
+        click(&mut h, "Align to Baseline Grid");
+        assert_eq!(crate::panels::text_attrs(&mut h.state_mut().app).unwrap()["para"]["gridAlign"], "none");
     }
 
     /// The course's chapter 16: the text Control panel has InDesign's two modes. A shows the
