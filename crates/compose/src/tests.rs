@@ -6611,7 +6611,7 @@ fn roman_word_break_breaks_inside_words_without_hyphens() {
 fn grid_doc(text: &str, para: ParaAttrs, edit: impl FnOnce(&mut Document, StoryId)) -> (Vec<Line>, (f64, f64)) {
     let (mut d, sid, fid) = doc_with(text, Rect::new(0.0, 0.0, 300.0, 400.0), para);
     if let Some(tf) = d.item_mut(fid).and_then(|i| i.text_frame_mut()) {
-        tf.options.baseline_grid = Some((12.0, 0.0));
+        tf.options.baseline_grid = Some(designcraft_doc::FrameBaselineGrid { start: 0.0, increment: 12.0 });
     }
     edit(&mut d, sid);
     // Vertical frames have no baseline grid.
