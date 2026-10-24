@@ -46,6 +46,27 @@ pub fn picker_languages() -> Vec<(&'static str, &'static str)> {
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 const TABLE: &[(&str, [&str; 5])] = &[
+    (
+        "Character Formatting Controls",
+        [
+            "Steuerelemente für Zeichenformatierung",
+            "Commandes de mise en forme des caractères",
+            "Controles de formato de carácter",
+            "文字形式コントロール",
+            "字符格式控制",
+        ],
+    ),
+    (
+        "Paragraph Formatting Controls",
+        [
+            "Steuerelemente für Absatzformatierung",
+            "Commandes de mise en forme des paragraphes",
+            "Controles de formato de párrafo",
+            "段落形式コントロール",
+            "段落格式控制",
+        ],
+    ),
+    ("Font Size", ["Schriftgrad", "Corps", "Tamaño de fuente", "フォントサイズ", "字体大小"]),
     ("Vertical Scale", ["Vertikal skalieren", "Échelle verticale", "Escala vertical", "垂直比率", "垂直缩放"]),
     ("Horizontal Scale", ["Horizontal skalieren", "Échelle horizontale", "Escala horizontal", "水平比率", "水平缩放"]),
     ("Baseline Shift", ["Grundlinienversatz", "Décalage vertical", "Desplazamiento vertical", "ベースラインシフト", "基线偏移"]),

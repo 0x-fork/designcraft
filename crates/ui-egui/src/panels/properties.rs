@@ -1365,8 +1365,11 @@ fn half_field(ui: &mut Ui, b: Rect, right: bool, y: f32, half: f32, icon: &str, 
     let x = if right { half + 10.0 } else { 0.0 };
     let ir = sub(b, x, y + 1.0, 19.0, 19.0);
     icons::paint(ui.painter(), ir, icon, t.icon);
-    ui.interact(ir, ui.id().with(("half_icon", icon)), Sense::hover()).on_hover_text(tip);
-    place(ui, sub(b, x + 24.0, y, half - 24.0, FIELD_H), |ui| field.width(half - 24.0).show(ui))
+    let resp = ui.interact(ir, ui.id().with(("half_icon", icon)), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tip));
+    let label = resp.id;
+    resp.on_hover_text(tip);
+    place(ui, sub(b, x + 24.0, y, half - 24.0, FIELD_H), |ui| field.width(half - 24.0).labelled_by(label).show(ui))
 }
 
 /// Properties › Character after •••: vertical and horizontal scale, baseline shift and skew,
@@ -1671,7 +1674,7 @@ pub(crate) const LANGUAGES: &[&str] = &[
 
 /// The Language list (Character panel, Properties ▸ Character): picking one sets the language of
 /// the selected text.
-fn language_menu(app: &mut DesignApp, ui: &mut Ui, cur: &str) {
+pub(crate) fn language_menu(app: &mut DesignApp, ui: &mut Ui, cur: &str) {
     for l in LANGUAGES {
         if ui.selectable_label(*l == cur, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, l))).clicked() {
             let _ = app.run("type.char", json!({"attrs": {"language": l}}));
@@ -1683,7 +1686,7 @@ fn language_menu(app: &mut DesignApp, ui: &mut Ui, cur: &str) {
 /// Kerning for the text selection, or at a caret for the pair at the caret: the label shows
 /// Metrics, Optical, 0 or the manual value; its menu sets one of the first three or a manual value
 /// in 1/1000 em (typed or stepped).
-fn kerning_control(app: &mut DesignApp, ui: &mut egui::Ui, id: &str, k: &Value, width: f32) {
+pub(crate) fn kerning_control(app: &mut DesignApp, ui: &mut egui::Ui, id: &str, k: &Value, width: f32) {
     let kind = k["kind"].as_str().unwrap_or("metrics");
     let manual = k["value"].as_f64().filter(|v| kind == "manual" && v.is_finite());
     let label = match (kind, manual) {

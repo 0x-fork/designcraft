@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::panels;
 use crate::theme::{Tokens, semibold};
-use crate::widgets::{caption, measure, number};
+use crate::widgets::{NumField, caption, measure};
 use crate::{DesignApp, icons};
 
 /// Height of the application bar (InDesign 2026), then a 7 pt lower band and a 1 pt border. The
@@ -564,20 +564,101 @@ fn control_page(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The Control panel's font sizes (and leadings), as InDesign lists them.
+const SIZES: &[f64] = &[6.0, 8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 18.0, 24.0, 30.0, 36.0, 48.0, 60.0, 72.0];
+/// The Control panel's tracking values (1/1000 em).
+const TRACKING: &[f64] = &[-100.0, -75.0, -50.0, -25.0, -10.0, -5.0, 0.0, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 200.0];
+
+/// Whether the text Control panel shows Paragraph Formatting Controls (¶) rather than Character
+/// Formatting Controls (A).
+const PARA_MODE: &str = "ctl_text_para_mode";
+
+/// An icon and a field after it, as the Control panel lays its fields out.
+fn icon_field(ui: &mut egui::Ui, icon: &str, tip: &str, field: NumField) -> Option<f64> {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+    icons::paint(ui.painter(), r, icon, t.icon);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tip));
+    let label = resp.id;
+    resp.on_hover_text(tip);
+    field.spinner().labelled_by(label).show(ui)
+}
+
+/// A column of two rows (the Control panel's two-row groups).
+fn rows(ui: &mut egui::Ui, mut row: impl FnMut(&mut egui::Ui, usize)) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 3.0;
+        ui.horizontal(|ui| row(ui, 0));
+        ui.horizontal(|ui| row(ui, 1));
+    });
+}
+
+/// A small toggle button showing `text` (the case and position buttons).
+fn text_toggle(ui: &mut egui::Ui, text: &str, strike: bool, on: bool, tip: &str) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 20.0), Sense::click());
+    if on {
+        ui.painter().rect_filled(r, 2.0, t.tool_active);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, 2.0, t.hover);
+    }
+    let col = if on { t.text_strong } else { t.icon };
+    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(13.0), col);
+    if strike {
+        ui.painter().line_segment([r.center() + vec2(-6.0, 0.5), r.center() + vec2(6.0, 0.5)], Stroke::new(1.2, col));
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, tip));
+    resp.on_hover_text(tip).clicked()
+}
+
+/// The text Control panel, as InDesign's: A shows the Character Formatting Controls (font, size
+/// and leading, the case and position buttons, kerning and tracking, the scales, baseline shift
+/// and skew, the character style and language); ¶ the Paragraph Formatting Controls (alignment,
+/// the indents, space before and after, the drop cap, the paragraph style, Hyphenate and Align to
+/// Baseline Grid).
 fn control_text(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    let lang = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
     let attrs = panels::text_attrs(app);
     let chars = attrs.as_ref().map(|a| a["chars"].clone()).unwrap_or_default();
     let para = attrs.as_ref().map(|a| a["para"].clone()).unwrap_or_default();
+    let mode_id = egui::Id::new(PARA_MODE);
+    let para_mode = ui.data(|d| d.get_temp::<bool>(mode_id)).unwrap_or(false);
     ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("A").font(semibold(15.0)).color(t.text_strong));
-        });
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("¶").font(semibold(15.0)).color(t.text_dim));
-        });
+        ui.spacing_mut().item_spacing.y = 3.0;
+        for (para, text, tip) in [(false, "A", "Character Formatting Controls"), (true, "¶", "Paragraph Formatting Controls")] {
+            let on = para_mode == para;
+            let (r, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
+            if on {
+                ui.painter().rect_filled(r, 2.0, t.tool_active);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, 2.0, t.hover);
+            }
+            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, text, semibold(15.0), if on { t.text_strong } else { t.text_dim });
+            let tip = tr(tip);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, &tip));
+            if resp.on_hover_text(&tip).clicked() {
+                ui.data_mut(|d| d.insert_temp(mode_id, para));
+            }
+        }
     });
     vsep(ui);
+    if para_mode {
+        control_paragraph(app, ui, &attrs, &para, &tr);
+    } else {
+        control_character(app, ui, &attrs, &chars, &para, &tr);
+    }
+}
+
+fn control_character(
+    app: &mut DesignApp,
+    ui: &mut egui::Ui,
+    attrs: &Option<serde_json::Value>,
+    chars: &serde_json::Value,
+    para: &serde_json::Value,
+    tr: &dyn Fn(&str) -> String,
+) {
     ui.vertical(|ui| {
         let fam = chars["fontFamily"].as_str().unwrap_or("").to_string();
         let sty = chars["fontStyle"].as_str().unwrap_or("").to_string();
@@ -585,81 +666,268 @@ fn control_text(app: &mut DesignApp, ui: &mut egui::Ui) {
         panels::font_style_picker(app, ui, &fam, &sty, 170.0);
     });
     vsep(ui);
-    egui::Grid::new("ctl_char").num_columns(4).spacing(vec2(4.0, 3.0)).show(ui, |ui| {
-        caption(ui, "𝐓");
-        if let Some(v) = number(ui, "csize", chars["size"].as_f64(), " pt", 54.0, 2) {
-            let _ = app.run("type.char", json!({"attrs": {"size": v}}));
+    // Size and leading: a spinner on the left and a list of common values on the right;
+    // automatic leading in parentheses.
+    rows(ui, |ui, row| {
+        if row == 0 {
+            if let Some(v) = icon_field(
+                ui,
+                "font-size",
+                &tr("Font Size"),
+                NumField::number("csize", chars["size"].as_f64(), " pt", 2).width(84.0).presets(SIZES).range(0.1, 1296.0),
+            ) {
+                let _ = app.run("type.char", json!({"attrs": {"size": v}}));
+            }
+        } else {
+            let auto = chars["leading"]["kind"].as_str() != Some("points");
+            let lead = if auto {
+                chars["size"].as_f64().map(|s| s * para["autoLeading"].as_f64().unwrap_or(1.2))
+            } else {
+                chars["leading"]["value"].as_f64()
+            };
+            let lead = lead.map(|v| (v * 100.0).round() / 100.0);
+            let key = if auto { "cleadauto" } else { "clead" };
+            if let Some(v) = icon_field(
+                ui,
+                "leading",
+                &tr("Leading"),
+                NumField::number(key, lead, " pt", 2).width(84.0).presets(SIZES).range(0.0, 5000.0).parens(auto),
+            ) {
+                let _ = app.run("type.char", json!({"attrs": {"leading": {"kind": "points", "value": v}}}));
+            }
         }
-        caption(ui, crate::i18n::tr(&app.ui.language, "VA"));
-        if let Some(v) = number(ui, "ctrack", chars["tracking"].as_f64(), "", 48.0, 0) {
-            let _ = app.run("type.char", json!({"attrs": {"tracking": v}}));
+    });
+    vsep(ui);
+    // All Caps, Superscript, Underline / Small Caps, Subscript, Strikethrough.
+    let caps = chars["capitalization"].as_str().unwrap_or("normal").to_string();
+    let pos = chars["position"].as_str().unwrap_or("normal").to_string();
+    let (ul, st) = (chars["underline"].as_bool().unwrap_or(false), chars["strikethrough"].as_bool().unwrap_or(false));
+    let mut set = None;
+    rows(ui, |ui, row| {
+        if row == 0 {
+            if text_toggle(ui, "TT", false, caps == "allCaps", &tr("All Caps")) {
+                set = Some(json!({"capitalization": if caps == "allCaps" { "normal" } else { "allCaps" }}));
+            }
+            if text_toggle(ui, "T¹", false, pos == "superscript", &tr("Superscript")) {
+                set = Some(json!({"position": if pos == "superscript" { "normal" } else { "superscript" }}));
+            }
+            if text_toggle(ui, "T̲", false, ul, &tr("Underline")) {
+                set = Some(json!({"underline": !ul}));
+            }
+        } else {
+            if text_toggle(ui, "Tᴛ", false, caps == "smallCaps", &tr("Small Caps")) {
+                set = Some(json!({"capitalization": if caps == "smallCaps" { "normal" } else { "smallCaps" }}));
+            }
+            if text_toggle(ui, "T₁", false, pos == "subscript", &tr("Subscript")) {
+                set = Some(json!({"position": if pos == "subscript" { "normal" } else { "subscript" }}));
+            }
+            if text_toggle(ui, "T", true, st, &tr("Strikethrough")) {
+                set = Some(json!({"strikethrough": !st}));
+            }
         }
-        ui.end_row();
-        caption(ui, "Ā");
-        let lead = match chars["leading"]["kind"].as_str() {
-            Some("points") => chars["leading"]["value"].as_f64(),
-            _ => chars["size"].as_f64().map(|s| s * para["autoLeading"].as_f64().unwrap_or(1.2)),
-        };
-        if let Some(v) = number(ui, "clead", lead, " pt", 54.0, 2) {
-            let _ = app.run("type.char", json!({"attrs": {"leading": {"kind": "points", "value": v}}}));
+    });
+    if let Some(a) = set {
+        let _ = app.run("type.char", json!({"attrs": a}));
+    }
+    vsep(ui);
+    rows(ui, |ui, row| {
+        if row == 0 {
+            let t = Tokens::get(ui.ctx());
+            let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+            icons::paint(ui.painter(), r, "kerning", t.icon);
+            resp.on_hover_text(tr("Kerning"));
+            crate::panels::properties::kerning_control(app, ui, "ckern", &chars["kerning"], 92.0);
+        } else {
+            if let Some(v) = icon_field(
+                ui,
+                "tracking",
+                &tr("Tracking"),
+                NumField::number("ctrack", chars["tracking"].as_f64(), "", 0).width(92.0).presets(TRACKING).step(5.0).range(-1000.0, 10000.0),
+            ) {
+                let _ = app.run("type.char", json!({"attrs": {"tracking": v}}));
+            }
         }
-        caption(ui, crate::i18n::tr(&app.ui.language, "IT"));
-        if let Some(v) = number(ui, "chs", chars["hScale"].as_f64().map(|v| v * 100.0), "%", 48.0, 0) {
-            let _ = app.run("type.char", json!({"attrs": {"hScale": v / 100.0}}));
+    });
+    vsep(ui);
+    const SCALES: &[f64] = &[25.0, 50.0, 75.0, 80.0, 90.0, 100.0, 110.0, 120.0, 125.0, 150.0, 200.0];
+    let pct = |v: &serde_json::Value| v.as_f64().map(|s| (s * 1000.0).round() / 10.0);
+    rows(ui, |ui, row| {
+        if row == 0 {
+            if let Some(v) = icon_field(
+                ui,
+                "vscale",
+                &tr("Vertical Scale"),
+                NumField::number("cvs", pct(&chars["vScale"]), "%", 1).width(84.0).presets(SCALES).range(1.0, 1000.0),
+            ) {
+                let _ = app.run("type.char", json!({"attrs": {"vScale": v / 100.0}}));
+            }
+        } else {
+            if let Some(v) = icon_field(
+                ui,
+                "hscale",
+                &tr("Horizontal Scale"),
+                NumField::number("chs", pct(&chars["hScale"]), "%", 1).width(84.0).presets(SCALES).range(1.0, 1000.0),
+            ) {
+                let _ = app.run("type.char", json!({"attrs": {"hScale": v / 100.0}}));
+            }
         }
-        ui.end_row();
+    });
+    vsep(ui);
+    rows(ui, |ui, row| {
+        if row == 0 {
+            if let Some(v) = icon_field(
+                ui,
+                "baseline-shift",
+                &tr("Baseline Shift"),
+                NumField::number("cbs", chars["baselineShift"].as_f64(), " pt", 2).width(76.0).range(-5000.0, 5000.0),
+            ) {
+                let _ = app.run("type.char", json!({"attrs": {"baselineShift": v}}));
+            }
+        } else {
+            if let Some(v) = icon_field(
+                ui,
+                "skew",
+                &tr("Skew (False Italic)"),
+                NumField::number("csk", chars["skew"].as_f64(), "°", 1).width(76.0).range(-85.0, 85.0),
+            ) {
+                let _ = app.run("type.char", json!({"attrs": {"skew": v}}));
+            }
+        }
     });
     vsep(ui);
     ui.vertical(|ui| {
-        let cur: Align = serde_json::from_value(para["align"].clone()).unwrap_or_default();
-        ui.horizontal(|ui| {
-            for (a, icon) in [(Align::Left, "align-left"), (Align::Center, "align-center"), (Align::Right, "align-right")] {
-                if icons::button(ui, icon, 20.0, cur == a, a.label()).clicked() {
-                    let _ = app.run("type.para", json!({"attrs": {"align": a}}));
+        ui.spacing_mut().item_spacing.y = 3.0;
+        // The character style, then the language.
+        let cs = attrs.as_ref().and_then(|a| a["characterStyle"].as_str()).unwrap_or(designcraft_doc::NO_CHAR_STYLE).to_string();
+        let names: Vec<String> = app.session.active().map(|d| d.doc.styles.character.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
+        let mut pick = None;
+        egui::ComboBox::from_id_salt("ctl_char_style")
+            .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, &cs)))
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                for n in &names {
+                    if ui.selectable_label(*n == cs, crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, n))).clicked() {
+                        pick = Some(n.clone());
+                    }
                 }
-            }
-        });
-        ui.horizontal(|ui| {
-            for (a, icon) in [(Align::LeftJustified, "align-justify"), (Align::FullyJustified, "align-justify-all")] {
-                if icons::button(ui, icon, 20.0, cur == a, a.label()).clicked() {
-                    let _ = app.run("type.para", json!({"attrs": {"align": a}}));
-                }
-            }
+            });
+        if let Some(n) = pick {
+            let _ = app.run("style.character.apply", json!({"name": n}));
+        }
+        let lang = chars["language"].as_str().unwrap_or("English: USA").to_string();
+        egui::ComboBox::from_id_salt("ctl_language").selected_text(crate::rtl::widget(ui, tr(&lang))).width(150.0).show_ui(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| crate::panels::properties::language_menu(app, ui, &lang));
         });
     });
+}
+
+fn control_paragraph(
+    app: &mut DesignApp,
+    ui: &mut egui::Ui,
+    attrs: &Option<serde_json::Value>,
+    para: &serde_json::Value,
+    tr: &dyn Fn(&str) -> String,
+) {
+    let cur: Align = serde_json::from_value(para["align"].clone()).unwrap_or_default();
+    let mut align = None;
+    rows(ui, |ui, row| {
+        if row == 0 {
+            for (a, icon) in [
+                (Align::Left, "palign-left"),
+                (Align::Center, "palign-center"),
+                (Align::Right, "palign-right"),
+                (Align::TowardsSpine, "palign-spine-towards"),
+            ] {
+                if icons::button(ui, icon, 20.0, cur == a, &tr(a.label())).clicked() {
+                    align = Some(a);
+                }
+            }
+        } else {
+            for (a, icon) in [
+                (Align::LeftJustified, "palign-justify-left"),
+                (Align::CenterJustified, "palign-justify-center"),
+                (Align::RightJustified, "palign-justify-right"),
+                (Align::FullyJustified, "palign-justify-all"),
+                (Align::AwayFromSpine, "palign-spine-away"),
+            ] {
+                if icons::button(ui, icon, 20.0, cur == a, &tr(a.label())).clicked() {
+                    align = Some(a);
+                }
+            }
+        }
+    });
+    if let Some(a) = align {
+        let _ = app.run("type.para", json!({"attrs": {"align": a}}));
+    }
     vsep(ui);
     let units = app.session.active().map(|d| d.doc.settings.horizontal_units).unwrap_or(Unit::Picas);
-    egui::Grid::new("ctl_para").num_columns(4).spacing(vec2(4.0, 3.0)).show(ui, |ui| {
-        caption(ui, "→|");
-        if let Some(v) = measure(ui, "cli", para["leftIndent"].as_f64(), units, 54.0) {
-            let _ = app.run("type.para", json!({"attrs": {"leftIndent": v}}));
+    let mut set = None;
+    for ((ia, ta, ka), (ib, tb, kb)) in [
+        (("indent-left", "Left Indent", "leftIndent"), ("indent-first", "First Line Left Indent", "firstLineIndent")),
+        (("indent-right", "Right Indent", "rightIndent"), ("indent-last", "Last Line Right Indent", "lastLineIndent")),
+        (("space-before", "Space Before", "spaceBefore"), ("space-after", "Space After", "spaceAfter")),
+    ] {
+        rows(ui, |ui, row| {
+            if row == 0 {
+                if let Some(v) = icon_field(ui, ia, &tr(ta), NumField::measure(ka, para[ka].as_f64(), units).width(84.0).range(0.0, 10_000.0)) {
+                    set = Some((ka, v));
+                }
+            } else {
+                let min = crate::panels::properties::para_field_min(kb);
+                if let Some(v) = icon_field(ui, ib, &tr(tb), NumField::measure(kb, para[kb].as_f64(), units).width(84.0).range(min, 10_000.0)) {
+                    set = Some((kb, v));
+                }
+            }
+        });
+        vsep(ui);
+    }
+    if let Some((k, v)) = set {
+        let _ = app.run("type.para", json!({"attrs": {k: v}}));
+    }
+    let mut drop = None;
+    rows(ui, |ui, row| {
+        if row == 0 {
+            let max = designcraft_compose::MAX_DROP_CAP_LINES as f64;
+            if let Some(v) = icon_field(
+                ui,
+                "drop-lines",
+                &tr("Drop Cap Number of Lines"),
+                NumField::number("cdl", para["dropCapLines"].as_f64(), "", 0).width(64.0).range(0.0, max),
+            ) {
+                drop = Some(("dropCapLines", v));
+            }
+        } else {
+            let max = designcraft_compose::MAX_DROP_CAP_CHARS as f64;
+            if let Some(v) = icon_field(
+                ui,
+                "drop-chars",
+                &tr("Drop Cap One or More Characters"),
+                NumField::number("cdc", para["dropCapChars"].as_f64(), "", 0).width(64.0).range(0.0, max),
+            ) {
+                drop = Some(("dropCapChars", v));
+            }
         }
-        caption(ui, "↑¶");
-        if let Some(v) = measure(ui, "csb", para["spaceBefore"].as_f64(), units, 54.0) {
-            let _ = app.run("type.para", json!({"attrs": {"spaceBefore": v}}));
-        }
-        ui.end_row();
-        caption(ui, "→¶");
-        if let Some(v) = measure(ui, "cfi", para["firstLineIndent"].as_f64(), units, 54.0) {
-            let _ = app.run("type.para", json!({"attrs": {"firstLineIndent": v}}));
-        }
-        caption(ui, "↓¶");
-        if let Some(v) = measure(ui, "csa", para["spaceAfter"].as_f64(), units, 54.0) {
-            let _ = app.run("type.para", json!({"attrs": {"spaceAfter": v}}));
-        }
-        ui.end_row();
     });
+    if let Some((k, v)) = drop {
+        let _ = app.run("type.para", json!({"attrs": {k: v.max(0.0) as u64}}));
+    }
     vsep(ui);
     ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 3.0;
         let ps = attrs.as_ref().and_then(|a| a["paragraphStyle"].as_str()).unwrap_or("").to_string();
         let ov = attrs.as_ref().and_then(|a| a["paraOverrides"].as_u64()).unwrap_or(0)
             + attrs.as_ref().and_then(|a| a["charOverrides"].as_u64()).unwrap_or(0);
         panels::para_style_picker(app, ui, &ps, ov > 0, 170.0);
-        let hy = para["hyphenate"].as_bool().unwrap_or(true);
-        let mut h = hy;
-        if ui.checkbox(&mut h, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Hyphenate"))).changed() {
-            let _ = app.run("type.para", json!({"attrs": {"hyphenate": h}}));
-        }
+        ui.horizontal(|ui| {
+            let mut h = para["hyphenate"].as_bool().unwrap_or(true);
+            if crate::widgets::checkbox(ui, &mut h, &tr("Hyphenate")).changed() {
+                let _ = app.run("type.para", json!({"attrs": {"hyphenate": h}}));
+            }
+            let grid = para["gridAlign"].as_str() == Some("allLines");
+            if crate::widgets::icon_toggle(ui, "grid-baseline", grid, &tr("Align to Baseline Grid")).clicked() {
+                let _ = app.run("type.para", json!({"attrs": {"gridAlign": if grid { "none" } else { "allLines" }}}));
+            }
+        });
     });
 }
 
@@ -1114,6 +1382,28 @@ fn community_card(app: &mut DesignApp, ui: &mut egui::Ui) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A Control panel field is labelled by its icon, so assistive technology reads "Tracking"
+    /// (or "Font Size", …) with the value.
+    #[test]
+    fn icon_fields_are_labelled_by_their_icon() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "en");
+        ctx.enable_accesskit();
+        let mut update = None;
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                icon_field(ui, "tracking", "Tracking", NumField::number("tracking_test", Some(0.0), "", 0));
+            });
+            out.textures_delta.clear();
+            update = out.platform_output.accesskit_update;
+        }
+        let update = update.expect("an AccessKit tree");
+        let named = |n: &egui::accesskit::Node| n.label() == Some("Tracking") || n.value() == Some("Tracking");
+        let icon = update.nodes.iter().find(|(_, n)| named(n)).map(|(id, _)| *id).expect("the icon's node");
+        assert!(update.nodes.iter().any(|(_, n)| n.role() == Role::TextInput && n.labelled_by().contains(&icon)), "the editor names its icon");
+    }
     use egui::{pos2, vec2};
     use egui_kittest::kittest::{NodeT, Queryable};
 
@@ -1316,6 +1606,131 @@ mod tests {
         }
         let (first, short) = (rect(&h, &latin), rect(&h, "Short"));
         assert!(short.min.x - first.min.x <= 2.0 * super::DOC_TAB_MAX_W, "the last tab {short:?} starts too far right");
+    }
+
+    /// Zero2Graphic's page layout video (0:48): with the Type tool, the Control panel's font size
+    /// has a list of sizes; the instructor picks 72 pt from it. Leading has the same list.
+    #[test]
+    fn the_type_control_panel_lists_font_sizes_and_leadings() {
+        let mut app = app();
+        app.run("file.new", serde_json::json!({})).unwrap();
+        let f = app.run("frame.create", serde_json::json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Headline"})).unwrap();
+        app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 8})).unwrap();
+        app.session.set_tool("type");
+        let mut h = test_window::open(app, vec2(1800.0, 700.0));
+        let bar = test_window::panel_rect(&h, "control_bar");
+        let in_bar = |r: &egui::Rect| bar.y_range().contains(r.center().y);
+        let field = |h: &egui_kittest::Harness<'static, test_window::Window>, value: &str| {
+            h.query_all_by_value(value).map(|n| n.rect()).find(in_bar).unwrap_or_else(|| panic!("no {value:?} field in the Control panel"))
+        };
+        let press = |h: &mut egui_kittest::Harness<'static, test_window::Window>, p: egui::Pos2| {
+            h.hover_at(p);
+            h.drag_at(p);
+            h.drop_at(p);
+        };
+        let size_of = |h: &egui_kittest::Harness<'static, test_window::Window>| {
+            let st = h.state().app.session.doc().unwrap();
+            let sid = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+            st.doc.story(sid).unwrap().format_after(0).over.size
+        };
+        // The ⌄ segment right of the size field opens the list; choosing 72 pt sets the size.
+        let size = field(&h, "12 pt");
+        let chevron = pos2(size.max.x + 1.0 + crate::widgets::SEG_W / 2.0, size.center().y);
+        press(&mut h, chevron);
+        h.run_steps(3);
+        h.get_by_label("72 pt").click();
+        h.run_steps(3);
+        assert_eq!(size_of(&h), Some(72.0));
+        // Auto leading shows in parentheses, with the same list beside it.
+        let lead = field(&h, "(86.4 pt)");
+        press(&mut h, pos2(lead.max.x + 1.0 + crate::widgets::SEG_W / 2.0, lead.center().y));
+        h.run_steps(3);
+        h.get_by_label("60 pt").click();
+        h.run_steps(3);
+        let st = h.state().app.session.doc().unwrap();
+        let sid = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+        assert_eq!(st.doc.story(sid).unwrap().format_after(0).over.leading, Some(designcraft_doc::Leading::Points(60.0)));
+        // The spinner left of the size steps it by a point.
+        let size = field(&h, "72 pt");
+        press(&mut h, pos2(size.min.x - 5.0 - crate::widgets::SEG_W / 2.0, size.min.y + 3.0));
+        h.run_steps(3);
+        assert_eq!(size_of(&h), Some(73.0));
+        // Typing the automatic value itself over "(87.6 pt)" fixes the leading at it.
+        h.state_mut().app.run("type.char", serde_json::json!({"attrs": {"leading": {"kind": "auto"}}})).unwrap();
+        h.run_steps(3);
+        let lead = field(&h, "(87.6 pt)");
+        press(&mut h, lead.center());
+        h.run_steps(2);
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        h.event(egui::Event::Text("87.6".into()));
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        let st = h.state().app.session.doc().unwrap();
+        let sid = designcraft_doc::StoryId(f["story"].as_u64().unwrap());
+        assert_eq!(st.doc.story(sid).unwrap().format_after(0).over.leading, Some(designcraft_doc::Leading::Points(87.6)));
+        // Escape cancels: the same typing, then Escape, leaves the leading automatic.
+        h.state_mut().app.run("type.char", serde_json::json!({"attrs": {"leading": {"kind": "auto"}}})).unwrap();
+        h.run_steps(3);
+        let auto = h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading;
+        let lead = field(&h, "(87.6 pt)");
+        press(&mut h, lead.center());
+        h.run_steps(2);
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        h.event(egui::Event::Text("87.6".into()));
+        h.key_press(egui::Key::Escape);
+        h.run_steps(3);
+        assert_eq!(h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading, auto, "Escape leaves it automatic");
+        // Escape also reverts a different number, in the leading field and in a plain one. (It
+        // leaves the text too, so each try selects it again.)
+        for (shown, typed) in [("(87.6 pt)", "20"), ("73 pt", "50")] {
+            h.state_mut().app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 8})).unwrap();
+            h.state_mut().app.session.set_tool("type");
+            h.run_steps(3);
+            let r = field(&h, shown);
+            press(&mut h, r.center());
+            h.run_steps(2);
+            h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+            h.event(egui::Event::Text(typed.into()));
+            h.key_press(egui::Key::Escape);
+            h.run_steps(3);
+        }
+        assert_eq!(h.state().app.session.doc().unwrap().doc.story(sid).unwrap().format_after(0).over.leading, auto, "still automatic");
+        assert_eq!(size_of(&h), Some(73.0), "the size is unchanged");
+    }
+
+    /// The course's chapter 16: the text Control panel has InDesign's two modes. A shows the
+    /// Character Formatting Controls (the case buttons, kerning and tracking, the scales…), ¶ the
+    /// Paragraph Formatting Controls (alignment, indents, spacing, the drop cap…).
+    #[test]
+    fn the_type_control_panel_has_character_and_paragraph_modes() {
+        let mut app = app();
+        app.run("file.new", serde_json::json!({})).unwrap();
+        let f = app.run("frame.create", serde_json::json!({"rect": [72, 72, 400, 300], "content": "text", "text": "Bulbs"})).unwrap();
+        app.run("text.select", serde_json::json!({"story": f["story"], "anchor": 0, "focus": 5})).unwrap();
+        app.session.set_tool("type");
+        let mut h = test_window::open(app, vec2(2400.0, 700.0));
+        let bar = test_window::panel_rect(&h, "control_bar");
+        let in_bar = move |r: egui::Rect| bar.y_range().contains(r.center().y);
+        let click = |h: &mut egui_kittest::Harness<'static, test_window::Window>, label: &str| {
+            let r = h.query_all_by_label(label).map(|n| n.rect()).find(|r| in_bar(*r)).unwrap_or_else(|| panic!("no {label:?} in the Control panel"));
+            h.hover_at(r.center());
+            h.drag_at(r.center());
+            h.drop_at(r.center());
+            h.run_steps(3);
+        };
+        let has = |h: &egui_kittest::Harness<'static, test_window::Window>, label: &str| h.query_all_by_label(label).any(|n| in_bar(n.rect()));
+        assert!(has(&h, "Small Caps") && has(&h, "Vertical Scale") && !has(&h, "Drop Cap Number of Lines"));
+        click(&mut h, "Small Caps");
+        click(&mut h, "Paragraph Formatting Controls");
+        assert!(has(&h, "Drop Cap Number of Lines") && has(&h, "Space Before") && !has(&h, "Small Caps"));
+        click(&mut h, "Align to Baseline Grid");
+        click(&mut h, "Align center");
+        let a = crate::panels::text_attrs(&mut h.state_mut().app).unwrap();
+        assert_eq!(a["chars"]["capitalization"], "smallCaps");
+        assert_eq!(a["para"]["gridAlign"], "allLines");
+        assert_eq!(a["para"]["align"], "center");
+        click(&mut h, "Character Formatting Controls");
+        assert!(has(&h, "Small Caps"));
     }
 
     #[test]
