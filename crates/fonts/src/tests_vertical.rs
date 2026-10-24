@@ -3,6 +3,7 @@
 //! The synthetic font (Source Sans 3 with `vhea`/`vmtx`, and `VORG` where asked) runs everywhere;
 //! the checks against Shippori Mincho's own tables run when built with craft-fonts.
 
+use skrifa::MetadataProvider;
 use skrifa::raw::TableProvider;
 
 use super::{Arc, FontBytes, FontDb, FontFace, FontSource, GlyphId, LocationRef, Size, make_face};
