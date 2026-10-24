@@ -352,6 +352,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "<",
             "-",
             "cmd:layout.documentSetup",
+            "cmd:file.info",
         ],
     ),
     (
@@ -2516,6 +2517,10 @@ fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
     }
     if params.is_null() && id == "layout.documentSetup" {
         crate::dialogs::open_document_setup(app);
+        return;
+    }
+    if params.is_null() && id == "file.info" {
+        crate::dialogs::open_file_info(app);
         return;
     }
     if params.is_null() && id == "toc.generate" {
