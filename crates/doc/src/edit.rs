@@ -645,8 +645,8 @@ impl Document {
     /// Every item on document and parent spreads, in groups, and among the objects anchored in a
     /// story: a placement a page inherits from its parent, and one anchored in text, both count.
     /// Objects anchored inside a table cell's text or a note's text are not reached, as this walk
-    /// does not follow the stories nested there. Walks that must cover every placement a page can
-    /// show use this, not [`Document::all_items`].
+    /// does not follow the stories nested there. Walks that must reach parent-page and anchored
+    /// placements too use this, not [`Document::all_items`].
     pub fn placed_items(&self) -> Vec<&Item> {
         let mut v = Vec::new();
         for sp in self.spreads.iter().chain(&self.parents) {
