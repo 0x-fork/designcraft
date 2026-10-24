@@ -686,6 +686,10 @@ fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraf
         })
         .collect();
     if choices.is_empty() {
+        // Fail closed: a choice this walk cannot reach must not become the file's defaults.
+        if d.has_pdf_layer_overrides() {
+            return Err(EngineError::Other("a placed PDF's layer choice sits where this raster export cannot apply it".into()));
+        }
         return Ok((None, 0));
     }
     let mut out = d.clone();
@@ -715,7 +719,7 @@ fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraf
         images.insert(id, aid);
         n += 1;
     }
-    out.update_items(
+    out.update_placed_items(
         |it| images.contains_key(&it.id),
         |it| {
             if let designcraft_doc::Content::Graphic(gg) = &mut it.content

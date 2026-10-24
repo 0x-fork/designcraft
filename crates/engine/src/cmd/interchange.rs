@@ -56,6 +56,11 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
         })
         .collect();
     if choices.is_empty() {
+        // A choice this walk cannot reach would silently become the file's defaults (a newer
+        // nesting construct, say), so the copy is refused instead.
+        if doc.has_pdf_layer_overrides() {
+            return Err(EngineError::Other("a placed PDF's layer choice sits where this IDML export cannot apply it".into()));
+        }
         return Ok(None);
     }
     if !embed {
@@ -76,7 +81,7 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
     }
     // Anchored objects live in stories, and parent pages outside the document-spread walk, so
     // the choice is cleared where the placement actually is.
-    out.update_items(
+    out.update_placed_items(
         |it| variants.contains_key(&it.id),
         |it| {
             if let designcraft_doc::Content::Graphic(g) = &mut it.content

@@ -642,9 +642,9 @@ impl Document {
         found
     }
 
-    /// Every item on document and parent spreads, in groups, and among the objects embedded in
-    /// stories (anchored objects, notes and table cells): walks that must cover every placement
-    /// use this, not [`Document::all_items`].
+    /// Every item on document and parent spreads, in groups, and among the objects anchored in
+    /// stories, including the stories in table cells and in notes: walks that must cover every
+    /// placement use this, not [`Document::all_items`].
     pub fn placed_items(&self) -> Vec<&Item> {
         let mut v = Vec::new();
         for sp in self.spreads.iter().chain(&self.parents) {
@@ -653,11 +653,27 @@ impl Document {
             }
         }
         for st in self.stories.values() {
-            for o in &st.objects {
-                o.item.walk(&mut |i| v.push(i));
-            }
+            placed_story_items(st, 0, &mut v);
         }
         v
+    }
+
+    /// Applies `f` to every placed item `hit` selects, wherever it sits: on document or parent
+    /// spreads, in groups, and anchored in a story (also inside table cells and notes).
+    /// Returns how many items `f` saw.
+    pub fn update_placed_items(&mut self, hit: impl Fn(&Item) -> bool, mut f: impl FnMut(&mut Item)) -> usize {
+        let mut n = 0;
+        for sp in self.spreads.iter_mut().chain(self.parents.iter_mut()) {
+            for it in Arc::make_mut(sp).items.iter_mut() {
+                if has_hit(it, &hit) {
+                    update_placed_item(Arc::make_mut(it), 0, &hit, &mut f, &mut n);
+                }
+            }
+        }
+        for st in self.stories.values_mut() {
+            update_story_items(Arc::make_mut(st), 0, &hit, &mut f, &mut n);
+        }
+        n
     }
 
     /// Every item id (pre-order) on document spreads.
@@ -751,6 +767,70 @@ impl Document {
         st.fix_marks();
         st.rev = st.rev.wrapping_add(1);
         Ok(())
+    }
+}
+
+/// How deep nested stories (a cell's text, a footnote's text, an endnote's text) are followed
+/// when every placement is visited. A document nested deeper is left alone.
+const MAX_PLACEMENT_DEPTH: usize = 64;
+
+/// The items anchored in `st`, and in the stories nested in its cells and notes, pre-order.
+fn placed_story_items<'a>(st: &'a Story, depth: usize, v: &mut Vec<&'a Item>) {
+    if depth > MAX_PLACEMENT_DEPTH {
+        return;
+    }
+    for o in &st.objects {
+        o.item.walk(&mut |i| v.push(i));
+    }
+    for c in st.tables.values().flat_map(|t| &t.cells) {
+        placed_story_items(&c.text, depth + 1, v);
+    }
+    for n in st.notes.iter().chain(&st.endnotes) {
+        placed_story_items(&n.text, depth + 1, v);
+    }
+}
+
+/// Whether `it` or anything in it is selected by `hit`.
+fn has_hit(it: &Item, hit: &impl Fn(&Item) -> bool) -> bool {
+    let mut found = false;
+    it.walk(&mut |i| found |= hit(i));
+    found
+}
+
+/// [`Document::update_placed_items`] for one item: only the branches holding a hit are copied.
+fn update_placed_item(it: &mut Item, depth: usize, hit: &impl Fn(&Item) -> bool, f: &mut impl FnMut(&mut Item), n: &mut usize) {
+    if hit(it) {
+        f(it);
+        *n += 1;
+    }
+    if depth >= MAX_PLACEMENT_DEPTH {
+        return;
+    }
+    if let Some(children) = it.children_mut() {
+        for c in children.iter_mut().filter(|c| has_hit(c, hit)) {
+            update_placed_item(Arc::make_mut(c), depth + 1, hit, f, n);
+        }
+    }
+}
+
+/// [`Document::update_placed_items`] for the placements of one story, and of the stories nested
+/// in its cells and notes.
+fn update_story_items(st: &mut Story, depth: usize, hit: &impl Fn(&Item) -> bool, f: &mut impl FnMut(&mut Item), n: &mut usize) {
+    if depth > MAX_PLACEMENT_DEPTH {
+        return;
+    }
+    for o in st.objects.iter_mut() {
+        if has_hit(&o.item, hit) {
+            update_placed_item(&mut Arc::make_mut(o).item, 0, hit, f, n);
+        }
+    }
+    for t in st.tables.values_mut() {
+        for c in &mut Arc::make_mut(t).cells {
+            update_story_items(&mut c.text, depth + 1, hit, f, n);
+        }
+    }
+    for note in st.notes.iter_mut().chain(st.endnotes.iter_mut()) {
+        update_story_items(&mut Arc::make_mut(note).text, depth + 1, hit, f, n);
     }
 }
 
