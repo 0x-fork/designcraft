@@ -206,7 +206,7 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 
 ### 19. Placed graphics depth (FF)
 - **Have:** per-placement IDML graphic-layer settings survive IDML/native round trips; native format 4 guards older readers. Unsupported layer visibility is reported by import, preflight and PDF export. See [graphic-layer-options.md](graphic-layer-options.md).
-- **Still missing:** applying the retained layer visibility to the rendered/PDF appearance; layer-comp choices and the layer-options UI. Metadata preservation does not establish visual fidelity.
+- **Still missing:** DesignCraft does not apply retained IDML graphic-layer visibility to raster or PDF output; layer-comp choices and the layer-options UI are also missing. Metadata preservation does not establish visual fidelity. Placed-PDF layer choices are applied (see **Layer choices** below).
 - **Safety:** PDF visibility variants preserve catalog/configuration entries and nonzero-generation
   references, redefining the existing catalog rather than choosing an arbitrary object number.
   Encrypted, hybrid-reference and over-budget rewrites are rejected; no print-fidelity claim.
