@@ -487,6 +487,65 @@ mod tests {
     }
 
     #[test]
+    fn one_version_4_reader_keeps_both_explicit_all_on_and_graphic_layer_options() {
+        use designcraft_doc::{Content, GraphicLayerOptions};
+        let mut d = Document::new(&NewDocument::default());
+        let pdf = AssetId(d.alloc());
+        d.assets.insert(
+            pdf,
+            Arc::new(Asset {
+                id: pdf,
+                name: "art.pdf".into(),
+                mime: "application/pdf".into(),
+                data: Arc::new(b"%PDF-1.7".to_vec()),
+                ..Default::default()
+            }),
+        );
+        let eps = AssetId(d.alloc());
+        let source = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 20 10\n%%EOF\n".to_vec();
+        d.assets.insert(
+            eps,
+            Arc::new(Asset { id: eps, name: "logo.eps".into(), mime: "application/postscript".into(), data: Arc::new(source), ..Default::default() }),
+        );
+        let all_on = place(&mut d, pdf, 0.0);
+        let layered = place(&mut d, eps, 0.0);
+        assert_eq!(required_version(&d), 3, "neither feature: EPS documents keep version 3");
+        let options = GraphicLayerOptions { layers: vec![[("Name".to_string(), "Art".to_string())].into()], ..Default::default() };
+        let set_options = |d: &mut Document, value: Option<GraphicLayerOptions>| {
+            let Some(Content::Graphic(g)) = d.item_mut(layered).map(|it| &mut it.content) else { panic!("placed graphic") };
+            g.layer_options = value;
+        };
+        set_options(&mut d, Some(options.clone()));
+        d.item_mut(all_on).unwrap().pdf_layer_override = true;
+        let bytes = save(&d).unwrap();
+        let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut meta = String::new();
+        z.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&meta).unwrap()["version"], 4);
+        let reopened = load(&bytes).unwrap();
+        let it = reopened.item(all_on).unwrap();
+        assert!(it.pdf_layer_override && it.pdf_hidden_layers.is_empty(), "explicit all-on survives");
+        assert_eq!(reopened.item(layered).unwrap().graphic().unwrap().layer_options.as_ref(), Some(&options), "graphic layer options survive");
+        assert_eq!(required_version(&reopened), 4);
+        // Either feature alone needs version 4; dropping both restores the older requirement.
+        set_options(&mut d, None);
+        assert_eq!(required_version(&d), 4, "explicit all-on alone");
+        d.item_mut(all_on).unwrap().pdf_layer_override = false;
+        assert_eq!(required_version(&d), 3);
+        set_options(&mut d, Some(options));
+        assert_eq!(required_version(&d), 4, "graphic layer options alone");
+        set_options(&mut d, None);
+        d.assets.remove(&eps);
+        d.remove_item(layered).unwrap();
+        assert_eq!(required_version(&d), 2, "neither feature and no EPS: version 2");
+        // An explicit all-on choice on a parent spread also needs the version 4 reader.
+        let mut parent_item = (*d.remove_item(all_on).unwrap()).clone();
+        parent_item.pdf_layer_override = true;
+        d.insert_item(SpreadRef::Parent(0), parent_item, None).unwrap();
+        assert_eq!(required_version(&d), 4, "parent-spread placements are not skipped");
+    }
+
+    #[test]
     fn eps_source_requires_new_reader_but_preview_documents_keep_the_older_one() {
         let mut d = Document::new(&NewDocument::default());
         let version = |d: &Document| {
