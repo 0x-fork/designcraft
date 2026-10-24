@@ -3157,92 +3157,148 @@ pub fn paste_chord_command(app: &DesignApp, modifiers: egui::Modifiers) -> Optio
 pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
     // Only a focused text field takes the keys: the canvas (or a button) having focus after a click
     // must not swallow tool shortcuts until Esc clears it.
-    // While an IME composes at the text caret, the keyboard is its own. An open canvas context menu
-    // takes the keys (Escape closes it), as a native menu would.
-    if ctx.text_edit_focused()
-        || app.ui.dialog.is_some()
-        || app.ui.palette.is_some()
-        || app.session.tool_composing()
-        || crate::canvas::context_menu_open(ctx)
-        || crate::chrome::search_had_focus(ctx)
-    {
+    if ctx.text_edit_focused() || keys_taken(app, ctx) {
         return;
     }
     let typing = app.session.wants_text();
     let events = ctx.input(|i| i.events.clone());
     for e in events {
         let egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } = e else { continue };
-        // Presentation hides every control, so Esc always leaves it, and only that: the canvas must
-        // not also see the press and switch tools or deselect.
-        if key == egui::Key::Escape && app.ui.screen_mode == ScreenMode::Presentation {
+        if !shortcut_key(app, key, modifiers, typing, &mut || {
             ctx.input_mut(|i| i.consume_key(modifiers, key));
-            let _ = app.run("view.togglePresentation", json!({}));
-            continue;
+        }) {
+            escape_to_selection(app, key, modifiers, typing);
         }
-        // Presentation goes through the spreads with the arrow keys, Page Up/Down, Home and End.
-        if app.ui.screen_mode == ScreenMode::Presentation && !modifiers.command && !modifiers.alt {
-            let step = match key {
-                egui::Key::ArrowRight | egui::Key::ArrowDown | egui::Key::PageDown => Some(1),
-                egui::Key::ArrowLeft | egui::Key::ArrowUp | egui::Key::PageUp => Some(-1),
-                egui::Key::Home => Some(isize::MIN),
-                egui::Key::End => Some(isize::MAX),
-                _ => None,
-            };
-            if let Some(step) = step {
-                ctx.input_mut(|i| i.consume_key(modifiers, key));
-                crate::canvas::step_spread(app, step);
+    }
+}
+
+/// Keys that a floating panel in its own OS window left over (craft-ui's
+/// `DockOutput::forwarded_events`, with the modifiers held in that window): they run the main
+/// window's shortcuts, clipboard and tool keys in the frame they arrive, so the keyboard works
+/// while a floating window has focus. craft-ui forwards nothing while one of that window's
+/// widgets has keyboard focus.
+pub fn forwarded_shortcuts(app: &mut DesignApp, ctx: &egui::Context, events: Vec<egui::Event>, modifiers: egui::Modifiers) {
+    if events.is_empty() || keys_taken(app, ctx) {
+        return;
+    }
+    let typing = app.session.wants_text();
+    let mut rest = Vec::with_capacity(events.len());
+    let mut escape = None;
+    for e in events {
+        if let egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } = e {
+            if shortcut_key(app, key, modifiers, typing, &mut || {}) {
                 continue;
             }
-        }
-        // Command shortcuts.
-        let mut fired: Option<(String, bool)> = None;
-        let all = effective_shortcuts(app);
-        for (id, sc) in &all {
-            let id = id.as_str();
-            if let Some((m, k)) = parse_shortcut(sc)
-                && let Some(exact) = key_matches(m, k, key, modifiers)
-                && (m.command || m.alt || !typing)
-                && !(id == "edit.clear" && typing)
-            {
-                // Single-key shortcuts (W) only when not typing.
-                if !m.command && !m.alt && !m.shift && typing {
-                    continue;
-                }
-                if id == "edit.clear" || (typing && matches!(id, "edit.copy" | "edit.cut" | "edit.paste" | "edit.pasteInPlace")) {
-                    continue; // Handled by the active tool / text clipboard events.
-                }
-                fired = Some((id.to_string(), exact));
-                break;
+            if key == egui::Key::Escape {
+                escape = Some(modifiers);
             }
         }
-        if let Some((id, exact)) = fired {
-            // The native menu bar carries the shortcuts in effect, the user's included, and its
-            // accelerator fires only for the shortcut's own key and modifiers; the Plus key standing
-            // in for = never reaches it.
-            if exact && app.native_shortcuts.contains(&id) {
-                continue; // The native menu handles it.
-            }
-            // The key press belongs to the shortcut: what it opens (Quick Apply's list, a dialog's
-            // default button) must not see the same press as Enter or Space this frame.
-            ctx.input_mut(|i| i.consume_key(modifiers, key));
-            // Like choosing the menu item: "…" commands open their dialog.
-            activate(app, &id, &Value::Null);
-            continue;
+        rest.push(e);
+    }
+    crate::canvas::forwarded_keys(app, rest, modifiers);
+    if let Some(m) = escape {
+        escape_to_selection(app, egui::Key::Escape, m, typing);
+    }
+}
+
+/// Whether something other than the shortcuts has the keyboard: a dialog or Quick Apply, an input
+/// method composing at the text caret, an open canvas context menu (Escape closes it, as a
+/// native menu would) or the menu search.
+fn keys_taken(app: &DesignApp, ctx: &egui::Context) -> bool {
+    app.ui.dialog.is_some()
+        || app.ui.palette.is_some()
+        || app.session.tool_composing()
+        || crate::canvas::context_menu_open(ctx)
+        || crate::chrome::search_had_focus(ctx)
+}
+
+/// Runs the presentation key, command shortcut or tool shortcut a key press stands for. `consume`
+/// takes the press from the input where nothing else may see it. Returns whether the press was used.
+fn shortcut_key(app: &mut DesignApp, key: egui::Key, modifiers: egui::Modifiers, typing: bool, consume: &mut dyn FnMut()) -> bool {
+    // Presentation hides every control, so Esc always leaves it, and only that: the canvas must
+    // not also see the press and switch tools or deselect.
+    if key == egui::Key::Escape && app.ui.screen_mode == ScreenMode::Presentation {
+        consume();
+        let _ = app.run("view.togglePresentation", json!({}));
+        return true;
+    }
+    // Presentation goes through the spreads with the arrow keys, Page Up/Down, Home and End.
+    if app.ui.screen_mode == ScreenMode::Presentation && !modifiers.command && !modifiers.alt {
+        let step = match key {
+            egui::Key::ArrowRight | egui::Key::ArrowDown | egui::Key::PageDown => Some(1),
+            egui::Key::ArrowLeft | egui::Key::ArrowUp | egui::Key::PageUp => Some(-1),
+            egui::Key::Home => Some(isize::MIN),
+            egui::Key::End => Some(isize::MAX),
+            _ => None,
+        };
+        if let Some(step) = step {
+            consume();
+            crate::canvas::step_spread(app, step);
+            return true;
         }
-        // Tool shortcuts (single keys, Shift+key).
-        if !typing && !modifiers.command && !modifiers.alt {
-            let name = key.name();
-            let sc = if modifiers.shift { format!("Shift+{name}") } else { name.to_string() };
-            if let Some(tool) = designcraft_tools::tool_for_shortcut(&sc) {
-                log::debug!("tool shortcut {sc} -> {tool}");
-                if std::env::var_os("DESIGNCRAFT_DEBUG_KEYS").is_some() {
-                    eprintln!("tool shortcut {sc} ({key:?}, {modifiers:?}) -> {tool}");
-                }
-                app.select_tool(tool);
-            } else if key == egui::Key::Escape && app.session.tool_id() != "selection" && !app.session.tool_busy() && app.ui.flyout.is_none() {
-                app.select_tool("selection");
+    }
+    // Command shortcuts.
+    let mut fired: Option<(String, bool)> = None;
+    let all = effective_shortcuts(app);
+    for (id, sc) in &all {
+        let id = id.as_str();
+        if let Some((m, k)) = parse_shortcut(sc)
+            && let Some(exact) = key_matches(m, k, key, modifiers)
+            && (m.command || m.alt || !typing)
+            && !(id == "edit.clear" && typing)
+        {
+            // Single-key shortcuts (W) only when not typing.
+            if !m.command && !m.alt && !m.shift && typing {
+                continue;
             }
+            if id == "edit.clear" || (typing && matches!(id, "edit.copy" | "edit.cut" | "edit.paste" | "edit.pasteInPlace")) {
+                continue; // Handled by the active tool / text clipboard events.
+            }
+            fired = Some((id.to_string(), exact));
+            break;
         }
+    }
+    if let Some((id, exact)) = fired {
+        // The native menu bar carries the shortcuts in effect, the user's included, and its
+        // accelerator fires only for the shortcut's own key and modifiers; the Plus key standing
+        // in for = never reaches it.
+        if exact && app.native_shortcuts.contains(&id) {
+            return true; // The native menu handles it.
+        }
+        // The key press belongs to the shortcut: what it opens (Quick Apply's list, a dialog's
+        // default button) must not see the same press as Enter or Space this frame.
+        consume();
+        // Like choosing the menu item: "…" commands open their dialog.
+        activate(app, &id, &Value::Null);
+        return true;
+    }
+    // Tool shortcuts (single keys, Shift+key).
+    if !typing && !modifiers.command && !modifiers.alt {
+        let name = key.name();
+        let sc = if modifiers.shift { format!("Shift+{name}") } else { name.to_string() };
+        if let Some(tool) = designcraft_tools::tool_for_shortcut(&sc) {
+            log::debug!("tool shortcut {sc} -> {tool}");
+            if std::env::var_os("DESIGNCRAFT_DEBUG_KEYS").is_some() {
+                eprintln!("tool shortcut {sc} ({key:?}, {modifiers:?}) -> {tool}");
+            }
+            app.select_tool(tool);
+            return true;
+        }
+    }
+    false
+}
+
+/// Esc with no shortcut of its own goes back to the Selection tool.
+fn escape_to_selection(app: &mut DesignApp, key: egui::Key, modifiers: egui::Modifiers, typing: bool) {
+    if key == egui::Key::Escape
+        && !typing
+        && !modifiers.command
+        && !modifiers.alt
+        && app.session.tool_id() != "selection"
+        && !app.session.tool_busy()
+        && app.ui.flyout.is_none()
+    {
+        app.select_tool("selection");
     }
 }
 
@@ -5372,7 +5428,13 @@ mod tests {
         // Paragraph Styles opens floating, grouped with Character Styles, as in InDesign.
         activate(&mut app, "app.paragraphStylesPanel", &Value::Null);
         let layout = app.ui.docking.as_ref().unwrap();
-        assert!(layout.floating.iter().flat_map(|w| &w.groups).any(|g| g.panels == ["characterStyles", "paragraphStyles"] && g.active == 1));
+        assert!(
+            layout
+                .floating
+                .iter()
+                .flat_map(crate::panel_docking::window_groups)
+                .any(|g| g.panels == ["characterStyles", "paragraphStyles"] && g.active == 1)
+        );
         let story = app.run("frame.create", json!({"rect": [36, 36, 200, 100], "content": "text", "text": "Page "})).unwrap()["story"].clone();
         app.run("text.select", json!({"story": story, "anchor": 5, "focus": 5})).unwrap();
         activate(&mut app, "app.insertCurrentPageNumber", &Value::Null);
@@ -6098,5 +6160,30 @@ mod tests {
             );
         }
         assert!(app.ui.dialog.is_some(), "clicking the empty end of the Preferences… row must choose it");
+    }
+
+    /// Keys a floating panel's own OS window left over run the main window's tool shortcuts,
+    /// Escape and the active tool's keys.
+    #[test]
+    fn forwarded_keys_run_shortcuts() {
+        use egui::{Event, Key, Modifiers};
+        fn press(key: Key) -> Vec<Event> {
+            [true, false].map(|pressed| Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: Modifiers::NONE }).to_vec()
+        }
+        let ctx = egui::Context::default();
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        let frame = app.session.execute("frame.create", &json!({"rect": [36, 36, 200, 200]})).unwrap();
+        app.session.execute("selection.set", &json!({"ids": [frame["id"]]})).unwrap();
+        forwarded_shortcuts(&mut app, &ctx, press(Key::P), Modifiers::NONE);
+        assert_ne!(app.session.tool_id(), "selection", "P picks a tool");
+        forwarded_shortcuts(&mut app, &ctx, press(Key::Escape), Modifiers::NONE);
+        assert_eq!(app.session.tool_id(), "selection", "Escape goes back to the Selection tool");
+        app.session.execute("selection.set", &json!({"ids": [frame["id"]]})).unwrap();
+        forwarded_shortcuts(&mut app, &ctx, press(Key::Delete), Modifiers::NONE);
+        assert!(
+            app.session.active().unwrap().doc.item(designcraft_doc::ItemId(frame["id"].as_u64().unwrap())).is_none(),
+            "Delete clears the selection"
+        );
     }
 }
