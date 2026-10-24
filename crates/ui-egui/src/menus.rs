@@ -988,6 +988,15 @@ pub const MENUS: &[(&str, &[&str])] = &[
 pub const WORKSPACES: &[&str] =
     &["Advanced", "Book", "Digital Publishing", "Essentials", "Essentials Classic", "Interactive for PDF", "Printing and Proofing", "Typography"];
 
+/// The built-in workspaces that open a panel below the Properties · Pages · Layers group.
+pub const WORKSPACE_OPEN_PANELS: &[(&str, &str)] =
+    &[("Printing and Proofing", "swatches"), ("Interactive for PDF", "buttons"), ("Digital Publishing", "liquid")];
+
+/// The panel the built-in workspace `name` opens below the Properties · Pages · Layers group.
+pub fn workspace_open_panel(name: &str) -> Option<&'static str> {
+    WORKSPACE_OPEN_PANELS.iter().find(|(workspace, _)| *workspace == name).map(|(_, panel)| *panel)
+}
+
 /// Essentials Classic's iconic column: InDesign's iconic panel groups, top to bottom.
 pub const CLASSIC_GROUPS: &[&[&str]] = &[
     &["pages", "layers", "links"],
@@ -1988,12 +1997,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
                 app.ui.dock_tab = tab.into();
                 app.ui.dock_expanded = true;
             }
-            app.ui.open_panel = match name {
-                "Printing and Proofing" => Some("swatches".into()),
-                "Interactive for PDF" => Some("buttons".into()),
-                "Digital Publishing" => Some("liquid".into()),
-                _ => None,
-            };
+            app.ui.open_panel = workspace_open_panel(name).map(str::to_string);
             app.ui.workspace = name.to_string();
             Ok(Value::Null)
         }

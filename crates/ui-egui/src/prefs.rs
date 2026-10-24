@@ -32,12 +32,34 @@ impl UiState {
             }
         }
         let mut ui: UiState = serde_json::from_value(saved)?;
+        clear_stale_open_panels(&mut ui);
         intact &= migrate(&mut ui.docking, &mut ui.floating, &ui.docking_hidden, ui.dock_expanded, ui.icon_groups.as_deref());
         for workspace in &mut ui.custom_workspaces {
             let SavedWorkspace { docking, floating, docking_hidden, dock_expanded, icon_groups, .. } = workspace;
             intact &= migrate(docking, floating, docking_hidden, *dock_expanded, icon_groups.as_deref());
         }
         Ok(ReadPreferences { ui, intact })
+    }
+}
+
+/// Files from before the canvas joined the panel layout saved the flyout open at quit as
+/// `openPanel`, which is the panel a workspace opens below Properties · Pages · Layers. Only a
+/// workspace's own panel stays: a built-in workspace's (Printing and Proofing: Swatches), and in a
+/// saved workspace one a built-in workspace opens (saving copies it). The current workspace keeps
+/// a saved workspace's panel.
+fn clear_stale_open_panels(ui: &mut UiState) {
+    let built_in = |panel: &str| crate::menus::WORKSPACE_OPEN_PANELS.iter().any(|(_, p)| *p == panel);
+    for workspace in &mut ui.custom_workspaces {
+        if workspace.open_panel.as_deref().is_some_and(|panel| !built_in(panel)) {
+            workspace.open_panel = None;
+        }
+    }
+    let own = match ui.custom_workspaces.iter().find(|w| w.name == ui.workspace) {
+        Some(saved) => saved.open_panel.as_deref(),
+        None => crate::menus::workspace_open_panel(&ui.workspace),
+    };
+    if ui.open_panel.as_deref() != own {
+        ui.open_panel = None;
     }
 }
 
@@ -204,6 +226,25 @@ mod tests {
         assert_eq!(layout.floating.len(), 1);
         assert_eq!(crate::panel_docking::window_groups(&layout.floating[0])[0].panels, ["glyphs"]);
         assert_eq!(&layout.floating[0].rect[..2], &[100.0, 120.0]);
+    }
+
+    /// An `openPanel` that was the flyout open at quit is not docked below Properties.
+    #[test]
+    fn a_flyout_open_at_quit_is_not_docked() {
+        let ui = load(json!({
+            "workspace": "Essentials", "dockExpanded": true, "openPanel": "stroke",
+            "customWorkspaces": [
+                {"name": "Mine", "dockExpanded": true, "openPanel": "effects"},
+                {"name": "Proof", "dockExpanded": true, "openPanel": "swatches"},
+            ],
+        }));
+        assert_eq!(ui.open_panel, None);
+        let layout = crate::panel_docking::default_layout(&ui);
+        assert_eq!(panels(&dock(&layout)[0]), [vec!["properties", "pages", "layers"]], "Stroke stays in its icon group");
+        assert_eq!(ui.custom_workspaces[0].open_panel, None);
+        assert_eq!(ui.custom_workspaces[1].open_panel.as_deref(), Some("swatches"), "saved from Printing and Proofing");
+        let ui = load(json!({"workspace": "Proof", "openPanel": "swatches", "customWorkspaces": [{"name": "Proof", "openPanel": "swatches"}]}));
+        assert_eq!(ui.open_panel.as_deref(), Some("swatches"), "the saved workspace's own panel");
     }
 
     #[test]
