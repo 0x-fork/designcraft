@@ -16,9 +16,12 @@ use crate::widgets::{
 };
 use crate::{DesignApp, icons};
 
-/// A link to another panel: `window.panel` shows it in the docking layout.
+/// A link to another panel: `window.panel` shows it in the docking layout. An open flyout of
+/// that panel stays: `window.panel` would close it.
 fn show_panel(app: &mut DesignApp, panel: &str) {
-    let _ = app.run("window.panel", json!({"panel": panel}));
+    if app.ui.docking_flyout.as_deref() != Some(panel) {
+        let _ = app.run("window.panel", json!({"panel": panel}));
+    }
 }
 
 fn units(app: &DesignApp) -> Unit {
@@ -3168,6 +3171,16 @@ mod tests {
     };
 
     use super::*;
+
+    /// A link to a panel whose flyout is open leaves the flyout open.
+    #[test]
+    fn a_panel_link_keeps_its_open_flyout() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        show_panel(&mut app, "stroke");
+        assert_eq!(app.ui.docking_flyout.as_deref(), Some("stroke"));
+        show_panel(&mut app, "stroke");
+        assert!(crate::panel_docking::showing(&app, "stroke"));
+    }
 
     fn language(app: &mut DesignApp) -> Value {
         text_attrs(app).unwrap()["chars"]["language"].clone()
