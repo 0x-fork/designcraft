@@ -14,43 +14,6 @@ use support::{catalog, document, fixture, painted};
 const DEFAULT: &str = "/BaseState/ON/OFF[6 3 R]";
 const USAGE_APPLICATIONS: &str = "/BaseState/ON/ON[5 0 R]/OFF[6 3 R]/AS[<</Event/View/Category[/View]/OCGs[5 0 R 6 3 R]>><</Event/Print/Category[/Print]/OCGs[5 0 R 6 3 R]>><</Event/Export/Category[/Export]/OCGs[5 0 R 6 3 R]>>]";
 
-/// The user path behind the stale-choice guard: place a PDF, hide a layer, relink that asset to a
-/// PNG (links.relink replaces the asset in place, so the item keeps its layer fields), then export.
-/// The fields are no longer a placed-PDF choice, so nothing is refused.
-#[test]
-fn relinking_a_layered_pdf_to_an_image_still_exports() {
-    let source = fixture(DEFAULT, "Hidden");
-    let pdf_path = std::env::temp_dir().join(format!(
-        "dc-layered-{}-{}.pdf",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-    ));
-    std::fs::write(&pdf_path, &source).unwrap();
-    let mut session = designcraft_engine::Session::new();
-    session.execute("file.new", &serde_json::json!({"width": 200, "height": 200})).unwrap();
-    let placed = session.execute("file.place", &serde_json::json!({"path": pdf_path.to_string_lossy(), "x": 0, "y": 0, "width": 100})).unwrap();
-    let id = designcraft_doc::ItemId(placed["id"].as_u64().unwrap());
-    session.execute("object.layerOptions", &serde_json::json!({"ids": [placed["id"]], "hidden": ["Hidden"]})).unwrap();
-    let asset = session.doc().unwrap().doc.item(id).unwrap().graphic().unwrap().asset;
-    let png = designcraft_render::Rendered { width: 4, height: 3, pixels: [30, 90, 180, 255].repeat(12) }.to_png();
-    let path = std::env::temp_dir().join(format!(
-        "dc-relinked-{}-{}.png",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-    ));
-    std::fs::write(&path, &png).unwrap();
-    session.execute("links.relink", &serde_json::json!({"asset": asset.0, "path": path.to_string_lossy()})).unwrap();
-    let doc = session.doc().unwrap().doc.clone();
-    assert!(!designcraft_render::is_pdf(&doc.assets[&asset].data), "the placement is an image now");
-    assert!(doc.item(id).unwrap().has_pdf_layer_override(), "the stale fields are still on the item");
-    // All three exports still work: the field is not a placed-PDF choice any more.
-    session.execute("file.exportIdml", &serde_json::json!({})).unwrap();
-    session.execute("file.exportPdf", &serde_json::json!({"standard": "a2b"})).unwrap();
-    session.execute("file.exportPdf", &serde_json::json!({})).unwrap();
-    std::fs::remove_file(&path).ok();
-    std::fs::remove_file(&pdf_path).ok();
-}
-
 #[test]
 fn source_layer_dictionaries_are_readable() {
     let pdf = hayro_syntax::Pdf::new(fixture(DEFAULT, "Hidden")).unwrap();

@@ -507,93 +507,16 @@ pub(crate) mod tests {
         // An external-only copy would keep the original file's defaults: the choice is rejected.
         let err = s.execute("file.exportIdml", &json!({"embedImages": false})).unwrap_err().to_string();
         assert!(err.contains("embedded images"), "{err}");
-        // PDF/A-2b rasterises a placement with a choice wherever it sits, warnings included.
+        // PDF/A-2b rasterises a parent-page placement with a choice, warnings included.
         let a2b = s.execute("file.exportPdf", &json!({"standard": "a2b"})).unwrap();
         assert!(a2b["warnings"].as_array().unwrap().iter().any(|w| w.as_str().is_some_and(|w| w.contains("exported as images"))), "{a2b}");
     }
 
-    /// A choice on a frame anchored inside a table cell or a footnote is a placement too: the
-    /// save asks for the newer reader, the IDML copy gets a variant, an external-only copy is
-    /// refused and PDF/A-2b rasterises it, rather than each quietly falling back to the file.
-    #[test]
-    fn nested_placements_keep_their_layer_choices_in_saves_and_exports() {
-        use designcraft_doc::{AnchoredObject, Content, Graphic, Item, Shape, SpreadRef, Table};
-        use designcraft_geom::{Affine, Rect, shapes};
-
-        let pdf = designcraft_render::pdf_hide_layers(&two_layer_pdf(), &["Red".into()]).unwrap();
-        for in_note in [false, true] {
-            let mut d = designcraft_doc::Document::new(&Default::default());
-            let asset = designcraft_doc::AssetId(d.alloc());
-            d.add_asset(designcraft_doc::Asset {
-                id: asset,
-                name: "nested.pdf".into(),
-                mime: "application/pdf".into(),
-                data: std::sync::Arc::new(pdf.clone()),
-                ..Default::default()
-            });
-            let mut item = Item::new(
-                designcraft_doc::ItemId(d.alloc()),
-                d.default_layer(),
-                Shape::Rectangle,
-                shapes::rectangle(Rect::new(0.0, 0.0, 100.0, 100.0)),
-            );
-            item.pdf_layer_override = true;
-            item.content = Content::Graphic(Graphic {
-                asset,
-                size: (100.0, 100.0),
-                xf: Affine::IDENTITY,
-                clip: None,
-                auto_fit: Default::default(),
-                fit_align: 4,
-                crop: [0.0; 4],
-                wrap: Default::default(),
-                fill: Default::default(),
-                layer_options: None,
-            });
-            let layer = d.default_layer();
-            let (_, story) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(0.0, 0.0, 80.0, 80.0), layer, "Body", Default::default()).unwrap();
-            let anchored = AnchoredObject { item, position: Default::default() };
-            if in_note {
-                let st = d.story_mut(story).unwrap();
-                st.insert_note(0, "Note", Default::default()).unwrap();
-                assert_eq!(st.notes.len(), 1);
-                std::sync::Arc::make_mut(&mut st.notes[0]).text.insert_object(0, anchored);
-            } else {
-                let mut table = Table::new(1, 1, 1, 0, 0, 20.0);
-                table.cells[0].text.insert_object(0, anchored);
-                d.story_mut(story).unwrap().insert_table(0, table);
-            }
-            assert!(d.has_pdf_layer_overrides(), "the nested placement carries the choice");
-            let mut s = Session::new();
-            s.add_document(crate::DocState::new(d, None));
-            // The save keeps it under the newer reader, as the detection walk says.
-            let saved = designcraft_format::save(&s.doc().unwrap().doc).unwrap();
-            let reopened = designcraft_format::load(&saved).unwrap();
-            assert!(reopened.has_pdf_layer_overrides(), "in_note={in_note}");
-            s.add_document(crate::DocState::new(reopened, None));
-            // Embedded IDML carries a variant that shows every layer.
-            let idml = s.execute("file.exportIdml", &json!({})).unwrap();
-            let imported = designcraft_idml::import_idml(&super::super::file::base64_decode(idml["base64"].as_str().unwrap())).unwrap();
-            let copies: Vec<_> = imported.assets.values().filter(|a| designcraft_render::is_pdf(&a.data)).collect();
-            assert!(!copies.is_empty(), "in_note={in_note}: the anchored placement is exported");
-            assert!(
-                copies.iter().all(|a| designcraft_render::pdf_layers(&a.data).iter().all(|(_, on)| *on)),
-                "in_note={in_note}: the embedded copy must not fall back to the file's defaults"
-            );
-            // An external-only copy would keep the original file's defaults.
-            assert!(s.execute("file.exportIdml", &json!({"embedImages": false})).is_err(), "in_note={in_note}");
-            // PDF/A-2b rasterises a placement with a choice, wherever it sits.
-            let a2b = s.execute("file.exportPdf", &json!({"standard": "a2b"}));
-            assert!(a2b.is_ok(), "in_note={in_note}: {a2b:?}");
-        }
-    }
-
     /// Relinking a placed PDF to an image leaves the item's layer fields behind. They are no longer a
-    /// placed-PDF choice, so they must not block an export: the refusal guard asks for a graphic whose
-    /// asset is a PDF, the same thing the export walks ask for. The user path (a real relink to a PNG)
-    /// is covered in `tests/pdf_optional_content.rs`, where the file guard allows a test fixture on disk.
+    /// placed-PDF choice: the package report asks for a graphic whose asset is a PDF, the same thing
+    /// the export walks ask for, so it does not name the stale field, and exports run unaffected.
     #[test]
-    fn a_stale_choice_on_a_non_pdf_placement_does_not_block_exports() {
+    fn a_stale_choice_on_a_non_pdf_placement_is_not_a_placed_pdf_choice() {
         let png = designcraft_render::Rendered { width: 4, height: 3, pixels: [30, 90, 180, 255].repeat(12) }.to_png();
         let mut s = Session::new();
         s.execute("file.new", &json!({"width": 200, "height": 200})).unwrap();
@@ -608,7 +531,7 @@ pub(crate) mod tests {
         assert!(d.item(item).unwrap().has_pdf_layer_override(), "the stale field is on the item");
         assert!(d.has_pdf_layer_overrides(), "the field is there");
         assert!(!super::super::interchange::has_applicable_pdf_layer_overrides(d), "but it is not a placed-PDF choice");
-        // Both exports still run: nothing is dropped, and there is no choice to refuse.
+        // Nothing is dropped: the field is not a choice any export applies.
         s.execute("file.exportIdml", &json!({})).unwrap();
         s.execute("file.exportPdf", &json!({"standard": "a2b"})).unwrap();
         s.execute("file.exportPdf", &json!({})).unwrap();

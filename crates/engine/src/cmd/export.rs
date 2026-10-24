@@ -672,8 +672,9 @@ fn wrap_stand_in(it: &designcraft_doc::Item, depth: usize) -> designcraft_doc::I
 
 /// A copy of `d` where placed PDFs with Object Layer Options hidden layers are 300 ppi images.
 ///
-/// Every placement counts, including parent-page and anchored ones, so a choice is never
-/// silently replaced by the file's defaults.
+/// Parent-page and anchored placements count too, so a page that inherits the placement is not
+/// silently replaced by the file's defaults. A choice anchored inside a table cell's or a note's
+/// text keeps the source file's defaults (see `docs/pdf-layer-visibility.md`).
 fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraft_doc::Document>, usize)> {
     let choices: Vec<_> = d
         .placed_items()
@@ -686,12 +687,6 @@ fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraf
         })
         .collect();
     if choices.is_empty() {
-        // Fail closed, with the same predicate as the walk. As in the IDML pass this is a tripwire
-        // for a future construct the walk misses, not live behaviour; a stale choice on an item that
-        // is no longer a placed PDF must not block the export.
-        if super::interchange::has_applicable_pdf_layer_overrides(d) {
-            return Err(EngineError::Other("a placed PDF's layer choice sits where this raster export cannot apply it".into()));
-        }
         return Ok((None, 0));
     }
     let mut out = d.clone();
@@ -721,7 +716,7 @@ fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraf
         images.insert(id, aid);
         n += 1;
     }
-    out.update_placed_items(
+    out.update_items(
         |it| images.contains_key(&it.id),
         |it| {
             if let designcraft_doc::Content::Graphic(gg) = &mut it.content

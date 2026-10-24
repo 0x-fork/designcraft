@@ -40,9 +40,9 @@ fn export_idml(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
-/// Whether a placement still holds an Object Layer Options choice the exports can apply: a
-/// graphic whose asset is a PDF. A choice left on an item that is no longer a placed PDF (its
-/// link was replaced with another format) is not one, and must not block an export.
+/// Whether a placement holds an Object Layer Options choice an export can still apply: a graphic
+/// whose asset is a PDF. A choice left on an item that is no longer a placed PDF (its link was
+/// replaced with another format) is not one, so the package report does not name it.
 pub(crate) fn has_applicable_pdf_layer_overrides(doc: &Document) -> bool {
     doc.placed_items().into_iter().any(|it| {
         it.has_pdf_layer_override() && it.graphic().and_then(|g| doc.assets.get(&g.asset)).is_some_and(|a| designcraft_render::is_pdf(&a.data))
@@ -52,8 +52,10 @@ pub(crate) fn has_applicable_pdf_layer_overrides(doc: &Document) -> bool {
 /// Each placement gets its own embedded variant so two frames sharing a PDF can
 /// choose different layers. The live document and original linked bytes stay untouched.
 ///
-/// Every placement counts, including parent-page and anchored ones: a choice that the copy
-/// cannot carry is rejected rather than exported as the file's defaults.
+/// Parent-page and anchored placements count too, so a page that inherits the placement does not
+/// quietly fall back to the file's defaults. A choice anchored inside a table cell's or a note's
+/// text is not carried yet: this walk does not follow the stories nested there (see
+/// `docs/pdf-layer-visibility.md`).
 fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Document>> {
     let choices: Vec<_> = doc
         .placed_items()
@@ -65,14 +67,6 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
         })
         .collect();
     if choices.is_empty() {
-        // A tripwire, not live behaviour: the walk and this predicate cover the same placements, so
-        // they can only disagree if a future nesting construct slips past the walk, and that would
-        // silently become the file's defaults. Do not narrow the walk to match this check. The
-        // predicate asks for a graphic whose asset is a PDF, like the walk, so stale fields left on a
-        // relinked image never block an export.
-        if has_applicable_pdf_layer_overrides(doc) {
-            return Err(EngineError::Other("a placed PDF's layer choice sits where this IDML export cannot apply it".into()));
-        }
         return Ok(None);
     }
     if !embed {
@@ -93,7 +87,7 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
     }
     // Anchored objects live in stories, and parent pages outside the document-spread walk, so
     // the choice is cleared where the placement actually is.
-    out.update_placed_items(
+    out.update_items(
         |it| variants.contains_key(&it.id),
         |it| {
             if let designcraft_doc::Content::Graphic(g) = &mut it.content

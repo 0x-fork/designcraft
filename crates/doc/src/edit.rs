@@ -642,9 +642,11 @@ impl Document {
         found
     }
 
-    /// Every item on document and parent spreads, in groups, and among the objects anchored in
-    /// stories, including the stories in table cells and in notes: walks that must cover every
-    /// placement use this, not [`Document::all_items`].
+    /// Every item on document and parent spreads, in groups, and among the objects anchored in a
+    /// story: a placement a page inherits from its parent, and one anchored in text, both count.
+    /// Objects anchored inside a table cell's text or a note's text are not reached, as this walk
+    /// does not follow the stories nested there. Walks that must cover every placement a page can
+    /// show use this, not [`Document::all_items`].
     pub fn placed_items(&self) -> Vec<&Item> {
         let mut v = Vec::new();
         for sp in self.spreads.iter().chain(&self.parents) {
@@ -653,33 +655,11 @@ impl Document {
             }
         }
         for st in self.stories.values() {
-            placed_story_items(st, 0, &mut v);
+            for o in &st.objects {
+                o.item.walk(&mut |i| v.push(i));
+            }
         }
         v
-    }
-
-    /// Applies `f` to every placed item `hit` selects, wherever it sits: on document or parent
-    /// spreads, in groups, and anchored in a story (also inside table cells and notes).
-    /// Returns how many items `f` saw.
-    pub fn update_placed_items(&mut self, hit: impl Fn(&Item) -> bool, mut f: impl FnMut(&mut Item)) -> usize {
-        let mut n = 0;
-        for sp in self.spreads.iter_mut().chain(self.parents.iter_mut()) {
-            if !sp.items.iter().any(|i| has_hit(i, &hit)) {
-                continue;
-            }
-            for it in Arc::make_mut(sp).items.iter_mut() {
-                if has_hit(it, &hit) {
-                    update_placed_item(Arc::make_mut(it), 0, &hit, &mut f, &mut n);
-                }
-            }
-        }
-        for st in self.stories.values_mut() {
-            if !story_has_hit(st, 0, &hit) {
-                continue;
-            }
-            update_story_items(Arc::make_mut(st), 0, &hit, &mut f, &mut n);
-        }
-        n
     }
 
     /// Every item id (pre-order) on document spreads.
@@ -776,87 +756,6 @@ impl Document {
     }
 }
 
-/// How deep nested stories (a cell's text, a footnote's text, an endnote's text) are followed
-/// when every placement is visited. A document nested deeper is left alone.
-const MAX_PLACEMENT_DEPTH: usize = 64;
-
-/// The items anchored in `st`, and in the stories nested in its cells and notes, pre-order.
-fn placed_story_items<'a>(st: &'a Story, depth: usize, v: &mut Vec<&'a Item>) {
-    if depth > MAX_PLACEMENT_DEPTH {
-        return;
-    }
-    for o in &st.objects {
-        o.item.walk(&mut |i| v.push(i));
-    }
-    for c in st.tables.values().flat_map(|t| &t.cells) {
-        placed_story_items(&c.text, depth + 1, v);
-    }
-    for n in st.notes.iter().chain(&st.endnotes) {
-        placed_story_items(&n.text, depth + 1, v);
-    }
-}
-
-/// Whether `it` or anything in it is selected by `hit`.
-fn has_hit(it: &Item, hit: &impl Fn(&Item) -> bool) -> bool {
-    let mut found = false;
-    it.walk(&mut |i| found |= hit(i));
-    found
-}
-
-/// Whether anything anchored in `st`, or in the stories nested in its cells and notes, is selected
-/// by `hit`. Stops at the first match, so an untouched story is never copied.
-fn story_has_hit(st: &Story, depth: usize, hit: &impl Fn(&Item) -> bool) -> bool {
-    if depth > MAX_PLACEMENT_DEPTH {
-        return false;
-    }
-    st.objects.iter().any(|o| has_hit(&o.item, hit))
-        || st.tables.values().flat_map(|t| &t.cells).any(|c| story_has_hit(&c.text, depth + 1, hit))
-        || st.notes.iter().chain(&st.endnotes).any(|n| story_has_hit(&n.text, depth + 1, hit))
-}
-
-/// [`Document::update_placed_items`] for one item: only the branches holding a hit are copied.
-fn update_placed_item(it: &mut Item, depth: usize, hit: &impl Fn(&Item) -> bool, f: &mut impl FnMut(&mut Item), n: &mut usize) {
-    if hit(it) {
-        f(it);
-        *n += 1;
-    }
-    if depth >= MAX_PLACEMENT_DEPTH {
-        return;
-    }
-    if let Some(children) = it.children_mut() {
-        for c in children.iter_mut().filter(|c| has_hit(c, hit)) {
-            update_placed_item(Arc::make_mut(c), depth + 1, hit, f, n);
-        }
-    }
-}
-
-/// [`Document::update_placed_items`] for the placements of one story, and of the stories nested
-/// in its cells and notes.
-fn update_story_items(st: &mut Story, depth: usize, hit: &impl Fn(&Item) -> bool, f: &mut impl FnMut(&mut Item), n: &mut usize) {
-    if depth > MAX_PLACEMENT_DEPTH {
-        return;
-    }
-    for o in st.objects.iter_mut() {
-        if has_hit(&o.item, hit) {
-            update_placed_item(&mut Arc::make_mut(o).item, 0, hit, f, n);
-        }
-    }
-    for t in st.tables.values_mut() {
-        if !t.cells.iter().any(|c| story_has_hit(&c.text, depth + 1, hit)) {
-            continue;
-        }
-        for c in &mut Arc::make_mut(t).cells {
-            update_story_items(&mut c.text, depth + 1, hit, f, n);
-        }
-    }
-    for note in st.notes.iter_mut().chain(st.endnotes.iter_mut()) {
-        if !story_has_hit(&note.text, depth + 1, hit) {
-            continue;
-        }
-        update_story_items(&mut Arc::make_mut(note).text, depth + 1, hit, f, n);
-    }
-}
-
 /// Does `p` (in the item's parent space) hit `it`?
 pub fn item_hit(it: &Item, p: Point, tol: f64) -> bool {
     if let Content::Group { items } = &it.content {
@@ -901,33 +800,3 @@ pub fn hit_descendant(it: &Item, p: Point, tol: f64, want: &dyn Fn(&Item) -> boo
 /// How far from its path type on a path is hit (points): about a cap height of 12–18 pt type,
 /// either side (the type may sit on or under the path).
 const PATH_TYPE_REACH: f64 = 12.0;
-
-#[cfg(test)]
-mod placed_item_tests {
-    use super::*;
-
-    /// A pass that changes nothing must not copy a spread or a story: only branches holding a
-    /// match are touched (see `update_placed_items`).
-    #[test]
-    fn update_placed_items_leaves_untouched_spreads_and_stories_shared() {
-        let mut d = Document::new(&crate::build::NewDocument { pages: 2, ..Default::default() });
-        let layer = d.default_layer();
-        let (_, story) =
-            d.add_text_frame(crate::SpreadRef::Doc(0), crate::geom::Rect::new(0.0, 0.0, 80.0, 80.0), layer, "Body", Default::default()).unwrap();
-        let mut table = crate::Table::new(1, 1, 1, 0, 0, 20.0);
-        table.cells[0].text.insert_object(0, crate::anchored::AnchoredObject::default());
-        d.story_mut(story).unwrap().insert_table(0, table);
-        let spreads = d.spreads.to_vec();
-        let parents = d.parents.to_vec();
-        let stories: Vec<_> = d.stories.values().cloned().collect();
-        let seen = d.update_placed_items(|_| false, |_| panic!("nothing matches"));
-        assert_eq!(seen, 0);
-        assert!(d.spreads.iter().zip(&spreads).all(|(now, before)| std::sync::Arc::ptr_eq(now, before)), "spreads are shared");
-        assert!(d.parents.iter().zip(&parents).all(|(now, before)| std::sync::Arc::ptr_eq(now, before)), "parents are shared");
-        assert!(d.stories.values().zip(&stories).all(|(now, before)| std::sync::Arc::ptr_eq(now, before)), "stories are shared");
-        // A matching pass still reaches the anchored placement inside the cell.
-        let mut hits = 0;
-        d.update_placed_items(|_| true, |_| hits += 1);
-        assert!(hits > 0, "the walk reaches the nested placement");
-    }
-}
