@@ -276,7 +276,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "window.panel.float",
         "Float Panel",
         None,
-        "{panel, x?, y?, width?, height?, group?, column?} — detach a panel (or its group, or its dock column) inside the application window",
+        "{panel, x?, y?, width?, height?, group?, column?} — detach a panel (or its group, or its dock column) into a floating window",
     ),
     (
         "window.panel.dock",
@@ -290,7 +290,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("window.panel.closeOthers", "Close Other Panels in Group", None, "{panel} — hide the panels tabbed with it"),
     ("window.panel.minimize", "Minimize", None, "{panel, minimized?} — minimize the panel's group to its tab strip (toggles without minimized)"),
     ("window.panel.iconic", "Collapse to Icons", None, "{panel, iconic?} — collapse the panel's dock column to icons (toggles without iconic)"),
-    ("window.panel.window", "Move Panel to New Window", None, "{panel, native?} — not available: DesignCraft keeps panels in its window"),
+    (
+        "window.panel.window",
+        "Move Panel to New Window",
+        None,
+        "{panel, native?} — not available: a floating panel has its own window on the desktop and stays in the page on the web",
+    ),
     ("window.workspace.new", "New Workspace", None, "{name} — save the current workspace (window.newWorkspace)"),
     ("window.workspace.delete", "Delete Workspace", None, "{name} — delete a saved workspace (window.deleteWorkspace)"),
     ("window.workspace.reset", "Reset Workspace", None, "{} — back to the current workspace as saved (window.resetWorkspace)"),

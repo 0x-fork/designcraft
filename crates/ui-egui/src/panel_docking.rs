@@ -592,7 +592,12 @@ fn shared_command(app: &mut DesignApp, id: &str, params: &Value) -> Result<Value
         DockCommand::DeleteWorkspace { name } => return app.run("window.deleteWorkspace", json!({"name": name})),
         DockCommand::ResetWorkspace {} => return app.run("window.resetWorkspace", json!({})),
         DockCommand::Lock { .. } => return Err("Lock Workspace is not available in DesignCraft".into()),
-        DockCommand::Window { .. } => return Err("DesignCraft does not move panels to their own windows".into()),
+        DockCommand::Window { .. } => {
+            return Err(
+                "Move Panel to New Window is not available: a floating panel has its own window on the desktop and stays in the page on the web"
+                    .into(),
+            );
+        }
         _ => {}
     }
     // A zone is a side of `anchor`. DesignCraft's docks are columns beside the canvas, so a dock at

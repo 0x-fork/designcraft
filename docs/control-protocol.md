@@ -75,9 +75,10 @@ to finish before retrying a request that would exceed the pending-event limit.
 ## Shared panel docking
 
 Panel arrangements support tab grouping and reordering, horizontal and vertical splits,
-and movable, resizable floating windows inside the application window. A floating window
-holds tab groups split side by side or one above another, like the dock area. Drag a panel
-tab, or use its context menu. Floating windows remain within the application viewport.
+and movable, resizable floating windows. A floating window holds tab groups split side by side
+or one above another, like the dock area. Drag a panel tab, or use its context menu. On the
+desktop each floating window is a window of its own; on the web floating windows stay within
+the application viewport.
 
 The window is one panel layout: the protected `canvas` panel (the document area) beside a
 dock at the logical end edge, the right in left-to-right languages and the left in
@@ -139,8 +140,8 @@ read as `anchor`.
   and SoundCraft use: `open`, `close`, `activate`, `float {rect}`, `moveFloating {rect}`,
   `move {target, zone?, before?}`, `setStackOpen {open}`, `resizeStack {height}` and
   `resizeSplit {path, size}`, with `rect` as `[x, y, width, height]`.
-- `window.panel.window` (native panel windows) and `window.workspace.lock` are not available
-  in DesignCraft and return an error.
+- `window.panel.window` (a panel into or out of its own window) and `window.workspace.lock` are
+  not available in DesignCraft and return an error.
 - `window.collapseToIcons` collapses every dock column to icons.
 
 Panel IDs are stable across themes. Invalid IDs, non-finite or invalid geometry, and

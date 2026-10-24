@@ -263,21 +263,6 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Close panel window",
         ["Bedienfeldfenster schließen", "Fermer la fenêtre de panneau", "Cerrar ventana de panel", "パネルウィンドウを閉じる", "关闭面板窗口"],
     ),
-    ("Undock Panel", ["Bedienfeld abdocken", "Désancrer le panneau", "Desacoplar panel", "パネルのドッキングを解除", "取消停靠面板"]),
-    (
-        "Undock Panel Group",
-        [
-            "Bedienfeldgruppe abdocken",
-            "Désancrer le groupe de panneaux",
-            "Desacoplar grupo de paneles",
-            "パネルグループのドッキングを解除",
-            "取消停靠面板组",
-        ],
-    ),
-    (
-        "Close Panel Group",
-        ["Bedienfeldgruppe schließen", "Fermer le groupe de panneaux", "Cerrar grupo de paneles", "パネルグループを閉じる", "关闭面板组"],
-    ),
     (
         "Close Other Panels in Group",
         [
