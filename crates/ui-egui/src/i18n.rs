@@ -1774,6 +1774,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Convert to Form Field",
         ["Convert to Form Field", "Convertir en champ de formulaire", "Convert to Form Field", "Convert to Form Field", "转换为表单域"],
     ),
+    ("Convert to Note", ["Convert to Note", "Convertir en note", "Convert to Note", "Convert to Note", "转换为注释"]),
     ("Conveyor", ["Conveyor", "Convoyeur", "Conveyor", "Conveyor", "传送带"]),
     ("Copy Link(s) To…", ["Copy Link(s) To…", "Copier les liens vers…", "Copy Link(s) To…", "Copy Link(s) To…", "复制链接至…"]),
     ("Corner Options…", ["Corner Options…", "Options d'arrondi…", "Corner Options…", "Corner Options…", "角选项…"]),
