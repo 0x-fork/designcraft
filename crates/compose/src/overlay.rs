@@ -106,7 +106,7 @@ pub(crate) fn overlays(text: &str, range: Range<usize>, nested: &[NestedStyle], 
         }
         with_pattern(&g.pattern, |slot| {
             let Some(re) = slot else { return };
-            match re.find_all(text.get(range.start..end).unwrap_or(""), crate::grep::MAX_MATCHES_PER_PARAGRAPH) {
+            match re.find_nonempty(text.get(range.start..end).unwrap_or(""), crate::grep::MAX_MATCHES_PER_PARAGRAPH) {
                 Ok(ms) => {
                     if ms.len() == crate::grep::MAX_MATCHES_PER_PARAGRAPH {
                         log::warn!("GREP style {:?} matched more than {} times in one paragraph; the rest are not styled", g.pattern, ms.len());
@@ -126,6 +126,15 @@ pub(crate) fn overlays(text: &str, range: Range<usize>, nested: &[NestedStyle], 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pattern that can match nothing still styles a paragraph longer than the cap: empty
+    /// matches don't count toward it.
+    #[test]
+    fn empty_matches_do_not_use_up_the_grep_cap() {
+        let text = format!("{}a", "b".repeat(crate::grep::MAX_MATCHES_PER_PARAGRAPH + 100));
+        let o = overlays(&text, 0..text.len(), &[], &[GrepStyle { style: "A".into(), pattern: "a*".into() }], 0);
+        assert_eq!(o.len(), 1, "the one non-empty match at the end is styled");
+    }
 
     /// A GREP style's scan is bounded two ways (#1598): the matches one paragraph can take, and
     /// the patterns kept compiled at once.

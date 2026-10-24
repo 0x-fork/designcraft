@@ -385,6 +385,17 @@ impl Grep {
         self.re.find_iter(text).take(limit).map(|m| m.map(|m| m.range()).map_err(run_err)).collect()
     }
 
+    /// Non-empty matches in `text`, at most `limit` of them: an empty match styles nothing, so it
+    /// doesn't count toward a GREP style's cap.
+    pub fn find_nonempty(&self, text: &str, limit: usize) -> Result<Vec<Range<usize>>, GrepError> {
+        self.re
+            .find_iter(text)
+            .filter(|m| !m.as_ref().is_ok_and(|m| m.range().is_empty()))
+            .take(limit)
+            .map(|m| m.map(|m| m.range()).map_err(run_err))
+            .collect()
+    }
+
     /// Matches in `text` and their replacements, `template` expanded per match (`$1`…; see
     /// [`translate_replacement`]). Stops after the first match when `first_only`.
     pub fn replacements(&self, text: &str, template: &str, first_only: bool) -> Result<Vec<(Range<usize>, String)>, GrepError> {
