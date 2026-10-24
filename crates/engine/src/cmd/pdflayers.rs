@@ -512,6 +512,65 @@ pub(crate) mod tests {
         assert!(a2b["warnings"].as_array().unwrap().iter().any(|w| w.as_str().is_some_and(|w| w.contains("exported as images"))), "{a2b}");
     }
 
+    /// An object anchored in a story is a placement too: the IDML copy gets a variant that shows
+    /// every layer, an external-only copy is refused, and PDF/A-2b rasterises it, rather than each
+    /// quietly falling back to the file's defaults.
+    #[test]
+    fn an_anchored_placement_keeps_its_layer_choice_in_saves_and_exports() {
+        use designcraft_doc::{AnchoredObject, Content, Graphic, Item, Shape, SpreadRef};
+        use designcraft_geom::{Affine, Rect, shapes};
+
+        let pdf = designcraft_render::pdf_hide_layers(&two_layer_pdf(), &["Red".into()]).unwrap();
+        let mut d = designcraft_doc::Document::new(&Default::default());
+        let asset = designcraft_doc::AssetId(d.alloc());
+        d.add_asset(designcraft_doc::Asset {
+            id: asset,
+            name: "anchored.pdf".into(),
+            mime: "application/pdf".into(),
+            data: std::sync::Arc::new(pdf),
+            ..Default::default()
+        });
+        let mut item = Item::new(
+            designcraft_doc::ItemId(d.alloc()),
+            d.default_layer(),
+            Shape::Rectangle,
+            shapes::rectangle(Rect::new(0.0, 0.0, 100.0, 100.0)),
+        );
+        item.pdf_layer_override = true;
+        item.content = Content::Graphic(Graphic {
+            asset,
+            size: (100.0, 100.0),
+            xf: Affine::IDENTITY,
+            clip: None,
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [0.0; 4],
+            wrap: Default::default(),
+            fill: Default::default(),
+            layer_options: None,
+        });
+        let layer = d.default_layer();
+        let (_, story) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(0.0, 0.0, 80.0, 80.0), layer, "Body", Default::default()).unwrap();
+        d.story_mut(story).unwrap().insert_object(0, AnchoredObject { item, position: Default::default() });
+        assert!(d.has_pdf_layer_overrides(), "the anchored placement carries the choice");
+        let mut s = Session::new();
+        s.add_document(crate::DocState::new(d, None));
+        // Embedded IDML carries a variant that shows every layer.
+        let idml = s.execute("file.exportIdml", &json!({})).unwrap();
+        let imported = designcraft_idml::import_idml(&super::super::file::base64_decode(idml["base64"].as_str().unwrap())).unwrap();
+        let copies: Vec<_> = imported.assets.values().filter(|a| designcraft_render::is_pdf(&a.data)).collect();
+        assert!(!copies.is_empty(), "the anchored placement is exported");
+        assert!(
+            copies.iter().all(|a| designcraft_render::pdf_layers(&a.data).iter().all(|(_, on)| *on)),
+            "the embedded copy must not fall back to the file's defaults"
+        );
+        // An external-only copy would keep the original file's defaults.
+        assert!(s.execute("file.exportIdml", &json!({"embedImages": false})).is_err());
+        // PDF/A-2b rasterises a placement with a choice, warnings included.
+        let a2b = s.execute("file.exportPdf", &json!({"standard": "a2b"})).unwrap();
+        assert!(a2b["warnings"].as_array().unwrap().iter().any(|w| w.as_str().is_some_and(|w| w.contains("exported as images"))), "{a2b}");
+    }
+
     /// Relinking a placed PDF to an image leaves the item's layer fields behind. They are no longer a
     /// placed-PDF choice: the package report asks for a graphic whose asset is a PDF, the same thing
     /// the export walks ask for, so it does not name the stale field, and exports run unaffected.
