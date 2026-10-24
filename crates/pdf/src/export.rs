@@ -2009,6 +2009,7 @@ mod image_content_cache_tests {
                 crop: [0.0; 4],
                 wrap: Default::default(),
                 fill: Default::default(),
+                layer_options: None,
             };
             ex.graphic_unclipped(&mut surface, &graphic, hidden.as_deref());
             assert!(ex.layer_error.is_none());
