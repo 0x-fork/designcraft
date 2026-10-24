@@ -1641,28 +1641,7 @@ impl<'r> Importer<'r> {
                 a.strikethrough_tint = tint;
             }
         }
-        // OpenType features (only when the element sets any).
-        let mut otf_list: Vec<String> = Vec::new();
-        let mut any = false;
-        for (tag, _, attr) in designcraft_doc::otf::TOGGLES {
-            if let Some(on) = e.boolean(attr) {
-                designcraft_doc::otf::set(&mut otf_list, tag, on);
-                any = true;
-            }
-        }
-        if let Some(fig) = e.prop("OTFFigureStyle")
-            && let Some((id, ..)) = designcraft_doc::otf::FIGURES.iter().find(|f| f.3 == fig.trim())
-        {
-            designcraft_doc::otf::set_figures(&mut otf_list, id);
-            any = true;
-        }
-        if let Some(m) = e.num("OTFStylisticSets") {
-            designcraft_doc::otf::set_stylistic_sets(&mut otf_list, m.max(0.0) as u32);
-            any = true;
-        }
-        if any {
-            a.otf_features = Some(otf_list);
-        }
+        read_otf_features(e, &mut a);
         a.glyph_form = e.prop("GlyphForm");
         a.no_break = e.boolean("NoBreak");
         a.tate_chu_yoko = e.boolean("Tatechuyoko");
@@ -1841,6 +1820,7 @@ impl<'r> Importer<'r> {
         a.single_word_justify = e.prop("SingleWordJustification").and_then(|v| names::align_in(v.trim()));
         a.keep_with_next = u("KeepWithNext");
         a.keep_lines_together = e.boolean("KeepLinesTogether");
+        a.ignore_optical_margin = e.boolean("IgnoreEdgeAlignment");
         a.keep_all_lines = e.boolean("KeepAllLinesTogether");
         a.keep_first = u("KeepFirstLines");
         a.keep_last = u("KeepLastLines");
@@ -2116,6 +2096,14 @@ impl<'r> Importer<'r> {
             let format = self.xref_format_names.get(&fmt).cloned().unwrap_or_else(|| "Full Paragraph & Page Number".into());
             xref_list.push(Arc::new(designcraft_doc::CrossRef { target: 0, format }));
         }
+        let pref = e.find("StoryPreference");
+        let optical_margin = designcraft_doc::OpticalMargin {
+            on: pref.and_then(|p| p.boolean("OpticalMarginAlignment")).unwrap_or(false),
+            size: pref
+                .and_then(|p| p.num("OpticalMarginSize"))
+                .and_then(designcraft_doc::OpticalMargin::clamp_size)
+                .unwrap_or(designcraft_doc::OpticalMargin::DEFAULT_SIZE),
+        };
         let mut st = Story {
             id,
             text,
@@ -2128,6 +2116,7 @@ impl<'r> Importer<'r> {
                 designcraft_doc::TextDirection::LeftToRight
             },
             vertical: e.find("StoryPreference").and_then(|p| p.get("StoryOrientation")) == Some("Vertical"),
+            optical_margin,
             rev: 0,
             tables,
             notes,
@@ -2995,8 +2984,11 @@ impl<'r> Importer<'r> {
                 if let Some(g) = self.with_style(e, "BaselineFrameGridOption")
                     && g.get("UseCustomBaselineFrameGrid") == Some("true")
                 {
-                    options.baseline_grid =
-                        Some((g.num("StartingOffsetForBaselineFrameGrid").unwrap_or(0.0), g.num("BaselineFrameGridIncrement").unwrap_or(12.0)));
+                    options.baseline_grid = Some(designcraft_doc::FrameBaselineGrid {
+                        start: g.num("StartingOffsetForBaselineFrameGrid").unwrap_or(0.0),
+                        increment: g.num("BaselineFrameGridIncrement").unwrap_or(12.0),
+                        relative_to: g.get("BaselineFrameGridRelativeOption").map(frame_grid_relative).unwrap_or_default(),
+                    });
                 }
                 it.content = Content::Text(TextFrame { story, options });
                 self.ctx.threads.push((
@@ -3537,6 +3529,19 @@ fn fit_columns(mut columns: Columns, margins: &Margins, page_width: f64) -> Colu
     columns
 }
 
+/// A `BaselineFrameGridRelativeOption` value (`TopOfInsetOfBaselineFrameGridRelativeOption`, or a
+/// short form such as `TopOfInset`); unknown values measure from the top of the page.
+fn frame_grid_relative(v: &str) -> designcraft_doc::FrameGridRelative {
+    use designcraft_doc::FrameGridRelative as R;
+    let v = v.strip_suffix("OfBaselineFrameGridRelativeOption").unwrap_or(v);
+    match v {
+        "TopOfMargin" | "TopMargin" => R::TopMargin,
+        "TopOfFrame" => R::TopOfFrame,
+        "TopOfInset" | "TopInset" => R::TopInset,
+        _ => R::TopOfPage,
+    }
+}
+
 /// Text Frame Options from `TextFramePreference` elements: each attribute from the first that sets it.
 fn text_frame_options(prefs: &[&El]) -> TextFrameOptions {
     let e = Prefs(prefs);
@@ -3886,6 +3891,31 @@ impl Importer<'_> {
         a.shatai_angle = finite("ShataiDegreeAngle").map(|v| v / crate::cjk::SHATAI_ANGLE_UNITS);
         a.shatai_adjust_rotation = e.boolean("ShataiAdjustRotation");
         a.shatai_adjust_tsume = e.boolean("ShataiAdjustTsume");
+    }
+}
+
+/// OpenType features (only when the element sets any).
+fn read_otf_features(e: &El, a: &mut CharAttrs) {
+    let mut otf_list: Vec<String> = Vec::new();
+    let mut any = false;
+    for (tag, _, attr) in designcraft_doc::otf::TOGGLES {
+        if let Some(on) = e.boolean(attr) {
+            designcraft_doc::otf::set(&mut otf_list, tag, on);
+            any = true;
+        }
+    }
+    if let Some(fig) = e.prop("OTFFigureStyle")
+        && let Some((id, ..)) = designcraft_doc::otf::FIGURES.iter().find(|f| f.3 == fig.trim())
+    {
+        designcraft_doc::otf::set_figures(&mut otf_list, id);
+        any = true;
+    }
+    if let Some(m) = e.num("OTFStylisticSets") {
+        designcraft_doc::otf::set_stylistic_sets(&mut otf_list, m.max(0.0) as u32);
+        any = true;
+    }
+    if any {
+        a.otf_features = Some(otf_list);
     }
 }
 
