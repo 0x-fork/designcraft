@@ -437,7 +437,7 @@ fn package(s: &mut Session, p: &Value) -> Result<Value> {
         let opts = designcraft_idml::ExportOptions { embed_images: false };
         root.write(&path, &designcraft_idml::export_idml_with(&packed, &opts))?;
         files.push(path);
-        if packed.has_pdf_layer_overrides() {
+        if super::interchange::has_applicable_pdf_layer_overrides(&packed) {
             idml_layer_note = "\nPlaced PDF layers\nThe IDML copy links the placed PDFs, so it shows their file defaults. The DesignCraft document keeps each placement's Object Layer Options choice.\n";
         }
     }

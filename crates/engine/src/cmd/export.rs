@@ -686,8 +686,9 @@ fn rasterize_layered(d: &designcraft_doc::Document) -> Result<(Option<designcraf
         })
         .collect();
     if choices.is_empty() {
-        // Fail closed: a choice this walk cannot reach must not become the file's defaults.
-        if d.has_pdf_layer_overrides() {
+        // Fail closed, with the same predicate as the walk: a stale choice on an item that is no
+        // longer a placed PDF must not block the export.
+        if super::interchange::has_applicable_pdf_layer_overrides(d) {
             return Err(EngineError::Other("a placed PDF's layer choice sits where this raster export cannot apply it".into()));
         }
         return Ok((None, 0));

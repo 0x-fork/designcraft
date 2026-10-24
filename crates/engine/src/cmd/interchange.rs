@@ -40,6 +40,15 @@ fn export_idml(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
+/// Whether a placement still holds an Object Layer Options choice the exports can apply: a
+/// graphic whose asset is a PDF. A choice left on an item that is no longer a placed PDF (its
+/// link was replaced with another format) is not one, and must not block an export.
+pub(crate) fn has_applicable_pdf_layer_overrides(doc: &Document) -> bool {
+    doc.placed_items().into_iter().any(|it| {
+        it.has_pdf_layer_override() && it.graphic().and_then(|g| doc.assets.get(&g.asset)).is_some_and(|a| designcraft_render::is_pdf(&a.data))
+    })
+}
+
 /// Each placement gets its own embedded variant so two frames sharing a PDF can
 /// choose different layers. The live document and original linked bytes stay untouched.
 ///
@@ -56,9 +65,11 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
         })
         .collect();
     if choices.is_empty() {
-        // A choice this walk cannot reach would silently become the file's defaults (a newer
-        // nesting construct, say), so the copy is refused instead.
-        if doc.has_pdf_layer_overrides() {
+        // A choice the walk cannot reach would silently become the file's defaults (a newer nesting
+        // construct, say), so the copy is refused instead. The predicate matches the walk above:
+        // both ask for a graphic whose asset is a PDF, so stale fields on a relinked image never
+        // block an export.
+        if has_applicable_pdf_layer_overrides(doc) {
             return Err(EngineError::Other("a placed PDF's layer choice sits where this IDML export cannot apply it".into()));
         }
         return Ok(None);
