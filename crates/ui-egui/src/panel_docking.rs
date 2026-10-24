@@ -512,6 +512,10 @@ fn shared_id(id: &str) -> Option<&'static str> {
 
 pub(crate) fn command(app: &mut DesignApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if id == "app.tablePanel" {
+        // A Table flyout closes; the panel stays in its icon group.
+        if flyout_open(app, "table") {
+            return Some(Ok(close_flyout(app)));
+        }
         let id = if showing(app, "table") { "window.panel.close" } else { "window.panel.activate" };
         return Some(shared_command(app, id, &json!({"panel": "table"})));
     }
@@ -530,17 +534,27 @@ pub(crate) fn command(app: &mut DesignApp, id: &str, params: &Value) -> Option<R
         // Float-only panels (Type › Tabs) are not in the layout.
         let panel = params.get("panel").and_then(Value::as_str).and_then(normalize)?;
         // Choosing a panel whose flyout is open closes the flyout, as the panel's icon does.
-        if app.ui.docking_flyout.as_deref() == Some(panel) && in_iconic_column(&layout_of(app), panel) {
-            app.ui.docking_flyout = None;
-            if let Some(ctx) = app.egui_ctx.as_ref() {
-                craft_ui::docking::close_flyout::<String>(ctx, area_id());
-            }
-            return Some(Ok(json!({"layout": layout_of(app), "closed": [], "floating": floating_panels(app)})));
+        if flyout_open(app, panel) {
+            return Some(Ok(close_flyout(app)));
         }
         return Some(shared_command(app, "window.panel.activate", params));
     }
     let id = shared_id(id)?;
     Some(shared_command(app, id, params))
+}
+
+/// Is `panel` showing in the open flyout of an iconic column?
+fn flyout_open(app: &DesignApp, panel: &str) -> bool {
+    app.ui.docking_flyout.as_deref() == Some(panel) && in_iconic_column(&layout_of(app), panel)
+}
+
+/// Close the open flyout; the layout is unchanged.
+fn close_flyout(app: &mut DesignApp) -> Value {
+    app.ui.docking_flyout = None;
+    if let Some(ctx) = app.egui_ctx.as_ref() {
+        craft_ui::docking::close_flyout::<String>(ctx, area_id());
+    }
+    json!({"layout": layout_of(app), "closed": [], "floating": floating_panels(app)})
 }
 
 /// Command params with DesignCraft's panel names resolved (a panel id or English name, in any

@@ -392,10 +392,13 @@ fn table_and_control_visibility_work_after_customization_without_document_edits(
     let undo = app.session.active().unwrap().history.undo.len();
     app.run("window.panel.float", json!({"panel":"layers"})).unwrap();
     app.run("app.tablePanel", json!({})).unwrap();
-    assert!(app.ui.docking.as_ref().unwrap().contains(&"table".into()));
+    assert!(showing(&app, "table"));
+    // The Table flyout closes; Table stays in its icon group.
     app.run("app.tablePanel", json!({})).unwrap();
-    assert!(!app.ui.docking.as_ref().unwrap().contains(&"table".into()));
+    assert!(!showing(&app, "table"));
+    assert!(in_iconic_column(app.ui.docking.as_ref().unwrap(), "table"));
     app.run("app.tablePanel", json!({})).unwrap();
+    assert!(showing(&app, "table"));
     let ctx = egui::Context::default();
     let (req, _) = crate::control::ControlRequest::new("ui.set", json!({"closePanel":true,"dockExpanded":false}));
     let crate::control::Outcome::Done(result) = crate::control::handle(&mut app, &ctx, &req) else { panic!("expected synchronous control result") };
@@ -473,7 +476,8 @@ fn shift_f9_toggles_table_after_customization_through_the_real_shortcut_path() {
         h.run_steps(1);
         h.event(Event::Key { key: egui::Key::F9, physical_key: None, pressed: false, repeat: false, modifiers });
         h.run_steps(2);
-        assert_eq!(h.state().app.ui.docking.as_ref().unwrap().contains(&"table".into()), visible);
+        assert_eq!(showing(&h.state().app, "table"), visible);
+        assert!(h.state().app.ui.docking.as_ref().unwrap().contains(&"table".into()), "Table stays in its icon group");
     }
     assert_eq!(serde_json::to_value(&h.state().app.session.active().unwrap().doc).unwrap(), before);
 }
