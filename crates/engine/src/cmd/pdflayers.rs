@@ -530,12 +530,8 @@ pub(crate) mod tests {
             data: std::sync::Arc::new(pdf),
             ..Default::default()
         });
-        let mut item = Item::new(
-            designcraft_doc::ItemId(d.alloc()),
-            d.default_layer(),
-            Shape::Rectangle,
-            shapes::rectangle(Rect::new(0.0, 0.0, 100.0, 100.0)),
-        );
+        let mut item =
+            Item::new(designcraft_doc::ItemId(d.alloc()), d.default_layer(), Shape::Rectangle, shapes::rectangle(Rect::new(0.0, 0.0, 100.0, 100.0)));
         item.pdf_layer_override = true;
         item.content = Content::Graphic(Graphic {
             asset,
