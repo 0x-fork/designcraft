@@ -338,13 +338,13 @@ pub fn open_print(app: &mut DesignApp) {
 }
 
 /// File › Export PDF…: the "Export PDF" options dialog, seeded from the persisted settings
-/// (`UiState.pdf_export`) and the active document. `pages` is per-job (not persisted); `flatten`
-/// falls back to the global flattener preset when the persisted value is empty.
+/// (`UiState.pdf_export`). `pages` is per-job (not persisted); `flatten` falls back to the global
+/// flattener preset when the persisted value is empty. `title` starts empty: a title given to the
+/// dialog is the PDF's title and names the file, and without one the file is named after the
+/// document and the PDF takes its title from File Info.
 pub fn open_pdf_export(app: &mut DesignApp) {
     let mut fields = serde_json::to_value(&app.ui.pdf_export).unwrap_or_else(|_| json!({}));
     if let Value::Object(m) = &mut fields {
-        let title = app.session.active().map(|st| st.doc.title.clone()).unwrap_or_default();
-        m.insert("title".into(), json!(title));
         m.insert("pages".into(), json!("all"));
         if app.ui.pdf_export.flatten.is_empty() {
             m.insert("flatten".into(), json!(app.ui.flattener));
@@ -1269,10 +1269,13 @@ pub fn open_file_info(app: &mut DesignApp) {
         };
         f.insert(key.into(), Value::String(v));
     }
-    // The keywords as shown: OK sends them only when they were edited, so a keyword holding a
-    // semicolon or comma stays one keyword.
+    // The keywords as shown and as stored: OK sends them only when they were edited, and then a
+    // stored keyword holding a semicolon or comma that is still there whole stays one keyword.
     let shown = f.get("keywords").cloned().unwrap_or_default();
     f.insert("keywordsShown".into(), shown);
+    f.insert("keywordsStored".into(), cur["keywords"].clone());
+    // The document the fields belong to, should another one become active before OK.
+    f.insert("uid".into(), json!(app.session.active().map(|doc| doc.uid)));
     app.ui.dialog = Some(Dialog::new("fileInfo", Value::Object(f)));
 }
 
@@ -1294,15 +1297,40 @@ fn file_info_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
 }
 
 /// File Info's OK: every field as typed (an empty one clears it); the keywords only when they
-/// were edited.
+/// were edited. The fields go to the document the dialog was opened for, even when another one
+/// became active meanwhile, and the active document stays active; when the dialog's document has
+/// closed, nothing is stored.
 fn confirm_file_info(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     let keywords_edited = d.fields.get("keywordsShown").and_then(Value::as_str) != Some(d.s("keywords").as_str());
+    let stored: Vec<String> = match d.fields.get("keywordsStored") {
+        Some(Value::Array(words)) => words.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+        _ => Vec::new(),
+    };
     let p: Map<String, Value> = FILE_INFO_FIELDS
         .iter()
         .filter(|(key, _)| *key != "keywords" || keywords_edited)
-        .map(|(key, _)| (key.to_string(), Value::String(d.s(key))))
+        .map(|(key, _)| {
+            let v = if *key == "keywords" {
+                json!(designcraft_doc::file_info::parse_keywords_keeping(&d.s(key), &stored))
+            } else {
+                Value::String(d.s(key))
+            };
+            (key.to_string(), v)
+        })
         .collect();
-    app.run("file.info", Value::Object(p))
+    let uid = d.fields.get("uid").and_then(Value::as_u64);
+    let active = app.session.active().map(|doc| doc.uid);
+    if uid.is_none() || uid == active {
+        return app.run("file.info", Value::Object(p));
+    }
+    let index = |app: &DesignApp, uid: Option<u64>| app.session.documents().iter().position(|doc| Some(doc.uid) == uid);
+    let Some(i) = index(app, uid) else { return Ok(Value::Null) };
+    app.run("file.activate", json!({"index": i}))?;
+    let r = app.run("file.info", Value::Object(p));
+    if let Some(back) = index(app, active) {
+        app.run("file.activate", json!({"index": back}))?;
+    }
+    r
 }
 
 /// The edges of Document Setup's margins, bleed and slug (field suffixes).
@@ -3420,12 +3448,14 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 params["pages"] = json!(pages);
             }
             let title = d.s("title");
-            // The document's name names the file; the PDF's title then comes from File Info.
+            // Without a title the document's name names the file, and the PDF's title comes from
+            // File Info.
             let doc_name = app.session.active().map(|st| st.doc.title.clone()).unwrap_or_default();
-            if !title.is_empty() && title != doc_name {
+            if !title.is_empty() {
                 params["title"] = json!(title);
             }
-            let name = if title.is_empty() { "Export.pdf".to_string() } else { format!("{title}.pdf") };
+            let stem = if title.is_empty() { doc_name } else { title };
+            let name = if stem.is_empty() { "Export.pdf".to_string() } else { format!("{stem}.pdf") };
             match app.pick_save(&name) {
                 Some(path) => {
                     params["path"] = json!(path);
@@ -7177,6 +7207,12 @@ mod tests {
         confirm(&mut app).unwrap();
         let info = app.session.active().unwrap().doc.file_info.clone();
         assert_eq!((info.author.as_str(), info.keywords.clone()), ("Studio", vec!["Washington, DC".to_string(), "map".to_string()]));
+        // Another keyword edited: the one with a comma in it still stays one keyword.
+        crate::menus::activate(&mut app, "file.info", &Value::Null);
+        assert_eq!(app.ui.dialog.as_ref().unwrap().s("keywords"), "Washington, DC; map");
+        setup_fields(&mut app, json!({"keywords": "Washington, DC; atlas"}));
+        confirm(&mut app).unwrap();
+        assert_eq!(app.session.active().unwrap().doc.file_info.keywords, ["Washington, DC", "atlas"]);
 
         let writes: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = writes.clone();
@@ -7195,6 +7231,36 @@ mod tests {
         assert_eq!(names.lock().unwrap().as_slice(), ["flyer-v3.pdf"]);
         let pdf = String::from_utf8_lossy(&writes.lock().unwrap()[0]).into_owned();
         assert!(pdf.contains("/Title(Spring Catalog)") && !pdf.contains("/Title(flyer-v3)"), "the PDF's title is File Info's");
+        // A title given to the export is the PDF's title, even when it is the document's name.
+        open_pdf_export(&mut app);
+        setup_fields(&mut app, json!({"title": "flyer-v3"}));
+        confirm(&mut app).unwrap();
+        let asked = names.lock().unwrap().last().cloned().unwrap_or_default();
+        assert_eq!(std::path::Path::new(&asked).file_name().and_then(|n| n.to_str()), Some("flyer-v3.pdf"), "{asked}");
+        let pdf = String::from_utf8_lossy(&writes.lock().unwrap()[1]).into_owned();
+        assert!(pdf.contains("/Title(flyer-v3)") && !pdf.contains("/Title(Spring Catalog)"), "the given title wins");
+    }
+
+    /// File Info's OK stores the fields in the document the dialog was opened for, even when
+    /// another document became active meanwhile; once that document has closed, OK stores nothing.
+    #[test]
+    fn file_info_dialog_stores_into_the_document_it_was_opened_for() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"title": "first"})).unwrap();
+        crate::menus::activate(&mut app, "file.info", &Value::Null);
+        app.run("file.new", json!({"title": "second"})).unwrap();
+        setup_fields(&mut app, json!({"author": "Ana Ruiz"}));
+        confirm(&mut app).unwrap();
+        let docs = app.session.documents();
+        let author = |title: &str| docs.iter().find(|d| d.doc.title == title).map(|d| d.doc.file_info.author.clone());
+        assert_eq!((author("first").as_deref(), author("second").as_deref()), (Some("Ana Ruiz"), Some("")));
+        assert_eq!(app.session.active().map(|d| d.doc.title.as_str()), Some("second"), "the active document stays active");
+
+        crate::menus::activate(&mut app, "file.info", &Value::Null);
+        app.run("file.close", json!({})).unwrap();
+        setup_fields(&mut app, json!({"author": "Studio"}));
+        confirm(&mut app).unwrap();
+        assert!(app.session.documents().iter().all(|d| d.doc.file_info.author != "Studio"), "the dialog's document closed");
     }
 
     #[test]

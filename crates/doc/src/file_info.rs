@@ -32,6 +32,29 @@ pub fn parse_keywords(text: &str) -> Vec<String> {
     clean_keywords(text.split([';', ',']))
 }
 
+/// Keywords typed as one line, read as [`parse_keywords`] reads them, except that a keyword of
+/// `kept` that holds a semicolon or comma stays one keyword wherever it still stands whole
+/// between separators.
+pub fn parse_keywords_keeping(text: &str, kept: &[String]) -> Vec<String> {
+    let mut whole: Vec<&str> = kept.iter().map(|k| k.trim()).filter(|k| k.contains([';', ','])).collect();
+    whole.sort_by_key(|k| std::cmp::Reverse(k.len()));
+    let separator = |c: char| c == ';' || c == ',';
+    let mut words = Vec::new();
+    let mut rest = text;
+    loop {
+        rest = rest.trim_start_matches(|c: char| separator(c) || c.is_whitespace());
+        if rest.is_empty() {
+            break;
+        }
+        let kept_here = whole.iter().find(|k| rest.strip_prefix(**k).is_some_and(|after| after.trim_start().chars().next().is_none_or(separator)));
+        let end = kept_here.map_or_else(|| rest.find(separator).unwrap_or(rest.len()), |k| k.len());
+        let (word, after) = rest.split_at_checked(end).unwrap_or((rest, ""));
+        words.push(word);
+        rest = after;
+    }
+    clean_keywords(words)
+}
+
 /// Trimmed keywords without empty or repeated ones, in their first order.
 pub fn clean_keywords<'a>(words: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
@@ -62,6 +85,17 @@ mod tests {
     fn keywords_split_at_semicolons_and_commas() {
         assert_eq!(parse_keywords(" spring; catalog,  shoes ;;spring , "), ["spring", "catalog", "shoes"]);
         assert!(parse_keywords(" ; , ").is_empty());
+    }
+
+    #[test]
+    fn keywords_with_separators_stay_whole_when_another_one_changes() {
+        let kept = ["Washington, DC".to_string(), "map".into(), "a; b".into()];
+        assert_eq!(parse_keywords_keeping("Washington, DC; atlas", &kept), ["Washington, DC", "atlas"]);
+        assert_eq!(parse_keywords_keeping("atlas, a; b ;Washington, DC", &kept), ["atlas", "a; b", "Washington, DC"]);
+        // Edited, a keyword is read like any other text.
+        assert_eq!(parse_keywords_keeping("Washington, D.C.; map", &kept), ["Washington", "D.C.", "map"]);
+        assert_eq!(parse_keywords_keeping("Washington, DCX", &kept), ["Washington", "DCX"]);
+        assert_eq!(parse_keywords_keeping(" spring; catalog,  shoes ;;spring , ", &[]), ["spring", "catalog", "shoes"]);
     }
 
     #[test]

@@ -30,7 +30,12 @@ pub fn specs() -> Vec<CommandSpec> {
 
 fn file_info(s: &mut Session, p: &Value) -> Result<Value> {
     let cur = s.doc()?.doc.file_info.clone();
-    let Some(o) = p.as_object().filter(|o| !o.is_empty()) else { return Ok(to_json(&cur)) };
+    let o = match p {
+        Value::Null => return Ok(to_json(&cur)),
+        Value::Object(o) if o.is_empty() => return Ok(to_json(&cur)),
+        Value::Object(o) => o,
+        _ => return Err(bad(ID, "the parameters must be an object of fields")),
+    };
     let next = apply(&cur, o)?;
     if next == cur {
         return Ok(to_json(&cur));
@@ -164,6 +169,13 @@ mod tests {
             assert!(s.execute("file.info", &p).is_err(), "{p}");
         }
         assert!(s.doc().unwrap().doc.file_info.is_empty(), "a refused call changes nothing");
+        // Parameters that are not an object are refused; null reads like {}.
+        s.execute("file.info", &json!({"author": "Ana Ruiz"})).unwrap();
+        for p in [json!(3), json!("author"), json!(true), json!(["author"])] {
+            let e = s.execute("file.info", &p).unwrap_err().to_string();
+            assert!(e.contains("must be an object"), "{p}: {e}");
+        }
+        assert_eq!(s.execute("file.info", &serde_json::Value::Null).unwrap()["author"], "Ana Ruiz");
     }
 
     #[test]
