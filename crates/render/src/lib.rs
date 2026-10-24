@@ -888,7 +888,7 @@ impl Renderer {
         let page = Rect::new(-l * page_w, -t * page_h, (1.0 - l) * page_w, (1.0 - t) * page_h);
         let Some(pm) = images::mip(&data, asset.page, page_w, on_screen) else { return };
         // A coloured image is already in the plate's inks (its colours come from `color_of`).
-        let pm = match (colorize::colorized(f.doc, &g.fill, &asset.data, &pm), PLATE.with(|p| p.get())) {
+        let pm = match (colorize::colorized(f.doc, &g.fill, &asset.data, &pm), PLATE.with(std::cell::Cell::get)) {
             (Some(coloured), _) => coloured,
             (None, Some(plate)) => plate_pixmap(&pm, plate),
             (None, None) => pm,
@@ -919,7 +919,7 @@ pub(crate) fn cmyk_table() -> std::sync::Arc<Vec<[f32; 4]>> {
     type Lut = (designcraft_color::cms::ColorSettings, std::sync::Arc<Vec<[f32; 4]>>);
     static LUT: std::sync::Mutex<Option<Lut>> = std::sync::Mutex::new(None);
     let settings = designcraft_color::cms::active_settings();
-    let mut g = LUT.lock().unwrap_or_else(|e| e.into_inner());
+    let mut g = LUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     match g.as_ref() {
         Some((s, t)) if *s == settings => t.clone(),
         _ => {
@@ -967,7 +967,7 @@ fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync:
     let key = (std::sync::Arc::as_ptr(pm) as usize, plate);
     let settings = designcraft_color::cms::active_settings();
     {
-        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((previous, map, _)) = guard.as_ref() {
             if *previous == settings {
                 if let Some((_, derived)) = map.get(&key) {
@@ -1000,7 +1000,7 @@ fn plate_pixmap(pm: &std::sync::Arc<vello_cpu::Pixmap>, plate: u8) -> std::sync:
     let out = std::sync::Arc::new(vello_cpu::Pixmap::from_parts(data, pm.width(), pm.height()));
     let bytes = (pm.width() as usize).saturating_mul(pm.height() as usize).saturating_mul(8);
     if bytes <= BUDGET {
-        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (previous, map, used) = guard.get_or_insert_with(|| (settings.clone(), Default::default(), 0));
         if *previous != settings || used.saturating_add(bytes) > BUDGET {
             map.clear();
@@ -1030,7 +1030,7 @@ thread_local! {
 /// Screen indicators and placeholders are display sRGB, independent of the document's RGB
 /// working profile. Encode their inks only while drawing a process plate or CMYK blend pass.
 pub(crate) fn screen_color(rgb: [u8; 3], alpha: u8) -> peniko::Color {
-    if PLATE.with(|plate| plate.get()).is_none() {
+    if PLATE.with(std::cell::Cell::get).is_none() {
         return peniko::Color::from_rgba8(rgb[0], rgb[1], rgb[2], alpha);
     }
     let [c, m, y, k] = cmyk_in(&cmyk_table(), rgb.map(|v| v as f32 / 255.0));
@@ -1038,7 +1038,7 @@ pub(crate) fn screen_color(rgb: [u8; 3], alpha: u8) -> peniko::Color {
 }
 
 pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
-    if let Some(p) = PLATE.with(|p| p.get()) {
+    if let Some(p) = PLATE.with(std::cell::Cell::get) {
         let cmyk = match *c {
             designcraft_color::Color::Cmyk { c, m, y, k } => [c, m, y, k],
             _ => c.to_cmyk_managed(designcraft_color::cms::Intent::RelativeColorimetric),
@@ -1051,7 +1051,7 @@ pub fn color_of(c: &designcraft_color::Color, alpha: f32) -> peniko::Color {
         let v = ink(p.min(3) as usize);
         return peniko::Color::from_rgba8(v, v, v, a);
     }
-    if RICH_BLACK.with(|r| r.get())
+    if RICH_BLACK.with(std::cell::Cell::get)
         && let designcraft_color::Color::Cmyk { c: cc, m, y, k } = *c
         && cc <= 1e-3
         && m <= 1e-3
