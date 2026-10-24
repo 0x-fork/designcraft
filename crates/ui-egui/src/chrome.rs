@@ -1095,9 +1095,11 @@ pub fn doc_tabs(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Show the Preflight panel.
+/// Show the Preflight panel. An open Preflight flyout stays: `window.panel` would close it.
 fn show_preflight(app: &mut DesignApp) {
-    if let Err(e) = app.run("window.panel", json!({"panel": "preflight"})) {
+    if app.ui.docking_flyout.as_deref() != Some("preflight")
+        && let Err(e) = app.run("window.panel", json!({"panel": "preflight"}))
+    {
         app.status(e);
     }
 }

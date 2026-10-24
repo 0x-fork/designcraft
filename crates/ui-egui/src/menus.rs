@@ -3408,8 +3408,22 @@ fn quick_commands() -> impl Iterator<Item = (&'static str, &'static str, Option<
         .iter()
         .filter(|c| !c.menu.is_empty() || c.shortcut.is_some())
         .map(|c| (c.id, c.label, c.shortcut))
-        .chain(UI_COMMANDS.iter().map(|c| (c.0, c.1, c.2)))
+        .chain(UI_COMMANDS.iter().filter(|c| !NOT_SEARCHED.contains(&c.0)).map(|c| (c.0, c.1, c.2)))
 }
+
+/// UI commands Quick Apply and the menu search leave out: the shared docking commands
+/// DesignCraft does not provide, and the older ids that share a label with a `window.panel.*` or
+/// `window.workspace.*` command.
+const NOT_SEARCHED: &[&str] = &[
+    "window.panel.window",
+    "window.workspace.lock",
+    "window.floatPanel",
+    "window.dockPanel",
+    "window.collapseToIcons",
+    "ui.dock",
+    "ui.dock.reset",
+    "window.resetWorkspace",
+];
 
 /// Whether any of `texts` contains the lowercased query (an empty query matches everything).
 fn quick_match(query_lower: &str, texts: &[&str]) -> bool {
@@ -6160,6 +6174,20 @@ mod tests {
             );
         }
         assert!(app.ui.dialog.is_some(), "clicking the empty end of the Preferences… row must choose it");
+    }
+
+    /// Quick Apply and the menu search list no unavailable docking command and no label twice
+    /// among the UI commands.
+    #[test]
+    fn searched_ui_commands_are_available_and_named_once() {
+        let ui_ids: Vec<&str> = UI_COMMANDS.iter().map(|c| c.0).collect();
+        let searched: Vec<(&str, &str)> = quick_commands().filter(|c| ui_ids.contains(&c.0)).map(|c| (c.0, c.1)).collect();
+        assert!(!searched.iter().any(|c| matches!(c.0, "window.panel.window" | "window.workspace.lock")), "{searched:?}");
+        let mut labels: Vec<&str> = searched.iter().map(|c| c.1).collect();
+        labels.sort_unstable();
+        let before = labels.len();
+        labels.dedup();
+        assert_eq!(labels.len(), before, "a label twice: {searched:?}");
     }
 
     /// Keys a floating panel's own OS window left over run the main window's tool shortcuts,
