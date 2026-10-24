@@ -3411,15 +3411,26 @@ fn quick_commands() -> impl Iterator<Item = (&'static str, &'static str, Option<
         .chain(UI_COMMANDS.iter().filter(|c| !NOT_SEARCHED.contains(&c.0)).map(|c| (c.0, c.1, c.2)))
 }
 
-/// UI commands Quick Apply and the menu search leave out: the shared docking commands
-/// DesignCraft does not provide, and the older ids that share a label with a `window.panel.*` or
-/// `window.workspace.*` command.
+/// UI commands Quick Apply and the menu search leave out. They run an entry with `{}`, so this
+/// lists the shared docking commands DesignCraft does not provide, those that need a `panel` or
+/// `name`, and the ids that share a label with another searched docking command.
 const NOT_SEARCHED: &[&str] = &[
     "window.panel.window",
     "window.workspace.lock",
+    "window.panel.layout",
+    "window.panel.move",
+    "window.panel.float",
+    "window.panel.dock",
+    "window.panel.activate",
+    "window.panel.close",
+    "window.panel.closeGroup",
+    "window.panel.closeOthers",
+    "window.panel.minimize",
+    "window.panel.iconic",
+    "window.workspace.new",
+    "window.workspace.delete",
     "window.floatPanel",
     "window.dockPanel",
-    "window.collapseToIcons",
     "ui.dock",
     "ui.dock.reset",
     "window.resetWorkspace",
@@ -6183,6 +6194,24 @@ mod tests {
         let ui_ids: Vec<&str> = UI_COMMANDS.iter().map(|c| c.0).collect();
         let searched: Vec<(&str, &str)> = quick_commands().filter(|c| ui_ids.contains(&c.0)).map(|c| (c.0, c.1)).collect();
         assert!(!searched.iter().any(|c| matches!(c.0, "window.panel.window" | "window.workspace.lock")), "{searched:?}");
+        assert!(searched.iter().any(|c| c.0 == "window.collapseToIcons"), "Collapse to Icons is searched");
+        // Quick Apply runs an entry as `app.run(id, {})`, so each docking command it lists must
+        // work without params.
+        let docking = |id: &str| {
+            id.starts_with("window.panel")
+                || id.starts_with("window.workspace")
+                || id.starts_with("ui.dock")
+                || matches!(id, "window.floatPanel" | "window.dockPanel" | "window.collapseToIcons" | "window.resetWorkspace")
+        };
+        let failing: Vec<(&str, String)> = searched
+            .iter()
+            .filter(|c| docking(c.0))
+            .filter_map(|c| {
+                let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+                app.run(c.0, json!({})).err().map(|e| (c.0, e))
+            })
+            .collect();
+        assert!(failing.is_empty(), "searched docking commands that fail with {{}}: {failing:?}");
         let mut labels: Vec<&str> = searched.iter().map(|c| c.1).collect();
         labels.sort_unstable();
         let before = labels.len();
