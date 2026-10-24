@@ -40,6 +40,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Hyphenate Capitalized Words", "Großgeschriebene Wörter trennen"),
     ("Hyphenate Last Word", "Letztes Wort trennen"),
     ("Hyphenate Across Column", "Über Spalten trennen"),
+    ("Apply Bullets", "Aufzählungszeichen anwenden"),
+    ("Apply Numbers", "Nummerierung anwenden"),
     ("Inches Decimal", "Zoll dezimal"),
     ("Back", "Zurück"),
     ("Warning", "Warnung"),

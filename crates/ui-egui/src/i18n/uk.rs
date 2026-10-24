@@ -52,6 +52,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Drop Cap Number of Lines", "Буквиця: кількість рядків"),
     ("Drop Cap One or More Characters", "Буквиця: один або кілька символів"),
     ("Align to Baseline Grid", "Вирівняти за сіткою базових ліній"),
+    ("Apply Bullets", "Застосувати маркери"),
+    ("Apply Numbers", "Застосувати нумерацію"),
     ("Paste Vector Art", "Вставити векторну графіку"),
     ("Baseline Options", "Параметри базової лінії"),
     ("Fixed Number", "Фіксована кількість"),

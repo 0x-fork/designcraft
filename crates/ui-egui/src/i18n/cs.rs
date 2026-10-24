@@ -54,6 +54,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Drop Cap Number of Lines", "Počet řádků iniciály"),
     ("Drop Cap One or More Characters", "Iniciála: jeden nebo více znaků"),
     ("Align to Baseline Grid", "Zarovnat na mřížku účaří"),
+    ("Apply Bullets", "Použít odrážky"),
+    ("Apply Numbers", "Použít číslování"),
     ("Reverse Path", "Obrátit cestu"),
     ("Set Anchor", "Nastavit kotvu"),
     ("Clear", "Vymazat"),

@@ -53,6 +53,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Drop Cap Number of Lines", "عدد أسطر الحرف الاستهلالي"),
     ("Drop Cap One or More Characters", "حرف استهلالي واحد أو أكثر"),
     ("Align to Baseline Grid", "محاذاة إلى شبكة خط الأساس"),
+    ("Apply Bullets", "تطبيق التعداد النقطي"),
+    ("Apply Numbers", "تطبيق الترقيم"),
     ("Paste Vector Art", "لصق رسم متجه"),
     ("Baseline Options", "خيارات خط الأساس"),
     ("Fixed Number", "عدد ثابت"),

@@ -52,6 +52,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Drop Cap Number of Lines", "Inicjał: liczba wierszy"),
     ("Drop Cap One or More Characters", "Inicjał: jeden lub więcej znaków"),
     ("Align to Baseline Grid", "Wyrównaj do siatki linii bazowych"),
+    ("Apply Bullets", "Zastosuj wypunktowanie"),
+    ("Apply Numbers", "Zastosuj numerowanie"),
     ("Clear", "Wyczyść"),
     ("Duplicate", "Powiel"),
     ("Select All", "Zaznacz wszystko"),

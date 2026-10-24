@@ -56,6 +56,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Drop Cap Number of Lines", "Буквица: число строк"),
     ("Drop Cap One or More Characters", "Буквица: один или несколько символов"),
     ("Align to Baseline Grid", "Выровнять по сетке базовых линий"),
+    ("Apply Bullets", "Применить маркеры"),
+    ("Apply Numbers", "Применить нумерацию"),
     ("Clear", "Очистить"),
     ("Duplicate", "Дублировать"),
     ("Select All", "Выделить все"),

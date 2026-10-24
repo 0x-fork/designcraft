@@ -51,6 +51,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Drop Cap Number of Lines", "Capolettera: numero di righe"),
     ("Drop Cap One or More Characters", "Capolettera: uno o più caratteri"),
     ("Align to Baseline Grid", "Allinea alla griglia di base"),
+    ("Apply Bullets", "Applica punti elenco"),
+    ("Apply Numbers", "Applica numeri"),
     ("Paste Vector Art", "Incolla grafica vettoriale"),
     ("Baseline Options", "Opzioni linea di base"),
     ("Fixed Number", "Numero fisso"),

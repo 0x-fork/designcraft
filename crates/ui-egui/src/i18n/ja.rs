@@ -39,6 +39,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Hyphenate Capitalized Words", "大文字で始まる単語をハイフネーション"),
     ("Hyphenate Last Word", "最後の単語をハイフネーション"),
     ("Hyphenate Across Column", "段をまたいでハイフネーション"),
+    ("Apply Bullets", "箇条書きを適用"),
+    ("Apply Numbers", "段落番号を適用"),
     ("Paste Vector Art", "ベクトルアートをペースト"),
     ("Baseline Options", "ベースラインオプション"),
     ("Column Rules", "段落境界線"),

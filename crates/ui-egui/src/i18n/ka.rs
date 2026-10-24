@@ -54,6 +54,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Drop Cap Number of Lines", "ინიციალის სტრიქონების რაოდენობა"),
     ("Drop Cap One or More Characters", "ინიციალი: ერთი ან მეტი სიმბოლო"),
     ("Align to Baseline Grid", "საბაზო ბადეზე სწორება"),
+    ("Apply Bullets", "მარკერების გამოყენება"),
+    ("Apply Numbers", "ნუმერაციის გამოყენება"),
     ("Inches Decimal", "ინჩები (ათობითი)"),
     ("Back", "უკან"),
     ("Warning", "გაფრთხილება"),
