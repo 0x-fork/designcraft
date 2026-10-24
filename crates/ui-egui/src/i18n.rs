@@ -2085,6 +2085,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("New Table Style…", ["New Table Style…", "Nouveau style de tableau…", "New Table Style…", "New Table Style…", "新建表样式…"]),
     ("Next Cell", ["Next Cell", "Cellule suivante", "Next Cell", "Next Cell", "下一个单元格"]),
     ("Next Document", ["Next Document", "Document suivant", "Next Document", "Next Document", "下一个文档"]),
+    ("Next Note", ["Next Note", "Note suivante", "Next Note", "Next Note", "下一个注释"]),
     ("Next Object Above", ["Next Object Above", "Objet suivant au-dessus", "Next Object Above", "Next Object Above", "上方下一个对象"]),
     ("Next Object Below", ["Next Object Below", "Objet suivant en dessous", "Next Object Below", "Next Object Below", "下方下一个对象"]),
     (
@@ -2163,6 +2164,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Preflight Document", ["Preflight Document", "Contrôle en amont du document", "Preflight Document", "Preflight Document", "预检文档"]),
     ("Previous Cell", ["Previous Cell", "Cellule précédente", "Previous Cell", "Previous Cell", "上一个单元格"]),
     ("Previous Document", ["Previous Document", "Document précédent", "Previous Document", "Previous Document", "上一个文档"]),
+    ("Previous Note", ["Previous Note", "Note précédente", "Previous Note", "Previous Note", "上一个注释"]),
     (
         "Previous Object in Group",
         ["Previous Object in Group", "Objet précédent du groupe", "Previous Object in Group", "Previous Object in Group", "组中的上一个对象"],
