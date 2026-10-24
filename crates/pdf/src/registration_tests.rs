@@ -138,6 +138,25 @@ fn unlayered_placed_pdf_skips_optional_content_registration() {
 }
 
 #[test]
+fn null_optional_content_properties_are_no_optional_content() {
+    let content = "0.125 0.625 0.875 rg 0 0 100 100 re f";
+    for (properties, extra) in [("/OCProperties null", None), ("/OCProperties 5 0 R", Some("null"))] {
+        let mut objects = vec![
+            format!("<</Type/Catalog/Pages 2 0 R{properties}>>"),
+            "<</Type/Pages/Kids[3 0 R]/Count 1>>".into(),
+            "<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Resources<<>>/Contents 4 0 R>>".into(),
+            format!("<</Length {}>>\nstream\n{content}\nendstream", content.len()),
+        ];
+        objects.extend(extra.map(String::from));
+        let doc = placed_document(assemble(&objects));
+        for standard in [Standard::None, Standard::PdfX4] {
+            let bytes = export_pdf(&doc, &Cache::new(), &PdfOptions { standard, ..Default::default() }).unwrap();
+            check_unlayered_pdf(&bytes, 1, true);
+        }
+    }
+}
+
+#[test]
 fn layered_and_resource_only_inputs_register_optional_content() {
     for hidden in [true, false] {
         let source = layered_source(hidden);

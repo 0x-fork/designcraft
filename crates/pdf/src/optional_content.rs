@@ -123,6 +123,9 @@ fn append(bytes: &[u8], changes: &[(ObjectIdentifier, Vec<u8>)], root: ObjectIde
             return Err(invalid());
         }
         offset = section.get::<usize>(b"Prev");
+        if offset.is_none() && has_entry(&section, b"Prev") {
+            return Err(damaged());
+        }
     }
     if offset.is_some() {
         return Err(damaged());
@@ -180,7 +183,8 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, choice: Option<&[String]>) -> Result
     let pdf = Pdf::new(bytes.clone()).map_err(|_| invalid())?;
     let xref = pdf.xref();
     let root = xref.get::<Dict<'_>>(xref.root_id()).ok_or_else(invalid)?;
-    if !root.contains_key(b"OCProperties") {
+    // A null value, literal or referenced, is the same as no entry.
+    if matches!(root.get::<Object<'_>>(b"OCProperties"), None | Some(Object::Null(_))) {
         let has_optional_content = pdf
             .objects()
             .into_iter()
@@ -431,6 +435,16 @@ mod tests {
         assert!(trailer_at(bytes, 0).is_none(), "a comment inside the table is not table syntax");
         let bytes = b"xref\n0 1\n0000000000 65535 f\r\ntrailer\n<</Size 9/Encrypt 12 0 R>>";
         assert!(has_entry(&trailer_at(bytes, 0).unwrap(), b"Encrypt"));
+    }
+
+    #[test]
+    fn an_unreadable_prev_is_damage_and_a_null_one_ends_the_chain() {
+        for value in ["(12)", "/Twelve", "-1", "[12]", "<<>>", "true", "9 0 R"] {
+            let bytes = default_hidden(&format!("<</Size 5/Root 1 0 R/Prev {value}>>"), None);
+            let error = update(&bytes).unwrap_err().to_string();
+            assert!(error.contains("cross-reference"), "{value}: {error}");
+        }
+        assert!(update(&default_hidden("<</Size 5/Root 1 0 R/Prev null>>", None)).is_ok());
     }
 
     #[test]
