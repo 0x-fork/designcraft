@@ -1042,7 +1042,8 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let layout = layout_of(app);
     let raise = app.ui.docking_raise.take();
     let mut blocked = Vec::new();
-    if app.ui.dialog.is_some() || app.ui.about || app.ui.palette.is_some() || egui::Popup::is_any_open(ui.ctx()) {
+    let modal = modal_open(app);
+    if modal || egui::Popup::is_any_open(ui.ctx()) {
         blocked.push(ui.ctx().content_rect());
     } else if crate::story_editor::visible(app) {
         // The editor is rendered after the dock; block its unmeasured first frame conservatively.
@@ -1053,6 +1054,7 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let mut dock = craft_ui::docking::DockArea::new(area)
         .float_bounds(float_bounds(app, ui.ctx()))
         .blocked_rects(&blocked)
+        .input_blocked(modal)
         .auto_collapse_iconic(app.ui.dock_auto_collapse);
     if let Some(panel) = raise {
         dock = dock.raise_panel(panel);
@@ -1088,6 +1090,12 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     crate::menus::forwarded_shortcuts(app, ui.ctx(), output.forwarded_events, output.forwarded_modifiers.unwrap_or_default());
 }
 
+/// Whether a modal (a dialog, About or Quick Apply) is open. Floating panels in their own OS
+/// windows take no input then, as the main window behind the modal doesn't.
+pub(crate) fn modal_open(app: &DesignApp) -> bool {
+    app.ui.dialog.is_some() || app.ui.about || app.ui.palette.is_some()
+}
+
 /// What the control channel reports: the layout in use (craft-ui's serialized `Layout`),
 /// whether it is the workspace's default, the panel (or `canvas`) last clicked or selected, the
 /// panels closed with a remembered place, the panel whose flyout is open, and where each
@@ -1118,6 +1126,7 @@ fn dock_style(ui: &egui::Ui, language: &str) -> craft_ui::docking::DockStyle {
     style.inactive_text = t.text_dim;
     style.border = egui::Stroke::new(1.0, t.border);
     style.accent = t.accent;
+    style.blocked_dim = t.panel.gamma_multiply(0.6);
     style.right_to_left = crate::i18n::is_rtl(language);
     // InDesign's docking: new docks at the docked area's free sides, but no full-height column
     // from the window's left or right edge; a drop on no target (the canvas) floats, and a

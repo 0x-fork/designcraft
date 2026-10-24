@@ -1225,3 +1225,20 @@ fn default_layout_floats_keep_their_window_ids() {
     assert_eq!(first.len(), 1, "Swatches floats");
     assert_eq!(ids(&app), first);
 }
+
+#[test]
+fn dialogs_about_and_quick_apply_block_native_floating_windows() {
+    let mut app = app();
+    assert!(!modal_open(&app));
+    app.ui.dialog = Some(crate::dialogs::Dialog::new("newDocument", json!({})));
+    assert!(modal_open(&app), "dialog");
+    app.ui.dialog = None;
+    app.run("help.about", json!({})).unwrap();
+    assert!(modal_open(&app), "About");
+    app.run("help.about", json!({"open": false})).unwrap();
+    assert!(!modal_open(&app));
+    app.ui.palette = Some(String::new());
+    assert!(modal_open(&app), "Quick Apply");
+    app.ui.palette = None;
+    assert!(!modal_open(&app));
+}
