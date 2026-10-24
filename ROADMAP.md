@@ -358,6 +358,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-24** · Type › Notes › Previous Note and Next Note (`note.previous`, `note.next`): as in InDesign, they move the insertion point from note to note in the story, putting the caret after the note's anchor. Each item is unavailable when no note lies in its direction in the story, or when the insertion point is in a table cell or a footnote. No readiness percentage change.
 - **2026-10-24** · Anchored text frames, such as marginal notes, compose where their host story places them: they align to the baseline grid at that position, and page-number markers and spine-relative alignment inside them read the host's page. They composed against a grid measured from their stored position and on no page, so a note set to Only Align First Line to Grid could sit a fraction of a line off the body text's grid line. No readiness percentage change.
 - **2026-10-24** · New documents start with Hyphenate Capitalized Words, Hyphenate Last Word and Hyphenate Across Column off in [Basic Paragraph], as in InDesign. Opened and imported files keep the values they carry. No readiness percentage change.
 - **2026-10-24** · The baseline grid's Relative To setting applies: with Top Margin, the grid starts at each page's own top margin in text composition, on the canvas and for snapping. It started at the page top, so grid-aligned text sat on the wrong lines and a page could fit one line fewer. No readiness percentage change.

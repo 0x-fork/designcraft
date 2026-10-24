@@ -93,6 +93,24 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(Value::Array(out))
         }),
+        cmd!(
+            noundo "note.previous",
+            "Previous Note",
+            ["Type", "Notes"],
+            None,
+            "{} → {story, id, pos}. The caret moves after the anchor of the story's previous note.",
+            has_previous,
+            |s, _| go_to(s, false)
+        ),
+        cmd!(
+            noundo "note.next",
+            "Next Note",
+            ["Type", "Notes"],
+            None,
+            "{} → {story, id, pos}. The caret moves after the anchor of the story's next note.",
+            has_next,
+            |s, _| go_to(s, true)
+        ),
     ]
 }
 
@@ -106,6 +124,53 @@ fn target(p: &Value) -> Result<(StoryId, u64)> {
 fn anchor(st: &designcraft_doc::Story, id: u64) -> Option<usize> {
     let k = st.editorial.iter().position(|n: &Arc<EditorialNote>| n.id == id)?;
     st.text.match_indices(NOTE_MARK).nth(k).map(|(i, _)| i)
+}
+
+/// The anchor offset and id of the note before or after the selection `t` in its story. Going
+/// back skips the note whose anchor the caret directly follows, so repeated steps reach every note.
+fn neighbor(st: &designcraft_doc::Story, t: &designcraft_doc::TextSel, forward: bool) -> Option<(usize, u64)> {
+    let r = t.range();
+    let mut anchors = st.text.match_indices(NOTE_MARK).enumerate().map(|(k, (i, _))| (k, i));
+    let (k, at) = if forward { anchors.find(|&(_, i)| i >= r.end) } else { anchors.filter(|&(_, i)| i + NOTE_MARK.len_utf8() < r.start).last() }?;
+    Some((at, st.editorial.get(k)?.id))
+}
+
+fn has_note(s: &crate::Session, forward: bool) -> std::result::Result<(), String> {
+    has_text(s)?;
+    match s.active().and_then(|d| Some((d, d.selection.text?))) {
+        Some((_, t)) if t.cell.is_some() => Err("notes go in story text".into()),
+        Some((d, t)) if d.doc.story(t.story).and_then(|st| neighbor(st, &t, forward)).is_some() => Ok(()),
+        _ => Err(no_note(forward).into()),
+    }
+}
+
+fn has_previous(s: &crate::Session) -> std::result::Result<(), String> {
+    has_note(s, false)
+}
+
+fn has_next(s: &crate::Session) -> std::result::Result<(), String> {
+    has_note(s, true)
+}
+
+fn no_note(forward: bool) -> &'static str {
+    if forward { "no later note in this story" } else { "no earlier note in this story" }
+}
+
+/// Type › Notes › Previous Note and Next Note: from the insertion point, the caret moves after
+/// the anchor of the story's previous or next note.
+fn go_to(s: &mut crate::Session, forward: bool) -> Result<Value> {
+    let id = if forward { "note.next" } else { "note.previous" };
+    let st = s.doc_mut()?;
+    let t = st.selection.text.ok_or_else(|| bad(id, "place the insertion point in text"))?;
+    if t.cell.is_some() {
+        return Err(bad(id, "notes go in story text"));
+    }
+    let (at, note) = st.doc.story(t.story).and_then(|x| neighbor(x, &t, forward)).ok_or_else(|| bad(id, no_note(forward)))?;
+    let pos = at + NOTE_MARK.len_utf8();
+    st.selection.text = Some(designcraft_doc::TextSel::caret(t.story, pos));
+    st.bump_revision();
+    s.typing_format = None;
+    Ok(json!({"story": t.story.0, "id": note, "pos": pos}))
 }
 
 #[cfg(test)]
@@ -134,6 +199,46 @@ mod tests {
         s.execute("note.convertToText", &json!({"story": n["story"], "id": n["id"]})).unwrap();
         assert_eq!(s.doc().unwrap().doc.stories[&sid].text, "Draft (checked) copy.");
         assert!(s.doc().unwrap().doc.stories[&sid].editorial.is_empty());
+    }
+
+    #[test]
+    fn previous_and_next_note_step_through_the_story_s_notes() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "One two three."})).unwrap();
+        let len = designcraft_doc::NOTE_MARK.len_utf8();
+        let caret = |s: &mut Session, at: usize| s.execute("text.select", &json!({"story": r["story"], "anchor": at, "focus": at})).unwrap();
+        caret(&mut s, 3);
+        let first = s.execute("note.new", &json!({"text": "a"})).unwrap();
+        caret(&mut s, 7 + len);
+        let second = s.execute("note.new", &json!({"text": "b"})).unwrap();
+        caret(&mut s, 0);
+        let disabled = |s: &mut Session, id: &str| matches!(s.execute(id, &json!({})), Err(crate::EngineError::Disabled(..)));
+        assert!(disabled(&mut s, "note.previous"), "no note before the start");
+        let n = s.execute("note.next", &json!({})).unwrap();
+        assert_eq!((n["id"].clone(), n["pos"].clone()), (first["id"].clone(), json!(3 + len)));
+        let n = s.execute("note.next", &json!({})).unwrap();
+        assert_eq!((n["id"].clone(), n["pos"].clone()), (second["id"].clone(), json!(7 + 2 * len)));
+        let t = s.doc().unwrap().selection.text.unwrap();
+        assert_eq!((t.anchor, t.focus), (7 + 2 * len, 7 + 2 * len), "the caret follows the anchor");
+        assert!(disabled(&mut s, "note.next"), "no note after the last");
+        // From just after the second anchor, Previous Note goes to the first one.
+        let n = s.execute("note.previous", &json!({})).unwrap();
+        assert_eq!(n["id"], first["id"]);
+        assert!(disabled(&mut s, "note.previous"));
+        // From the middle of the story, each direction finds its neighbor.
+        caret(&mut s, 5 + len);
+        assert_eq!(s.execute("note.previous", &json!({})).unwrap()["id"], first["id"]);
+        caret(&mut s, 5 + len);
+        assert_eq!(s.execute("note.next", &json!({})).unwrap()["id"], second["id"]);
+        // Formatting set at the insertion point does not survive the move.
+        s.execute("type.char", &json!({"attrs": {"size": 30}})).unwrap();
+        assert!(s.typing_format.is_some());
+        s.execute("note.previous", &json!({})).unwrap();
+        assert!(s.typing_format.is_none(), "note.previous");
+        s.execute("type.char", &json!({"attrs": {"size": 30}})).unwrap();
+        s.execute("note.next", &json!({})).unwrap();
+        assert!(s.typing_format.is_none(), "note.next");
     }
 
     #[test]
