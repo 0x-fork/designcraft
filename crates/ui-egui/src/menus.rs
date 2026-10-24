@@ -3436,6 +3436,7 @@ const NOT_SEARCHED: &[&str] = &[
     "window.panel.closeOthers",
     "window.panel.minimize",
     "window.panel.iconic",
+    "window.workspace",
     "window.workspace.new",
     "window.workspace.delete",
     "window.floatPanel",
@@ -6202,7 +6203,7 @@ mod tests {
     fn searched_ui_commands_are_available_and_named_once() {
         let ui_ids: Vec<&str> = UI_COMMANDS.iter().map(|c| c.0).collect();
         let searched: Vec<(&str, &str)> = quick_commands().filter(|c| ui_ids.contains(&c.0)).map(|c| (c.0, c.1)).collect();
-        assert!(!searched.iter().any(|c| matches!(c.0, "window.panel.window" | "window.workspace.lock")), "{searched:?}");
+        assert!(!searched.iter().any(|c| matches!(c.0, "window.panel.window" | "window.workspace.lock" | "window.workspace")), "{searched:?}");
         assert!(searched.iter().any(|c| c.0 == "window.collapseToIcons"), "Collapse to Icons is searched");
         // Quick Apply runs an entry as `app.run(id, {})`, so each docking command it lists must
         // work without params.
