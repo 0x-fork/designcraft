@@ -4470,8 +4470,6 @@ fn border_shading(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, doc
     });
 }
 
-/// Paragraph Style Options › Keep Options: lines kept with the next paragraph, the paragraph's
-/// lines kept together (all of them, or its first and last lines), and where it starts.
 /// Drop Caps and Nested Styles: the drop cap, nested styles and nested line styles (`p.` fields).
 fn drop_caps_and_nested_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames: &[String]) {
     let cur = |d: &Dialog, k: &str, base: &Value| d.fields.get(k).cloned().unwrap_or_else(|| base.clone());
@@ -4720,6 +4718,8 @@ fn grep_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames
     }
 }
 
+/// Paragraph Style Options › Keep Options: lines kept with the next paragraph, the paragraph's
+/// lines kept together (all of them, or its first and last lines), and where it starts.
 fn keep_options(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value) {
     ui.horizontal(|ui| {
         crate::rtl::label(ui, crate::i18n::tr(lang, "Keep with Next:"));
@@ -5821,10 +5821,6 @@ fn check_justification(d: &Dialog, prefix: &str, current: &Value) -> Result<(), 
     Ok(())
 }
 
-/// The Justification controls (the Justification dialog, and the Paragraph Style Options section).
-/// `current` holds the resolved paragraph attributes, `null` where the selected paragraphs differ
-/// (the field shows empty); each edit is stored as `{prefix}{attr}`, so OK changes only the fields
-/// edited.
 /// Paragraph attributes the Hyphenation Settings dialog sets.
 pub const HYPH_ATTRS: [&str; 10] = [
     "hyphenate",
@@ -5892,11 +5888,17 @@ fn hyphenation(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, prefix: &str, curr
         crate::rtl::label(ui, tr("Better Spacing"));
         let w = cur(d, "hyphWeight").as_f64();
         let mut step = w.map_or(5.0, |w| (w * 10.0).round()).clamp(0.0, 10.0);
+        // Mixed across the selection: the slider shows dimmed, and a click or drag on it, even
+        // one that leaves the knob in place, sets every paragraph to that step.
+        let mixed = w.is_none();
         // The ticks go under the knob: their place in the paint order is taken first.
         let ticks = ui.painter().add(egui::Shape::Noop);
         let r = ui
             .scope(|ui| {
                 ui.spacing_mut().slider_width = 180.0;
+                if mixed {
+                    ui.multiply_opacity(0.4);
+                }
                 ui.add(egui::Slider::new(&mut step, 0.0..=10.0).step_by(1.0).show_value(false).handle_shape(egui::style::HandleShape::Circle))
             })
             .inner;
@@ -5911,7 +5913,7 @@ fn hyphenation(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, prefix: &str, curr
             })
             .collect();
         ui.painter().set(ticks, egui::Shape::Vec(marks));
-        if r.changed() {
+        if r.changed() || (mixed && (r.clicked() || r.drag_stopped())) {
             d.fields.insert(format!("{prefix}hyphWeight"), json!(step / 10.0));
         }
         crate::rtl::label(ui, tr("Fewer Hyphens"));
@@ -5946,7 +5948,10 @@ fn hyphenation_preview(app: &mut DesignApp, d: &mut Dialog) {
     if shown.as_ref() == Some(&params) || d.fields.get(PREVIEW_FAILED) == Some(&params) {
         return;
     }
-    if shown.is_none() && app.session.begin_interaction("Hyphenation").is_err() {
+    if shown.is_none()
+        && let Err(e) = app.session.begin_interaction("Hyphenation")
+    {
+        d.fields.insert("status".into(), json!(e.to_string()));
         return;
     }
     match app.session.preview("type.para", params.clone()) {
@@ -5968,6 +5973,10 @@ fn hyphenation_preview(app: &mut DesignApp, d: &mut Dialog) {
 /// The hyphenation settings a preview was refused for (not tried again until they change).
 const PREVIEW_FAILED: &str = "previewFailed";
 
+/// The Justification controls (the Justification dialog, and the Paragraph Style Options section).
+/// `current` holds the resolved paragraph attributes, `null` where the selected paragraphs differ
+/// (the field shows empty); each edit is stored as `{prefix}{attr}`, so OK changes only the fields
+/// edited.
 fn justification(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, prefix: &str, current: &Value) {
     let cur = |d: &Dialog, k: &str| d.fields.get(&format!("{prefix}{k}")).cloned().unwrap_or_else(|| current[k].clone());
     egui::Grid::new("psj").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
@@ -7868,6 +7877,26 @@ mod tests {
     /// Hyphenate differs across the selection: it shows mixed, and the first click turns it on for
     /// all. Settings the command refuses show why: a preview goes back and isn't retried until they
     /// change, and OK keeps the dialog open.
+    /// A mixed Better Spacing ↔ Fewer Hyphens slider: a click on its middle step sets every
+    /// selected paragraph to it, though the knob already sat there.
+    #[test]
+    fn hyphenation_settings_mixed_slider_click_sets_the_step() {
+        let (mut app, story) = two_paragraphs();
+        let ctx = dialog_context("en");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+        app.run("type.para", json!({"attrs": {"hyphWeight": 0.2}})).unwrap();
+        app.run("text.select", json!({"story": story, "anchor": 0, "focus": 7})).unwrap();
+        app.run("app.hyphenationDialog", json!({})).unwrap();
+        for _ in 0..3 {
+            dialog_frame(&mut app, &ctx, screen, vec![]);
+        }
+        let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+        let rect = |l: &str| labels.iter().find(|(t, _, _)| t == l).map(|(_, r, _)| *r).unwrap();
+        let (better, fewer) = (rect("Better Spacing"), rect("Fewer Hyphens"));
+        click_dialog(&mut app, &ctx, screen, egui::pos2((better.right() + fewer.left()) / 2.0, better.center().y));
+        assert_eq!(app.ui.dialog.as_ref().unwrap().fields.get("hyphWeight"), Some(&json!(0.5)));
+    }
+
     #[test]
     fn hyphenation_settings_mixed_checkbox_and_refused_settings() {
         let (mut app, story) = two_paragraphs();
