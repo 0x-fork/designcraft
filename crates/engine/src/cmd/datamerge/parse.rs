@@ -200,7 +200,10 @@ fn select_range(range: &str, count: usize, idx: &mut Vec<usize>, seen: &mut std:
             if seen.insert(i) {
                 idx.push(i);
             }
-            n = n.saturating_add(1);
+            if n == b {
+                break;
+            }
+            n += 1;
         }
     }
     Ok(())
