@@ -10,6 +10,7 @@ use super::*;
 mod assets;
 mod clipping;
 mod decorations;
+mod frame_grid;
 mod index_sort;
 mod liquid_guides;
 mod object_styles;

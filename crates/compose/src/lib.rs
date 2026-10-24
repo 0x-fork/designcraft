@@ -712,10 +712,10 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
             _ => None,
         };
         let g = &doc.settings.baseline_grid;
-        let (inc, start) = tf.options.baseline_grid.unwrap_or((g.increment, g.start));
+        let (start, inc) = tf.options.baseline_grid.map_or((g.start, g.increment), |f| (f.start, f.increment));
         // Grid lines are at spread y = start + n·inc (page tops are y = 0); map into inner space (translation only).
         let ty = xf.translation().y;
-        let grid = (inc > 0.0).then_some((start - ty, inc));
+        let grid = (inc > 0.0 && inc.is_finite() && start.is_finite()).then_some((start - ty, inc));
         // Type on a path: one line as long as the path (from the start offset).
         let (area, opts) = match &tf.options.path {
             Some(pt) => {
