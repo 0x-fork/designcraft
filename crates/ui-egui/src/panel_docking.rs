@@ -114,6 +114,7 @@ impl Placed {
 const ICON_GROUPS: &[&[&str]] = &[
     &["stroke", "color", "swatches", "gradient"],
     &["effects"],
+    &["characterStyles", "paragraphStyles"],
     &["character", "paragraph", "typography"],
     &["glyphs", "story"],
     &["table"],
@@ -133,20 +134,14 @@ const ICON_GROUPS: &[&[&str]] = &[
 
 /// A workspace's iconic column of the panels not placed yet: its named `icon_groups`
 /// (Essentials Classic, Typography), or [`ICON_GROUPS`] followed by any other dock panel as a
-/// group of its own. Window › Styles opens the style panels as a floating group, so they start
-/// outside it.
+/// group of its own.
 fn icon_column(icon_groups: Option<&[Vec<String>]>, placed: &mut Placed) -> Option<Column<String>> {
     let (groups, width): (Vec<Group<String>>, f32) = match icon_groups {
         Some(groups) => (groups.iter().filter_map(|g| placed.group(g, 0)).collect(), NAMED_ICON_WIDTH),
         None => {
             let mut groups: Vec<Group<String>> = ICON_GROUPS.iter().filter_map(|g| placed.group(g, 0)).collect();
             groups.extend(
-                crate::dock::DOCK_TABS
-                    .iter()
-                    .chain(crate::dock::ICON_PANELS)
-                    .filter(|p| !FLOATING_GROUPS.iter().any(|g| g.contains(&p.0)))
-                    .filter_map(|p| placed.take(p.0))
-                    .map(|id| Group::new(vec![id], 0)),
+                crate::dock::DOCK_TABS.iter().chain(crate::dock::ICON_PANELS).filter_map(|p| placed.take(p.0)).map(|id| Group::new(vec![id], 0)),
             );
             (groups, ICON_WIDTH)
         }
@@ -844,7 +839,8 @@ pub(crate) fn floating_panels(app: &DesignApp) -> Vec<String> {
 const FLOATING_GROUPS: &[&[&str]] = &[&["characterStyles", "paragraphStyles"]];
 
 /// Window › a panel of a [`FLOATING_GROUPS`] group none of whose panels is showing: the group
-/// opens as one floating window over the right of the canvas, with that panel in front. None
+/// opens as one floating window over the right of the canvas, with that panel in front. A group
+/// that is an icon group of the default workspaces floats out of the iconic column. None
 /// otherwise (the panel opens as before).
 fn open_floating_group(app: &mut DesignApp, params: &Value) -> Option<Result<Value, String>> {
     let panel = params.get("panel").and_then(Value::as_str).and_then(normalize)?;
@@ -858,11 +854,22 @@ fn open_floating_group(app: &mut DesignApp, params: &Value) -> Option<Result<Val
         return None;
     }
     let layout = layout_of(app);
+    let (w, h) = (290.0, 340.0);
+    let (x, y) = app.canvas_rect.map_or((400.0, 140.0), |r| ((r.right() - w - 24.0).max(r.left()), r.top() + 96.0));
+    let icon_group = dock_columns(&layout)
+        .iter()
+        .filter(|c| c.iconic)
+        .flat_map(|c| &c.groups)
+        .any(|g| g.panels.len() == group.len() && g.panels.iter().all(|p| group.contains(&p.as_str())));
+    if icon_group && !group.iter().any(|p| showing(app, p)) {
+        let float = json!({"panel": panel, "group": true, "x": x, "y": y, "width": w, "height": h});
+        return Some(
+            shared_command(app, "window.panel.float", &float).and_then(|_| shared_command(app, "window.panel.activate", &json!({"panel": panel}))),
+        );
+    }
     if group.iter().any(|p| layout.contains(&p.to_string())) {
         return None;
     }
-    let (w, h) = (290.0, 340.0);
-    let (x, y) = app.canvas_rect.map_or((400.0, 140.0), |r| ((r.right() - w - 24.0).max(r.left()), r.top() + 96.0));
     let open = |app: &mut DesignApp| -> Result<Value, String> {
         let mut txn = Transaction::begin(app)?;
         let panels: Vec<String> = group.iter().map(|p| (*p).to_string()).collect();

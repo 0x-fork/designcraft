@@ -814,7 +814,6 @@ fn default_workspaces_are_the_canvas_beside_an_end_dock() {
     let groups: Vec<Vec<&str>> = icons.groups.iter().map(|g| g.panels.iter().map(String::as_str).collect()).collect();
     let expected: Vec<Vec<&str>> = ICON_GROUPS.iter().map(|g| g.to_vec()).collect();
     assert_eq!(groups, expected, "the iconic column groups InDesign's panel families");
-    assert!(!layout.contains(&"paragraphStyles".to_string()), "Window › Styles opens the styles floating");
     // Essentials Classic: only its named icon groups, in one iconic column.
     app.run("window.workspace", json!({"name": "Essentials Classic"})).unwrap();
     let layout = default_layout(&app.ui);
@@ -832,7 +831,7 @@ fn default_workspaces_are_the_canvas_beside_an_end_dock() {
 /// panel is not left as a group of its own.
 #[test]
 fn every_icon_panel_is_in_one_default_icon_group() {
-    for (id, _, _) in crate::dock::ICON_PANELS.iter().filter(|p| !FLOATING_GROUPS.iter().any(|g| g.contains(&p.0))) {
+    for (id, _, _) in crate::dock::ICON_PANELS {
         assert_eq!(ICON_GROUPS.iter().flat_map(|g| g.iter()).filter(|p| *p == id).count(), 1, "{id}");
     }
     for id in ICON_GROUPS.iter().flat_map(|g| g.iter()) {
@@ -850,7 +849,7 @@ fn placed_panels_leave_their_icon_groups() {
     let column = icon_column(None, &mut placed).unwrap();
     let groups: Vec<Vec<&str>> = column.groups.iter().map(|g| g.panels.iter().map(String::as_str).collect()).collect();
     assert_eq!(groups.first().unwrap(), &["stroke", "color", "gradient"]);
-    assert_eq!(groups.get(1).unwrap(), &["character", "paragraph", "typography"]);
+    assert_eq!(groups.get(1).unwrap(), &["characterStyles", "paragraphStyles"]);
     assert_eq!(groups.len(), ICON_GROUPS.len() - 1);
 }
 
