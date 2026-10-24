@@ -1657,6 +1657,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Previous Page", "Pagina precedente"),
     ("First Page", "Prima pagina"),
     ("Last Page", "Ultima pagina"),
+    ("Go Back", "Torna indietro"),
+    ("Go Forward", "Vai avanti"),
     ("Object Styles", "Stili oggetto"),
     ("Row", "Riga"),
     ("Column", "Colonna"),
