@@ -450,11 +450,12 @@ fn char_css(doc: &Document, c: &CharProps, base_size: f64, generics: &BTreeMap<S
         }
         _ => {}
     }
-    if c.underline {
-        out.push_str("text-decoration: underline; ");
-    }
-    if c.strikethrough {
-        out.push_str("text-decoration: line-through; ");
+    // One declaration: a later `text-decoration` would replace the earlier one.
+    match (c.underline, c.strikethrough) {
+        (true, true) => out.push_str("text-decoration: underline line-through; "),
+        (true, false) => out.push_str("text-decoration: underline; "),
+        (false, true) => out.push_str("text-decoration: line-through; "),
+        (false, false) => {}
     }
     if let Some(h) = hex(doc, &c.fill, c.fill_tint) {
         let _ = write!(out, "color: {h}; ");
@@ -785,6 +786,39 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
         close_blocks(&mut list, &mut pre, out);
     }
 
+    /// The markup for one run's text `raw` (starting at byte `a` of the story): anchored objects
+    /// and notes where their marks are.
+    fn run_markup(&mut self, st: &Story, raw: &str, a: usize, depth: usize, after: &mut String) -> String {
+        let doc = self.doc;
+        let mut t = String::new();
+        let mut seg_start = 0;
+        // Index of the next anchored object: marks count from the story start, as
+        // `Story::object_at` counts them (counted once, at the run's first mark).
+        let mut mark: Option<usize> = None;
+        for (i, c) in raw.char_indices() {
+            if c != FOOTNOTE_REF && c != ENDNOTE_REF && c != OBJECT_MARK {
+                continue;
+            }
+            t.push_str(&run_text(doc, raw.get(seg_start..i).unwrap_or_default()));
+            seg_start = i + c.len_utf8();
+            if c == OBJECT_MARK {
+                let k = mark.unwrap_or_else(|| st.text.get(..a).map_or(0, |t| t.matches(OBJECT_MARK).count()));
+                mark = Some(k.saturating_add(1));
+                if let Some(o) = st.objects.get(k) {
+                    t.push_str(&self.object(o));
+                }
+            } else if depth < MAX_DEPTH {
+                if c == FOOTNOTE_REF {
+                    self.footnote(st, a + i, depth, &mut t, after);
+                } else {
+                    self.endnote(st, a + i, depth, &mut t);
+                }
+            }
+        }
+        t.push_str(&run_text(doc, raw.get(seg_start..).unwrap_or_default()));
+        t
+    }
+
     /// The runs of paragraph `para` of `st`; footnotes go to `after`.
     fn runs(&mut self, st: &Story, para: std::ops::Range<usize>, depth: usize, out: &mut String, after: &mut String) {
         let doc = self.doc;
@@ -799,32 +833,7 @@ impl<'a, 'f> StoryWriter<'a, 'f> {
                 continue;
             }
             let Some(raw) = st.text.get(a..b) else { continue };
-            let mut t = String::new();
-            let mut seg_start = 0;
-            // Index of the next anchored object: marks count from the story start, as
-            // `Story::object_at` counts them (counted once, at the run's first mark).
-            let mut mark: Option<usize> = None;
-            for (i, c) in raw.char_indices() {
-                if c != FOOTNOTE_REF && c != ENDNOTE_REF && c != OBJECT_MARK {
-                    continue;
-                }
-                t.push_str(&run_text(doc, raw.get(seg_start..i).unwrap_or_default()));
-                seg_start = i + c.len_utf8();
-                if c == OBJECT_MARK {
-                    let k = mark.unwrap_or_else(|| st.text.get(..a).map_or(0, |t| t.matches(OBJECT_MARK).count()));
-                    mark = Some(k.saturating_add(1));
-                    if let Some(o) = st.objects.get(k) {
-                        t.push_str(&self.object(o));
-                    }
-                } else if depth < MAX_DEPTH {
-                    if c == FOOTNOTE_REF {
-                        self.footnote(st, a + i, depth, &mut t, after);
-                    } else {
-                        self.endnote(st, a + i, depth, &mut t);
-                    }
-                }
-            }
-            t.push_str(&run_text(doc, raw.get(seg_start..).unwrap_or_default()));
+            let t = self.run_markup(st, raw, a, depth, after);
             let (ctag, cls) = if f.style != story::NO_CHAR_STYLE {
                 let (tag, class) = export_mapping(&doc.styles, &f.style, true, &self.cc);
                 (tag, format!(" class=\"{}\"", xml_attr(&class)))
@@ -2222,5 +2231,22 @@ mod tests {
         );
         let last = "<li id=\"en-1\"><a href=\"#enref-1\">1</a> End note</li>";
         assert_eq!(link_across_chapters(last, "content2.xhtml", &files), "<li id=\"en-1\"><a href=\"content.xhtml#enref-1\">1</a> End note</li>");
+    }
+
+    #[test]
+    fn char_css_joins_underline_and_strikethrough_in_one_declaration() {
+        let d = Document::new(&NewDocument::default());
+        let css = |u: bool, s: bool| {
+            let c = CharProps { underline: u, strikethrough: s, ..CharProps::default() };
+            let mut out = String::new();
+            char_css(&d, &c, 12.0, &BTreeMap::new(), &mut out);
+            out
+        };
+        let both = css(true, true);
+        assert_eq!(both.matches("text-decoration:").count(), 1, "{both}");
+        assert!(both.contains("text-decoration: underline line-through;"), "{both}");
+        assert!(css(true, false).contains("text-decoration: underline;"));
+        assert!(css(false, true).contains("text-decoration: line-through;"));
+        assert!(!css(false, false).contains("text-decoration"));
     }
 }
