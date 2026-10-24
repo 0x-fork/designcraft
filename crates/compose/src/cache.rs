@@ -374,8 +374,12 @@ fn signature(doc: &Document, story: &Arc<Story>) -> (Vec<usize>, Vec<Arc<Item>>)
             sig.push(loc.top());
             if !spreads.contains(&loc.spread) {
                 spreads.push(loc.spread);
-                // A grid relative to the top margin starts at each page's own margin.
-                sig.extend(sp.pages.iter().map(|p| p.margins.top.to_bits() as usize));
+                // The page under a frame (found by x) gives its grid origin, page rect and side.
+                for p in &sp.pages {
+                    let m = &p.margins;
+                    sig.extend([p.x, p.width, p.height, m.top, m.bottom, m.inside, m.outside].map(|v| v.to_bits() as usize));
+                    sig.push(p.side as usize);
+                }
                 for it in &sp.items {
                     let mut wraps = false;
                     it.walk(&mut |i| wraps |= i.has_wrap());

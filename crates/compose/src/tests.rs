@@ -7449,6 +7449,30 @@ fn cache_recomposes_when_the_grid_reference_or_a_top_margin_changes() {
     assert!((b.frames[0].lines[0].baseline - c.frames[0].lines[0].baseline).abs() > 1.0);
 }
 
+/// Pages trading places under a frame: the frame is on the other page, with its top margin.
+#[test]
+fn cache_recomposes_when_the_page_under_a_frame_changes() {
+    use designcraft_doc::GridRelative;
+    let mut d = Document::new(&NewDocument { pages: 3, facing_pages: true, margins: designcraft_doc::Margins::uniform(36.0), ..Default::default() });
+    Arc::make_mut(&mut d.spreads[1]).pages[1].margins.top = 48.0;
+    d.settings.baseline_grid.start = 0.0;
+    d.settings.baseline_grid.increment = 13.0;
+    d.settings.baseline_grid.relative_to = GridRelative::TopMargin;
+    let lid = d.default_layer();
+    let para = ParaFormat { para: ParaAttrs { grid_align: Some(GridAlign::AllLines), ..Default::default() }, ..Default::default() };
+    let x = d.spreads[1].pages[0].x;
+    let (_, sid) = d.add_text_frame(SpreadRef::Doc(1), Rect::new(x + 36.0, 36.0, x + 336.0, 582.0), lid, LOREM, para).unwrap();
+    let cache = Cache::new();
+    let a = cache.get(&d, sid, None);
+    let sp = Arc::make_mut(&mut d.spreads[1]);
+    let (x0, x1) = (sp.pages[0].x, sp.pages[1].x);
+    (sp.pages[0].x, sp.pages[1].x) = (x1, x0);
+    let b = cache.get(&d, sid, None);
+    assert!(!Arc::ptr_eq(&a, &b));
+    assert_eq!(b.frames[0].lines[0].baseline, compose_story(&d, sid, &ComposeOptions::default()).frames[0].lines[0].baseline);
+    assert!((a.frames[0].lines[0].baseline - b.frames[0].lines[0].baseline).abs() > 1.0);
+}
+
 #[test]
 fn cache_recomposes_when_a_wrap_layer_is_hidden() {
     let (mut d, sid, _) = doc_with(&[LOREM; 2].join(" "), Rect::new(0.0, 0.0, 300.0, 800.0), ParaAttrs::default());
