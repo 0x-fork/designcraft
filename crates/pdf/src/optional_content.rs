@@ -55,29 +55,77 @@ fn edited(dict: &Dict<'_>, replacements: &[(&[u8], &[u8])]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// The trailer of the cross-reference section at `offset`: a table's `trailer` dictionary or an
+/// xref stream's own. A table is read entry by entry rather than searched for the keyword, so a
+/// `trailer` in a comment can't stand in for the real one; reading is bounded either way.
+fn trailer_at(bytes: &[u8], offset: usize) -> Option<Dict<'_>> {
+    const MAX_SECTION_BYTES: usize = 4 * 1024 * 1024;
+    let data = bytes.get(offset..)?;
+    let mut reader = Reader::new(data.get(..data.len().min(MAX_SECTION_BYTES))?);
+    reader.skip_white_spaces_and_comments();
+    if reader.forward_tag(b"xref").is_none() {
+        reader.read_without_context::<ObjectIdentifier>()?;
+        reader.skip_white_spaces_and_comments();
+        let stream = reader.read_without_context::<Stream<'_>>()?;
+        let is_xref = stream.dict().get::<Name<'_>>(b"Type").as_ref().map(AsRef::as_ref) == Some(b"XRef");
+        return is_xref.then(|| stream.dict().clone());
+    }
+    // Every pass consumes input or fails, and the input is bounded, so this ends.
+    loop {
+        reader.skip_white_spaces();
+        if reader.forward_tag(b"trailer").is_some() {
+            break;
+        }
+        reader.read_without_context::<u32>()?;
+        reader.skip_white_spaces();
+        let count = reader.read_without_context::<usize>()?;
+        if count > MAX_SECTION_BYTES / 18 {
+            return None;
+        }
+        for _ in 0..count {
+            reader.skip_white_spaces();
+            reader.read_without_context::<u32>()?;
+            reader.skip_white_spaces();
+            if reader.read_without_context::<u32>()? > 65535 {
+                return None;
+            }
+            reader.skip_white_spaces();
+            reader.forward_tag(b"n").or_else(|| reader.forward_tag(b"f"))?;
+        }
+    }
+    reader.skip_white_spaces_and_comments();
+    reader.read_without_context::<Dict<'_>>()
+}
+
+/// Whether `dict` has `key`: a literal `null` value is the same as no entry. A reference counts,
+/// since a trailer has no context to resolve it in.
+fn has_entry(dict: &Dict<'_>, key: &[u8]) -> bool {
+    dict.contains_key(key) && !matches!(dict.get_raw::<Object<'_>>(key), Some(MaybeRef::NotRef(Object::Null(_))))
+}
+
 fn append(bytes: &[u8], changes: &[(ObjectIdentifier, Vec<u8>)], root: ObjectIdentifier) -> Result<Vec<u8>> {
     let damaged = || PdfError::Write("the placed PDF's cross-reference table is damaged; layer changes could not be preserved safely".into());
     let at = crate::transitions::rfind(bytes, b"startxref").ok_or_else(damaged)?;
     let tail = std::str::from_utf8(bytes.get(at..).ok_or_else(damaged)?).map_err(|_| damaged())?;
     let prev = crate::transitions::int_after(tail, "startxref").ok_or_else(damaged)?;
-    let section = bytes.get(prev..).ok_or_else(damaged)?;
-    let trailer = if section.starts_with(b"xref") {
-        let at = crate::transitions::find(section, b"trailer", 0).ok_or_else(damaged)?;
-        let mut reader = Reader::new(section.get(at + 7..).ok_or_else(damaged)?);
-        reader.skip_white_spaces_and_comments();
-        reader.read_without_context::<Dict<'_>>().ok_or_else(damaged)?
-    } else {
-        let mut reader = Reader::new(section);
-        reader.read_without_context::<ObjectIdentifier>().ok_or_else(damaged)?;
-        reader.skip_white_spaces_and_comments();
-        let stream = reader.read_without_context::<Stream<'_>>().ok_or_else(damaged)?;
-        if stream.dict().get::<Name<'_>>(b"Type").as_ref().map(AsRef::as_ref) != Some(b"XRef") {
+    let trailer = trailer_at(bytes, prev).ok_or_else(damaged)?;
+    // Never write decrypted objects into an encrypted file. An earlier update's trailer can
+    // carry the encryption, so follow the (bounded, acyclic) Prev chain to its end.
+    let mut offset = Some(prev);
+    let mut visited = std::collections::HashSet::new();
+    for _ in 0..32 {
+        let Some(at) = offset else { break };
+        if !visited.insert(at) {
             return Err(damaged());
         }
-        stream.dict().clone()
-    };
-    if trailer.contains_key(b"Encrypt") {
-        return Err(invalid());
+        let section = trailer_at(bytes, at).ok_or_else(damaged)?;
+        if has_entry(&section, b"Encrypt") {
+            return Err(invalid());
+        }
+        offset = section.get::<usize>(b"Prev");
+    }
+    if offset.is_some() {
+        return Err(damaged());
     }
     trailer.get::<i32>(b"Size").filter(|n| *n > 0).ok_or_else(damaged)?;
     let mut out = bytes.to_vec();
@@ -125,7 +173,10 @@ pub(crate) struct Variant {
     pub has_optional_content: bool,
 }
 
-pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, hidden: &[String]) -> Result<Variant> {
+/// The placed PDF with its layer choice applied: `None` keeps the file's own default
+/// visibility, `Some(names)` shows every layer except `names` (so `Some(&[])` is all on).
+pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, choice: Option<&[String]>) -> Result<Variant> {
+    let hidden = choice.unwrap_or_default();
     let pdf = Pdf::new(bytes.clone()).map_err(|_| invalid())?;
     let xref = pdf.xref();
     let root = xref.get::<Dict<'_>>(xref.root_id()).ok_or_else(invalid)?;
@@ -181,9 +232,10 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, hidden: &[String]) -> Result<Variant
             return Err(invalid());
         }
         let name = group.get::<hayro_syntax::object::String<'_>>(b"Name");
-        let is_hidden = match (hidden.is_empty(), name.as_ref()) {
-            (true, _) => !fallback && (off.contains(&id) || (base_off && !on.contains(&id))),
-            (false, Some(name)) => {
+        let is_hidden = match (choice, name.as_ref()) {
+            (None, _) => !fallback && (off.contains(&id) || (base_off && !on.contains(&id))),
+            (Some([]), None) => false,
+            (Some(_), Some(name)) => {
                 let name = String::from_utf8_lossy(name.as_bytes());
                 let mut is_hidden = false;
                 for (n, found) in hidden.iter().zip(&mut found) {
@@ -193,7 +245,7 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, hidden: &[String]) -> Result<Variant
                 }
                 is_hidden
             }
-            (false, None) => return Err(invalid()),
+            (Some(_), None) => return Err(invalid()),
         };
         if is_hidden {
             effective.push(id);
@@ -289,10 +341,105 @@ mod tests {
         );
         assert!(Pdf::new(bytes.clone()).is_ok());
 
-        let variant = prepare(&bytes, &[]).unwrap();
+        let variant = prepare(&bytes, None).unwrap();
 
         assert!(Arc::ptr_eq(&bytes, &variant.data), "visible groups must not copy the complete PDF or require incremental writes");
         assert!(variant.hidden.is_empty());
         assert!(variant.warning.is_none());
+    }
+
+    /// One page with layer "Off", hidden by the file's default configuration. `trailer` is the
+    /// trailer dictionary; `previous` an earlier revision's trailer, chained by /Prev.
+    fn default_hidden(trailer: &str, previous: Option<&str>) -> Arc<Vec<u8>> {
+        let mut bytes = b"%PDF-1.5\n".to_vec();
+        let mut offsets = Vec::new();
+        for body in [
+            "<</Type/Catalog/Pages 2 0 R/OCProperties<</OCGs[4 0 R]/D<</OFF[4 0 R]>>>>>>",
+            "<</Type/Pages/Kids[3 0 R]/Count 1>>",
+            "<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Resources<<>>>>",
+            "<</Type/OCG/Name(Off)>>",
+        ] {
+            offsets.push(bytes.len());
+            bytes.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", offsets.len()).as_bytes());
+        }
+        let table = |bytes: &mut Vec<u8>, trailer: &str| {
+            let at = bytes.len();
+            bytes.extend_from_slice(b"xref\n0 5\n0000000000 65535 f\r\n");
+            for offset in &offsets {
+                bytes.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
+            }
+            bytes.extend_from_slice(format!("trailer\n{trailer}\n").as_bytes());
+            at
+        };
+        let trailer = match previous {
+            Some(previous) => {
+                let at = table(&mut bytes, previous);
+                trailer.replace(">>", &format!("/Prev {at}>>"))
+            }
+            None => trailer.to_owned(),
+        };
+        let at = table(&mut bytes, &trailer);
+        bytes.extend_from_slice(format!("startxref\n{at}\n%%EOF\n").as_bytes());
+        Arc::new(bytes)
+    }
+
+    #[test]
+    fn an_explicit_choice_overrides_a_layer_the_file_hides() {
+        let bytes = default_hidden("<</Size 5/Root 1 0 R>>", None);
+
+        let defaults = prepare(&bytes, None).unwrap();
+        let all_on = prepare(&bytes, Some(&[])).unwrap();
+
+        let group = ObjectIdentifier::new(4, 0);
+        assert_eq!(defaults.hidden, vec![group], "file defaults keep the layer hidden");
+        assert!(all_on.hidden.is_empty(), "an explicit all-on choice shows it");
+        let registered = register(&all_on.data).unwrap();
+        let pdf = Pdf::new(registered).unwrap();
+        let catalog = pdf.xref().get::<Dict<'_>>(pdf.xref().root_id()).unwrap();
+        let config = catalog.get::<Dict<'_>>(b"OCProperties").unwrap().get::<Dict<'_>>(b"D").unwrap();
+        assert_eq!(references(&config, b"OFF").unwrap(), Vec::new());
+    }
+
+    /// The incremental writer alone, so a reader's own handling of the input can't decide the result.
+    fn update(bytes: &[u8]) -> Result<Vec<u8>> {
+        append(bytes, &[(ObjectIdentifier::new(4, 0), b"<</Type/OCG/Name(Off)>>".to_vec())], ObjectIdentifier::new(1, 0))
+    }
+
+    #[test]
+    fn a_null_encrypt_entry_is_no_encryption() {
+        for trailer in ["<</Size 5/Root 1 0 R/Encrypt null>>", "<</Size 5/Root 1 0 R>>"] {
+            assert!(update(&default_hidden(trailer, None)).is_ok(), "{trailer}");
+        }
+        for trailer in ["<</Size 5/Root 1 0 R/Encrypt 9 0 R>>", "<</Size 5/Root 1 0 R/Encrypt<</Filter/Standard>>>>"] {
+            assert!(update(&default_hidden(trailer, None)).is_err(), "{trailer}");
+        }
+        // End to end, a null entry still lets a layer choice be written.
+        assert!(prepare(&default_hidden("<</Size 5/Root 1 0 R/Encrypt null>>", None), None).is_ok());
+    }
+
+    #[test]
+    fn encryption_in_an_earlier_revision_is_found() {
+        let bytes = default_hidden("<</Size 5/Root 1 0 R>>", Some("<</Size 5/Root 1 0 R/Encrypt 9 0 R>>"));
+        assert!(update(&bytes).is_err());
+        let bytes = default_hidden("<</Size 5/Root 1 0 R>>", Some("<</Size 5/Root 1 0 R/Encrypt null>>"));
+        assert!(update(&bytes).is_ok());
+    }
+
+    #[test]
+    fn a_trailer_in_a_comment_does_not_hide_the_real_one() {
+        let bytes = b"xref\n% trailer <</Size 9/Encrypt null>>\n0 1\n0000000000 65535 f\r\ntrailer\n<</Size 9/Encrypt 12 0 R>>";
+        assert!(trailer_at(bytes, 0).is_none(), "a comment inside the table is not table syntax");
+        let bytes = b"xref\n0 1\n0000000000 65535 f\r\ntrailer\n<</Size 9/Encrypt 12 0 R>>";
+        assert!(has_entry(&trailer_at(bytes, 0).unwrap(), b"Encrypt"));
+    }
+
+    #[test]
+    fn a_cyclic_prev_chain_is_damage() {
+        let mut bytes = default_hidden("<</Size 5/Root 1 0 R>>", None).to_vec();
+        let at = crate::transitions::rfind(&bytes, b"xref\n").unwrap();
+        let patched = String::from_utf8(bytes.clone()).unwrap().replacen("<</Size 5/Root 1 0 R>>", &format!("<</Size 5/Root 1 0 R/Prev {at}>>"), 1);
+        bytes = patched.into_bytes();
+        let error = update(&bytes).unwrap_err().to_string();
+        assert!(error.contains("cross-reference"), "{error}");
     }
 }

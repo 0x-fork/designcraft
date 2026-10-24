@@ -294,7 +294,7 @@ fn merge_pdfs_inner(parts: &[(Vec<u8>, Vec<(f32, f32)>)], title: Option<&str>) -
     let mut pages = 0;
     let mut has_optional_content = false;
     for (bytes, sizes) in parts {
-        let variant = crate::optional_content::prepare(&Arc::new(bytes.clone()), &[])?;
+        let variant = crate::optional_content::prepare(&Arc::new(bytes.clone()), None)?;
         has_optional_content |= !sizes.is_empty() && variant.has_optional_content;
         let src = krilla::pdf::Pdf::new(variant.data).map_err(|e| PdfError::Write(format!("{e:?}")))?;
         let doc = krilla::pdf::PdfDocument::new(Arc::new(src));
@@ -518,7 +518,7 @@ pub(crate) struct Exporter<'a> {
     image_conversions: usize,
     /// Placed PDFs (embedded as vector pages) and their page counts.
     pdfs: HashMap<(AssetId, Vec<hayro_syntax::object::ObjectIdentifier>), Option<(krilla::pdf::PdfDocument, usize)>>,
-    variants: HashMap<(AssetId, Vec<String>), crate::optional_content::Variant>,
+    variants: HashMap<(AssetId, Option<Vec<String>>), crate::optional_content::Variant>,
     has_optional_content: bool,
     #[cfg(test)]
     pdf_preparations: usize,
@@ -1000,7 +1000,7 @@ impl Exporter<'_> {
                 let g = &if it.media.is_some() { it.drawn_graphic(&self.doc.assets).unwrap_or_else(|| g.clone()) } else { g.clone() };
                 if let Some(p) = &path {
                     s.push_clip_path(p, &FillRule::NonZero);
-                    self.graphic(s, g, &it.pdf_hidden_layers);
+                    self.graphic(s, g, (!it.pdf_hidden_layers.is_empty()).then_some(it.pdf_hidden_layers.as_slice()));
                     s.pop();
                 }
             }
@@ -1406,8 +1406,9 @@ impl Exporter<'_> {
         img
     }
 
-    /// Draw a placed graphic, inside its clipping path when it has one.
-    pub(crate) fn graphic(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: &[String]) {
+    /// Draw a placed graphic, inside its clipping path when it has one. `hidden` is the
+    /// placed PDF's layer choice: `None` keeps the file's defaults, `Some(&[])` shows every layer.
+    pub(crate) fn graphic(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: Option<&[String]>) {
         match g.clip_region().map(|(region, even_odd)| (to_path(&region), even_odd)) {
             Some((Some(clip), even_odd)) => {
                 s.push_clip_path(&clip, if even_odd { &FillRule::EvenOdd } else { &FillRule::NonZero });
@@ -1424,7 +1425,7 @@ impl Exporter<'_> {
         }
     }
 
-    fn graphic_unclipped(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: &[String]) {
+    fn graphic_unclipped(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: Option<&[String]>) {
         // Video / sound without a poster: a dark frame with a play mark.
         if let Some(asset) = self.doc.assets.get(&g.asset)
             && designcraft_doc::media_kind(&asset.mime).is_some()
@@ -1458,7 +1459,7 @@ impl Exporter<'_> {
             let [l, t, r, b] = shown.unwrap_or([0.0, 0.0, 1.0, 1.0]);
             let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
             let Some(size) = Size::from_wh(page_w.max(1e-3) as f32, page_h.max(1e-3) as f32) else { return };
-            let request = (g.asset, hidden.to_vec());
+            let request = (g.asset, hidden.map(<[String]>::to_vec));
             let variant = match self.variants.get(&request) {
                 Some(variant) => variant.clone(),
                 None => {
@@ -1985,7 +1986,7 @@ mod image_content_cache_tests {
         let mut writer = Writer::new(Default::default(), Default::default());
         let mut page = writer.document_mut().start_page_with(PageSettings::new(Size::from_wh(100.0, 100.0).unwrap()));
         let mut surface = page.surface();
-        for (id, hidden, count) in [(a, vec![], 1), (a, vec![], 1), (a, vec!["Hidden".into()], 2), (b, vec![], 3), (a, vec![], 3)] {
+        for (id, hidden, count) in [(a, None, 1), (a, None, 1), (a, Some(vec!["Hidden".into()]), 2), (b, None, 3), (a, None, 3)] {
             let graphic = designcraft_doc::Graphic {
                 asset: id,
                 size: (100.0, 100.0),
@@ -1997,14 +1998,14 @@ mod image_content_cache_tests {
                 wrap: Default::default(),
                 fill: Default::default(),
             };
-            ex.graphic_unclipped(&mut surface, &graphic, &hidden);
+            ex.graphic_unclipped(&mut surface, &graphic, hidden.as_deref());
             assert!(ex.layer_error.is_none());
             assert_eq!(ex.pdf_preparations, count, "count actual preparations, not writer resource deduplication");
         }
         assert_eq!(ex.variants.len(), 3);
         // a, b, and a with its layer hidden (a copy of its own).
         assert_eq!(ex.pdfs.len(), 3);
-        let variant = ex.variants.get(&(a, Vec::new())).unwrap();
+        let variant = ex.variants.get(&(a, None)).unwrap();
         assert!(Arc::ptr_eq(&variant.data, &doc.assets[&a].data));
         surface.finish();
         page.finish();
