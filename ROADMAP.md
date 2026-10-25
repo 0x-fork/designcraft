@@ -12,6 +12,10 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-24** · Embedded IDML keeps independent placed-PDF layer choices in table-cell and
+  footnote text. The variant rewrite reaches endnote stories too, but IDML endnote structures and
+  artwork remain unsupported. External-only export continues to reject active nested choices.
+  Shared placement ids with different sources or choices fail closed; no readiness percentage change.
 - **2026-10-24** · PDF/A-2b preparation applies placed-PDF layer choices, including explicit all-on,
   to anchors inside table-cell text, footnotes and endnotes in an export-only copy. The nested
   IDML variant write pass remains separate work; no readiness percentage change.
@@ -374,6 +378,8 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-24** · Story Options rejects malformed or nonexistent explicit story/frame IDs without changing the selected story, including an invalid frame alongside a valid story. Null targets remain absent; omitted targets still use the selection. No readiness percentage change.
+- **2026-10-24** · Text Frame Options explains that a custom baseline-grid increment must be a measure greater than zero when zero, a negative value or a non-measure is entered. Validation is unchanged. No readiness percentage change.
 - **2026-10-24** · Renaming a paragraph or character style, or moving it into a style group, keeps its Export Tagging under the new name, and undo puts it back under the old one. Deleting a tagged style drops its tagging and leaves the replacement style's own tagging as it was. No readiness percentage change.
 - **2026-10-24** · Quick Apply and the application bar's search leave out the interface commands that failed or reset a setting when chosen there: those that need a workspace, a command and shortcut, a menu item, a panel, a window edge, an app page, a recent file or a swatch they can't give them, a Contextual Task Bar place, and Interface Color Theme, UI Scaling, Reset Shortcuts, the flattener preset, Screen Mode and Zoom To, which without a value switched to the dark theme, set 100%, cleared every custom shortcut or the preset, or went to Normal mode or 100% zoom. Each stays in the menu, panel or dialog that gives it the value. No readiness percentage change.
 - **2026-10-24** · EPUB Export Options › Split Document, a dialog before File › Export EPUB… saves (`document.epubSplit`, stored with the document): off, a single paragraph style, or based on paragraph style export tags, with Paragraph Style Options › Export Tagging's Split Document flag marking those styles. A reflowable EPUB is one content file unless Split Document is on; the split before each top-level h1 from #791 is gone. A split before a list item or preformatted line no longer leaves an unclosed list or block in a content file. IDML import and export keep the setting and the flag, and Load Styles the flag. No readiness percentage change.
