@@ -497,6 +497,7 @@ fn paint_order(bytes: &[u8]) -> Vec<(String, f32)> {
                 GlyphDrawMode::Fill => ("fill text".into(), 0.0),
                 GlyphDrawMode::Stroke(p) => ("stroke text".into(), p.line_width),
                 GlyphDrawMode::Invisible => ("invisible text".into(), 0.0),
+                GlyphDrawMode::Clip => ("clip text".into(), 0.0),
             });
         }
         fn draw_image(&mut self, _: Image<'_, '_>, _: kurbo::Affine) {}

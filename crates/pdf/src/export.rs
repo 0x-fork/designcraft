@@ -463,6 +463,7 @@ fn file_info_metadata(doc: &Document, title: Option<&str>, author: Option<&str>)
         description: (!description.is_empty()).then(|| description.to_string()),
         keywords: info.keywords.clone(),
         created: None,
+        modified: None,
     }
 }
 
