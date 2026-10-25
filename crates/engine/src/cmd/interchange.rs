@@ -63,7 +63,7 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
         .filter(|it| it.has_pdf_layer_override())
         .filter_map(|it| {
             let asset = it.graphic().and_then(|g| doc.assets.get(&g.asset)).filter(|a| designcraft_render::is_pdf(&a.data))?;
-            Some((it.id, asset, it.pdf_hidden_layers.clone()))
+            Some((it.id, asset, it.pdf_hidden_layers.clone(), it.pdf_layer_override))
         })
         .collect();
     if choices.is_empty() {
@@ -74,7 +74,17 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
     }
     let mut out = doc.clone();
     let mut variants = std::collections::HashMap::new();
-    for (id, asset, hidden) in choices {
+    // Duplicated anchors can share an id. Reuse a variant only when source and choice agree.
+    let mut expected = std::collections::HashMap::new();
+    for (id, asset, hidden, overridden) in choices {
+        let signature = (asset.id, hidden.clone(), overridden);
+        if let Some(previous) = expected.get(&id) {
+            if previous != &signature {
+                return Err(EngineError::Other(format!("PDF layer choices: placements sharing id {id} have different sources or layer choices")));
+            }
+            continue;
+        }
+        expected.insert(id, signature);
         let bytes = designcraft_render::pdf_hide_layers(&asset.data, &hidden)
             .ok_or_else(|| EngineError::Other(format!("{}: PDF layer choices could not be applied", asset.name)))?;
         let mut variant = (**asset).clone();
@@ -87,13 +97,20 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
     }
     // Anchored objects live in stories, and parent pages outside the document-spread walk, so
     // the choice is cleared where the placement actually is.
-    // Count distinct ids reached, not updates: a duplicated frame can leave two placements
-    // sharing one id (a renumber gap tracked separately), which is not a divergence.
+    // Count distinct ids, allowing identical duplicated anchors, but check every hit against
+    // the original source and choice before rewriting (including placements using defaults).
     let mut reached = std::collections::HashSet::new();
+    let mut conflicting_id = None;
     out.update_placed_items(
         |it| variants.contains_key(&it.id),
         |it| {
             reached.insert(it.id);
+            if let Some((asset, hidden, overridden)) = expected.get(&it.id)
+                && (it.graphic().map(|g| g.asset) != Some(*asset) || &it.pdf_hidden_layers != hidden || it.pdf_layer_override != *overridden)
+            {
+                conflicting_id = Some(it.id);
+                return;
+            }
             if let designcraft_doc::Content::Graphic(g) = &mut it.content
                 && let Some(aid) = variants.get(&it.id)
             {
@@ -103,6 +120,9 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
             it.pdf_hidden_layers.clear();
         },
     );
+    if let Some(id) = conflicting_id {
+        return Err(EngineError::Other(format!("PDF layer choices: placements sharing id {id} have different sources or layer choices")));
+    }
     if reached.len() != variants.len() {
         return Err(EngineError::Other(format!(
             "PDF layer choices could not be applied to every placement (reached {} of {})",
@@ -807,6 +827,81 @@ mod nested_layer_tests {
             imported.assets.values().filter(|a| designcraft_render::is_pdf(&a.data)).map(|a| designcraft_render::pdf_layers(&a.data)).collect();
         layers.sort();
         assert_eq!(layers, vec![states(false, true), states(true, false)]);
+    }
+
+    // Shared anchored ids are a pre-existing duplication gap. Conflicting choices must not
+    // silently select one variant; this fixture changes only the copied anchor's choice.
+    #[test]
+    fn shared_id_with_divergent_pdf_choices_is_rejected() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let pdf = designcraft_render::pdf_hide_layers(&super::super::pdflayers::tests::two_layer_pdf(), &["Red".into()]).unwrap();
+        let placed = s.execute("file.place", &json!({"base64": base64_encode(&pdf), "name": "layers.pdf"})).unwrap();
+        let control = ItemId(placed["id"].as_u64().unwrap());
+        let frame = {
+            let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let mut item = doc.item(control).unwrap().clone();
+            item.id = ItemId(doc.alloc());
+            item.pdf_hidden_layers = vec!["Blue".into()];
+            let layer = doc.default_layer();
+            let (frame, sid) = doc.add_text_frame(SpreadRef::Doc(0), Rect::new(0.0, 0.0, 200.0, 200.0), layer, "Body", Default::default()).unwrap();
+            doc.story_mut(sid).unwrap().insert_object(0, AnchoredObject { item, position: Default::default() });
+            frame
+        };
+        s.execute("transform.move", &json!({"ids": [frame.0], "dx": 10, "dy": 10, "copy": true})).unwrap();
+        // Change ONLY the copy in the newest story to explicit all-on.
+        {
+            let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let (_, st) = doc.stories.iter_mut().filter(|(_, st)| !st.objects.is_empty()).last().unwrap();
+            let o = &mut Arc::make_mut(st).objects[0];
+            let it = &mut Arc::make_mut(o).item;
+            it.pdf_hidden_layers.clear();
+            it.pdf_layer_override = true;
+        }
+        let before = s.doc().unwrap().doc.clone();
+        let chosen: Vec<_> = before.placed_items().into_iter().filter(|i| i.has_pdf_layer_override()).collect();
+        assert_eq!(chosen.len(), 2);
+        assert_eq!(chosen[0].id, chosen[1].id);
+        assert_eq!(chosen[0].graphic().unwrap().asset, chosen[1].graphic().unwrap().asset);
+        assert_ne!(chosen[0].pdf_hidden_layers, chosen[1].pdf_hidden_layers);
+        let err = s.execute("file.exportIdml", &json!({})).unwrap_err().to_string();
+        assert!(err.contains("placements sharing id") && err.contains("different sources or layer choices"), "{err}");
+        assert!(Arc::ptr_eq(&before, &s.doc().unwrap().doc));
+    }
+
+    // Cross-document paste: the pasted frame's anchored placement keeps its source id,
+    // which can collide with an unrelated placement in the destination.
+    #[test]
+    fn shared_id_with_different_pdf_assets_is_rejected() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let pdf = designcraft_render::pdf_hide_layers(&super::super::pdflayers::tests::two_layer_pdf(), &["Red".into()]).unwrap();
+        let a = s.execute("file.place", &json!({"base64": base64_encode(&pdf), "name": "a.pdf"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("object.layerOptions", &json!({"ids": [a], "hidden": ["Blue"]})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [72, 72, 400, 400], "content": "text", "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+        let sid = s.doc().unwrap().doc.item(ItemId(f)).unwrap().text_frame().unwrap().story;
+        s.execute("anchored.insert", &json!({"ids": [a], "story": sid.0, "pos": 0})).unwrap();
+        s.execute("selection.set", &json!({"ids": [f]})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("file.new", &json!({})).unwrap();
+        // A different, unrelated PDF placement in the destination (no choice).
+        let b = s
+            .execute("file.place", &json!({"base64": base64_encode(&super::super::pdflayers::tests::two_layer_pdf()), "name": "b.pdf"}))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        s.execute("edit.paste", &json!({})).unwrap();
+        assert_eq!(a, b, "fresh documents allocate the same first placement id");
+        let before = s.doc().unwrap().doc.clone();
+        let graphics: Vec<_> = before.placed_items().into_iter().filter(|i| i.graphic().is_some()).collect();
+        assert_eq!(graphics.len(), 2);
+        assert_eq!(graphics[0].id, graphics[1].id);
+        assert_ne!(graphics[0].graphic().unwrap().asset, graphics[1].graphic().unwrap().asset);
+        assert!(!graphics[0].has_pdf_layer_override(), "destination placement uses file defaults");
+        assert!(graphics[1].has_pdf_layer_override());
+        let err = s.execute("file.exportIdml", &json!({})).unwrap_err().to_string();
+        assert!(err.contains("placements sharing id") && err.contains("different sources or layer choices"), "{err}");
+        assert!(Arc::ptr_eq(&before, &s.doc().unwrap().doc));
     }
 
     #[test]
