@@ -74,7 +74,9 @@ pub(crate) fn tick(app: &mut DesignApp, ctx: &egui::Context) {
 pub(crate) fn show(app: &mut DesignApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match app.updates_rt.updater.show(ctx) {
+        // The restart helper is scheduled before the app closes, so no update starts over unsaved work.
+        let clean = !app.session.documents().iter().any(|d| d.is_dirty());
+        match app.updates_rt.updater.show_if(ctx, clean) {
             Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
             Action::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::None => {}
