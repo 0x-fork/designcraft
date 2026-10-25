@@ -1,7 +1,7 @@
 # Shared PDF backend
 
 DesignCraft pins `craft-pdf`, patched Krilla 0.8.2 and the six Hayro reader crates (with
-`hayro-cmap` and `hayro-postscript`) to craft-libs revision `6e7f28518dd1cb57e1624bdc269c3c14316b13ae`. `craft-ui`,
+`hayro-cmap` and `hayro-postscript`) to craft-libs revision `869928d2a06a14fccd921dc9e94cd15e4ad18e18`. `craft-ui`,
 `craft-print` and the other craft-libs crates are pinned to the same revision. The reader migration is reviewed on top of the separate writer change.
 
 ## Writing
