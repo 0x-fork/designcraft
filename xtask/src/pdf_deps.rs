@@ -4,7 +4,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-const REV: &str = "4dc543cb449cc232e4c3d58f78a05c1ab169db9e";
+const REV: &str = "cdc6713130b2dfe3cdddeb3a9cd71deeb94ed65f";
 const PACKAGES: &[(&str, &str)] = &[
     ("craft-pdf", "0.1.0"),
     ("krilla", "0.8.2"),
