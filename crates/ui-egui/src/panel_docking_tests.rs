@@ -1275,4 +1275,3 @@ fn a_document_dropped_on_a_floating_panel_window_opens() {
     open_window_drops(&mut app, &[files]);
     assert_eq!(app.session.documents().len(), 1, "the dropped document opens");
 }
-
