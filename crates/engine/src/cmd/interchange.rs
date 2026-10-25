@@ -87,9 +87,13 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
     }
     // Anchored objects live in stories, and parent pages outside the document-spread walk, so
     // the choice is cleared where the placement actually is.
-    let applied = out.update_placed_items(
+    // Count distinct ids reached, not updates: a duplicated frame can leave two placements
+    // sharing one id (a renumber gap tracked separately), which is not a divergence.
+    let mut reached = std::collections::HashSet::new();
+    out.update_placed_items(
         |it| variants.contains_key(&it.id),
         |it| {
+            reached.insert(it.id);
             if let designcraft_doc::Content::Graphic(g) = &mut it.content
                 && let Some(aid) = variants.get(&it.id)
             {
@@ -99,9 +103,10 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
             it.pdf_hidden_layers.clear();
         },
     );
-    if applied != variants.len() {
+    if reached.len() != variants.len() {
         return Err(EngineError::Other(format!(
-            "PDF layer choices could not be applied to every placement (updated {applied}, expected {})",
+            "PDF layer choices could not be applied to every placement (reached {} of {})",
+            reached.len(),
             variants.len()
         )));
     }
@@ -771,15 +776,37 @@ mod nested_layer_tests {
         session.execute("file.exportIdml", &json!({"embedImages": false})).unwrap();
     }
 
+    // Duplicating a text frame that holds an anchored placed PDF leaves two placements sharing
+    // one ItemId (renumber gap, tracked separately). Export must still apply the choice to both.
     #[test]
-    fn nested_idml_variant_mapping_mismatch_is_rejected() {
-        let (mut session, _, ids) = fixture("cell");
-        let source = Arc::make_mut(&mut session.doc_mut().unwrap().doc);
-        source.update_placed_items(|i| i.id == ids[1], |i| i.id = ids[0]);
-        // Both nested placements now use one id: the mapping has one entry, the write walk
-        // updates two items. A malformed document must not silently assign one choice to both.
-        let err = with_pdf_layer_variants(source, true).err().unwrap().to_string();
-        assert!(err.contains("every placement") && err.contains("updated 2, expected 1"), "{err}");
+    fn duplicated_frame_keeps_its_anchored_pdf_choice_in_idml() {
+        let pdf = designcraft_render::pdf_hide_layers(&super::super::pdflayers::tests::two_layer_pdf(), &["Red".into()]).unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let placed = s.execute("file.place", &json!({"base64": base64_encode(&pdf), "name": "layers.pdf"})).unwrap();
+        let control = ItemId(placed["id"].as_u64().unwrap());
+        let (frame, chosen) = {
+            let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let mut item = doc.item(control).unwrap().clone();
+            item.id = ItemId(doc.alloc());
+            item.pdf_hidden_layers = vec!["Blue".into()];
+            let chosen = item.id;
+            let layer = doc.default_layer();
+            let (frame, sid) = doc.add_text_frame(SpreadRef::Doc(0), Rect::new(0.0, 0.0, 200.0, 200.0), layer, "Body", Default::default()).unwrap();
+            doc.story_mut(sid).unwrap().insert_object(0, AnchoredObject { item, position: Default::default() });
+            (frame, chosen)
+        };
+        s.execute("transform.move", &json!({"ids": [frame.0], "dx": 10, "dy": 10, "copy": true})).unwrap();
+        let doc = s.doc().unwrap().doc.clone();
+        let with_choice: Vec<_> = doc.placed_items().into_iter().filter(|i| i.has_pdf_layer_override()).map(|i| i.id).collect();
+        assert_eq!(with_choice, [chosen, chosen], "both placements share one id");
+        assert!(doc.check().unwrap_err().to_string().contains(&format!("duplicate item id {chosen}")));
+        let result = s.execute("file.exportIdml", &json!({})).unwrap();
+        let imported = designcraft_idml::import_idml(&base64_decode(result["base64"].as_str().unwrap())).unwrap();
+        let mut layers: Vec<_> =
+            imported.assets.values().filter(|a| designcraft_render::is_pdf(&a.data)).map(|a| designcraft_render::pdf_layers(&a.data)).collect();
+        layers.sort();
+        assert_eq!(layers, vec![states(false, true), states(true, false)]);
     }
 
     #[test]
