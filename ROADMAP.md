@@ -12,6 +12,10 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-24** · Embedded IDML keeps independent placed-PDF layer choices in table-cell and
+  footnote text. The variant rewrite reaches endnote stories too, but IDML endnote structures and
+  artwork remain unsupported. External-only export continues to reject active nested choices.
+  Shared placement ids with different sources or choices fail closed; no readiness percentage change.
 - **2026-10-24** · PDF/A-2b preparation applies placed-PDF layer choices, including explicit all-on,
   to anchors inside table-cell text, footnotes and endnotes in an export-only copy. The nested
   IDML variant write pass remains separate work; no readiness percentage change.

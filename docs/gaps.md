@@ -213,9 +213,10 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 - **Layer choices:** placed PDFs distinguish explicit all-on visibility from file defaults;
   choices survive native saves, raster/PDF output and embedded IDML export for the placements the
   export walks reach: document and parent spreads, groups, and objects anchored in a story. A
-  placement anchored inside table-cell or footnote/endnote text is also prepared for PDF/A-2b,
-  but the IDML variant write pass cannot update those nested placements yet. IDML layer variants
-  are embedded copies; external-only export is rejected when choices would be lost.
+  placement anchored inside table-cell or footnote/endnote text is also prepared for PDF/A-2b.
+  Embedded IDML applies variants inside table-cell and footnote text; endnote variants are prepared,
+  but IDML endnote structures/artwork are not serialized yet. IDML layer variants are embedded
+  copies; external-only export is rejected when choices would be lost.
 - **Missing:** EPS is shown through its preview only (no PostScript interpreter); PSD layer
   comps beyond visibility; the Clipping Path Options dialog (tracing into a clip that keeps the
   frame, Threshold/Tolerance/Inset Frame preview, picking an alpha channel or a path saved in a
