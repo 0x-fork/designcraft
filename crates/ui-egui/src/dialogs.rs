@@ -1412,9 +1412,10 @@ fn file_info_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
 }
 
 /// File Info's OK: every field the dialog holds, as typed (an empty one clears it); the keywords
-/// only when they were edited. The fields go to the document the dialog was opened for, even when another one
-/// became active meanwhile, and the active document stays active; when the dialog's document has
-/// closed, nothing is stored.
+/// only when they were edited. A field that is not text (a keyword list, or `null` from
+/// `ui.dialog.open`) goes to `file.info` as it is. The fields go to the document the dialog was
+/// opened for, even when another one became active meanwhile, and the active document stays
+/// active; when the dialog's document has closed, nothing is stored.
 fn confirm_file_info(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     let keywords_edited = d.fields.get("keywordsShown").and_then(Value::as_str) != Some(d.s("keywords").as_str());
     let stored: Vec<String> = match d.fields.get("keywordsStored") {
@@ -1426,10 +1427,10 @@ fn confirm_file_info(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
         .filter(|(key, _)| d.fields.contains_key(*key))
         .filter(|(key, _)| *key != "keywords" || keywords_edited)
         .map(|(key, _)| {
-            let v = if *key == "keywords" {
-                json!(designcraft_doc::file_info::parse_keywords_keeping(&d.s(key), &stored))
-            } else {
-                Value::String(d.s(key))
+            let v = match d.fields.get(*key) {
+                Some(Value::String(s)) if *key == "keywords" => json!(designcraft_doc::file_info::parse_keywords_keeping(s, &stored)),
+                Some(v) => v.clone(),
+                None => Value::Null,
             };
             (key.to_string(), v)
         })
@@ -7628,6 +7629,21 @@ mod tests {
         let info = app.session.active().unwrap().doc.file_info.clone();
         assert_eq!((info.document_title.as_str(), info.author.as_str(), info.description.as_str()), ("Spring Catalog", "Ana Ruiz", ""));
         assert_eq!(info.keywords, ["spring", "shoes"]);
+    }
+
+    /// Fields given to `ui.dialog.open` as JSON other than text reach `file.info` as they are: a
+    /// keyword list stays a list, and `null` clears a field.
+    #[test]
+    fn file_info_opened_with_a_keyword_list_stores_the_list() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("file.info", json!({"author": "Ana Ruiz"})).unwrap();
+        let fields = json!({"keywords": ["Washington, DC", "map"], "author": null});
+        assert_eq!(ctl(&mut app, "ui.dialog.open", json!({"id": "fileInfo", "fields": fields}))["ok"], true);
+        confirm(&mut app).unwrap();
+        let info = app.session.active().unwrap().doc.file_info.clone();
+        assert_eq!(info.keywords, ["Washington, DC", "map"]);
+        assert_eq!(info.author, "");
     }
 
     /// File Info's OK for a document that is not the active one leaves the active document's
