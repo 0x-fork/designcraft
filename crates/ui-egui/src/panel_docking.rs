@@ -13,7 +13,7 @@ use crate::DesignApp;
 
 /// The id of the dock area that draws the panels.
 fn area_id() -> egui::Id {
-    egui::Id::new("designcraft-panel-docking")
+    egui::Id::unique("designcraft-panel-docking")
 }
 
 /// The dock area a headless app floats into, before it ever drew a frame.
@@ -1047,7 +1047,7 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         blocked.push(ui.ctx().content_rect());
     } else if crate::story_editor::visible(app) {
         // The editor is rendered after the dock; block its unmeasured first frame conservatively.
-        let rect = ui.ctx().memory(|m| m.area_rect(egui::Id::new("story_editor"))).unwrap_or_else(|| ui.ctx().content_rect());
+        let rect = ui.ctx().memory(|m| m.area_rect(egui::Id::unique("story_editor"))).unwrap_or_else(|| ui.ctx().content_rect());
         blocked.push(rect);
     }
     let style = dock_style(ui, &app.ui.language);
@@ -1198,7 +1198,7 @@ fn three_line_button(app: &mut DesignApp, ui: &mut egui::Ui, panel: &str) {
     let t = crate::theme::Tokens::get(ui.ctx());
     let area = ui.max_rect();
     let r = egui::Rect::from_center_size(area.center(), egui::vec2(18.0, 18.0));
-    let menu = ui.interact(r, ui.id().with("panel-menu"), egui::Sense::click());
+    let menu = ui.interact(r, ui.scope_id().with("panel-menu"), egui::Sense::click());
     if menu.hovered() {
         ui.painter().rect_filled(r, 3.0, t.hover);
     }

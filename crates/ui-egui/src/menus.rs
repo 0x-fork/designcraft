@@ -1855,6 +1855,9 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.split);
             app.split = on;
             if on {
+                if app.second_window {
+                    app.end_second_ime_viewport();
+                }
                 app.second_window = false;
             } else {
                 app.switch_pane(0);
@@ -1864,7 +1867,11 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "window.newWindow" => {
             // The second view moves into its own window (on the web: a floating window).
-            app.second_window = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+            if app.second_window && !on {
+                app.end_second_ime_viewport();
+            }
+            app.second_window = on;
             app.split = false;
             if !app.second_window {
                 app.switch_pane(0);
@@ -3339,7 +3346,7 @@ pub fn palette(app: &mut DesignApp, ctx: &egui::Context) {
     let Some(mut q) = app.ui.palette.clone() else { return };
     let mut close = false;
     let mut run: Option<(String, Value)> = None;
-    egui::Modal::new(egui::Id::new("palette")).show(ctx, |ui| {
+    egui::Modal::new(egui::Id::unique("palette")).show(ctx, |ui| {
         ui.set_width(480.0);
         let r = ui.add(
             egui::TextEdit::singleline(&mut q)
@@ -3666,6 +3673,7 @@ mod tests {
                     delta: egui::vec2(0.0, -3000.0),
                     phase: egui::TouchPhase::Move,
                     modifiers: egui::Modifiers::NONE,
+                    source: egui::MouseWheelSource::Unknown,
                 },
             ],
         );
@@ -3923,6 +3931,7 @@ mod tests {
                 delta: egui::vec2(0.0, -40.0),
                 phase: egui::TouchPhase::Move,
                 modifiers: egui::Modifiers::NONE,
+                source: egui::MouseWheelSource::Unknown,
             }],
         );
         let scrolled = cameras(&mut app);
@@ -3973,8 +3982,9 @@ mod tests {
             output.textures_delta.clear();
         }
         assert!(warnings.is_empty(), "both bars reused the same interactive widget IDs: {warnings:?}");
-        let bars: Vec<_> =
-            (0_u8..2).map(|pane| ctx.memory(|memory| memory.area_rect(egui::Id::new(("task_bar", egui::ViewportId::ROOT, pane)))).unwrap()).collect();
+        let bars: Vec<_> = (0_u8..2)
+            .map(|pane| ctx.memory(|memory| memory.area_rect(egui::Id::unique(("task_bar", egui::ViewportId::ROOT, pane)))).unwrap())
+            .collect();
         assert!(!bars[0].intersects(bars[1]), "each pane keeps its own bar: {bars:?}");
     }
 
@@ -5203,7 +5213,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        app.raw_input_hook(&mut input);
+        app.raw_input_hook(ctx, &mut input);
         let mut menu = menu;
         let mut out = ctx.run_ui(input, |ui| {
             let ctx = ui.ctx().clone();
@@ -5953,6 +5963,7 @@ mod tests {
                     delta: egui::vec2(0.0, -5000.0),
                     phase: egui::TouchPhase::Move,
                     modifiers: egui::Modifiers::NONE,
+                    source: egui::MouseWheelSource::Unknown,
                 },
             ]);
             for _ in 0..60 {
@@ -6279,6 +6290,7 @@ mod tests {
             delta: egui::vec2(0.0, -400.0),
             phase: egui::TouchPhase::Move,
             modifiers: egui::Modifiers::NONE,
+            source: egui::MouseWheelSource::Unknown,
         };
         let mut after = tile_y(vec![egui::Event::PointerMoved(at), wheel]);
         for _ in 0..30 {
@@ -6329,7 +6341,7 @@ mod tests {
             let mut row = egui::Rect::NOTHING;
             let mut output =
                 ctx.run_ui(egui::RawInput { screen_rect: Some(screen), time: Some(tick as f64 / 60.0), events, ..Default::default() }, |ui| {
-                    egui::Area::new(egui::Id::new("menu_rows")).fixed_pos(egui::pos2(50.0, 50.0)).show(ui.ctx(), |ui| {
+                    egui::Area::new(egui::Id::unique("menu_rows")).fixed_pos(egui::pos2(50.0, 50.0)).show(ui.ctx(), |ui| {
                         let before = ui.cursor().min;
                         menu_column(app, ui, &[("Test", entries.clone())]);
                         row = egui::Rect::from_min_max(before, ui.min_rect().max);

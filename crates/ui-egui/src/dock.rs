@@ -137,7 +137,7 @@ pub fn float_only_windows(app: &mut DesignApp, ctx: &egui::Context) {
         let label = crate::i18n::tr(&app.ui.language, panel_label(&id)).to_owned();
         let mut open = true;
         let mut w = egui::Window::new(label.clone())
-            .id(egui::Id::new(("floating_panel", &id)))
+            .id(egui::Id::unique(("floating_panel", &id)))
             .title_bar(false)
             .default_pos(egui::pos2(at[0], at[1]))
             .default_width(if id == "tabs" { 560.0 } else { 256.0 })
@@ -156,7 +156,7 @@ pub fn float_only_windows(app: &mut DesignApp, ctx: &egui::Context) {
             crate::rtl::paint(ui.painter(), strip.min + vec2(10.0, 12.0), egui::Align2::LEFT_CENTER, &label, semibold(12.0), t.text_strong);
             let close = egui::Rect::from_min_size(egui::pos2(strip.max.x - 22.0, strip.min.y + 3.0), vec2(18.0, 18.0));
             if ui
-                .interact(close, ui.id().with("fclose"), Sense::click())
+                .interact(close, ui.scope_id().with("fclose"), Sense::click())
                 .on_hover_ui(|ui| {
                     crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Close"));
                 })

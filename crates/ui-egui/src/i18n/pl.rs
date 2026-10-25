@@ -1498,6 +1498,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Records per page", "Rekordy na stronę"),
     ("Single record", "Pojedynczy rekord"),
     ("Multiple records", "Wiele rekordów"),
+    ("Arrangement", "Rozmieszczenie"),
     ("Rows first", "Najpierw wiersze"),
     ("Columns first", "Najpierw kolumny"),
     ("Column spacing", "Odstęp między kolumnami"),

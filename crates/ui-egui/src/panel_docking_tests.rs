@@ -501,7 +501,7 @@ fn first_story_editor_frame_conservatively_blocks_owned_tab_release() {
     h.event(Event::PointerMoved(from - vec2(90.0, 0.0)));
     h.run_steps(2);
     assert_eq!(h.ctx.dragged_id(), Some(tab), "must own a real tab drag before opening editor");
-    assert!(h.ctx.memory(|m| m.area_rect(egui::Id::new("story_editor"))).is_none());
+    assert!(h.ctx.memory(|m| m.area_rect(egui::Id::unique("story_editor"))).is_none());
     let layout = h.state().app.ui.docking.clone();
     let frame_before = h.ctx.cumulative_frame_nr();
     h.state_mut().app.run("app.storyEditor", json!({"story":story})).unwrap();
@@ -513,12 +513,12 @@ fn first_story_editor_frame_conservatively_blocks_owned_tab_release() {
     ]);
     h.run_steps(1);
     assert_eq!(h.ctx.cumulative_frame_nr() - frame_before, 1, "release must occur in the first editor frame");
-    let measured = h.ctx.memory(|m| m.area_rect(egui::Id::new("story_editor"))).unwrap();
+    let measured = h.ctx.memory(|m| m.area_rect(egui::Id::unique("story_editor"))).unwrap();
     assert!(!measured.contains(release), "fixture exercises the conservative first-frame guard outside eventual editor bounds");
     assert_eq!(h.state().app.ui.docking, layout, "first editor frame must block release before it has a measured rectangle");
     assert_eq!(serde_json::to_value(&h.state().app.session.active().unwrap().doc).unwrap(), doc);
     h.run_steps(3);
-    let editor = h.ctx.memory(|m| m.area_rect(egui::Id::new("story_editor"))).unwrap();
+    let editor = h.ctx.memory(|m| m.area_rect(egui::Id::unique("story_editor"))).unwrap();
     let screen = h.ctx.content_rect();
     let outside = [screen.left_bottom() + vec2(80.0, -80.0), screen.right_bottom() + vec2(-450.0, -80.0)]
         .into_iter()

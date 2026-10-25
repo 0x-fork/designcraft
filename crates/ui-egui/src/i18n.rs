@@ -4217,6 +4217,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Records per page", ["Datensätze pro Seite", "Enregistrements par page", "Registros por página", "ページあたりのレコード", "每页记录数"]),
     ("Single record", ["Einzelner Datensatz", "Un seul enregistrement", "Un solo registro", "単一レコード", "单条记录"]),
     ("Multiple records", ["Mehrere Datensätze", "Plusieurs enregistrements", "Varios registros", "複数レコード", "多条记录"]),
+    ("Arrangement", ["Anordnung", "Disposition", "Disposición", "配置", "排列"]),
     ("Rows first", ["Zeilen zuerst", "Lignes d'abord", "Filas primero", "行を優先", "先行后列"]),
     ("Columns first", ["Spalten zuerst", "Colonnes d'abord", "Columnas primero", "列を優先", "先列后行"]),
     ("Column spacing", ["Spaltenabstand", "Espacement des colonnes", "Espacio entre columnas", "列の間隔", "列间距"]),
@@ -4948,6 +4949,22 @@ mod tests {
         }
     }
 
+    /// The Data Merge arrangement combo takes its accessible name from `tr(lang, "Arrangement")`.
+    /// A row in only the shared table leaves the languages whose lookup returns directly with the
+    /// English name.
+    #[test]
+    fn arrangement_accessible_name_is_localized_in_every_interface_language() {
+        for (code, name) in LANGUAGES {
+            let label = tr(code, "Arrangement");
+            if code.is_empty() {
+                assert_eq!(label, "Arrangement", "{name}");
+            } else {
+                assert_ne!(label, "Arrangement", "{name} still announces the English accessible name");
+                assert!(!label.trim().is_empty(), "{name}");
+            }
+        }
+    }
+
     #[test]
     fn context_captions_come_from_their_context_or_the_plain_translation() {
         for (lang, table) in CONTEXT_TABLES {
@@ -5164,6 +5181,7 @@ mod tests {
             "{label}: {name} (double-click: Color Picker)",
             "All",
             "Align To",
+            "Arrangement",
             "Auto Rename",
             "Character Style",
             "Company",
