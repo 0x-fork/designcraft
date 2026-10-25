@@ -1,9 +1,10 @@
 # DesignCraft roadmap
 
 **Stage: pre-alpha** · next: alpha, ~5–7 h away; beta ~28 points and ~420–750 h beyond that (the core-workflow gate, not the percentage: ready for real work is already ~47%)
+- 2026-10-23: placed-artwork layer options survive IDML and native round trips per placement, independently of shared assets. Unsupported visibility overrides are explicit import/preflight/PDF warnings; format 4 prevents older native readers from silently discarding them. Rendering parity is still open; see [graphic-layer-options.md](docs/graphic-layer-options.md).
 - FID1: PDF export normalizes mixed emitted gradient color spaces to RGB with an explicit warning; homogeneous device-space gradients retain their components. Linear/radial, midpoint, archival and print policies have synthetic regression coverage.
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects; table anchors keep their own paragraphs; grouped HTML/EPUB reading order; Links source paths; XLSX cached cell values retain numeric precision and text) · **Target:** Adobe InDesign 2026
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-23 · **Change:** minor (placed graphic layer-option preservation and explicit rendering warnings; File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; the alpha gate waits on Primary Text Frame page fixes; Japanese print, import and table controls localized; Live corners (#186); Optical kerning from outlines (#181); window and menu quit confirmation; failed writes preserve live save and collection state; spring-loaded Zoom navigation; orderly native exit recovery; Pages panel parents; cancelable macOS Dock Quit; text stroke behind fill; Based on Parent; object styles carry effects; table anchors keep their own paragraphs; grouped HTML/EPUB reading order; Links source paths; XLSX cached cell values retain numeric precision and text) · **Target:** Adobe InDesign 2026
 - AR1.1: Kashida justification tests verify space fallback without Tatweel fonts using an isolated font database, while retaining elongation assertions when fonts support it.
 
 - AR1: Arabic IDML controls now retain character direction, kashida switches, diacritic offsets/forms, paragraph policy values and independent story/table directions. Shaping preserves joining context and script/language selection; paragraph-level bidi, contextual digit conversion, mark-safe elongation, RTL columns/tables and physical column insertion have regression coverage. Vendor-specific justification and diacritic presets remain explicit preflight warnings; see docs/arabic-typography.md.
@@ -11,6 +12,24 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-25** · The application bar uses craft-window's shared title-bar code. A drag that
+  starts on a floating panel over the bar moves the panel, not the window, and in full screen the
+  bar no longer zooms or moves the window. No readiness percentage change.
+- **2026-10-24** · Embedded IDML keeps independent placed-PDF layer choices in table-cell and
+  footnote text. The variant rewrite reaches endnote stories too, but IDML endnote structures and
+  artwork remain unsupported. External-only export continues to reject active nested choices.
+  Shared placement ids with different sources or choices fail closed; no readiness percentage change.
+- **2026-10-24** · PDF/A-2b preparation applies placed-PDF layer choices, including explicit all-on,
+  to anchors inside table-cell text, footnotes and endnotes in an export-only copy. The nested
+  IDML variant write pass remains separate work; no readiness percentage change.
+- **2026-10-24** · Explicit PDF layer choices, including all-on, are checked with one actual
+  rewrite per distinct source before editing; reset to file defaults bypasses the check. Native
+  format 4 covers both explicit all-on PDF layers and retained graphic-layer options. No readiness percentage change.
+- **2026-10-23** · Placed PDF layers can explicitly all be shown, separately from Use File Defaults.
+  Legacy commands keep their reset behavior; native saves require a capable reader only for
+  the new all-on state, and PDF/embedded IDML exports preserve the choice. No readiness percentage change.
+- **2026-10-23** · IDML graphic-layer export rejects parents in already closed subtrees,
+  preserving native-edited layer order through round trips. Synthetic regression added.
 - **2026-10-23** · PDF layer choices now validate before editing all targets; rejected rewrites
   leave document/undo state intact. Null trailer entries remain unencrypted, and unsupported
   all-content crops retain the whole page rather than silently clipping hidden layers.
@@ -18,6 +37,10 @@ DesignCraft aims at full Adobe InDesign parity — and to be better: faster, ope
   object references; bounded incremental updates replace the existing catalog. Synthetic
   regression tests cover metadata, output-intent references, nonzero generations and
   forward Prev links; repeated cross-reference offsets are rejected explicitly. No readiness percentage change.
+
+- **2026-10-23** · PDF layer commands reject overrides on layerless files atomically;
+  default layer queries find a placed PDF anywhere in mixed selections. Regression tests cover
+  IDML export after rejection and both selection orders.
 
 ## Status (2026-10-01)
 
@@ -359,6 +382,8 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 Newest first.
 
 - **2026-10-24** · Panels dock through the suite's shared docking (craft-libs), and on desktop a floating panel opens in its own window that can leave the main window: keys pressed there run the main window's shortcuts, clipboard and tool keys, and the canvas paints no tool cursor while another of the app's windows has the pointer. The web build keeps floating panels in the page. No readiness percentage change.
+- **2026-10-24** · Story Options rejects malformed or nonexistent explicit story/frame IDs without changing the selected story, including an invalid frame alongside a valid story. Null targets remain absent; omitted targets still use the selection. No readiness percentage change.
+- **2026-10-24** · Text Frame Options explains that a custom baseline-grid increment must be a measure greater than zero when zero, a negative value or a non-measure is entered. Validation is unchanged. No readiness percentage change.
 - **2026-10-24** · Renaming a paragraph or character style, or moving it into a style group, keeps its Export Tagging under the new name, and undo puts it back under the old one. Deleting a tagged style drops its tagging and leaves the replacement style's own tagging as it was. No readiness percentage change.
 - **2026-10-24** · Quick Apply and the application bar's search leave out the interface commands that failed or reset a setting when chosen there: those that need a workspace, a command and shortcut, a menu item, a panel, a window edge, an app page, a recent file or a swatch they can't give them, a Contextual Task Bar place, and Interface Color Theme, UI Scaling, Reset Shortcuts, the flattener preset, Screen Mode and Zoom To, which without a value switched to the dark theme, set 100%, cleared every custom shortcut or the preset, or went to Normal mode or 100% zoom. Each stays in the menu, panel or dialog that gives it the value. No readiness percentage change.
 - **2026-10-24** · EPUB Export Options › Split Document, a dialog before File › Export EPUB… saves (`document.epubSplit`, stored with the document): off, a single paragraph style, or based on paragraph style export tags, with Paragraph Style Options › Export Tagging's Split Document flag marking those styles. A reflowable EPUB is one content file unless Split Document is on; the split before each top-level h1 from #791 is gone. A split before a list item or preformatted line no longer leaves an unclosed list or block in a content file. IDML import and export keep the setting and the flag, and Load Styles the flag. No readiness percentage change.

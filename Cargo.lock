@@ -954,7 +954,7 @@ dependencies = [
 [[package]]
 name = "craft-atomic"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "rustix 1.1.5",
 ]
@@ -962,7 +962,7 @@ dependencies = [
 [[package]]
 name = "craft-cms"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "rayon",
 ]
@@ -970,12 +970,12 @@ dependencies = [
 [[package]]
 name = "craft-docpath"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 
 [[package]]
 name = "craft-pdf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "bytemuck",
  "hayro",
@@ -988,7 +988,7 @@ dependencies = [
 [[package]]
 name = "craft-print"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "craft-winprint-gdi",
  "miniz_oxide 0.8.9",
@@ -1001,7 +1001,7 @@ dependencies = [
 [[package]]
 name = "craft-ui"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "egui",
  "log",
@@ -1009,6 +1009,17 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "serde",
+]
+
+[[package]]
+name = "craft-window"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
+dependencies = [
+ "egui",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "wayland-client",
 ]
 
 [[package]]
@@ -1139,9 +1150,10 @@ dependencies = [
 
 [[package]]
 name = "designcraft"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arboard",
+ "craft-window",
  "designcraft-engine",
  "designcraft-ui-egui",
  "eframe",
@@ -1161,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1177,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-color"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "craft-cms",
  "kurbo",
@@ -1189,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-compose"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-color",
  "designcraft-doc",
@@ -1209,7 +1221,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-doc"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "designcraft-color",
@@ -1222,7 +1234,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-engine"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "caseless",
  "craft-atomic",
@@ -1261,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-epub"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "designcraft-color",
@@ -1271,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-fonts"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "core-text",
  "harfrust 0.13.3",
@@ -1284,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-format"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-doc",
  "designcraft-images",
@@ -1296,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-geom"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "flo_curves",
  "kurbo",
@@ -1309,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-idml"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1324,7 +1336,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-images"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "craft-cms",
  "designcraft-color",
@@ -1339,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-mcp"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-engine",
  "designcraft-geom",
@@ -1352,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-pdf"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "craft-pdf",
@@ -1375,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-pptx"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "designcraft-color",
@@ -1393,7 +1405,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-render"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "craft-pdf",
  "designcraft-color",
@@ -1412,7 +1424,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-textimport"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-doc",
  "quick-xml",
@@ -1421,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-tools"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-color",
  "designcraft-compose",
@@ -1433,9 +1445,10 @@ dependencies = [
 
 [[package]]
 name = "designcraft-ui-egui"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "craft-ui",
+ "craft-window",
  "designcraft-color",
  "designcraft-compose",
  "designcraft-doc",
@@ -1460,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "designcraft-web"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "designcraft-engine",
  "designcraft-format",
@@ -2458,7 +2471,7 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -2478,7 +2491,7 @@ checksum = "9f4d0e94ddd48749f06bbe4e5389fb9799a0c45bcaf00495042076ef05e3241a"
 [[package]]
 name = "hayro-cmap"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "brotli",
  "hayro-postscript",
@@ -2487,7 +2500,7 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -2505,7 +2518,7 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -2523,12 +2536,12 @@ dependencies = [
 [[package]]
 name = "hayro-postscript"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -3029,7 +3042,7 @@ dependencies = [
 [[package]]
 name = "krilla"
 version = "0.8.2"
-source = "git+https://github.com/storytold/craft-libs?rev=d24e4bcce3b420f25b7bca2b2d786cbcc8631f96#d24e4bcce3b420f25b7bca2b2d786cbcc8631f96"
+source = "git+https://github.com/storytold/craft-libs?rev=5bbe9f6254de3bb9f9707ae0740ab0db8170afd5#5bbe9f6254de3bb9f9707ae0740ab0db8170afd5"
 dependencies = [
  "base64 0.22.1",
  "bumpalo",
@@ -7149,7 +7162,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde_json",
 ]
