@@ -467,6 +467,14 @@ mod tests {
         assert!(!crate::UiState::from_preferences_json(&saved).unwrap().story_editor_depth_ruler);
     }
 
+    /// The Show/Hide Depth Ruler menu label is translated in every interface language.
+    #[test]
+    fn depth_ruler_menu_label_is_translated_in_every_language() {
+        for (lang, _) in crate::i18n::LANGUAGES.iter().filter(|(code, _)| !code.is_empty()) {
+            assert_ne!(crate::i18n::tr(lang, "Show/Hide Depth Ruler"), "Show/Hide Depth Ruler", "{lang}");
+        }
+    }
+
     /// Story ids are counted per document: typing in the editor after switching documents edited
     /// the other document's story with the same id.
     #[test]
