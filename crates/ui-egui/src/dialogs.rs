@@ -133,7 +133,17 @@ impl Dialog {
 
 fn text_field(ui: &mut egui::Ui, d: &mut Dialog, key: &str, w: f32) {
     let mut s = d.s(key);
-    if ui.add(egui::TextEdit::singleline(&mut s).desired_width(w).horizontal_align(egui::Align::Min)).changed() {
+    if ui.add(egui::TextEdit::singleline(&mut s).desired_width(w).align(egui::Align2::LEFT_TOP)).changed() {
+        d.fields.insert(key.into(), Value::String(s));
+    }
+}
+
+/// [`text_field`] with the visible caption's text as its accessible name (a text field with no
+/// label, hint or `labelled_by` is an unnamed input).
+fn text_field_named(ui: &mut egui::Ui, d: &mut Dialog, key: &str, w: f32, name: &str) {
+    let mut s = d.s(key);
+    let resp = ui.add(egui::TextEdit::singleline(&mut s).desired_width(w).align(egui::Align2::LEFT_TOP)).accessible_name(name.to_owned());
+    if resp.changed() {
         d.fields.insert(key.into(), Value::String(s));
     }
 }
@@ -842,7 +852,7 @@ fn reference_point(ui: &mut egui::Ui, d: &mut Dialog, key: &str) {
     for (i, name) in designcraft_engine::autosize::REFERENCES.iter().enumerate() {
         let c = r.min + egui::vec2(5.0 + 18.0 * (i % 3) as f32, 5.0 + 18.0 * (i / 3) as f32);
         let dot = egui::Rect::from_center_size(c, egui::vec2(8.0, 8.0));
-        let resp = ui.interact(dot.expand(2.0), ui.id().with((key, i)), egui::Sense::click());
+        let resp = ui.interact(dot.expand(2.0), ui.scope_id().with((key, i)), egui::Sense::click());
         if resp.clicked() {
             d.fields.insert(key.into(), json!(name));
         }
@@ -1113,7 +1123,7 @@ fn margins_and_columns_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Di
                             crate::icons::button(ui, if linked { "link" } else { "link-broken" }, 20.0, linked, &tip)
                         })
                         .inner;
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &tip));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &tip));
                     if resp.clicked() {
                         d.fields.insert("link".into(), json!(!linked));
                     }
@@ -1222,7 +1232,7 @@ fn create_guides_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) 
 /// InDesign shows it ("click in another field to see the value multiplied by two").
 fn measure_field(ui: &mut egui::Ui, d: &mut Dialog, key: &str, w: f32) {
     let mut s = d.s(key);
-    let r = ui.add(egui::TextEdit::singleline(&mut s).desired_width(w).horizontal_align(egui::Align::Min));
+    let r = ui.add(egui::TextEdit::singleline(&mut s).desired_width(w).align(egui::Align2::LEFT_TOP));
     if r.changed() {
         d.fields.insert(key.into(), Value::String(s));
     }
@@ -1488,7 +1498,7 @@ fn setup_spin(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32, min: f64
         (1.0, egui::Rect::from_min_max(seg.min, egui::pos2(seg.max.x, seg.center().y))),
         (-1.0, egui::Rect::from_min_max(egui::pos2(seg.min.x, seg.center().y), seg.max)),
     ] {
-        let resp = ui.interact(half, ui.id().with((key, dir < 0.0)), egui::Sense::click());
+        let resp = ui.interact(half, ui.scope_id().with((key, dir < 0.0)), egui::Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(half.shrink(1.0), 1.0, t.hover);
         }
@@ -1507,7 +1517,8 @@ fn setup_spin(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32, min: f64
     let text = egui::Rect::from_min_max(egui::pos2(seg.right() + 5.0, r.top() + 1.0), egui::pos2(r.right() - 3.0, r.bottom() - 1.0));
     let mut s = d.s(key);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text).layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let resp = child.add(egui::TextEdit::singleline(&mut s).id(ui.id().with((key, "text"))).frame(egui::Frame::NONE).desired_width(text.width()));
+    let resp =
+        child.add(egui::TextEdit::singleline(&mut s).id(ui.scope_id().with((key, "text"))).frame(egui::Frame::NONE).desired_width(text.width()));
     if resp.changed() {
         d.fields.insert(key.into(), Value::String(s));
         changed = true;
@@ -2242,6 +2253,7 @@ fn check(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
     }
 }
 
+/// Draw the active localized dialog; open popups own Enter/Escape, and result handling drives confirm or cancel.
 pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.dialog.clone() else { return };
     // Enter and Escape belong to an open popup (a menu, a name field) rather than the dialog.
@@ -2317,7 +2329,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         },
     };
     // No dimmed backdrop: the page behind a dialog is what its settings and colours are judged against.
-    let host = egui::Id::new("dialog");
+    let host = egui::Id::unique("dialog");
     let instance = host.with(&d.id);
     crate::modal_drag::modal(ctx, host, instance).backdrop_color(egui::Color32::TRANSPARENT).show(ctx, |ui| {
         let frame_margin = egui::Frame::popup(ui.style()).total_margin().sum();
@@ -4210,7 +4222,7 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
             "chars" => basic_character_formats(app, ui, d, &CharFields { base: &cv, sparse: false }),
             "indents" => {
                 egui::Grid::new("psi").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Alignment:"));
+                    let alignment_label = crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Alignment:"));
                     let a: designcraft_doc::Align = serde_json::from_value(cur(d, "p.align", &pv["align"])).unwrap_or_default();
                     egui::ComboBox::from_id_salt("psalign")
                         .selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, a.label())))
@@ -4221,7 +4233,9 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                                     d.fields.insert("p.align".into(), serde_json::to_value(al).unwrap_or_default());
                                 }
                             }
-                        });
+                        })
+                        .response
+                        .labelled_by(alignment_label.id);
                     ui.end_row();
                     for (label, key) in [
                         ("Left Indent:", "leftIndent"),
@@ -4241,7 +4255,7 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                     use designcraft_doc::GridAlign;
                     const GRID_ALIGN: [(GridAlign, &str); 3] =
                         [(GridAlign::None, "None"), (GridAlign::AllLines, "All Lines"), (GridAlign::FirstLineOnly, "First Line Only")];
-                    crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Align to Grid:"));
+                    let grid_label = crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Align to Grid:"));
                     let g: GridAlign = serde_json::from_value(cur(d, "p.gridAlign", &pv["gridAlign"])).unwrap_or_default();
                     let shown = GRID_ALIGN.iter().find(|o| o.0 == g).map_or("", |o| o.1);
                     egui::ComboBox::from_id_salt("psgridalign")
@@ -4255,7 +4269,9 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                                     d.fields.insert("p.gridAlign".into(), v);
                                 }
                             }
-                        });
+                        })
+                        .response
+                        .labelled_by(grid_label.id);
                     ui.end_row();
                 });
                 ui.add_space(6.0);
@@ -4291,7 +4307,10 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                         d.fields.insert("rename".into(), json!(name));
                     }
                     let mut rn = d.s("rename");
-                    if ui.add(egui::TextEdit::singleline(&mut rn).desired_width(220.0)).changed() {
+                    let name_field = ui
+                        .add(egui::TextEdit::singleline(&mut rn).desired_width(220.0))
+                        .accessible_name(crate::i18n::tr(&app.ui.language, "Style Name").to_owned());
+                    if name_field.changed() {
                         d.fields.insert("rename".into(), json!(rn));
                     }
                     ui.end_row();
@@ -4303,7 +4322,7 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                         .map(str::to_string)
                         .or(style.based_on.clone())
                         .unwrap_or_else(|| "[No Paragraph Style]".into());
-                    egui::ComboBox::from_id_salt("psbased")
+                    let combo = egui::ComboBox::from_id_salt("psbased")
                         .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(&app.ui.language, &based)))
                         .width(220.0)
                         .show_ui(ui, |ui| {
@@ -4313,6 +4332,7 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                                 }
                             }
                         });
+                    let _ = crate::widgets::name_combo(combo, crate::i18n::tr(&app.ui.language, "Based On"));
                     ui.end_row();
                 });
                 ui.add_space(8.0);
@@ -4456,12 +4476,16 @@ fn style_tabs(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, doc: &d
             });
         }
         crate::rtl::label(ui, crate::i18n::tr(lang, "Leader:"));
-        if let (Some(l), Some(i)) = (text_commit(ui, "psleader", stop.as_ref().map_or("", |s| s.leader.as_str()), 36.0, stop.is_some()), sel) {
+        let leader_name = crate::i18n::tr(lang, "Leader:");
+        let leader = text_commit(ui, "psleader", stop.as_ref().map_or("", |s| s.leader.as_str()), 36.0, stop.is_some(), leader_name);
+        if let (Some(l), Some(i)) = (leader, sel) {
             result = Some(tabs::leader_value(&l, "tabs").map_err(|e| e.to_string()).and_then(|l| tabs::change(&mut list, i, None, Some(l), None)));
         }
         crate::rtl::label(ui, crate::i18n::tr(lang, "Align On:"));
         let on_char = stop.as_ref().is_some_and(|s| s.align == designcraft_doc::TabAlign::Char);
-        if let (Some(c), Some(i)) = (text_commit(ui, "psalignon", stop.as_ref().map_or("", |s| s.align_on.as_str()), 18.0, on_char), sel) {
+        let align_name = crate::i18n::tr(lang, "Align On:");
+        let align_on = text_commit(ui, "psalignon", stop.as_ref().map_or("", |s| s.align_on.as_str()), 18.0, on_char, align_name);
+        if let (Some(c), Some(i)) = (align_on, sel) {
             result = Some(tabs::align_on_value(&c, "tabs").map_err(|e| e.to_string()).and_then(|c| tabs::change(&mut list, i, None, None, Some(c))));
         }
         ui.add_space(6.0);
@@ -5504,20 +5528,21 @@ fn character_style_general(
     let (name, new) = (d.s("name"), d.b("new"));
     egui::Grid::new("csg").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
         crate::rtl::label(ui, crate::i18n::tr(lang, "Style Name:"));
-        text_field(ui, d, "rename", 220.0);
+        text_field_named(ui, d, "rename", 220.0, crate::i18n::tr(lang, "Style Name"));
         ui.end_row();
         crate::rtl::label(ui, crate::i18n::tr(lang, "Based On:"));
-        egui::ComboBox::from_id_salt("csbased").selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, based))).width(220.0).show_ui(
-            ui,
-            |ui| {
+        let combo = egui::ComboBox::from_id_salt("csbased")
+            .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, based)))
+            .width(220.0)
+            .show_ui(ui, |ui| {
                 // Not itself, nor a style based on it.
                 for s in styles.character.iter().filter(|s| new || !styles.char_based_on_cycles(&name, &s.name)) {
                     if ui.selectable_label(s.name == based, crate::rtl::widget(ui, crate::i18n::style_name(lang, &s.name))).clicked() {
                         d.fields.insert("basedOn".into(), json!(s.name));
                     }
                 }
-            },
-        );
+            });
+        let _ = crate::widgets::name_combo(combo, crate::i18n::tr(lang, "Based On"));
         ui.end_row();
     });
     let status = d.s("status");
@@ -6905,7 +6930,7 @@ fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
             toc_style_combo(ui, "page_number", &char_styles, none, &mut r.page_number_style);
             ui.end_row();
             crate::rtl::label(ui, tr("Between Entry and Number:"));
-            ui.add(egui::TextEdit::singleline(&mut r.separator).desired_width(80.0).horizontal_align(egui::Align::Min));
+            ui.add(egui::TextEdit::singleline(&mut r.separator).desired_width(80.0).align(egui::Align2::LEFT_TOP));
             crate::rtl::label(ui, tr("Style:"));
             toc_style_combo(ui, "separator", &char_styles, none, &mut r.separator_style);
             ui.end_row();
@@ -7184,7 +7209,7 @@ fn color_picker(ui: &mut egui::Ui, d: &mut Dialog) {
     let mut cmyk = nums::<4>(d, "cmyk").unwrap_or_else(|| cmyk_of(rgb));
     let mut model = if d.s("model") == "cmyk" || (!d.fields.contains_key("model") && d.fields.contains_key("cmyk")) { "cmyk" } else { "rgb" };
     let mut edit = ColorEdit::None;
-    let hex_id = egui::Id::new("color_picker_hex");
+    let hex_id = egui::Id::unique("color_picker_hex");
     ui.horizontal_top(|ui| {
         let mut c = egui::Color32::from_rgb(to8(rgb[0]), to8(rgb[1]), to8(rgb[2]));
         let shown = c;
@@ -7198,7 +7223,9 @@ fn color_picker(ui: &mut egui::Ui, d: &mut Dialog) {
                 for (v, l) in cmyk.iter_mut().zip(["C", "M", "Y", "K"]) {
                     if let Some((rv, rl)) = rgb_rows.next() {
                         ui.label(rl);
-                        if ui.add(egui::DragValue::new(rv).range(0.0..=255.0).max_decimals(1)).changed() {
+                        // The channel letter is a label beside a bare spinner: name the spinner.
+                        let field = ui.add(egui::DragValue::new(rv).range(0.0..=255.0).max_decimals(1)).accessible_name(rl.to_owned());
+                        if field.changed() {
                             edit = ColorEdit::Rgb;
                         }
                     } else {
@@ -7206,7 +7233,8 @@ fn color_picker(ui: &mut egui::Ui, d: &mut Dialog) {
                         ui.label("");
                     }
                     ui.label(l);
-                    if ui.add(egui::DragValue::new(v).range(0.0..=100.0).max_decimals(1).suffix("%")).changed() {
+                    let field = ui.add(egui::DragValue::new(v).range(0.0..=100.0).max_decimals(1).suffix("%")).accessible_name(l.to_owned());
+                    if field.changed() {
                         edit = ColorEdit::Cmyk;
                     }
                     ui.end_row();
@@ -7217,7 +7245,8 @@ fn color_picker(ui: &mut egui::Ui, d: &mut Dialog) {
                 ui.label("#");
                 let editing = ui.memory(|m| m.has_focus(hex_id));
                 let mut h = if editing { d.s("hexEdit") } else { format!("{:02x}{:02x}{:02x}", to8(rgb[0]), to8(rgb[1]), to8(rgb[2])) };
-                if ui.add(egui::TextEdit::singleline(&mut h).id(hex_id).desired_width(70.0)).changed()
+                let hex_field = ui.add(egui::TextEdit::singleline(&mut h).id(hex_id).desired_width(70.0)).accessible_name("Hex".to_owned());
+                if hex_field.changed()
                     && let Some(v) = hex_rgb(&h)
                 {
                     rgb = v;
@@ -8232,7 +8261,7 @@ mod tests {
         app.ui.dialog = Some(Dialog::new("paragraphStyleOptions", json!({"name": "Flush", "section": "indents"})));
         let mut h = Harness::builder().with_size(egui::vec2(1000.0, 800.0)).build_ui_state(
             |ui, app: &mut DesignApp| {
-                let key = egui::Id::new("ignore_optical_margin_fonts");
+                let key = egui::Id::unique("ignore_optical_margin_fonts");
                 if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
                     crate::theme::install_fonts(ui.ctx(), "");
                     ui.data_mut(|d| d.insert_temp(key, true));
@@ -8609,7 +8638,7 @@ mod tests {
         open_style_options(&mut app, true, "Tutorial");
         let mut h = Harness::builder().with_size(egui::vec2(1000.0, 800.0)).build_ui_state(
             |ui, app: &mut DesignApp| {
-                let key = egui::Id::new("style_preview_remember_fonts");
+                let key = egui::Id::unique("style_preview_remember_fonts");
                 if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
                     crate::theme::install_fonts(ui.ctx(), "");
                     ui.data_mut(|d| d.insert_temp(key, true));
@@ -8644,7 +8673,7 @@ mod tests {
             open_style_options(&mut app, paragraph, "Tutorial");
             let mut h = Harness::builder().with_size(egui::vec2(1000.0, 800.0)).build_ui_state(
                 |ui, app: &mut DesignApp| {
-                    let key = egui::Id::new("style_preview_test_fonts");
+                    let key = egui::Id::unique("style_preview_test_fonts");
                     if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
                         crate::theme::install_fonts(ui.ctx(), "");
                         ui.data_mut(|d| d.insert_temp(key, true));
@@ -9089,7 +9118,13 @@ mod tests {
             screen,
             vec![
                 egui::Event::PointerMoved(pos),
-                egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, phase: egui::TouchPhase::Move, modifiers: egui::Modifiers::NONE },
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta,
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                    source: egui::MouseWheelSource::Unknown,
+                },
             ],
         );
         // Let smooth wheel scrolling and scrollbar visibility settle before clicking.
@@ -10757,7 +10792,7 @@ mod tests {
             h.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
             h.run_steps(3);
         }
-        let rect = |h: &Harness<'static, DesignApp>| h.ctx.memory(|m| m.area_rect(egui::Id::new("dialog"))).unwrap();
+        let rect = |h: &Harness<'static, DesignApp>| h.ctx.memory(|m| m.area_rect(egui::Id::unique("dialog"))).unwrap();
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({})).unwrap();
         app.ui.dialog = Some(Dialog::new("insertTable", Value::Null));
@@ -10810,7 +10845,7 @@ mod tests {
     fn the_new_document_window_drags_mostly_aside_and_keeps_its_preview() {
         use egui::{Event, Modifiers, PointerButton, vec2};
         use egui_kittest::{Harness, kittest::Queryable};
-        let rect = |h: &Harness<'static, DesignApp>| h.ctx.memory(|m| m.area_rect(egui::Id::new("dialog"))).unwrap();
+        let rect = |h: &Harness<'static, DesignApp>| h.ctx.memory(|m| m.area_rect(egui::Id::unique("dialog"))).unwrap();
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"title": "A"})).unwrap();
         app.ui.new_document_preview = true;

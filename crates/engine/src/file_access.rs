@@ -300,7 +300,19 @@ mod tests {
     }
 
     fn s(p: PathBuf) -> String {
-        p.to_string_lossy().into_owned()
+        let text = p.to_string_lossy();
+        if !cfg!(windows) {
+            return text.into_owned();
+        }
+        // A canonical path on Windows has a `\\?\` prefix, under which `..` is not a name:
+        // send ordinary paths, as the roots show them.
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        match text.strip_prefix(r"\\?\") {
+            Some(rest) => rest.to_owned(),
+            None => text.into_owned(),
+        }
     }
 
     #[test]

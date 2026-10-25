@@ -1467,6 +1467,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Records per page", "Záznamů na stránku"),
     ("Single record", "Jeden záznam"),
     ("Multiple records", "Více záznamů"),
+    ("Arrangement", "Uspořádání"),
     ("Rows first", "Nejdřív řádky"),
     ("Columns first", "Nejdřív sloupce"),
     ("Column spacing", "Mezera mezi sloupci"),

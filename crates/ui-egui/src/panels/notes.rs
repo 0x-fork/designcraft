@@ -11,7 +11,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let Ok(list) = app.session.execute("note.list", &json!({})) else { return };
     let notes = list.as_array().cloned().unwrap_or_default();
     let has_text = app.session.active().is_some_and(|d| d.selection.text.is_some());
-    let id = egui::Id::new("new_note_text");
+    let id = egui::Id::unique("new_note_text");
     let mut draft: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     ui.add(
         egui::TextEdit::multiline(&mut draft)
@@ -47,7 +47,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                 ui.label(egui::RichText::new(author).size(10.5).color(t.text_dim));
             }
             let mut text = n["text"].as_str().unwrap_or("");
-            let text_id = egui::Id::new(("note_text", story.as_u64(), nid.as_u64()));
+            let text_id = egui::Id::unique(("note_text", story.as_u64(), nid.as_u64()));
             ui.add(egui::TextEdit::multiline(&mut text).id(text_id).frame(egui::Frame::NONE).desired_rows(1).desired_width(f32::INFINITY));
             let split_at = split_point(ui.ctx(), text_id, text);
             ui.horizontal(|ui| {
@@ -99,7 +99,7 @@ mod tests {
         app.run("note.new", json!({"text": "check this", "author": "Ed"})).unwrap();
         let mut h = Harness::builder().with_size(egui::vec2(320.0, 400.0)).build_ui_state(
             |ui, app: &mut DesignApp| {
-                let id = egui::Id::new("test_fonts");
+                let id = egui::Id::unique("test_fonts");
                 if ui.data(|d| d.get_temp::<bool>(id)).is_none() {
                     crate::theme::install_fonts(ui.ctx(), "");
                     ui.data_mut(|d| d.insert_temp(id, true));

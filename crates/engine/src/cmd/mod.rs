@@ -6,7 +6,7 @@ mod articles;
 pub mod book;
 mod buttons;
 pub(crate) mod captions;
-mod changes;
+pub(crate) mod changes;
 mod color_theme;
 mod colorsettings;
 mod conditions;

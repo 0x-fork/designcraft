@@ -1849,6 +1849,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("All records", "كل السجلات"),
     ("Alpha Channel", "قناة ألفا"),
     ("Anchored Object Options", "خيارات الكائن المرسّى"),
+    ("Arrangement", "الترتيب"),
     ("ArtCraft App Page", "صفحة تطبيق ArtCraft"),
     ("ArtCraft Website", "موقع ArtCraft"),
     ("Bind to frame", "ربط بالإطار"),

@@ -441,9 +441,24 @@ fn mcp_automation_roots_take_several_folders() {
     for f in ["in/a.designcraft", "shared/b.designcraft", "outside/secret.designcraft", "parent.designcraft", "in2/c.designcraft"] {
         make_document(&base.join(f));
     }
+    // Windows' canonical `\\?\` form is not a prefix under which `..` is a path component:
+    // traversal requests use the ordinary spelling, while the other requests keep the resolved one.
+    let plain = |path: &std::path::Path| -> String {
+        let text = path.to_string_lossy();
+        if !cfg!(windows) {
+            return text.into_owned();
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        match text.strip_prefix(r"\\?\") {
+            Some(rest) => rest.to_owned(),
+            None => text.into_owned(),
+        }
+    };
     let p = |f: &str| base.join(f).to_str().unwrap().to_string();
     let sep = std::path::MAIN_SEPARATOR;
-    let up = |root: &str, rest: &str| format!("{}{sep}..{sep}{rest}", p(root));
+    let up = |root: &str, rest: &str| format!("{}{sep}..{sep}{rest}", plain(&base.join(root)));
     let calls = [
         ("open_document", serde_json::json!({"path": p("in/a.designcraft")})),
         ("open_document", serde_json::json!({"path": p("shared/b.designcraft")})),
@@ -467,8 +482,14 @@ fn mcp_automation_roots_take_several_folders() {
     let args = ["--automation-read-root", &p("in"), &read2, "--automation-write-root", &p("out"), "--automation-write-root", &p("scratch")];
     let (success, stderr, replies) = mcp_session(&args, &calls);
     assert!(success, "{stderr}");
-    let confined = format!("files confined: read {}, {}; write {}, {}", p("in"), p("shared"), p("out"), p("scratch"));
-    assert!(stderr.contains(&confined), "{stderr}");
+    let confined = format!(
+        "files confined: read {}, {}; write {}, {}",
+        plain(&base.join("in")),
+        plain(&base.join("shared")),
+        plain(&base.join("out")),
+        plain(&base.join("scratch"))
+    );
+    assert!(stderr.contains(&confined), "expected {confined:?} in {stderr:?}");
     let errors: Vec<bool> = replies.iter().map(|r| r["result"]["isError"] == true).collect();
     assert_eq!(errors, [false, false, true, true, true, false, false, false, true, true, true, true, true], "{replies:?}");
     for (i, kind) in [(2, "read"), (3, "read"), (4, "read"), (8, "write"), (9, "write"), (10, "write"), (11, "read"), (12, "write")] {

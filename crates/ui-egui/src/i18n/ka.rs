@@ -1567,6 +1567,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Records per page", "ჩანაწერი გვერდზე"),
     ("Single record", "ერთი ჩანაწერი"),
     ("Multiple records", "რამდენიმე ჩანაწერი"),
+    ("Arrangement", "განლაგება"),
     ("Rows first", "ჯერ სტრიქონები"),
     ("Columns first", "ჯერ სვეტები"),
     ("Column spacing", "სვეტებს შორის დაშორება"),

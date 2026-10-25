@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::{CommandSpec, bad, bool_or, cmd, has_doc, has_text, has_text_or_frames, id_param, ok, point_param, str_param};
 use crate::{Result, Session};
 
+/// Build the text command registry: caret/selection movement, insertion/deletion, release, text and paragraph formatting, story queries, ruby and OpenType commands, with their parameters and enabled predicates.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "text.placeCaret", "Place Caret", [], None, "{frame, point: [x,y] (spread coords)} — converts empty frames to text frames", has_doc, |s, p| place(s, p, false)),
@@ -72,6 +73,15 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         cmd!("text.insert", "Type", [], None, "{text, raw?: bool (no typographer's quotes)} — replaces the selected text", has_text, insert),
+        cmd!(
+            "text.deleteSurrounding",
+            "Delete Surrounding Text",
+            [],
+            None,
+            "{before?: int, after?: int, bytes?: bool, commit?: string} — removes the text around the selection (an input method's delete-surrounding), keeps the selection and its direction, and with `commit` types that text over it: one undo step",
+            has_text,
+            delete_surrounding
+        ),
         cmd!("text.delete", "Delete Text", [], None, "{forward?: bool, word?: bool}", has_text, delete),
         cmd!(noundo "text.move", "Move Caret", [], None, "{dir: left|right|up|down|lineStart|lineEnd|storyStart|storyEnd, extend?, word?}", has_text, move_caret),
         cmd!(noundo "text.exitToFrame", "Select Frame", [], None, "{}", has_doc, |s, _| {
@@ -765,6 +775,71 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         s.typing_format = None;
     }
     result
+}
+
+/// The input method's delete-surrounding: remove `before`/`after` characters (or bytes) around
+/// the selection, keeping the selection itself and its direction, then optionally type `commit`
+/// over it. One undo step for the whole batch, through the normal command pipeline (preview
+/// restoration, panic guard, undo, auto-size and the journal), unlike a private edit.
+fn delete_surrounding(s: &mut Session, p: &Value) -> Result<Value> {
+    let count = |key: &str| -> Result<usize> {
+        match p.get(key).and_then(Value::as_u64) {
+            Some(v) => usize::try_from(v).map_err(|_| bad("text.deleteSurrounding", format!("{key} is out of range"))),
+            None => Ok(0),
+        }
+    };
+    let before = count("before")?;
+    let after = count("after")?;
+    let bytes = p.get("bytes").and_then(Value::as_bool).unwrap_or(false);
+    let commit = designcraft_tools::ime_commit_text(p.get("commit").and_then(Value::as_str).unwrap_or(""));
+    // What the request removes, from the committed text as it is now: the ranges exclude the
+    // selection and any pre-edit (a pre-edit is only a preview, never in the story).
+    let (before_range, after_range, tracking, length_before) = {
+        let st = s.doc()?;
+        let t = st.selection.text.ok_or_else(|| bad("text.deleteSurrounding", "no text insertion point"))?;
+        let story = st.doc.text_story(t.story, t.cell).ok_or(designcraft_doc::DocError::NoStory(t.story))?;
+        let (before_range, after_range) = crate::ime_delete_ranges(&story.text, t.anchor, t.focus, before, after, bytes)
+            .ok_or_else(|| bad("text.deleteSurrounding", "the IME text selection is not on character boundaries"))?;
+        (before_range, after_range, st.doc.settings.track_changes && t.cell.is_none(), story.text.len())
+    };
+    s.edit(|d, sel| {
+        let t = sel.text.ok_or_else(|| bad("text.deleteSurrounding", "no text insertion point"))?;
+        let story = d.text_story_mut(t.story, t.cell).ok_or(designcraft_doc::DocError::NoStory(t.story))?;
+        if !after_range.is_empty() {
+            if tracking {
+                crate::cmd::changes::mark_deleted(story, after_range.clone());
+            } else {
+                story.delete(after_range.clone());
+            }
+        }
+        let mut shift = 0usize;
+        if !before_range.is_empty() {
+            if tracking {
+                // Tracked changes keep the text and mark it deleted: the selection does not move.
+                let new_end = crate::cmd::changes::mark_deleted(story, before_range.clone());
+                shift = before_range.end.saturating_sub(new_end);
+            } else {
+                shift = before_range.len();
+                story.delete(before_range.clone());
+            }
+        }
+        sel.text = Some(TextSel { anchor: t.anchor.saturating_sub(shift), focus: t.focus.saturating_sub(shift), ..t });
+        Ok(())
+    })?;
+    if !commit.is_empty() {
+        insert(s, &json!({"text": commit}))?;
+    }
+    let st = s.doc()?;
+    let (anchor, focus) = st.selection.text.map_or((0, 0), |t| (t.anchor, t.focus));
+    let length_after = st.selection.text.and_then(|t| st.doc.text_story(t.story, t.cell)).map_or(0, |story| story.text.len());
+    Ok(json!({
+        "deletedBefore": [before_range.start, before_range.end],
+        "deletedAfter": [after_range.start, after_range.end],
+        "lengthBefore": length_before,
+        "lengthAfter": length_after,
+        "anchor": anchor,
+        "focus": focus,
+    }))
 }
 
 fn smart_quotes(s: &Session, text: &str) -> String {
