@@ -3469,6 +3469,19 @@ const NOT_SEARCHED: &[&str] = &[
     "view.zoom",
     // Where to pin the Contextual Task Bar.
     "window.taskBarPin",
+    // Shared docking commands DesignCraft doesn't provide, those that need a panel or a name,
+    // and older ids that share a label with a searched docking command.
+    "window.panel",
+    "window.panel.window",
+    "window.workspace.lock",
+    "window.panel.closeOthers",
+    "window.panel.minimize",
+    "window.panel.iconic",
+    "window.workspace.new",
+    "window.workspace.delete",
+    "ui.dock",
+    "ui.dock.reset",
+    "window.resetWorkspace",
 ];
 
 /// The commands Quick Apply and the application bar's search find: (id, label, default shortcut).
@@ -3479,32 +3492,6 @@ fn quick_commands() -> impl Iterator<Item = (&'static str, &'static str, Option<
         .map(|c| (c.id, c.label, c.shortcut))
         .chain(UI_COMMANDS.iter().filter(|c| !NOT_SEARCHED.contains(&c.0)).map(|c| (c.0, c.1, c.2)))
 }
-
-/// UI commands Quick Apply and the menu search leave out. They run an entry with `{}`, so this
-/// lists the shared docking commands DesignCraft does not provide, those that need a `panel` or
-/// `name`, and the ids that share a label with another searched docking command.
-const NOT_SEARCHED: &[&str] = &[
-    "window.panel.window",
-    "window.workspace.lock",
-    "window.panel.layout",
-    "window.panel.move",
-    "window.panel.float",
-    "window.panel.dock",
-    "window.panel.activate",
-    "window.panel.close",
-    "window.panel.closeGroup",
-    "window.panel.closeOthers",
-    "window.panel.minimize",
-    "window.panel.iconic",
-    "window.workspace",
-    "window.workspace.new",
-    "window.workspace.delete",
-    "window.floatPanel",
-    "window.dockPanel",
-    "ui.dock",
-    "ui.dock.reset",
-    "window.resetWorkspace",
-];
 
 /// Whether any of `texts` contains the lowercased query (an empty query matches everything).
 fn quick_match(query_lower: &str, texts: &[&str]) -> bool {
@@ -5448,8 +5435,17 @@ mod tests {
         assert!(!quick.iter().any(|i| i.id == "window.deleteWorkspace"));
         // Each command runs as Quick Apply runs an entry. One that needs a selection may fail
         // without it, but runs in one of the contexts; none changes a preference it wasn't asked to.
-        // Opening a panel changes where the panels are, as it should.
-        let opens_a_panel = ["app.tabsPanel", "app.characterStylesPanel", "app.paragraphStylesPanel"];
+        // Opening a panel or collapsing the dock to icons changes where the panels are, as it should.
+        let opens_a_panel = [
+            "app.tabsPanel",
+            "app.characterStylesPanel",
+            "app.paragraphStylesPanel",
+            "app.characterPanel",
+            "app.paragraphPanel",
+            "app.glyphsPanel",
+            "app.tablePanel",
+            "window.collapseToIcons",
+        ];
         let arrangement = ["docking", "dockingHidden", "floating"];
         let mut failed = Vec::new();
         for (id, ..) in quick_commands().filter(|(id, ..)| UI_COMMANDS.iter().any(|c| c.0 == *id)) {
