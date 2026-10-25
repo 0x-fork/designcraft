@@ -254,8 +254,10 @@ pub(crate) fn prepare(bytes: &Arc<Vec<u8>>, choice: Option<&[String]>) -> Result
         if is_hidden {
             effective.push(id);
         }
-        // Unmarked groups are visible when registered in the output catalog.
-        if !is_hidden && name.is_some() {
+        // Unmarked groups are visible when registered in the output catalog. An explicit choice
+        // writes every group's state, so the catalog rewrite is attempted (and a file whose
+        // history cannot take one fails closed) even when the choice happens to change nothing.
+        if !is_hidden && name.is_some() && choice.is_none() {
             continue;
         }
         let marker = is_hidden.to_string();

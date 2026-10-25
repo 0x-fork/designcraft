@@ -1,5 +1,9 @@
 # egui 0.37 migration plan for DesignCraft
 
+Status update (2026-10-25): implementation is ready locally for review and includes main `5971d4639192bdecee5f818892a9c469bea8f9b2`. All nine Linux CI stages passed: 3,330 test executions passed, 0 failed and 6 ignored. The current-main integration received independent review. Dependency pins and lockfile are unchanged. Current-source Windows/packages, native IME and paired application performance remain open. Publication requires separate explicit approval; human review and human merge are required.
+
+The original planning record below is historical.
+
 Status: planning only. No production change, build, test, GUI run, browser run, benchmark,
 push, pull request or publication was performed while writing this document. Every future test
 or build runs through `maintenance/task.py run/status/finish` with its own task, source and

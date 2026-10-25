@@ -28,7 +28,8 @@ pub fn specs() -> Vec<CommandSpec> {
 fn export_idml(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let opts = designcraft_idml::ExportOptions { embed_images: p.get("embedImages").and_then(Value::as_bool).unwrap_or(true) };
-    let bytes = designcraft_idml::export_idml_with(&st.doc, &opts);
+    let layer_doc = with_pdf_layer_variants(&st.doc, opts.embed_images)?;
+    let bytes = designcraft_idml::export_idml_with(layer_doc.as_ref().unwrap_or(&st.doc), &opts);
     match str_param(p, "path") {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
@@ -37,6 +38,68 @@ fn export_idml(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => Ok(json!({"base64": base64_encode(&bytes), "bytes": bytes.len()})),
     }
+}
+
+/// Whether a placement holds an Object Layer Options choice an export can still apply: a graphic
+/// whose asset is a PDF. A choice left on an item that is no longer a placed PDF (its link was
+/// replaced with another format) is not one, so the package report does not name it.
+pub(crate) fn has_applicable_pdf_layer_overrides(doc: &Document) -> bool {
+    doc.placed_items().into_iter().any(|it| {
+        it.has_pdf_layer_override() && it.graphic().and_then(|g| doc.assets.get(&g.asset)).is_some_and(|a| designcraft_render::is_pdf(&a.data))
+    })
+}
+
+/// Each placement gets its own embedded variant so two frames sharing a PDF can
+/// choose different layers. The live document and original linked bytes stay untouched.
+///
+/// Parent-page and anchored placements count too, so a page that inherits the placement does not
+/// quietly fall back to the file's defaults. Choices inside table-cell and note text are found
+/// by the read walk, but the legacy update_items write pass below cannot apply their variants
+/// yet (see `docs/pdf-layer-visibility.md`).
+fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Document>> {
+    let choices: Vec<_> = doc
+        .placed_items()
+        .into_iter()
+        .filter(|it| it.has_pdf_layer_override())
+        .filter_map(|it| {
+            let asset = it.graphic().and_then(|g| doc.assets.get(&g.asset)).filter(|a| designcraft_render::is_pdf(&a.data))?;
+            Some((it.id, asset, it.pdf_hidden_layers.clone()))
+        })
+        .collect();
+    if choices.is_empty() {
+        return Ok(None);
+    }
+    if !embed {
+        return Err(EngineError::Other("PDF layer choices require embedded images in IDML export".into()));
+    }
+    let mut out = doc.clone();
+    let mut variants = std::collections::HashMap::new();
+    for (id, asset, hidden) in choices {
+        let bytes = designcraft_render::pdf_hide_layers(&asset.data, &hidden)
+            .ok_or_else(|| EngineError::Other(format!("{}: PDF layer choices could not be applied", asset.name)))?;
+        let mut variant = (**asset).clone();
+        variant.id = designcraft_doc::AssetId(out.alloc());
+        variant.data = std::sync::Arc::new(bytes);
+        variant.link = None;
+        let aid = variant.id;
+        out.assets.insert(aid, std::sync::Arc::new(variant));
+        variants.insert(id, aid);
+    }
+    // Anchored objects live in stories, and parent pages outside the document-spread walk, so
+    // the choice is cleared where the placement actually is.
+    out.update_items(
+        |it| variants.contains_key(&it.id),
+        |it| {
+            if let designcraft_doc::Content::Graphic(g) = &mut it.content
+                && let Some(aid) = variants.get(&it.id)
+            {
+                g.asset = *aid;
+            }
+            it.pdf_layer_override = false;
+            it.pdf_hidden_layers.clear();
+        },
+    );
+    Ok(Some(out))
 }
 
 /// [`designcraft_idml::import_idml`] with the linked images read through [`crate::io`] from
