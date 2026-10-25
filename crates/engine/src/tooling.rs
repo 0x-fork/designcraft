@@ -595,6 +595,7 @@ impl Session {
         self.ime_mutation_from_states(before, deleted_before, deleted_after, inserted)
     }
 
+    /// Return a mutation only when the document uid/epoch, story and cell still match; otherwise report no mutation.
     fn ime_mutation_from_states(
         &self,
         before: ImeState,
@@ -628,6 +629,7 @@ impl Session {
         })
     }
 
+    /// Clear an active pre-edit without inserting text; if no interaction snapshot exists, reset the tool.
     fn end_preedit_without_typing(&mut self) -> Result<()> {
         if !self.tool.composing() {
             return Ok(());
@@ -641,6 +643,7 @@ impl Session {
         }
     }
 
+    /// Report false for no IME context or no-op ranges, and error when the selection is not on character boundaries.
     fn ime_deletion_changes_text(&self, before: usize, after: usize, bytes: bool) -> Result<bool> {
         let Some(context) = self.ime_text_context() else { return Ok(false) };
         let Some((before_range, after_range)) = ime_delete_ranges(context.text, context.anchor, context.focus, before, after, bytes) else {

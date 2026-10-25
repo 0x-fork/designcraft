@@ -144,6 +144,7 @@ fn next_revision() -> u64 {
 }
 
 impl DocState {
+    /// Initialize saved/live document identity, revision, epoch, active default layer, empty history with limit 1,000 and the initial path.
     pub fn new(doc: Document, path: Option<String>) -> Self {
         let active_layer = doc.default_layer();
         let doc = Arc::new(doc);

@@ -852,6 +852,7 @@ struct QuitState {
 }
 
 impl DesignApp {
+    /// Start the background font scan, establish the monotonic timing origin, and initialize document, view, input, screenshot, dialog and control state.
     pub fn new(session: Session, services: Services) -> Self {
         // The font menus and the first file opened need the installed fonts: catalog them now.
         designcraft_fonts::FontDb::global().scan_in_background();
@@ -1900,14 +1901,17 @@ impl DesignApp {
         self.apply_native_actions(ctx);
     }
 
+    /// True while an injected batch, control synthetic event or ordinary synthetic event remains queued.
     fn synthetic_input_pending(&self) -> bool {
         self.synthetic_injected || !self.control_synthetic.is_empty() || !self.synthetic.is_empty()
     }
 
+    /// True when synthetic input, a queued native action or a pending native-event notification remains.
     fn host_order_pending(&self) -> bool {
         self.synthetic_input_pending() || !self.native_actions.is_empty() || self.native_events_pending.load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Execute queued native actions only after synthetic input settles, and request another repaint while host work remains.
     fn apply_native_actions(&mut self, ctx: &egui::Context) {
         while !self.synthetic_input_pending() {
             let Some((id, params)) = self.native_actions.pop_front() else { break };
@@ -2168,6 +2172,7 @@ impl DesignApp {
         self.perf.frame_ms = now_ms() - t0;
     }
 
+    /// Defer control commands while host-order input is pending; otherwise handle replies and screenshot admission.
     fn drain_control(&mut self, ctx: &egui::Context) {
         // An injected batch may still be waiting in the host's pending raw input. Running another
         // control command now could switch documents or dialogs under it, so keep the channel
@@ -3477,6 +3482,7 @@ mod tests {
         ctx.run_logic(raw, |ctx| app.logic(ctx))
     }
 
+    /// Build a 640x480 root viewport marked minimized and occluded.
     fn hidden_raw() -> egui::RawInput {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
         let mut raw = egui::RawInput { screen_rect: Some(rect), ..Default::default() };
@@ -3493,6 +3499,7 @@ mod tests {
         raw
     }
 
+    /// Count root `RequestPaintWhileHidden` commands.
     fn hidden_paints(output: &egui::LogicOutput) -> usize {
         output
             .viewport_commands
@@ -3500,6 +3507,7 @@ mod tests {
             .map_or(0, |commands| commands.iter().filter(|c| matches!(c, egui::ViewportCommand::RequestPaintWhileHidden)).count())
     }
 
+    /// Remove and return the root screenshot callback, replacing its command with `Focus`.
     fn screenshot_callback(output: &mut egui::FullOutput) -> Option<egui::ScreenshotCallback> {
         let viewport = output.viewport_output.get_mut(&egui::ViewportId::ROOT)?;
         for command in &mut viewport.commands {
@@ -3513,6 +3521,7 @@ mod tests {
         None
     }
 
+    /// Create a recording-write app with a new document and four settling frames.
     fn screenshot_app() -> (DesignApp, egui::Context, std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>) {
         let writes: std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>> = Default::default();
         let sink = writes.clone();
@@ -3535,6 +3544,7 @@ mod tests {
         (app, ctx, writes)
     }
 
+    /// The callback only fills a slot; the next logic pass writes and replies once and releases admission.
     #[test]
     fn screenshot_callback_stays_weak_and_writes_only_from_logic() {
         let (mut app, ctx, writes) = screenshot_app();
@@ -3565,6 +3575,7 @@ mod tests {
         assert!(app.pending_shots.is_empty(), "the reservation is released");
     }
 
+    /// Admission enforces the request count, aggregate RGBA byte budget and per-image limit before capture.
     #[test]
     fn screenshot_admission_bounds_count_aggregate_and_image_bytes() {
         let (mut app, ctx, _writes) = screenshot_app();
@@ -3596,6 +3607,7 @@ mod tests {
         assert!(error["error"].as_str().unwrap_or_default().contains("image limit"), "{error}");
     }
 
+    /// A resize invalidates in-flight pixels and retries within the deadline; a timeout errors and late callbacks are inert.
     #[test]
     fn screenshot_epoch_change_and_timeout_drop_stale_pixels() {
         let (mut app, ctx, writes) = screenshot_app();
@@ -3630,6 +3642,7 @@ mod tests {
         assert!(app.pending_shots.is_empty());
     }
 
+    /// A host without `inner_rect` uses `screen_rect` and can still admit and complete a capture.
     #[test]
     fn screenshot_geometry_uses_screen_rect_when_inner_rect_is_absent() {
         let (mut app, ctx, writes) = screenshot_app();
@@ -3658,6 +3671,7 @@ mod tests {
         assert_eq!(writes.lock().unwrap().len(), 1);
     }
 
+    /// Apply native pixels-per-point and UI zoom exactly once.
     #[test]
     fn screenshot_geometry_applies_native_dpi_and_zoom_once() {
         let (mut app, ctx, _writes) = screenshot_app();
@@ -3687,6 +3701,7 @@ mod tests {
         assert_eq!((geometry.width, geometry.height), (300, 150));
     }
 
+    /// Moving the window leaves the capture epoch unchanged; resizing and resizing back advance it.
     #[test]
     fn screenshot_epoch_ignores_window_position_but_tracks_size_changes() {
         let (mut app, ctx, _writes) = screenshot_app();
@@ -3701,6 +3716,7 @@ mod tests {
         assert_ne!(app.screenshot_epoch, resized, "and resizing back advances it again");
     }
 
+    /// `ui.screenshot` is admitted, waits for capture, then writes once and replies with the dimensions.
     #[test]
     fn control_screenshot_replies_with_the_saved_capture() {
         let (mut app, ctx, writes) = screenshot_app();
@@ -3733,6 +3749,7 @@ mod tests {
         assert!(app.queued_shots.is_empty());
     }
 
+    /// A timed-out capture replies with a no-frame error and writes no file.
     #[test]
     fn control_screenshot_times_out_without_writing_a_file() {
         let (mut app, ctx, writes) = screenshot_app();
@@ -3751,6 +3768,7 @@ mod tests {
         assert!(app.pending_shots.is_empty());
     }
 
+    /// A multipass frame ticks for every pass but runs once-per-frame work once.
     #[test]
     fn discarded_pass_runs_the_frame_stage_once_but_ticks_every_pass() {
         let mut app = DesignApp::new(Session::new(), Services::default());
@@ -3780,6 +3798,7 @@ mod tests {
         assert_eq!(app.input_ticks, 2);
     }
 
+    /// Hidden logic requests one paint per tick, injects one queued step at a time, treats unknown visibility as hidden, and lets one visible pass consume the step.
     #[test]
     fn hidden_logic_requests_exactly_one_paint_per_tick_until_a_settled_ui_pass() {
         let (mut app, ctx, _writes) = screenshot_app();
@@ -3828,6 +3847,7 @@ mod tests {
         assert_eq!(hidden_paints(&output), 1, "visible() == None is treated like hidden");
     }
 
+    /// A font-gated first pass requeues injected input instead of acknowledging it; a later settled pass consumes it.
     #[test]
     fn font_gated_first_pass_requeues_injected_input_instead_of_acknowledging_it() {
         let mut app = DesignApp::new(Session::new(), Services::default());
@@ -3864,6 +3884,7 @@ mod tests {
         assert!(app.control_synthetic.is_empty());
     }
 
+    /// Injected input is acknowledged only by the settled multipass frame.
     #[test]
     fn discarded_pass_does_not_acknowledge_injected_input() {
         let (mut app, ctx, _writes) = screenshot_app();
@@ -3886,6 +3907,7 @@ mod tests {
         assert!(app.control_synthetic.is_empty());
     }
 
+    /// A document change drops the stale batch and removes its events from pending raw input.
     #[test]
     fn a_document_switch_before_the_ui_pass_drops_the_pending_batch() {
         let (mut app, ctx, _writes) = screenshot_app();
@@ -3916,6 +3938,7 @@ mod tests {
         assert!(!seen.iter().any(|event| matches!(event, egui::Event::PointerMoved(p) if *p == pos)), "the new document did not receive it");
     }
 
+    /// Save a document, make an unsaved edit and return the temporary directory.
     #[cfg(not(target_arch = "wasm32"))]
     fn prepare_revert(app: &mut DesignApp) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -3925,6 +3948,7 @@ mod tests {
         dir
     }
 
+    /// Revert keeps the document uid, advances the identity epoch and clears dirty state.
     #[cfg(not(target_arch = "wasm32"))]
     fn revert_preserving_uid(app: &mut DesignApp) {
         let before = app.session.active().unwrap();
@@ -3936,6 +3960,7 @@ mod tests {
         assert!(!after.is_dirty());
     }
 
+    /// Input captured before Revert is neither acknowledged nor delivered to the restored document.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_revert_discards_a_buffered_input_batch() {
@@ -3953,6 +3978,7 @@ mod tests {
         assert!(!raw.events.iter().any(|event| matches!(event, egui::Event::PointerMoved(p) if *p == pos)));
     }
 
+    /// Return `hidden_raw` with the root viewport marked visible.
     #[cfg(not(target_arch = "wasm32"))]
     fn visible_raw() -> egui::RawInput {
         let mut raw = hidden_raw();
@@ -3962,6 +3988,7 @@ mod tests {
         raw
     }
 
+    /// Build Cmd-key press and release events.
     #[cfg(not(target_arch = "wasm32"))]
     fn command_key(key: egui::Key) -> Vec<egui::Event> {
         let modifiers = egui::Modifiers { command: true, mac_cmd: true, ..egui::Modifiers::NONE };
@@ -3995,6 +4022,7 @@ mod tests {
         .clear();
     }
 
+    /// A native Revert runs only after the injected press/release settles; pointer state and user clipboard provenance are preserved.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_native_revert_waits_for_the_control_gesture() {
@@ -4030,6 +4058,7 @@ mod tests {
         assert!(!app.control_input_frame.load(std::sync::atomic::Ordering::Relaxed), "native actions keep user clipboard provenance");
     }
 
+    /// Close is cancelled and deferred while old-document input is pending, then the request survives to the next frame.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_close_waits_for_input_and_keeps_the_request() {
@@ -4051,6 +4080,7 @@ mod tests {
         assert_eq!(dialog_uid(&app), Some(app.session.active().unwrap().uid), "the close request survives the deferred frame");
     }
 
+    /// A later control command cannot overtake queued input and eventually completes.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_control_command_waits_for_the_preceding_input() {
@@ -4070,6 +4100,7 @@ mod tests {
         assert_eq!(second_reply.try_recv().unwrap()["ok"], true, "the later command is eventually handled");
     }
 
+    /// Revert targets the original document before deferred OS-open delivery resumes.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_native_revert_precedes_the_deferred_os_open() {
@@ -4103,6 +4134,7 @@ mod tests {
         assert!(!app.session.documents().iter().find(|doc| doc.uid == original).unwrap().is_dirty(), "Revert targeted the original document");
     }
 
+    /// Preview cleanup cannot replace the input batch's document and runs after the batch settles.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_stale_preview_waits_for_the_input_batch() {
@@ -4119,6 +4151,7 @@ mod tests {
         assert_eq!(app.session.active().unwrap().uid, original);
     }
 
+    /// Revert waits for Select All's forwarded text input to settle.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_native_choices_wait_for_forwarded_text_input() {
@@ -4139,6 +4172,7 @@ mod tests {
         assert!(!app.session.active().unwrap().is_dirty());
     }
 
+    /// A queued native menu event precedes and blocks deferred OS-open delivery without synthetic input.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_arriving_native_event_blocks_an_os_open_without_synthetic_input() {
@@ -4168,6 +4202,7 @@ mod tests {
         assert_ne!(app.session.active().unwrap().uid, original);
     }
 
+    /// Hidden logic-only ticks cannot execute native menu actions; a real UI pass can.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_deferred_native_action_waits_for_a_real_ui_pass() {
@@ -4195,7 +4230,8 @@ mod tests {
         assert!(!app.session.active().unwrap().is_dirty(), "the deferred action runs when a UI callback resumes");
     }
 
-    /// An inbox delivery runs only after input sampled for the current document has settled.
+    /// An inbox delivery runs only after input sampled for the current document has settled, so
+    /// a pending Select All cannot select text in the opened document.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_inbox_open_must_not_receive_a_pending_shortcut() {
@@ -4247,6 +4283,7 @@ mod tests {
         assert_eq!(app.session.documents().len(), 2, "the deferred delivery is not lost");
     }
 
+    /// Deferred OS open waits for injected input and is not lost.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_host_order_os_document_waits_for_a_settled_batch_then_runs() {
@@ -4262,6 +4299,7 @@ mod tests {
         assert_eq!(app.session.documents().len(), 2, "the deferred OS open is not lost");
     }
 
+    /// Revert drops the buffered native drop so it cannot modify the restored document.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_revert_discards_a_buffered_native_drop() {
@@ -4279,6 +4317,7 @@ mod tests {
         assert!(app.pending_drops.is_empty());
     }
 
+    /// Revert rejects pre-issue and in-flight screenshots with a document error, issues no retry and writes no pixels.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_revert_rejects_screenshots_before_issue_and_in_flight() {
@@ -4320,6 +4359,7 @@ mod tests {
     // not cross a document/dialog/focus change.
     // ---------------------------------------------------------------------------------------
 
+    /// A document switch before issue errors the request and leaves no pending or queued capture.
     #[test]
     fn design_generation_screenshot_switch_before_issue_does_not_capture_the_new_document() {
         let (mut app, ctx, writes) = screenshot_app();
@@ -4359,6 +4399,7 @@ mod tests {
         assert!(app.queued_shots.is_empty(), "the stale request left no repaint token");
     }
 
+    /// An in-flight old-document capture cannot complete or retry on the new document; the request and tokens are released.
     #[test]
     fn design_generation_screenshot_in_flight_after_switch_does_not_complete_on_the_new_document() {
         let (mut app, ctx, writes) = screenshot_app();
@@ -4404,6 +4445,7 @@ mod tests {
         assert!(app.queued_shots.is_empty(), "the stale request left no repaint token");
     }
 
+    /// Admission stamps the current session document, not cached geometry from the previous document.
     #[test]
     fn design_generation_screenshot_admission_uses_the_current_document_not_the_cached_geometry() {
         let (mut app, _ctx, _writes) = screenshot_app();
@@ -4439,11 +4481,13 @@ mod tests {
         }
     }
 
+    /// Wrap a path as an egui dropped-file handle backed by the test type.
     #[cfg(not(target_arch = "wasm32"))]
     fn dropped_file(path: &std::path::Path) -> egui::DroppedFileHandle {
         std::sync::Arc::new(TestDroppedFile(path.to_path_buf()))
     }
 
+    /// Create a screenshot app with a fixed canvas rectangle and an initialized view for drop tests.
     #[cfg(not(target_arch = "wasm32"))]
     fn drop_test_app() -> (DesignApp, egui::Context) {
         let (mut app, ctx, _writes) = screenshot_app();
@@ -4452,6 +4496,7 @@ mod tests {
         (app, ctx)
     }
 
+    /// Write a tiny unique PNG for drop tests.
     #[cfg(not(target_arch = "wasm32"))]
     fn temporary_png(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("designcraft-ui-{}-{name}.png", std::process::id()));
@@ -4459,6 +4504,7 @@ mod tests {
         path
     }
 
+    /// Build visible raw input with a pointer move and dropped-file handles.
     #[cfg(not(target_arch = "wasm32"))]
     fn visible_raw_with_drop(paths: &[&std::path::Path]) -> egui::RawInput {
         let mut raw = hidden_raw();
@@ -4470,6 +4516,7 @@ mod tests {
         raw
     }
 
+    /// Run one logic-plus-UI frame and discard its texture deltas.
     #[cfg(not(target_arch = "wasm32"))]
     fn run_ui_pass(app: &mut DesignApp, ctx: &egui::Context, raw: egui::RawInput) {
         ctx.run_ui(raw, |ui| {
@@ -4481,6 +4528,7 @@ mod tests {
         .clear();
     }
 
+    /// A drop buffered before a document switch cannot add assets to the switched document.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_generation_native_drop_is_discarded_when_the_document_changes_before_ui() {
@@ -4499,6 +4547,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// A drop buffered before a dialog opens cannot land behind it.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_generation_native_drop_is_discarded_when_a_dialog_opens_before_ui() {
@@ -4516,6 +4565,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// A keyboard-focus change invalidates a buffered drop.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_generation_native_drop_is_discarded_when_focus_changes_before_ui() {
@@ -4535,6 +4585,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// With no generation change, every dropped file in a batch is placed.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn design_generation_native_drop_batch_without_a_change_still_places_every_file() {

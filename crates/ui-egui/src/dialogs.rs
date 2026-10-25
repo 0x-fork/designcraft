@@ -2253,6 +2253,7 @@ fn check(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
     }
 }
 
+/// Draw the active localized dialog; open popups own Enter/Escape, and result handling drives confirm or cancel.
 pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.dialog.clone() else { return };
     // Enter and Escape belong to an open popup (a menu, a name field) rather than the dialog.

@@ -60,6 +60,7 @@ pub fn mime(bytes: &[u8]) -> &'static str {
     }
 }
 
+/// Initialize the process-wide usvg database from the bundled and Japanese fonts, with case-aware family/PostScript resolution, fallback selection and preflighted SVG data URLs; file-backed image URLs are never read.
 fn svg_options() -> &'static usvg::Options<'static> {
     static OPTS: OnceLock<usvg::Options<'static>> = OnceLock::new();
     OPTS.get_or_init(|| {
@@ -229,6 +230,7 @@ const MAX_SVG_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SVG_EVENTS: usize = 100_000;
 const MAX_SVG_DEPTH: usize = 64;
 
+/// Enforce the encoded-size cap, gunzip SVGZ data with that bound, and return the decoded content within the cap as an owned or borrowed `Cow`.
 fn svg_data(bytes: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
     use std::io::Read;
 
@@ -244,6 +246,7 @@ fn svg_data(bytes: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
     }
 }
 
+/// Require UTF-8, bounded XML events, balanced tags and depth at most 64; reject internal DTD subsets while accepting ordinary external doctypes.
 fn svg_preflight(bytes: &[u8]) -> Option<()> {
     use quick_xml::events::Event;
 
@@ -578,6 +581,7 @@ mod tests {
   <text x="110" y="60" font-size="20">Hi</text>
 </svg>"##;
 
+    /// Build an SVG with the requested number of nested `g` wrappers around a leaf rect.
     fn nested_svg(groups: usize) -> String {
         format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">{}<rect width="10" height="10"/>{}</svg>"#,
@@ -586,6 +590,7 @@ mod tests {
         )
     }
 
+    /// Fast-gzip helper for SVGZ tests.
     fn gzip(bytes: &[u8]) -> Vec<u8> {
         use std::io::Write;
 
@@ -594,6 +599,7 @@ mod tests {
         encoder.finish().unwrap()
     }
 
+    /// A boundary-depth SVG parses into a tree; one level deeper and 2,000 levels are rejected by the tree, size and render APIs.
     #[test]
     fn svg_depth_is_checked_before_recursive_parsing() {
         // Count the SVG root and leaf too; the boundary document still draws its path.
@@ -609,6 +615,7 @@ mod tests {
         }
     }
 
+    /// Markup-looking text in comments, CDATA and attributes does not count as XML depth.
     #[test]
     fn svg_depth_ignores_markup_in_comments_cdata_and_attributes() {
         let markup = "<g>".repeat(2000);
@@ -618,6 +625,7 @@ mod tests {
         assert!(svg_tree(svg.as_bytes()).is_some());
     }
 
+    /// An external SVG doctype is accepted; an internal entity subset is rejected.
     #[test]
     fn svg_external_doctype_is_preserved_but_entity_markup_is_refused() {
         let external =
@@ -627,6 +635,7 @@ mod tests {
         assert!(svg_tree(internal.as_bytes()).is_none());
     }
 
+    /// The exact 16 MiB document and 100,000-event boundaries are accepted, each one-over case rejected.
     #[test]
     fn svg_byte_and_event_limits_are_enforced() {
         let mut bytes = nested_svg(0).into_bytes();
@@ -645,6 +654,7 @@ mod tests {
         assert!(svg_tree(document(MAX_SVG_EVENTS - 3).as_bytes()).is_none());
     }
 
+    /// SVGZ depth, decoded size and malformed gzip follow the plain-SVG limits.
     #[test]
     fn svgz_has_the_same_depth_and_decoded_size_limits() {
         assert!(svg_tree(&gzip(nested_svg(2).as_bytes())).is_some());
@@ -657,6 +667,7 @@ mod tests {
         assert!(svg_tree(b"\x1f\x8bnot gzip").is_none());
     }
 
+    /// Deeply nested SVG data images are omitted without bypassing the depth preflight.
     #[test]
     fn nested_svg_data_images_cannot_bypass_the_depth_limit() {
         let nested = nested_svg(2000);

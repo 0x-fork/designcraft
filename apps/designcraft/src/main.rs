@@ -35,7 +35,7 @@ struct App {
     /// Documents and quit requests from Finder, the Dock and Open With.
     #[cfg(target_os = "macos")]
     apple_events: fmv_macos_events::Inbox,
-    /// The window's `movable` flag as last set; see `craft_window::title_bar::sync_movable`.
+    /// The window's `movable` flag as last set; see `craft_window::title_bar`.
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
     /// Frames begun so far.
