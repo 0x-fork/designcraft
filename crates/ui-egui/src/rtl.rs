@@ -140,6 +140,7 @@ impl LayoutCache {
     }
 }
 
+/// Lay out text without RTL candidates directly; otherwise use a bounded job cache that checks full job equality and invalidates on the font token.
 fn layout(ctx: &egui::Context, job: LayoutJob) -> Arc<Galley> {
     if !may_have_rtl(&job.text) {
         return ctx.fonts_mut(|fonts| fonts.layout_job(job));
@@ -160,6 +161,7 @@ fn layout(ctx: &egui::Context, job: LayoutJob) -> Arc<Galley> {
     galley
 }
 
+/// Set paragraph direction to `Auto` and preserve the logical source, including line separators in a single-line label.
 fn layout_uncached(ctx: &egui::Context, mut job: LayoutJob) -> Arc<Galley> {
     job.direction = TextDirection::Auto;
     // The 0.37 shaper owns single-line handling as well as bidi. Preserve the logical source
@@ -318,6 +320,7 @@ mod tests {
         });
     }
 
+    /// Latin, CJK, combining and emoji labels skip the RTL path; Arabic/Hebrew, controls and Arabic-Indic digits take it.
     #[test]
     fn ordinary_multilingual_labels_skip_the_rtl_layout_cache() {
         for text in ["", "File (123)", "Édition", "中文排版", "スウォッチ", "e\u{301}", "🎨 🙂"] {
@@ -328,6 +331,7 @@ mod tests {
         }
     }
 
+    /// Non-RTL widgets remain `RichText`, keep their text and lay out with finite bounds.
     #[test]
     fn non_rtl_widgets_keep_native_text_and_formatting() {
         with_fonts(|ctx| {
@@ -342,6 +346,7 @@ mod tests {
         });
     }
 
+    /// Source and glyph arrays stay logical; painting applies bidi, mirrors brackets, keeps `PDF 123` left-to-right and gives finite metrics.
     #[test]
     fn mixed_arabic_latin_digits_and_brackets_preserve_logical_source() {
         with_fonts(|ctx| {
@@ -381,6 +386,7 @@ mod tests {
         });
     }
 
+    /// Fallback shaping matches the native Auto-direction shaper in displayed glyphs, sizes, atlas UVs, advances and spaces.
     #[test]
     fn arabic_fallback_matches_the_native_shaper_including_spaces() {
         with_fonts(|ctx| {
@@ -406,6 +412,7 @@ mod tests {
         });
     }
 
+    /// Logical wrapping puts the first word first and every RTL row flush right within one pixel.
     #[test]
     fn wraps_first_logical_word_first_and_right_aligns_lines() {
         with_fonts(|ctx| {

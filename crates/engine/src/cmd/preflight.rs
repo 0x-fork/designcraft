@@ -368,22 +368,24 @@ mod placed_vector_tests {
 
     /// An .indd opened without its links shows each graphic's preview: the asset has data, but its
     /// file is still missing.
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn a_missing_link_shown_by_its_preview_is_still_reported() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing_path = dir.path().join("missing dir").join("photo.jpg");
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
         let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
         s.execute("file.place", &json!({"base64": base64_encode(&png), "name": "photo.jpg", "x": 72, "y": 72, "width": 20})).unwrap();
         let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
         let asset = doc.assets.values_mut().next().unwrap();
-        std::sync::Arc::make_mut(asset).link = Some(missing_path.to_str().unwrap().into());
+        // On Windows, `/x` names no drive, so `document_path` refuses it when the document has no path. `TMPDIR` can be
+        // relative on macOS and Linux, so the temporary folder is made absolute.
+        let temp = std::path::absolute(std::env::temp_dir()).unwrap();
+        let link = temp.join(format!("dc-preflight-missing-{} dir", std::process::id())).join("photo.jpg");
+        let link = link.to_string_lossy().into_owned();
+        std::sync::Arc::make_mut(asset).link = Some(link.clone());
         let r = s.execute("preflight.run", &json!({})).unwrap();
         let missing: Vec<&str> =
             r["issues"].as_array().unwrap().iter().filter(|i| i["kind"] == "missingLink").map(|i| i["message"].as_str().unwrap()).collect();
-        assert_eq!(missing, [format!("Missing link: {}", missing_path.display())]);
+        assert_eq!(missing, [format!("Missing link: {link}")]);
     }
 }
 

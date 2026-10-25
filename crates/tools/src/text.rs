@@ -449,6 +449,7 @@ impl Tool for TypeTool {
         out
     }
 
+    /// Normalize commit text, cancel marked text, and emit one `text.insert` when text remains and a text selection is active.
     fn ime_commit(&mut self, cx: &ToolContext, text: &str) -> Vec<Action> {
         let text = ime_commit_text(text);
         // The marked text goes; the result is typed in its place like any typing: one command,

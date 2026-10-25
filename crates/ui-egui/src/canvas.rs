@@ -476,6 +476,7 @@ fn navigation_space(app: &mut DesignApp, ctx: &egui::Context) -> bool {
     ctx.input(|i| i.focused && i.key_down(egui::Key::Space)) && !app.session.wants_text() && !ctx.text_edit_focused()
 }
 
+/// Allow temporary Zoom only for Cmd+Space with no pointer press and no busy tool.
 fn spring_zoom_mode(app: &DesignApp, ctx: &egui::Context, space: bool) -> bool {
     let down = ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(("canvas_pointer_down", app.pane)))).unwrap_or(false);
     space && ctx.input(|i| i.modifiers.command) && !down && !app.session.tool_busy()
@@ -533,6 +534,7 @@ fn spring_zoom_input(app: &mut DesignApp, ui: &egui::Ui, resp: &egui::Response, 
     true
 }
 
+/// Lay out the canvas, scrollbars and rulers, presentation mode, fit/view state, input handling and painting.
 pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let outer = ui.available_rect_before_wrap();
@@ -2084,6 +2086,7 @@ fn draw_liquid_pins(painter: &egui::Painter, o: Rect, page: Rect, pins: [bool; 4
     }
 }
 
+/// Paint ruler bands and ticks, the zero-point crosshair, guide previews, and ticks restarted at each page origin.
 #[allow(clippy::too_many_arguments)]
 fn draw_rulers(app: &DesignApp, ui: &egui::Ui, full: Rect, rect: Rect, xf: &Xf, doc: &Document, layout: &CanvasLayout, t: &Tokens) {
     let painter = ui.painter_at(full);
@@ -2496,6 +2499,7 @@ fn scrollbars(app: &mut DesignApp, ui: &mut egui::Ui, outer: Rect, screen: Rect,
     }
 }
 
+/// Give an open menu priority, then handle wheel/zoom/pan, spring Zoom, guide drags and primary pointer routing.
 fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rect: Rect) {
     // While a context menu is open (in either pane), the click that closes it and the keys go to the menu.
     let menu_open = context_menu_open(ui.ctx());
@@ -2877,11 +2881,13 @@ struct ImeBefore {
     focus: usize,
 }
 
+/// Build a stable owner from the document uid, story and cell identity, plus the document epoch.
 fn ime_target(context: &ImeTextContext<'_>) -> ImeTarget {
     let owner = egui::Id::unique(("designcraft-ime", context.document_uid, context.story.0, context.cell.map(|c| (c.table, c.row, c.col))));
     ImeTarget::new(owner, context.document_epoch)
 }
 
+/// Capture the bounded committed surrounding text, mutation stamp, target and selection identity before an IME edit.
 fn capture_ime_before(app: &DesignApp) -> Option<ImeBefore> {
     let context = app.session.ime_text_context()?;
     let snapshot = IMESurroundingText::from_text(context.text, context.focus, context.anchor, None);
@@ -2899,6 +2905,7 @@ fn capture_ime_before(app: &DesignApp) -> Option<ImeBefore> {
     })
 }
 
+/// Fold a pending delete-surrounding plus commit into one engine operation, clear marked/target state and record the change.
 fn ime_commit(app: &mut DesignApp, ctx: &egui::Context, text: &str, vi: designcraft_engine::ViewInfo) -> Result<(), String> {
     let pending = app.pending_ime_delete.take();
     let before = capture_ime_before(app);
@@ -2916,6 +2923,7 @@ fn ime_commit(app: &mut DesignApp, ctx: &egui::Context, text: &str, vi: designcr
     r.map(|_| ())
 }
 
+/// Apply a pending IME delete unless its composition ended or moved; record the mutation and drop stale marked text.
 fn finish_pending_ime_delete(app: &mut DesignApp, ctx: &egui::Context) {
     let Some((before_bytes, after_bytes, bytes)) = app.pending_ime_delete.take() else { return };
     if ime_composition_ended(app) || ime_composition_moved(app) {
@@ -4174,6 +4182,7 @@ mod tests {
         }
     }
 
+    /// Build the four-fps app harness used by canvas tests.
     fn harness(app: DesignApp) -> Harness<'static, DesignApp> {
         harness_with_step(app, 1.0 / 4.0)
     }
@@ -4409,6 +4418,7 @@ mod tests {
         egui::Event::ModifiersChanged(modifiers)
     }
 
+    /// Construct a point-unit vertical mouse-wheel event with an unknown source.
     fn wheel(phase: egui::TouchPhase, up: f32, modifiers: egui::Modifiers) -> egui::Event {
         egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(0.0, up), phase, modifiers, source: egui::MouseWheelSource::Unknown }
     }
@@ -4492,6 +4502,7 @@ mod tests {
         app
     }
 
+    /// Run one app frame with the supplied modifiers, install fonts, draw the canvas when ready and return the cursor icon.
     fn canvas_frame(app: &mut DesignApp, ctx: &egui::Context, m: egui::Modifiers, mut events: Vec<egui::Event>) -> egui::CursorIcon {
         events.insert(0, egui::Event::ModifiersChanged(m));
         let mut output = ctx.run_ui(
@@ -5968,10 +5979,12 @@ mod tests {
         egui::Event::Ime(egui::ImeEvent::Preedit { text: t.into(), active_range_chars: Some(c..c) })
     }
 
+    /// Extract `(surrounding text, cursor, anchor)` from an IME output.
     fn ime_payload(ime: &egui::output::IMEOutput) -> Option<(&str, usize, usize)> {
         ime.surrounding_text.available().map(|p| (p.text.as_str(), p.cursor, p.anchor))
     }
 
+    /// Set an engine text selection for a test fixture.
     fn text_selection(app: &mut DesignApp, sid: &Value, anchor: usize, focus: usize) {
         app.session.execute("text.select", &json!({"story": sid, "anchor": anchor, "focus": focus})).unwrap();
     }
@@ -5985,6 +5998,7 @@ mod tests {
         focus: usize,
     }
 
+    /// Build the old and target stories, measure an interior target caret, and leave the old story selected before the click.
     fn native_gui_click_fixture() -> NativeClickFixture {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         let ctx = egui::Context::default();
@@ -6012,6 +6026,7 @@ mod tests {
         NativeClickFixture { app, ctx, target, old, at, focus }
     }
 
+    /// Build a primary pointer press or release event at a position.
     fn native_gui_button(pos: Pos2, pressed: bool) -> egui::Event {
         egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }
     }
@@ -6044,6 +6059,7 @@ mod tests {
         f
     }
 
+    /// Run one raw event batch, optionally force a discarded pass, and return the pointer edges observed by each pass.
     fn native_gui_input(f: &mut NativeClickFixture, events: Vec<egui::Event>, discard: bool) -> Vec<(bool, bool, bool)> {
         let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
         let mut edges = Vec::new();
@@ -6062,6 +6078,7 @@ mod tests {
         edges
     }
 
+    /// Assert that the primary button, canvas press state and tool gesture are all released.
     fn native_gui_released(f: &NativeClickFixture) {
         assert!(!f.ctx.input(|i| i.pointer.primary_down()), "the native primary button is up");
         let down = f.ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(("canvas_pointer_down", f.app.pane)))).unwrap_or(false);
@@ -6069,6 +6086,7 @@ mod tests {
         assert!(!f.app.session.tool_busy(), "a released click must not leave a tool gesture");
     }
 
+    /// Create an independently measured second-story caret farther apart than the double-click distance.
     fn native_gui_second_click_target(f: &mut NativeClickFixture) -> (Value, Pos2, usize) {
         let frame = f.app.run("frame.create", json!({"rect": [330, 280, 575, 400], "content": "text", "text": "Second story"})).unwrap();
         let story = frame["story"].clone();
@@ -6092,6 +6110,7 @@ mod tests {
         (story, at, focus)
     }
 
+    /// Two completed clicks in one batch use the last press once, emit one caret/release pair, add no history, and type at the final caret.
     #[test]
     fn native_gui_two_completed_clicks_use_last_primary_press_once() {
         for reverse in [false, true] {
@@ -6157,6 +6176,7 @@ mod tests {
         }
     }
 
+    /// A non-finite final press rejects the click instead of reviving an earlier valid press; later motion cannot drag.
     #[test]
     fn native_gui_nonfinite_final_press_cannot_reuse_an_earlier_click() {
         for discard in [false, true] {
@@ -6195,6 +6215,7 @@ mod tests {
         }
     }
 
+    /// A same-batch click switches story exactly once; typing, undo and redo affect only the target story, including discarded-pass runs.
     #[test]
     fn native_gui_same_batch_click_switches_story_once_before_typing() {
         for discard in [false, true] {
@@ -6285,6 +6306,7 @@ mod tests {
         }
     }
 
+    /// Pointer ownership survives a split press/move/release; a real drag selects, release ends it, and later motion cannot continue it.
     #[test]
     fn native_gui_split_click_and_drag_release_keep_pointer_ownership() {
         for drag in [false, true] {
@@ -6313,6 +6335,7 @@ mod tests {
         }
     }
 
+    /// An unowned outside press, and a press that dismisses an open menu, cannot move the selection or edit either story.
     #[test]
     fn native_gui_outside_press_and_open_menu_do_not_click_through() {
         for menu in [false, true] {
@@ -6350,6 +6373,7 @@ mod tests {
         }
     }
 
+    /// Font inventory distinguishes exact bundled faces, missing styles and missing families without accepting installed or injected substitutes.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn native_gui_font_inventory_keeps_exact_regular_and_missing_style_diagnostics() {
@@ -6472,6 +6496,7 @@ mod tests {
         assert_eq!(story_text(&mut app, &sid), "abde日");
     }
 
+    /// Surrounding text is committed text only, preserves reversed selection direction, and a commit keeps owner/generation while reporting `InputMethod`.
     #[test]
     fn ime_reports_the_committed_story_and_excludes_the_pre_edit() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6497,6 +6522,7 @@ mod tests {
         assert_eq!((ime.owner, ime.context_generation), owner, "an unchanged pass keeps the context");
     }
 
+    /// An empty story provides `("",0,0)`; long text is bounded and an out-of-window selection is explicitly unavailable.
     #[test]
     fn ime_empty_story_is_available_and_wide_text_is_bounded() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6516,6 +6542,7 @@ mod tests {
         assert!(ime.surrounding_text.available().is_none(), "a selection beyond the bound is explicitly unavailable");
     }
 
+    /// Caret movement preserves owner; changing story or document changes owner and generation.
     #[test]
     fn ime_owner_follows_the_story_and_the_document() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6541,6 +6568,7 @@ mod tests {
         assert_eq!(ime_payload(&replaced), Some(("z", 1, 1)));
     }
 
+    /// Pure commits report `InputMethod`; typing before or after a commit in one pass makes the cause `Other`.
     #[test]
     fn ime_cause_distinguishes_commits_from_application_edits() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6569,6 +6597,7 @@ mod tests {
         assert_eq!(ime_payload(&mixed), Some(("a日!", 5, 5)));
     }
 
+    /// The settled multipass result rebuilds the current surrounding text while retaining the accepted commit cause.
     #[test]
     fn ime_cause_and_context_survive_a_discarded_pass() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6595,6 +6624,7 @@ mod tests {
         assert_eq!(ime.change_cause, egui::output::ImeChangeCause::InputMethod, "the discarded pass keeps the accepted commit's cause");
     }
 
+    /// Autocorrected commit text is an application edit with cause `Other`.
     #[test]
     fn ime_autocorrect_is_not_an_input_method_cause() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6606,6 +6636,7 @@ mod tests {
         assert_eq!(ime.change_cause, egui::output::ImeChangeCause::Other);
     }
 
+    /// The selection stays selected and directed; byte partials leave whole characters; the deletion is one undo step.
     #[test]
     fn ime_delete_surrounding_excludes_the_selection_and_rounds_bytes_inward() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6647,6 +6678,7 @@ mod tests {
         assert_eq!(story_text(&mut app, &partial), "a😀");
     }
 
+    /// A 200-character request deletes the whole 100-character story.
     #[test]
     fn ime_delete_surrounding_has_no_sixty_four_character_cap() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6656,6 +6688,7 @@ mod tests {
         assert_eq!(story_text(&mut app, &sid), "");
     }
 
+    /// Delete plus commit in one IME batch produces one undoable edit and reports the final surrounding text.
     #[test]
     fn ime_delete_and_commit_are_one_undo_step() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -6972,6 +7005,7 @@ mod scrollbar_tests {
         h.run_steps(3);
     }
 
+    /// Scrollbars sit immediately outside the view, have non-full-size thumbs and use a positive content scale.
     #[test]
     fn document_views_have_scrollbars_beside_the_view() {
         let h = window();
@@ -7019,6 +7053,7 @@ mod scrollbar_tests {
         assert!((next.y - paged.y - view).abs() < 0.01, "{next:?} → {paged:?}, want -{view}");
     }
 
+    /// Wheel scrolling moves both thumbs and keeps the painted scrollbar rect in sync.
     #[test]
     fn scrolling_the_view_moves_the_thumbs() {
         let mut h = window();

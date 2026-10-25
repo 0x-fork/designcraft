@@ -157,6 +157,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Export PDF…", ["PDF exportieren …", "Exporter en PDF…", "Exportar PDF…", "PDF を書き出し…", "导出PDF…"]),
     ("Print…", ["Drucken …", "Imprimer…", "Imprimir…", "プリント…", "打印…"]),
     ("Document Setup…", ["Dokument einrichten …", "Format de document…", "Ajustar documento…", "ドキュメント設定…", "文档设置…"]),
+    ("File Info…", ["Dateiinformationen …", "Informations sur le fichier…", "Información de archivo…", "ファイル情報…", "文件信息…"]),
+    ("File Info", ["Dateiinformationen", "Informations sur le fichier", "Información de archivo", "ファイル情報", "文件信息"]),
     ("Package…", ["Verpacken …", "Assemblage…", "Empaquetar…", "パッケージ…", "打包…"]),
     // Edit.
     ("Undo", ["Rückgängig", "Annuler", "Deshacer", "取り消し", "还原"]),
@@ -2308,6 +2310,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Split Cell Vertically",
         ["Split Cell Vertically", "Scinder la cellule verticalement", "Split Cell Vertically", "Split Cell Vertically", "垂直拆分单元格"],
     ),
+    ("Split Note", ["Split Note", "Scinder la note", "Split Note", "Split Note", "拆分注释"]),
     ("Split Path", ["Split Path", "Fractionner le tracé", "Split Path", "Split Path", "拆分路径"]),
     ("Step and Repeat…", ["Step and Repeat…", "Exécuter et répéter…", "Step and Repeat…", "Step and Repeat…", "步进和重复…"]),
     ("Stroke Styles", ["Stroke Styles", "Styles de contour", "Stroke Styles", "Stroke Styles", "描边样式"]),

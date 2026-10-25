@@ -82,7 +82,9 @@ enum Node {
 // Empty a node before field drop glue can follow its children recursively. This also covers
 // replaced scripts and partially built parser continuations during unwinding.
 impl Node {
+    /// Move every child link into `pending`, draining `Group` children and replacing boxed children with empty groups, so field drop glue never walks a deep subtree.
     fn detach_children(&mut self, pending: &mut Vec<Node>) {
+        /// Detach one child into `pending`, leaving an empty group in its slot.
         fn detach(child: &mut Node, pending: &mut Vec<Node>) {
             pending.push(std::mem::replace(child, Node::Group(Vec::new())));
         }
@@ -114,6 +116,7 @@ impl Node {
 }
 
 impl Drop for Node {
+    /// Drain an explicit worklist, emptying each node before normal drop glue, so deep or replaced ASTs drop without stack overflow.
     fn drop(&mut self) {
         let mut pending = Vec::new();
         self.detach_children(&mut pending);
@@ -334,6 +337,7 @@ fn attach_script(mut base: Node, argument: Node, up: bool) -> Node {
 }
 
 impl<'a> Parser<'a> {
+    /// Run the parser as a heap worklist from a root `List`, so input nesting does not consume native stack.
     fn parse(&mut self, depth: usize) -> Node {
         let mut work = vec![ParseWork::List { end: None, depth }];
         let mut value = Node::Group(Vec::new());
@@ -358,6 +362,7 @@ impl<'a> Parser<'a> {
         value
     }
 
+    /// Start a list sequence, or yield an empty group when `depth` has reached `MAX_NESTING`.
     fn step_list(work: &mut Vec<ParseWork<'a>>, value: &mut Node, end: Option<char>, depth: usize) {
         if depth >= MAX_NESTING {
             *value = Node::Group(Vec::new());
@@ -366,6 +371,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consume list/fence terminators, route `^`/`_` to script attachment, append the next atom for list and fence sequences, or finish a `One` sequence after its single atom; fence sequences stop only at a real `\right`.
     fn step_sequence(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, kind: SequenceKind, depth: usize, mut out: Vec<Node>) {
         self.skip_ws();
         let Some(c) = self.peek() else {
@@ -400,6 +406,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Commit the completed atom or fence group into the pending sequence and resume it.
     fn step_append(work: &mut Vec<ParseWork<'a>>, value: &mut Node, kind: SequenceKind, depth: usize, mut out: Vec<Node>, group: bool) {
         if group {
             if let Node::Group(nodes) = &mut *value {
@@ -411,6 +418,7 @@ impl<'a> Parser<'a> {
         work.push(ParseWork::Sequence { kind, depth, out });
     }
 
+    /// Parse a braced list or one atom at `depth + 1`; a capped argument becomes an empty group.
     fn step_arg(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
         if depth >= MAX_NESTING {
             *value = Node::Group(Vec::new());
@@ -425,6 +433,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Attach the completed argument as superscript or subscript, preserving the opposite slot of an existing script node.
     fn step_script(work: &mut Vec<ParseWork<'a>>, value: &mut Node, kind: SequenceKind, depth: usize, mut out: Vec<Node>, up: bool) {
         let argument = std::mem::replace(value, Node::Group(Vec::new()));
         let base = out.pop().unwrap_or(Node::Group(Vec::new()));
@@ -432,16 +441,19 @@ impl<'a> Parser<'a> {
         work.push(ParseWork::Sequence { kind, depth, out });
     }
 
+    /// Save the parsed numerator and queue the denominator argument.
     fn step_fraction_numerator(work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
         let numerator = std::mem::replace(value, Node::Group(Vec::new()));
         work.push(ParseWork::FractionDenominator { numerator });
         work.push(ParseWork::Arg { depth });
     }
 
+    /// Build `Frac` from the saved numerator and the completed denominator.
     fn step_fraction_denominator(value: &mut Node, numerator: Node) {
         *value = Node::Frac(Box::new(numerator), Box::new(std::mem::replace(value, Node::Group(Vec::new()))));
     }
 
+    /// Restore the outer parser after the root-index subparse and queue the radicand argument.
     fn step_sqrt_index(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, outer: Parser<'a>, depth: usize) {
         *self = outer;
         let index = Some(Box::new(std::mem::replace(value, Node::Group(Vec::new()))));
@@ -449,15 +461,18 @@ impl<'a> Parser<'a> {
         work.push(ParseWork::Arg { depth });
     }
 
+    /// Build `Sqrt`, retaining the optional root index.
     fn step_sqrt_argument(value: &mut Node, index: Option<Box<Node>>) {
         *value = Node::Sqrt(index, Box::new(std::mem::replace(value, Node::Group(Vec::new()))));
     }
 
+    /// Wrap the completed body in `Fenced` with the opening and resolved closing delimiter.
     fn step_fence(&mut self, value: &mut Node, open: String) {
         let close = self.delimiter();
         *value = Node::Fenced(open, Box::new(std::mem::replace(value, Node::Group(Vec::new()))), close);
     }
 
+    /// Start a fence-body sequence that stops at a real `\right`, or an empty group at the nesting cap.
     fn step_until_right(work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
         if depth >= MAX_NESTING {
             *value = Node::Group(Vec::new());
@@ -466,16 +481,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Queue one atom and its one-item sequence collector.
     fn step_one(work: &mut Vec<ParseWork<'a>>, depth: usize) {
         work.push(ParseWork::OneAtom { depth });
         work.push(ParseWork::Atom { depth });
     }
 
+    /// Wrap the completed atom in a `Group` and continue the `One` sequence.
     fn step_one_atom(work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
         let out = vec![std::mem::replace(value, Node::Group(Vec::new()))];
         work.push(ParseWork::Sequence { kind: SequenceKind::One, depth, out });
     }
 
+    /// Parse a number, identifier, operator, punctuation mark or symbol with its spacing class, dispatching braces and commands.
     fn step_atom(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
         self.skip_ws();
         let Some(c) = self.peek() else {
@@ -505,6 +523,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Dispatch fractions, roots, fences, raw-text commands and named symbols/operators.
     fn step_command(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
         let name = self.command();
         match name.as_str() {
@@ -523,6 +542,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse an optional bracketed root index with the existing first-`]` grammar, otherwise queue a braced or atomic radicand.
     fn push_sqrt(&mut self, work: &mut Vec<ParseWork<'a>>, depth: usize) {
         self.skip_ws();
         if self.peek() == Some('[') {
@@ -548,6 +568,7 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Map function names, spacing commands, escaped punctuation, big operators and symbols; an unknown command becomes literal `\name` text.
 fn command_atom(name: &str) -> Node {
     match name {
         "sin" | "cos" | "tan" | "log" | "ln" | "exp" | "lim" | "max" | "min" => Node::Text(name.to_owned()),
@@ -573,6 +594,7 @@ fn parse(src: &str) -> Node {
     parse_at(src, 0)
 }
 
+/// Collect the input into chars and start parsing at the supplied depth.
 fn parse_at(src: &str, depth: usize) -> Node {
     let chars: Vec<char> = src.chars().collect();
     Parser { s: &chars, i: 0 }.parse(depth)
@@ -641,9 +663,11 @@ struct ScriptLayout {
 }
 
 impl ScriptLayout {
+    /// Seed script layout with the base box width and metrics, the big-operator flag and the size.
     fn new(base: MBox, big: bool, size: f64) -> Self {
         Self { bw: base.w, basc: base.asc, bdesc: base.desc, out: base, big, size }
     }
+    /// Place a superscript, subscript or big-operator limit and expand the aggregate width, ascent and descent.
     fn add(&mut self, script: MBox, up: bool) {
         let Self { out, bw, basc, bdesc, big, size } = self;
         let y = if *big {
@@ -663,6 +687,7 @@ impl ScriptLayout {
             out.desc = out.desc.max(y + sd);
         }
     }
+    /// For big operators, recentre the operator over the widest limit.
     fn finish(mut self) -> MBox {
         if self.big {
             let dx = (self.out.w - self.bw) / 2.0;
@@ -924,6 +949,7 @@ mod tests {
     use super::*;
 
     // Frozen pre-repair arithmetic; called only for shallow fixtures, never deep input.
+    /// Frozen recursive layout oracle for shallow test fixtures only, never deep input.
     fn recursive_layout_reference(f: &Fonts, n: &Node, size: f64) -> MBox {
         match n {
             Node::Sym(s, cl) => text_box(f, s, size, *cl == Class::Ident),
@@ -938,6 +964,7 @@ mod tests {
         }
     }
 
+    /// Oracle for operator spacing, leading-sign treatment and punctuation gaps.
     fn recursive_group_reference(f: &Fonts, list: &[Node], size: f64) -> MBox {
         let mut parts = Vec::new();
         let mut prev: Option<Class> = None;
@@ -974,6 +1001,7 @@ mod tests {
         hbox(parts)
     }
 
+    /// Oracle for fraction rule, child scale, math axis, gaps and bounds.
     fn recursive_fraction_reference(f: &Fonts, a: &Node, b: &Node, size: f64) -> MBox {
         let axis = size * 0.25;
         let s2 = size * 0.85;
@@ -991,6 +1019,7 @@ mod tests {
         out
     }
 
+    /// Oracle for radical geometry, body offset and optional root index.
     fn recursive_sqrt_reference(f: &Fonts, idx: &Option<Box<Node>>, a: &Node, size: f64) -> MBox {
         let axis = size * 0.25;
         let inner = recursive_layout_reference(f, a, size);
@@ -1017,6 +1046,7 @@ mod tests {
         out
     }
 
+    /// Oracle for enlarged, math-axis-centred big operators.
     fn recursive_big_reference(f: &Fonts, op: &str, size: f64) -> MBox {
         let mut b = text_box(f, op, size * 1.5, false);
         b.asc = size * 1.05;
@@ -1030,6 +1060,7 @@ mod tests {
         b
     }
 
+    /// Oracle for ordinary sup/sub placement and big-operator limits above and below.
     fn recursive_scripts_reference(f: &Fonts, base: &Node, sup: &Option<Box<Node>>, sub: &Option<Box<Node>>, size: f64) -> MBox {
         let big = matches!(base, Node::Big(_));
         let b = recursive_layout_reference(f, base, size);
@@ -1081,6 +1112,7 @@ mod tests {
         out
     }
 
+    /// Oracle for content-scaled, centred delimiters.
     fn recursive_fenced_reference(f: &Fonts, open: &str, body: &Node, close: &str, size: f64) -> MBox {
         let inner = recursive_layout_reference(f, body, size);
         let h = (inner.asc + inner.desc).max(size);
@@ -1106,6 +1138,7 @@ mod tests {
         hbox(vec![(l, 0.0), (inner, size * 0.05), (r, size * 0.05)])
     }
 
+    /// Asserts fraction/nested-root, big scripts, relation, symbol, fence and raw `\text` parse shapes.
     #[test]
     fn parses_the_common_constructs() {
         let n = parse(r"\frac{a^2+b}{\sqrt[3]{x}}");
@@ -1219,6 +1252,7 @@ mod tests {
         (counts, deepest)
     }
 
+    /// With `MAX_NESTING == 256`, all supported 255-level constructs stay nested and still render their sentinel.
     #[test]
     fn the_full_256_budget_keeps_deep_valid_formulas_intact() {
         assert_eq!(MAX_NESTING, 256, "preserve the existing expression capability");
@@ -1242,6 +1276,7 @@ mod tests {
         }
     }
 
+    /// A capped list consumes nothing; capped root-index/body cursor behavior and the permissive first-`]` grammar remain unchanged.
     #[test]
     fn cap_and_index_returns_preserve_their_exact_cursor_semantics() {
         let chars: Vec<_> = "x".chars().collect();
@@ -1295,6 +1330,7 @@ mod tests {
         );
     }
 
+    /// Repeated scripts replace slots; a fence `^` stays literal; incomplete fractions, escaped braces and unknown commands retain the prior grammar.
     #[test]
     fn heap_continuations_preserve_small_grammar_and_script_precedence() {
         let sym = |s: &str| Node::Sym(s.into(), Class::Ident);
@@ -1323,6 +1359,7 @@ mod tests {
         );
     }
 
+    /// Iterative layout equals the frozen recursive oracle for representative formulas, including malformed inputs.
     #[test]
     fn heap_layout_preserves_the_existing_element_order_and_geometry() {
         let db = FontDb::global();
@@ -1347,6 +1384,7 @@ mod tests {
         }
     }
 
+    /// Build a deep five-way alternating AST for destructor stress tests.
     fn mixed_chain(depth: usize) -> Node {
         let mut node = Node::Sym("z".into(), Class::Ident);
         for i in 0..depth {
@@ -1361,6 +1399,7 @@ mod tests {
         node
     }
 
+    /// Drops 50k-node chains, replaces one script slot, and unwinds parser continuations while preserving the retained slot.
     #[test]
     fn deep_nodes_drop_when_replaced_or_owned_by_unwinding_continuations() {
         // Far beyond the parser budget: this directly proves the private destructor's traversal.

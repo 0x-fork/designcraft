@@ -193,6 +193,7 @@ fn select_source(app: &mut DesignApp) {
     let _ = app.run("data.source.select", json!({"path": path}));
 }
 
+/// Render a localized, named combo and return only a changed selection.
 fn choice(ui: &mut egui::Ui, id: &str, current: &str, options: &[(&str, &str)], lang: &str, name: &str) -> Option<String> {
     let label = options.iter().find(|(value, _)| *value == current).map(|(_, text)| tr(lang, text)).unwrap_or(current);
     let mut picked = None;
@@ -252,6 +253,7 @@ mod tests {
 
     use super::*;
 
+    /// Records and Arrangement each expose exactly one named combo, and the accessibility check passes.
     #[test]
     fn arrangement_combo_is_accessible_and_distinct_from_the_records_combo() {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());

@@ -30,6 +30,7 @@ fn steps(s: &Session) -> usize {
     s.doc().unwrap().history.undo.len()
 }
 
+/// Byte counts round inward to whole characters, cap at the text bounds, and scan from the requested count rather than the story start.
 #[test]
 fn ime_byte_deletion_rounds_inward_from_the_requested_count() {
     // a: 0..1, é: 1..3, 😀: 3..7, b: 7..8.
@@ -46,6 +47,7 @@ fn ime_byte_deletion_rounds_inward_from_the_requested_count() {
     assert_eq!(ime_delete_ranges(&long, end, end, 1, 0, true), Some((end..end, end..end)), "one byte inside é leaves it");
 }
 
+/// Reports exact before/after byte ranges, preserves and remaps the selection direction; no-op deletes report `None`.
 #[test]
 fn ime_delete_reports_the_ranges_it_applied() {
     let mut s = session();

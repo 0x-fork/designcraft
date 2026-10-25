@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::{CommandSpec, bad, bool_or, cmd, has_doc, has_text, has_text_or_frames, id_param, ok, point_param, str_param};
 use crate::{Result, Session};
 
+/// Build the text command registry: caret/selection movement, insertion/deletion, release, text and paragraph formatting, story queries, ruby and OpenType commands, with their parameters and enabled predicates.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "text.placeCaret", "Place Caret", [], None, "{frame, point: [x,y] (spread coords)} — converts empty frames to text frames", has_doc, |s, p| place(s, p, false)),

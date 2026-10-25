@@ -605,11 +605,10 @@ mod tests {
         for link in links {
             let (idml, _) = linked_idml(link, false).unwrap();
             let (doc, seen) = crate::io::touched(|| import(&idml, Some(&package)).unwrap());
-            // Beside the package, and the link itself where it is on this computer.
-            // A rooted local path such as /dev/zero acquires the package's drive on Windows.
-            let local = std::path::Path::new(link);
-            let external = (local.has_root() && !link.starts_with(r"\\")).then(|| std::path::absolute(dir.join(local)).unwrap());
-            assert!(seen.iter().all(|p| p.starts_with(&dir) || Some(p) == external.as_ref()), "{link}: {seen:?}");
+            // Beside the package, and the link itself where it is on this computer (on Windows,
+            // `/dev/zero` is `\dev\zero` on the package's drive).
+            let itself = crate::io::document_path(link, Some(&package)).ok();
+            assert!(seen.iter().all(|p| p.starts_with(&dir) || itself.as_ref() == Some(p)), "{link}: {seen:?}");
             let asset = doc.assets.values().next().unwrap();
             assert!(asset.data.is_empty(), "{link}");
             assert_eq!(super::super::links::status(asset, None), "missing", "{link}");

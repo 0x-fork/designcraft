@@ -2212,6 +2212,7 @@ mod tests_docfonts;
 mod native_gui_document_fonts_tests {
     use super::*;
 
+    /// The production font scope contains the canonical bundled and Japanese faces in their existing order, including bundled Hebrew/Devanagari faces, without system or injected fonts.
     #[test]
     fn native_gui_canonical_document_faces_load_without_system_or_added_fonts() {
         if crate::CRAFT_FONTS.is_empty() {

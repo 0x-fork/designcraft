@@ -94,6 +94,7 @@ fn caption(ui: &mut egui::Ui, lang: &str, s: &str) {
     crate::rtl::label(ui, tr(lang, s));
 }
 
+/// Render a labelled, bounded colour-channel spinner, name it for accessibility and write changed values to dialog fields.
 fn channel(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, max: f64, suffix: &str) {
     ui.label(egui::RichText::new(label).monospace());
     let mut v = d.n(key).unwrap_or(0.0);

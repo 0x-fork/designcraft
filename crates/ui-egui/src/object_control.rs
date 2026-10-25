@@ -56,6 +56,7 @@ fn toggle(ui: &mut Ui, group: Rect, x: f32, key: &str, tip: &str) -> bool {
     }
 }
 
+/// Lay out the fixed two-row control groups for reference, geometry, transform, rotate/flip, appearance, wrap, corners, fitting, alignment and conditional columns.
 pub(crate) fn show(app: &mut DesignApp, ui: &mut Ui) {
     let language = app.ui.language.clone();
     let tr = |text: &str| crate::i18n::tr(&language, text).to_owned();

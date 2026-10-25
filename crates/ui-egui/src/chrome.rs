@@ -180,6 +180,7 @@ fn tools_slot_width(available: f32, tools_w: f32) -> f32 {
     (available - 1.0).max(tools_w)
 }
 
+/// Lay out the application bar, native/custom title handling, menu and tool scrolling, drag region, caption controls and search.
 pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let mac = app.integrated_titlebar;
@@ -204,7 +205,7 @@ pub fn app_bar(app: &mut DesignApp, ui: &mut egui::Ui) {
                     egui::pos2(full.min.x - f32::from(left), full.min.y),
                     egui::pos2(full.max.x + 10.0, full.min.y + MAC_APP_BAR),
                 );
-                crate::title_bar::empty_area(ui, band);
+                let _ = craft_window::title_bar::empty_area(ui, band);
             }
             let mut menus_end = full.min.x;
             let mut tools_start = full.max.x;
@@ -660,6 +661,7 @@ fn control_text(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Draw the character-mode controls and issue their corresponding text commands.
 fn control_character(
     app: &mut DesignApp,
     ui: &mut egui::Ui,
@@ -1033,6 +1035,7 @@ const DOC_TAB_MAX_W: f32 = 260.0;
 /// Close button and padding around a tab's title.
 const DOC_TAB_PAD: f32 = 44.0;
 
+/// Draw bounded document tabs with active, dirty, preview and zoom state, plus activation and close actions.
 pub fn doc_tabs(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
@@ -2101,7 +2104,7 @@ mod tests {
         let mut movable_at = |at: egui::Pos2| {
             h.hover_at(at);
             h.run_steps(2);
-            crate::title_bar::window_movable(&h.ctx)
+            craft_window::title_bar::window_movable(&h.ctx)
         };
         for at in [pos2(bar.center().x, mid), pos2(bar.min.x + MAC_CONTENT_LEFT - 4.0, bar.min.y + 4.0), pos2(bar.center().x, 500.0)] {
             assert!(movable_at(at), "empty title bar or the page at {at:?}");

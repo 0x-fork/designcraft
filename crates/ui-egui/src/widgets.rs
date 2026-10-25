@@ -94,6 +94,7 @@ impl<'a> NumField<'a> {
     pub fn number(id: &'a str, value: Option<f64>, suffix: &'a str, decimals: usize) -> Self {
         Self::new(id, value, NumKind::Number { suffix, decimals })
     }
+    /// Initialize a numeric field with no name, label or empty text, a 72-point width, no spinner or presets, the full range and the enabled state.
     fn new(id: &'a str, value: Option<f64>, kind: NumKind<'a>) -> Self {
         NumField {
             id,
@@ -371,6 +372,7 @@ pub fn dropdown(ui: &mut Ui, text: &str, width: f32) -> Response {
     dropdown_h(ui, text, width, FIELD_H)
 }
 
+/// Paint a labelled combo with hover, border and chevron, clip its text, and expose a `ComboBox` role named by the visible text.
 pub fn dropdown_h(ui: &mut Ui, text: &str, width: f32, h: f32) -> Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(width, h), Sense::click());
@@ -607,6 +609,7 @@ pub fn icon_toggle(ui: &mut Ui, icon: &str, on: bool, tip: &str) -> Response {
     icon_toggle_sized(ui, icon, on, tip, vec2(23.0, 21.0))
 }
 
+/// Paint an icon toggle at the requested size and expose it as a selected button named by its tooltip.
 pub fn icon_toggle_sized(ui: &mut Ui, icon: &str, on: bool, tip: &str, size: egui::Vec2) -> Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
@@ -836,6 +839,7 @@ mod tests {
         assert_eq!(m.step(), 1.0);
     }
 
+    /// A disabled field's preset button is disabled in AccessKit and cannot open a popup.
     #[test]
     fn disabled_numeric_presets_are_disabled_and_do_not_open() {
         use egui_kittest::kittest::{NodeT, Queryable};
@@ -852,6 +856,7 @@ mod tests {
         h.check_accessibility();
     }
 
+    /// Spinner buttons and presets inherit a disabled parent in both AccessKit and widget metadata.
     #[test]
     fn numeric_controls_inherit_a_disabled_parents_state() {
         use egui_kittest::kittest::{NodeT, Queryable};
