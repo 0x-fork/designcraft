@@ -435,58 +435,68 @@ fn ime_ranges_from_command(r: &Value) -> Option<(Range<usize>, Range<usize>)> {
 /// round inward: a count that ends inside a character leaves that whole character. Invalid or
 /// non-boundary selection offsets return `None` rather than guessed ranges.
 pub fn ime_delete_ranges(text: &str, anchor: usize, focus: usize, before: usize, after: usize, bytes: bool) -> Option<(Range<usize>, Range<usize>)> {
+    let (min, max) = ime_selection_bounds(text, anchor, focus)?;
+    Some(if bytes { ime_byte_delete_ranges(text, min, max, before, after) } else { ime_character_delete_ranges(text, min, max, before, after) })
+}
+
+/// Validate the committed selection and return its lower and upper UTF-8 byte offsets.
+fn ime_selection_bounds(text: &str, anchor: usize, focus: usize) -> Option<(usize, usize)> {
     if anchor > text.len() || focus > text.len() || !text.is_char_boundary(anchor) || !text.is_char_boundary(focus) {
         return None;
     }
-    let min = anchor.min(focus);
-    let max = anchor.max(focus);
-    if bytes {
-        // Start at the requested byte offset and step at most three bytes to the next character
-        // boundary: the scan is bounded by the count, not by the caret's offset in the story.
-        let from = min.saturating_sub(before).min(min);
-        let mut before_start = from;
-        while before_start < min && !text.is_char_boundary(before_start) {
-            before_start += 1;
+    Some((anchor.min(focus), anchor.max(focus)))
+}
+
+/// Byte-counted ranges around the selection, rounded inward to character boundaries.
+fn ime_byte_delete_ranges(text: &str, min: usize, max: usize, before: usize, after: usize) -> (Range<usize>, Range<usize>) {
+    // Start at the requested byte offset and step at most three bytes to the next character
+    // boundary: the scan is bounded by the count, not by the caret's offset in the story.
+    let from = min.saturating_sub(before).min(min);
+    let mut before_start = from;
+    while before_start < min && !text.is_char_boundary(before_start) {
+        before_start += 1;
+    }
+    let target = max.saturating_add(after).min(text.len());
+    let mut after_end = max;
+    for (i, c) in text[max..].char_indices() {
+        let end = max + i + c.len_utf8();
+        if end <= target {
+            after_end = end;
+        } else {
+            break;
         }
-        let target = max.saturating_add(after).min(text.len());
-        let mut after_end = max;
-        for (i, c) in text[max..].char_indices() {
-            let end = max + i + c.len_utf8();
-            if end <= target {
-                after_end = end;
-            } else {
+    }
+    (before_start..min, max..after_end)
+}
+
+/// Character-counted ranges around the selection, using Unicode scalar values.
+fn ime_character_delete_ranges(text: &str, min: usize, max: usize, before: usize, after: usize) -> (Range<usize>, Range<usize>) {
+    let before_start = if before == 0 {
+        min
+    } else {
+        let mut seen = 0usize;
+        let mut start = 0usize;
+        for (i, _) in text[..min].char_indices().rev() {
+            seen += 1;
+            start = i;
+            if seen == before {
                 break;
             }
         }
-        Some((before_start..min, max..after_end))
-    } else {
-        let before_start = if before == 0 {
-            min
-        } else {
-            let mut seen = 0usize;
-            let mut start = 0usize;
-            for (i, _) in text[..min].char_indices().rev() {
-                seen += 1;
-                start = i;
-                if seen == before {
-                    break;
-                }
-            }
-            if seen < before { 0 } else { start }
-        };
-        let mut after_end = max;
-        if after > 0 {
-            let mut seen = 0usize;
-            for (i, c) in text[max..].char_indices() {
-                seen += 1;
-                after_end = max + i + c.len_utf8();
-                if seen == after {
-                    break;
-                }
+        if seen < before { 0 } else { start }
+    };
+    let mut after_end = max;
+    if after > 0 {
+        let mut seen = 0usize;
+        for (i, c) in text[max..].char_indices() {
+            seen += 1;
+            after_end = max + i + c.len_utf8();
+            if seen == after {
+                break;
             }
         }
-        Some((before_start..min, max..after_end))
     }
+    (before_start..min, max..after_end)
 }
 
 impl Session {

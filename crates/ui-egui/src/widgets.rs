@@ -178,6 +178,7 @@ impl<'a> NumField<'a> {
     pub fn show_or_clear(self, ui: &mut Ui) -> Option<Option<f64>> {
         let t = Tokens::get(ui.ctx());
         let name = self.name.unwrap_or(self.id);
+        let enabled = self.enabled && ui.is_enabled();
         let key = ui.scope_id().with(self.id);
         let (rect, _) = ui.allocate_exact_size(vec2(self.width, FIELD_H), Sense::hover());
         let step = self.step.unwrap_or_else(|| self.kind.step());
@@ -189,7 +190,7 @@ impl<'a> NumField<'a> {
         let focused = ui.memory(|m| m.has_focus(focused_id));
         let (bg, fg, border) =
             if focused { (Color32::WHITE, Color32::from_gray(20), Color32::from_rgb(0x45, 0xa0, 0xf5)) } else { (t.input, t.text, t.field_border) };
-        let fg = if self.enabled { fg } else { t.text_disabled };
+        let fg = if enabled { fg } else { t.text_disabled };
         // Spinner segment.
         if self.spinner {
             let seg = Rect::from_min_size(rect.min, vec2(SEG_W, FIELD_H));
@@ -198,28 +199,24 @@ impl<'a> NumField<'a> {
             let up = Rect::from_min_max(seg.min, pos2(seg.max.x, seg.center().y));
             let down = Rect::from_min_max(pos2(seg.min.x, seg.center().y), seg.max);
             for (r, dir) in [(up, 1.0), (down, -1.0)] {
-                let resp = ui.interact(r, key.with(("spin", dir as i32)), if self.enabled { Sense::click() } else { Sense::hover() });
-                if resp.hovered() && self.enabled {
+                let resp = ui.interact(r, key.with(("spin", dir as i32)), if enabled { Sense::click() } else { Sense::hover() });
+                if resp.hovered() && enabled {
                     ui.painter().rect_filled(r.shrink(1.0), 0.0, t.hover);
                 }
                 let c = r.center();
                 let (a, b) = if dir > 0.0 { (2.5, -1.5) } else { (-2.5, 1.5) };
                 ui.painter().line_segment(
                     [pos2(c.x - 4.0, c.y + a * 0.6), pos2(c.x, c.y + b)],
-                    Stroke::new(1.0, if self.enabled { t.icon } else { t.text_disabled }),
+                    Stroke::new(1.0, if enabled { t.icon } else { t.text_disabled }),
                 );
                 ui.painter().line_segment(
                     [pos2(c.x, c.y + b), pos2(c.x + 4.0, c.y + a * 0.6)],
-                    Stroke::new(1.0, if self.enabled { t.icon } else { t.text_disabled }),
+                    Stroke::new(1.0, if enabled { t.icon } else { t.text_disabled }),
                 );
                 // The two spinner halves are real inputs: name them for screen readers and strict
                 // accessibility checks, which would otherwise see unnamed clickable nodes.
                 resp.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::Role::Button,
-                        self.enabled,
-                        format!("{} {}", if dir > 0.0 { "Increase" } else { "Decrease" }, name),
-                    )
+                    egui::WidgetInfo::labeled(egui::Role::Button, enabled, format!("{} {}", if dir > 0.0 { "Increase" } else { "Decrease" }, name))
                 });
                 if resp.clicked() {
                     let mul = if ui.input(|i| i.modifiers.shift) { 10.0 } else { 1.0 };
@@ -232,10 +229,10 @@ impl<'a> NumField<'a> {
         if !self.presets.is_empty() {
             let seg = Rect::from_min_max(pos2(rect.max.x - SEG_W, rect.min.y), rect.max);
             text_rect.max.x = seg.min.x;
-            let resp = ui.interact(seg, key.with("presets"), if self.enabled { Sense::click() } else { Sense::hover() });
-            ui.painter().rect_filled(seg, 0.0, if resp.hovered() && self.enabled { t.hover } else { t.input });
-            chevron_down(ui.painter(), seg.center(), if self.enabled { t.icon } else { t.text_disabled });
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, self.enabled, format!("{name} presets")));
+            let resp = ui.interact(seg, key.with("presets"), if enabled { Sense::click() } else { Sense::hover() });
+            ui.painter().rect_filled(seg, 0.0, if resp.hovered() && enabled { t.hover } else { t.input });
+            chevron_down(ui.painter(), seg.center(), if enabled { t.icon } else { t.text_disabled });
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, format!("{name} presets")));
             preset_resp = Some(resp);
         }
         // Value.
@@ -256,7 +253,7 @@ impl<'a> NumField<'a> {
         let value_rect = Rect::from_min_max(text_rect.min + vec2(5.0, 1.0), text_rect.max - vec2(1.0, 1.0));
         let mut editor_ui = ui.new_child(egui::UiBuilder::new().max_rect(value_rect));
         editor_ui.set_clip_rect(editor_ui.clip_rect().intersect(text_rect));
-        if !self.enabled {
+        if !enabled {
             editor_ui.disable();
         }
         let r = editor_ui.put(value_rect, te).accessible_name(name);
@@ -311,7 +308,7 @@ impl<'a> NumField<'a> {
             p.line_segment([pos2(rect.max.x - SEG_W, rect.min.y), pos2(rect.max.x - SEG_W, rect.max.y)], Stroke::new(1.0, t.field_border));
         }
         if let Some(resp) = preset_resp
-            && self.enabled
+            && enabled
         {
             egui::Popup::menu(&resp).show(|ui| {
                 ui.set_min_width(self.width);
@@ -852,6 +849,38 @@ mod tests {
         h.get_by_label("Opacity presets").click();
         h.run_steps(3);
         assert!(!egui::Popup::is_any_open(&h.ctx), "a disabled preset button must not open its menu");
+        h.check_accessibility();
+    }
+
+    #[test]
+    fn numeric_controls_inherit_a_disabled_parents_state() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        const PRESETS: &[f64] = &[0.0, 50.0, 100.0];
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(420.0, 240.0)).build_ui(|ui| {
+            ui.disable();
+            let _ = NumField::number("Opacity", Some(50.0), "%", 0).spinner().presets(PRESETS).show(ui);
+        });
+        h.ctx.all_styles_mut(|style| style.debug.show_interactive_widgets = true);
+        h.run_steps(2);
+        let metadata_enabled = |label: &str| {
+            h.ctx.viewport(|viewport| {
+                let rects = &viewport.prev_pass.widgets;
+                rects
+                    .layers()
+                    .flat_map(|(_, widgets)| widgets)
+                    .filter_map(|widget| rects.info(widget.id))
+                    .find(|info| info.label.as_deref() == Some(label))
+                    .map(|info| info.enabled)
+            })
+        };
+        for label in ["Increase Opacity", "Decrease Opacity", "Opacity presets"] {
+            assert!(h.get_by_label(label).accesskit_node().is_disabled(), "{label} reports the disabled parent");
+            assert_eq!(metadata_enabled(label), Some(false), "{label} metadata reports the disabled parent");
+        }
+        h.get_by_label("Opacity presets").click();
+        h.run_steps(3);
+        assert!(!egui::Popup::is_any_open(&h.ctx), "a preset in a disabled parent must not open its menu");
         h.check_accessibility();
     }
 

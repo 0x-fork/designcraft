@@ -339,197 +339,233 @@ impl<'a> Parser<'a> {
         let mut value = Node::Group(Vec::new());
         while let Some(next) = work.pop() {
             match next {
-                ParseWork::List { end, depth } => {
-                    if depth >= MAX_NESTING {
-                        value = Node::Group(Vec::new());
-                    } else {
-                        work.push(ParseWork::Sequence { kind: SequenceKind::List(end), depth: depth + 1, out: Vec::new() });
-                    }
-                }
-                ParseWork::Sequence { kind, depth, mut out } => {
-                    self.skip_ws();
-                    let Some(c) = self.peek() else {
-                        value = Node::Group(out);
-                        continue;
-                    };
-                    if let SequenceKind::List(Some(end)) = kind
-                        && c == end
-                    {
-                        self.i += 1;
-                        value = Node::Group(out);
-                        continue;
-                    }
-                    if matches!(kind, SequenceKind::Fence)
-                        && self.s.get(self.i..).is_some_and(|s| s.starts_with(&['\\', 'r', 'i', 'g', 'h', 't']))
-                        && !self.s.get(self.i + 6).is_some_and(char::is_ascii_alphabetic)
-                    {
-                        self.i += 6;
-                        value = Node::Group(out);
-                        continue;
-                    }
-                    if (c == '^' || c == '_') && !matches!(kind, SequenceKind::Fence) {
-                        self.i += 1;
-                        work.push(ParseWork::Script { kind, depth, out, up: c == '^' });
-                        work.push(ParseWork::Arg { depth });
-                    } else if matches!(kind, SequenceKind::One) {
-                        value = Node::Group(out);
-                    } else {
-                        let group = matches!(kind, SequenceKind::Fence);
-                        work.push(ParseWork::Append { kind, depth, out: std::mem::take(&mut out), group });
-                        work.push(if group { ParseWork::One { depth: depth + 1 } } else { ParseWork::Atom { depth } });
-                    }
-                }
-                ParseWork::Append { kind, depth, mut out, group } => {
-                    if group {
-                        if let Node::Group(nodes) = &mut value {
-                            out.append(nodes);
-                        }
-                    } else {
-                        out.push(std::mem::replace(&mut value, Node::Group(Vec::new())));
-                    }
-                    work.push(ParseWork::Sequence { kind, depth, out });
-                }
-                ParseWork::Arg { depth } => {
-                    if depth >= MAX_NESTING {
-                        value = Node::Group(Vec::new());
-                        continue;
-                    }
-                    self.skip_ws();
-                    if self.peek() == Some('{') {
-                        self.i += 1;
-                        work.push(ParseWork::List { end: Some('}'), depth: depth + 1 });
-                    } else {
-                        work.push(ParseWork::Atom { depth: depth + 1 });
-                    }
-                }
-                ParseWork::Script { kind, depth, mut out, up } => {
-                    let argument = std::mem::replace(&mut value, Node::Group(Vec::new()));
-                    let base = out.pop().unwrap_or(Node::Group(Vec::new()));
-                    out.push(attach_script(base, argument, up));
-                    work.push(ParseWork::Sequence { kind, depth, out });
-                }
-                ParseWork::FractionNumerator { depth } => {
-                    let numerator = std::mem::replace(&mut value, Node::Group(Vec::new()));
-                    work.push(ParseWork::FractionDenominator { numerator });
-                    work.push(ParseWork::Arg { depth });
-                }
-                ParseWork::FractionDenominator { numerator } => {
-                    value = Node::Frac(Box::new(numerator), Box::new(std::mem::replace(&mut value, Node::Group(Vec::new()))));
-                }
-                ParseWork::SqrtIndex { outer, depth } => {
-                    *self = outer;
-                    let index = Some(Box::new(std::mem::replace(&mut value, Node::Group(Vec::new()))));
-                    work.push(ParseWork::SqrtArgument { index });
-                    work.push(ParseWork::Arg { depth });
-                }
-                ParseWork::SqrtArgument { index } => {
-                    value = Node::Sqrt(index, Box::new(std::mem::replace(&mut value, Node::Group(Vec::new()))));
-                }
-                ParseWork::Fence { open } => {
-                    let close = self.delimiter();
-                    value = Node::Fenced(open, Box::new(std::mem::replace(&mut value, Node::Group(Vec::new()))), close);
-                }
-                ParseWork::UntilRight { depth } => {
-                    if depth >= MAX_NESTING {
-                        value = Node::Group(Vec::new());
-                    } else {
-                        work.push(ParseWork::Sequence { kind: SequenceKind::Fence, depth, out: Vec::new() });
-                    }
-                }
-                ParseWork::One { depth } => {
-                    work.push(ParseWork::OneAtom { depth });
-                    work.push(ParseWork::Atom { depth });
-                }
-                ParseWork::OneAtom { depth } => {
-                    let out = vec![std::mem::replace(&mut value, Node::Group(Vec::new()))];
-                    work.push(ParseWork::Sequence { kind: SequenceKind::One, depth, out });
-                }
-                ParseWork::Atom { depth } => {
-                    self.skip_ws();
-                    let Some(c) = self.peek() else {
-                        value = Node::Group(Vec::new());
-                        continue;
-                    };
-                    self.i += 1;
-                    match c {
-                        '{' => work.push(ParseWork::List { end: Some('}'), depth }),
-                        '\\' => {
-                            let name = self.command();
-                            match name.as_str() {
-                                "frac" | "dfrac" | "tfrac" => {
-                                    work.push(ParseWork::FractionNumerator { depth });
-                                    work.push(ParseWork::Arg { depth });
-                                }
-                                "sqrt" => {
-                                    self.skip_ws();
-                                    if self.peek() == Some('[') {
-                                        self.i += 1;
-                                        let start = self.i;
-                                        let mut end = start;
-                                        // Keep the existing first-']' index grammar, including EOF.
-                                        while let Some(c) = self.peek() {
-                                            self.i += 1;
-                                            if c == ']' {
-                                                break;
-                                            }
-                                            end = self.i;
-                                        }
-                                        let inner = self.s.get(start..end).unwrap_or_default();
-                                        let outer = std::mem::replace(self, Parser { s: inner, i: 0 });
-                                        work.push(ParseWork::SqrtIndex { outer, depth });
-                                        work.push(ParseWork::List { end: None, depth: depth + 1 });
-                                    } else {
-                                        work.push(ParseWork::SqrtArgument { index: None });
-                                        work.push(ParseWork::Arg { depth });
-                                    }
-                                }
-                                "left" => {
-                                    let open = self.delimiter();
-                                    work.push(ParseWork::Fence { open });
-                                    work.push(ParseWork::UntilRight { depth });
-                                }
-                                "text" | "mathrm" | "textrm" | "operatorname" => value = Node::Text(self.raw_group()),
-                                "sin" | "cos" | "tan" | "log" | "ln" | "exp" | "lim" | "max" | "min" => value = Node::Text(name),
-                                "," => value = Node::Space(3.0 / 18.0),
-                                ":" | ">" => value = Node::Space(4.0 / 18.0),
-                                ";" => value = Node::Space(5.0 / 18.0),
-                                "quad" => value = Node::Space(1.0),
-                                "qquad" => value = Node::Space(2.0),
-                                "!" => value = Node::Space(-3.0 / 18.0),
-                                " " => value = Node::Space(0.25),
-                                "{" => value = Node::Sym("{".into(), Class::Punct),
-                                "}" => value = Node::Sym("}".into(), Class::Punct),
-                                "%" | "$" | "#" | "&" | "_" => value = Node::Sym(name, Class::Plain),
-                                n => {
-                                    value = match (big_op(n), symbol(n)) {
-                                        (Some(op), _) => Node::Big(op.into()),
-                                        (None, Some((s, cl))) => Node::Sym(s.into(), cl),
-                                        _ => Node::Text(format!("\\{n}")),
-                                    }
-                                }
-                            }
-                        }
-                        c if c.is_ascii_digit() || c == '.' => {
-                            let mut s = c.to_string();
-                            while let Some(d) = self.peek().filter(|d| d.is_ascii_digit() || *d == '.') {
-                                s.push(d);
-                                self.i += 1;
-                            }
-                            value = Node::Sym(s, Class::Number);
-                        }
-                        c if c.is_alphabetic() => value = Node::Sym(c.to_string(), Class::Ident),
-                        '+' => value = Node::Sym("+".into(), Class::Bin),
-                        '-' => value = Node::Sym("−".into(), Class::Bin),
-                        '*' => value = Node::Sym("∗".into(), Class::Bin),
-                        '<'..='>' => value = Node::Sym(c.to_string(), Class::Rel),
-                        ',' | ';' => value = Node::Sym(c.to_string(), Class::Punct),
-                        '\'' => value = Node::Sym("′".into(), Class::Plain),
-                        c => value = Node::Sym(c.to_string(), Class::Plain),
-                    }
-                }
+                ParseWork::List { end, depth } => Self::step_list(&mut work, &mut value, end, depth),
+                ParseWork::Sequence { kind, depth, out } => self.step_sequence(&mut work, &mut value, kind, depth, out),
+                ParseWork::Append { kind, depth, out, group } => Self::step_append(&mut work, &mut value, kind, depth, out, group),
+                ParseWork::Arg { depth } => self.step_arg(&mut work, &mut value, depth),
+                ParseWork::Atom { depth } => self.step_atom(&mut work, &mut value, depth),
+                ParseWork::Script { kind, depth, out, up } => Self::step_script(&mut work, &mut value, kind, depth, out, up),
+                ParseWork::FractionNumerator { depth } => Self::step_fraction_numerator(&mut work, &mut value, depth),
+                ParseWork::FractionDenominator { numerator } => Self::step_fraction_denominator(&mut value, numerator),
+                ParseWork::SqrtIndex { outer, depth } => self.step_sqrt_index(&mut work, &mut value, outer, depth),
+                ParseWork::SqrtArgument { index } => Self::step_sqrt_argument(&mut value, index),
+                ParseWork::Fence { open } => self.step_fence(&mut value, open),
+                ParseWork::UntilRight { depth } => Self::step_until_right(&mut work, &mut value, depth),
+                ParseWork::One { depth } => Self::step_one(&mut work, depth),
+                ParseWork::OneAtom { depth } => Self::step_one_atom(&mut work, &mut value, depth),
             }
         }
         value
+    }
+
+    fn step_list(work: &mut Vec<ParseWork<'a>>, value: &mut Node, end: Option<char>, depth: usize) {
+        if depth >= MAX_NESTING {
+            *value = Node::Group(Vec::new());
+        } else {
+            work.push(ParseWork::Sequence { kind: SequenceKind::List(end), depth: depth + 1, out: Vec::new() });
+        }
+    }
+
+    fn step_sequence(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, kind: SequenceKind, depth: usize, mut out: Vec<Node>) {
+        self.skip_ws();
+        let Some(c) = self.peek() else {
+            *value = Node::Group(out);
+            return;
+        };
+        if let SequenceKind::List(Some(end)) = kind
+            && c == end
+        {
+            self.i += 1;
+            *value = Node::Group(out);
+            return;
+        }
+        if matches!(kind, SequenceKind::Fence)
+            && self.s.get(self.i..).is_some_and(|s| s.starts_with(&['\\', 'r', 'i', 'g', 'h', 't']))
+            && !self.s.get(self.i + 6).is_some_and(char::is_ascii_alphabetic)
+        {
+            self.i += 6;
+            *value = Node::Group(out);
+            return;
+        }
+        if (c == '^' || c == '_') && !matches!(kind, SequenceKind::Fence) {
+            self.i += 1;
+            work.push(ParseWork::Script { kind, depth, out, up: c == '^' });
+            work.push(ParseWork::Arg { depth });
+        } else if matches!(kind, SequenceKind::One) {
+            *value = Node::Group(out);
+        } else {
+            let group = matches!(kind, SequenceKind::Fence);
+            work.push(ParseWork::Append { kind, depth, out: std::mem::take(&mut out), group });
+            work.push(if group { ParseWork::One { depth: depth + 1 } } else { ParseWork::Atom { depth } });
+        }
+    }
+
+    fn step_append(work: &mut Vec<ParseWork<'a>>, value: &mut Node, kind: SequenceKind, depth: usize, mut out: Vec<Node>, group: bool) {
+        if group {
+            if let Node::Group(nodes) = &mut *value {
+                out.append(nodes);
+            }
+        } else {
+            out.push(std::mem::replace(value, Node::Group(Vec::new())));
+        }
+        work.push(ParseWork::Sequence { kind, depth, out });
+    }
+
+    fn step_arg(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
+        if depth >= MAX_NESTING {
+            *value = Node::Group(Vec::new());
+            return;
+        }
+        self.skip_ws();
+        if self.peek() == Some('{') {
+            self.i += 1;
+            work.push(ParseWork::List { end: Some('}'), depth: depth + 1 });
+        } else {
+            work.push(ParseWork::Atom { depth: depth + 1 });
+        }
+    }
+
+    fn step_script(work: &mut Vec<ParseWork<'a>>, value: &mut Node, kind: SequenceKind, depth: usize, mut out: Vec<Node>, up: bool) {
+        let argument = std::mem::replace(value, Node::Group(Vec::new()));
+        let base = out.pop().unwrap_or(Node::Group(Vec::new()));
+        out.push(attach_script(base, argument, up));
+        work.push(ParseWork::Sequence { kind, depth, out });
+    }
+
+    fn step_fraction_numerator(work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
+        let numerator = std::mem::replace(value, Node::Group(Vec::new()));
+        work.push(ParseWork::FractionDenominator { numerator });
+        work.push(ParseWork::Arg { depth });
+    }
+
+    fn step_fraction_denominator(value: &mut Node, numerator: Node) {
+        *value = Node::Frac(Box::new(numerator), Box::new(std::mem::replace(value, Node::Group(Vec::new()))));
+    }
+
+    fn step_sqrt_index(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, outer: Parser<'a>, depth: usize) {
+        *self = outer;
+        let index = Some(Box::new(std::mem::replace(value, Node::Group(Vec::new()))));
+        work.push(ParseWork::SqrtArgument { index });
+        work.push(ParseWork::Arg { depth });
+    }
+
+    fn step_sqrt_argument(value: &mut Node, index: Option<Box<Node>>) {
+        *value = Node::Sqrt(index, Box::new(std::mem::replace(value, Node::Group(Vec::new()))));
+    }
+
+    fn step_fence(&mut self, value: &mut Node, open: String) {
+        let close = self.delimiter();
+        *value = Node::Fenced(open, Box::new(std::mem::replace(value, Node::Group(Vec::new()))), close);
+    }
+
+    fn step_until_right(work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
+        if depth >= MAX_NESTING {
+            *value = Node::Group(Vec::new());
+        } else {
+            work.push(ParseWork::Sequence { kind: SequenceKind::Fence, depth, out: Vec::new() });
+        }
+    }
+
+    fn step_one(work: &mut Vec<ParseWork<'a>>, depth: usize) {
+        work.push(ParseWork::OneAtom { depth });
+        work.push(ParseWork::Atom { depth });
+    }
+
+    fn step_one_atom(work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
+        let out = vec![std::mem::replace(value, Node::Group(Vec::new()))];
+        work.push(ParseWork::Sequence { kind: SequenceKind::One, depth, out });
+    }
+
+    fn step_atom(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
+        self.skip_ws();
+        let Some(c) = self.peek() else {
+            *value = Node::Group(Vec::new());
+            return;
+        };
+        self.i += 1;
+        match c {
+            '{' => work.push(ParseWork::List { end: Some('}'), depth }),
+            '\\' => self.step_command(work, value, depth),
+            c if c.is_ascii_digit() || c == '.' => {
+                let mut s = c.to_string();
+                while let Some(d) = self.peek().filter(|d| d.is_ascii_digit() || *d == '.') {
+                    s.push(d);
+                    self.i += 1;
+                }
+                *value = Node::Sym(s, Class::Number);
+            }
+            c if c.is_alphabetic() => *value = Node::Sym(c.to_string(), Class::Ident),
+            '+' => *value = Node::Sym("+".into(), Class::Bin),
+            '-' => *value = Node::Sym("−".into(), Class::Bin),
+            '*' => *value = Node::Sym("∗".into(), Class::Bin),
+            '<'..='>' => *value = Node::Sym(c.to_string(), Class::Rel),
+            ',' | ';' => *value = Node::Sym(c.to_string(), Class::Punct),
+            '\'' => *value = Node::Sym("′".into(), Class::Plain),
+            c => *value = Node::Sym(c.to_string(), Class::Plain),
+        }
+    }
+
+    fn step_command(&mut self, work: &mut Vec<ParseWork<'a>>, value: &mut Node, depth: usize) {
+        let name = self.command();
+        match name.as_str() {
+            "frac" | "dfrac" | "tfrac" => {
+                work.push(ParseWork::FractionNumerator { depth });
+                work.push(ParseWork::Arg { depth });
+            }
+            "sqrt" => self.push_sqrt(work, depth),
+            "left" => {
+                let open = self.delimiter();
+                work.push(ParseWork::Fence { open });
+                work.push(ParseWork::UntilRight { depth });
+            }
+            "text" | "mathrm" | "textrm" | "operatorname" => *value = Node::Text(self.raw_group()),
+            n => *value = command_atom(n),
+        }
+    }
+
+    fn push_sqrt(&mut self, work: &mut Vec<ParseWork<'a>>, depth: usize) {
+        self.skip_ws();
+        if self.peek() == Some('[') {
+            self.i += 1;
+            let start = self.i;
+            let mut end = start;
+            // Keep the existing first-']' index grammar, including EOF.
+            while let Some(c) = self.peek() {
+                self.i += 1;
+                if c == ']' {
+                    break;
+                }
+                end = self.i;
+            }
+            let inner = self.s.get(start..end).unwrap_or_default();
+            let outer = std::mem::replace(self, Parser { s: inner, i: 0 });
+            work.push(ParseWork::SqrtIndex { outer, depth });
+            work.push(ParseWork::List { end: None, depth: depth + 1 });
+        } else {
+            work.push(ParseWork::SqrtArgument { index: None });
+            work.push(ParseWork::Arg { depth });
+        }
+    }
+}
+
+fn command_atom(name: &str) -> Node {
+    match name {
+        "sin" | "cos" | "tan" | "log" | "ln" | "exp" | "lim" | "max" | "min" => Node::Text(name.to_owned()),
+        "," => Node::Space(3.0 / 18.0),
+        ":" | ">" => Node::Space(4.0 / 18.0),
+        ";" => Node::Space(5.0 / 18.0),
+        "quad" => Node::Space(1.0),
+        "qquad" => Node::Space(2.0),
+        "!" => Node::Space(-3.0 / 18.0),
+        " " => Node::Space(0.25),
+        "{" => Node::Sym("{".into(), Class::Punct),
+        "}" => Node::Sym("}".into(), Class::Punct),
+        "%" | "$" | "#" | "&" | "_" => Node::Sym(name.to_owned(), Class::Plain),
+        n => match (big_op(n), symbol(n)) {
+            (Some(op), _) => Node::Big(op.into()),
+            (None, Some((s, cl))) => Node::Sym(s.into(), cl),
+            _ => Node::Text(format!("\\{n}")),
+        },
     }
 }
 
@@ -889,173 +925,185 @@ mod tests {
 
     // Frozen pre-repair arithmetic; called only for shallow fixtures, never deep input.
     fn recursive_layout_reference(f: &Fonts, n: &Node, size: f64) -> MBox {
-        let axis = size * 0.25;
         match n {
             Node::Sym(s, cl) => text_box(f, s, size, *cl == Class::Ident),
             Node::Text(s) => text_box(f, s, size, false),
             Node::Space(em) => MBox { w: em * size, ..Default::default() },
-            Node::Group(list) => {
-                let mut parts = Vec::new();
-                let mut prev: Option<Class> = None;
-                for (k, item) in list.iter().enumerate() {
-                    let cl = match item {
-                        Node::Sym(_, c) => Some(*c),
-                        Node::Scripts { base, .. } => match &**base {
-                            Node::Sym(_, c) => Some(*c),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    // A leading + or − (or after another operator) is a sign, not a binary operator.
-                    let cl = if cl == Some(Class::Bin) && (k == 0 || matches!(prev, Some(Class::Bin | Class::Rel | Class::Punct))) {
-                        Some(Class::Plain)
-                    } else {
-                        cl
-                    };
-                    let gap = |c: Option<Class>| match c {
-                        Some(Class::Bin) => size * 4.0 / 18.0,
-                        Some(Class::Rel) => size * 5.0 / 18.0,
-                        _ => 0.0,
-                    };
-                    let mut before = gap(cl).max(gap(prev));
-                    if k == 0 {
-                        before = 0.0;
-                    }
-                    if prev == Some(Class::Punct) {
-                        before = before.max(size * 3.0 / 18.0);
-                    }
-                    parts.push((recursive_layout_reference(f, item, size), before));
-                    prev = cl;
-                }
-                hbox(parts)
+            Node::Group(list) => recursive_group_reference(f, list, size),
+            Node::Frac(a, b) => recursive_fraction_reference(f, a, b, size),
+            Node::Sqrt(idx, a) => recursive_sqrt_reference(f, idx, a, size),
+            Node::Big(op) => recursive_big_reference(f, op, size),
+            Node::Scripts { base, sup, sub } => recursive_scripts_reference(f, base, sup, sub, size),
+            Node::Fenced(open, body, close) => recursive_fenced_reference(f, open, body, close, size),
+        }
+    }
+
+    fn recursive_group_reference(f: &Fonts, list: &[Node], size: f64) -> MBox {
+        let mut parts = Vec::new();
+        let mut prev: Option<Class> = None;
+        for (k, item) in list.iter().enumerate() {
+            let cl = match item {
+                Node::Sym(_, c) => Some(*c),
+                Node::Scripts { base, .. } => match &**base {
+                    Node::Sym(_, c) => Some(*c),
+                    _ => None,
+                },
+                _ => None,
+            };
+            // A leading + or − (or after another operator) is a sign, not a binary operator.
+            let cl = if cl == Some(Class::Bin) && (k == 0 || matches!(prev, Some(Class::Bin | Class::Rel | Class::Punct))) {
+                Some(Class::Plain)
+            } else {
+                cl
+            };
+            let gap = |c: Option<Class>| match c {
+                Some(Class::Bin) => size * 4.0 / 18.0,
+                Some(Class::Rel) => size * 5.0 / 18.0,
+                _ => 0.0,
+            };
+            let mut before = gap(cl).max(gap(prev));
+            if k == 0 {
+                before = 0.0;
             }
-            Node::Frac(a, b) => {
-                let s2 = size * 0.85;
-                let (na, nb) = (recursive_layout_reference(f, a, s2), recursive_layout_reference(f, b, s2));
-                let w = na.w.max(nb.w) + size * 0.2;
-                let t = (size * 0.06).max(0.4);
-                let gap = size * 0.15;
-                let num_base = -(axis + t / 2.0 + gap + na.desc);
-                let den_base = -axis + t / 2.0 + gap + nb.asc;
-                let mut out = MBox { w, asc: -num_base + na.asc, desc: den_base + nb.desc, els: Vec::new() };
-                out.els.push(Elem::Rule { x: 0.0, y: -axis - t / 2.0, w, h: t });
-                let (wa, wb) = (na.w, nb.w);
-                out.els.extend(na.shifted((w - wa) / 2.0, num_base));
-                out.els.extend(nb.shifted((w - wb) / 2.0, den_base));
-                out
+            if prev == Some(Class::Punct) {
+                before = before.max(size * 3.0 / 18.0);
             }
-            Node::Sqrt(idx, a) => {
-                let inner = recursive_layout_reference(f, a, size);
-                let t = (size * 0.05).max(0.4);
-                let gap = size * 0.12;
-                let top = inner.asc + gap + t;
-                let bottom = inner.desc;
-                let hook = size * 0.55;
-                let mut out = MBox { w: hook + inner.w + size * 0.1, asc: top, desc: bottom, els: Vec::new() };
-                // The radical: a short rise, the long stroke down, then up to the bar.
-                out.els.push(Elem::Line {
-                    pts: vec![(0.0, -axis * 0.6), (hook * 0.25, -axis), (hook * 0.55, bottom), (hook, -top + t / 2.0), (out.w, -top + t / 2.0)],
-                    w: t,
-                });
-                let iw = inner.w;
-                let _ = iw;
-                out.els.extend(inner.shifted(hook, 0.0));
-                if let Some(i) = idx {
-                    let ib = recursive_layout_reference(f, i, size * 0.55);
-                    let (ia, iw2) = (ib.asc, ib.w);
-                    out.els.extend(ib.shifted((hook * 0.3 - iw2).max(0.0) - 0.0, -axis - size * 0.1));
-                    out.asc = out.asc.max(axis + size * 0.1 + ia);
-                }
-                out
-            }
-            Node::Big(op) => {
-                let mut b = text_box(f, op, size * 1.5, false);
-                b.asc = size * 1.05;
-                b.desc = size * 0.35;
-                for e in &mut b.els {
-                    if let Elem::Text { y, .. } = e {
-                        // Centre the glyph on the math axis.
-                        *y = size * 0.32;
-                    }
-                }
-                b
-            }
-            Node::Scripts { base, sup, sub } => {
-                let big = matches!(&**base, Node::Big(_));
-                let b = recursive_layout_reference(f, base, size);
-                let s2 = size * 0.7;
-                let (bw, basc, bdesc) = (b.w, b.asc, b.desc);
-                let mut out = MBox { w: bw, asc: basc, desc: bdesc, els: b.els };
-                if big {
-                    // Limits above and below.
-                    let mut w = bw;
-                    if let Some(sp) = sup {
-                        let sb = recursive_layout_reference(f, sp, s2);
-                        let y = -basc - size * 0.1 - sb.desc;
-                        w = w.max(sb.w);
-                        let (sw, sa) = (sb.w, sb.asc);
-                        out.els.extend(sb.shifted((bw - sw) / 2.0, y));
-                        out.asc = out.asc.max(-y + sa);
-                    }
-                    if let Some(sbn) = sub {
-                        let sb = recursive_layout_reference(f, sbn, s2);
-                        let y = bdesc + size * 0.1 + sb.asc;
-                        w = w.max(sb.w);
-                        let (sw, sd) = (sb.w, sb.desc);
-                        out.els.extend(sb.shifted((bw - sw) / 2.0, y));
-                        out.desc = out.desc.max(y + sd);
-                    }
-                    // Centre the operator over the widest limit.
-                    let dx = (w - bw) / 2.0;
-                    let els = std::mem::take(&mut out.els);
-                    out = MBox { w, asc: out.asc, desc: out.desc, els: MBox { els, ..Default::default() }.shifted(dx, 0.0) };
-                    return out;
-                }
-                let mut w = bw;
-                if let Some(sp) = sup {
-                    let sb = recursive_layout_reference(f, sp, s2);
-                    let y = -(size * 0.42).max(basc - sb.asc * 0.6);
-                    w = w.max(bw + sb.w + size * 0.05);
-                    let sa = sb.asc;
-                    out.els.extend(sb.shifted(bw + size * 0.05, y));
-                    out.asc = out.asc.max(-y + sa);
-                }
-                if let Some(sbn) = sub {
-                    let sb = recursive_layout_reference(f, sbn, s2);
-                    let y = (size * 0.2).max(bdesc * 0.8);
-                    w = w.max(bw + sb.w + size * 0.05);
-                    let sd = sb.desc;
-                    out.els.extend(sb.shifted(bw + size * 0.05, y));
-                    out.desc = out.desc.max(y + sd);
-                }
-                out.w = w;
-                out
-            }
-            Node::Fenced(open, body, close) => {
-                let inner = recursive_layout_reference(f, body, size);
-                let h = (inner.asc + inner.desc).max(size);
-                let k = h / size;
-                let ds = size * k.max(1.0);
-                let mk = |s: &str| -> MBox {
-                    if s.is_empty() {
-                        return MBox::default();
-                    }
-                    let mut b = text_box(f, s, ds, false);
-                    // Scaled delimiters centred on the content.
-                    let mid = (inner.desc - inner.asc) / 2.0;
-                    for e in &mut b.els {
-                        if let Elem::Text { y, .. } = e {
-                            *y = mid + ds * 0.25;
-                        }
-                    }
-                    b.asc = inner.asc.max(size * 0.72);
-                    b.desc = inner.desc.max(size * 0.22);
-                    b
-                };
-                let (l, r) = (mk(open), mk(close));
-                hbox(vec![(l, 0.0), (inner, size * 0.05), (r, size * 0.05)])
+            parts.push((recursive_layout_reference(f, item, size), before));
+            prev = cl;
+        }
+        hbox(parts)
+    }
+
+    fn recursive_fraction_reference(f: &Fonts, a: &Node, b: &Node, size: f64) -> MBox {
+        let axis = size * 0.25;
+        let s2 = size * 0.85;
+        let (na, nb) = (recursive_layout_reference(f, a, s2), recursive_layout_reference(f, b, s2));
+        let w = na.w.max(nb.w) + size * 0.2;
+        let t = (size * 0.06).max(0.4);
+        let gap = size * 0.15;
+        let num_base = -(axis + t / 2.0 + gap + na.desc);
+        let den_base = -axis + t / 2.0 + gap + nb.asc;
+        let mut out = MBox { w, asc: -num_base + na.asc, desc: den_base + nb.desc, els: Vec::new() };
+        out.els.push(Elem::Rule { x: 0.0, y: -axis - t / 2.0, w, h: t });
+        let (wa, wb) = (na.w, nb.w);
+        out.els.extend(na.shifted((w - wa) / 2.0, num_base));
+        out.els.extend(nb.shifted((w - wb) / 2.0, den_base));
+        out
+    }
+
+    fn recursive_sqrt_reference(f: &Fonts, idx: &Option<Box<Node>>, a: &Node, size: f64) -> MBox {
+        let axis = size * 0.25;
+        let inner = recursive_layout_reference(f, a, size);
+        let t = (size * 0.05).max(0.4);
+        let gap = size * 0.12;
+        let top = inner.asc + gap + t;
+        let bottom = inner.desc;
+        let hook = size * 0.55;
+        let mut out = MBox { w: hook + inner.w + size * 0.1, asc: top, desc: bottom, els: Vec::new() };
+        // The radical: a short rise, the long stroke down, then up to the bar.
+        out.els.push(Elem::Line {
+            pts: vec![(0.0, -axis * 0.6), (hook * 0.25, -axis), (hook * 0.55, bottom), (hook, -top + t / 2.0), (out.w, -top + t / 2.0)],
+            w: t,
+        });
+        let iw = inner.w;
+        let _ = iw;
+        out.els.extend(inner.shifted(hook, 0.0));
+        if let Some(i) = idx {
+            let ib = recursive_layout_reference(f, i, size * 0.55);
+            let (ia, iw2) = (ib.asc, ib.w);
+            out.els.extend(ib.shifted((hook * 0.3 - iw2).max(0.0) - 0.0, -axis - size * 0.1));
+            out.asc = out.asc.max(axis + size * 0.1 + ia);
+        }
+        out
+    }
+
+    fn recursive_big_reference(f: &Fonts, op: &str, size: f64) -> MBox {
+        let mut b = text_box(f, op, size * 1.5, false);
+        b.asc = size * 1.05;
+        b.desc = size * 0.35;
+        for e in &mut b.els {
+            if let Elem::Text { y, .. } = e {
+                // Centre the glyph on the math axis.
+                *y = size * 0.32;
             }
         }
+        b
+    }
+
+    fn recursive_scripts_reference(f: &Fonts, base: &Node, sup: &Option<Box<Node>>, sub: &Option<Box<Node>>, size: f64) -> MBox {
+        let big = matches!(base, Node::Big(_));
+        let b = recursive_layout_reference(f, base, size);
+        let s2 = size * 0.7;
+        let (bw, basc, bdesc) = (b.w, b.asc, b.desc);
+        let mut out = MBox { w: bw, asc: basc, desc: bdesc, els: b.els };
+        if big {
+            // Limits above and below.
+            let mut w = bw;
+            if let Some(sp) = sup {
+                let sb = recursive_layout_reference(f, sp, s2);
+                let y = -basc - size * 0.1 - sb.desc;
+                w = w.max(sb.w);
+                let (sw, sa) = (sb.w, sb.asc);
+                out.els.extend(sb.shifted((bw - sw) / 2.0, y));
+                out.asc = out.asc.max(-y + sa);
+            }
+            if let Some(sbn) = sub {
+                let sb = recursive_layout_reference(f, sbn, s2);
+                let y = bdesc + size * 0.1 + sb.asc;
+                w = w.max(sb.w);
+                let (sw, sd) = (sb.w, sb.desc);
+                out.els.extend(sb.shifted((bw - sw) / 2.0, y));
+                out.desc = out.desc.max(y + sd);
+            }
+            // Centre the operator over the widest limit.
+            let dx = (w - bw) / 2.0;
+            let els = std::mem::take(&mut out.els);
+            return MBox { w, asc: out.asc, desc: out.desc, els: MBox { els, ..Default::default() }.shifted(dx, 0.0) };
+        }
+        let mut w = bw;
+        if let Some(sp) = sup {
+            let sb = recursive_layout_reference(f, sp, s2);
+            let y = -(size * 0.42).max(basc - sb.asc * 0.6);
+            w = w.max(bw + sb.w + size * 0.05);
+            let sa = sb.asc;
+            out.els.extend(sb.shifted(bw + size * 0.05, y));
+            out.asc = out.asc.max(-y + sa);
+        }
+        if let Some(sbn) = sub {
+            let sb = recursive_layout_reference(f, sbn, s2);
+            let y = (size * 0.2).max(bdesc * 0.8);
+            w = w.max(bw + sb.w + size * 0.05);
+            let sd = sb.desc;
+            out.els.extend(sb.shifted(bw + size * 0.05, y));
+            out.desc = out.desc.max(y + sd);
+        }
+        out.w = w;
+        out
+    }
+
+    fn recursive_fenced_reference(f: &Fonts, open: &str, body: &Node, close: &str, size: f64) -> MBox {
+        let inner = recursive_layout_reference(f, body, size);
+        let h = (inner.asc + inner.desc).max(size);
+        let k = h / size;
+        let ds = size * k.max(1.0);
+        let mk = |s: &str| -> MBox {
+            if s.is_empty() {
+                return MBox::default();
+            }
+            let mut b = text_box(f, s, ds, false);
+            // Scaled delimiters centred on the content.
+            let mid = (inner.desc - inner.asc) / 2.0;
+            for e in &mut b.els {
+                if let Elem::Text { y, .. } = e {
+                    *y = mid + ds * 0.25;
+                }
+            }
+            b.asc = inner.asc.max(size * 0.72);
+            b.desc = inner.desc.max(size * 0.22);
+            b
+        };
+        let (l, r) = (mk(open), mk(close));
+        hbox(vec![(l, 0.0), (inner, size * 0.05), (r, size * 0.05)])
     }
 
     #[test]

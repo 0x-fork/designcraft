@@ -368,6 +368,7 @@ mod placed_vector_tests {
 
     /// An .indd opened without its links shows each graphic's preview: the asset has data, but its
     /// file is still missing.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn a_missing_link_shown_by_its_preview_is_still_reported() {
         let dir = tempfile::tempdir().unwrap();

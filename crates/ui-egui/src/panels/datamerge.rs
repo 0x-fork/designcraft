@@ -79,10 +79,12 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                 jump = Some(shown.saturating_sub(1).max(1));
             }
             let mut rec = shown;
-            if ui.add(egui::DragValue::new(&mut rec).range(1..=max_record)).changed() {
+            let record = ui.add(egui::DragValue::new(&mut rec).range(1..=max_record));
+            if record.changed() {
                 jump = Some(rec);
             }
-            crate::rtl::label(ui, egui::RichText::new(tr(&lang, "Record")).color(t.text));
+            let label = crate::rtl::label(ui, egui::RichText::new(tr(&lang, "Record")).color(t.text));
+            record.labelled_by(label.id);
             if ui.small_button(w(ui, &lang, "Next")).clicked() {
                 jump = Some(shown.saturating_add(1).min(max_record));
             }
@@ -122,7 +124,8 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
     if options.per_page == "multiple" {
         let arrange_options = [("rows", "Rows first"), ("columns", "Columns first")];
-        if let Some(arrange) = choice(ui, "dm_arrange", &options.arrange, &arrange_options, &lang, records_name) {
+        let arrange_name = tr(&lang, "Arrangement");
+        if let Some(arrange) = choice(ui, "dm_arrange", &options.arrange, &arrange_options, &lang, arrange_name) {
             let _ = app.run("data.options", json!({"arrange": arrange}));
         }
         let labels = ["Top", "Right", "Bottom", "Left"];
@@ -130,8 +133,8 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         let mut insets_changed = false;
         for (i, label) in labels.iter().enumerate() {
             ui.horizontal(|ui| {
-                crate::rtl::label(ui, egui::RichText::new(tr(&lang, label)).color(t.text));
-                if ui.add(egui::DragValue::new(&mut insets[i]).speed(1.0)).changed() {
+                let label = crate::rtl::label(ui, egui::RichText::new(tr(&lang, label)).color(t.text));
+                if ui.add(egui::DragValue::new(&mut insets[i]).speed(1.0)).labelled_by(label.id).changed() {
                     insets_changed = true;
                 }
             });
@@ -238,4 +241,41 @@ fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
 
 fn w(ui: &egui::Ui, lang: &str, s: &str) -> egui::WidgetText {
     crate::rtl::widget(ui, tr(lang, s))
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
+
+    use super::*;
+
+    #[test]
+    fn arrangement_combo_is_accessible_and_distinct_from_the_records_combo() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("data.source.select", json!({"bytes": designcraft_engine::cmd::base64_encode(b"Name\nAda\nGrace\n"), "name": "people.csv"})).unwrap();
+        app.run("data.options", json!({"perPage": "multiple"})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(420.0, 700.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let key = egui::Id::unique("datamerge_test_fonts");
+                if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(key, true));
+                    return;
+                }
+                show(app, ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        let combos = |h: &Harness<'_, DesignApp>, label: &str| {
+            h.query_all_by_label(label).filter(|n| n.accesskit_node().role() == egui::accesskit::Role::ComboBox).count()
+        };
+        assert_eq!(combos(&h, "Merge options"), 1, "records selection keeps its name");
+        assert_eq!(combos(&h, "Arrangement"), 1, "the arrangement control has its own name");
+        h.check_accessibility();
+    }
 }

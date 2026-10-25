@@ -1454,6 +1454,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Records per page", "Записей на страницу"),
     ("Single record", "Одна запись"),
     ("Multiple records", "Несколько записей"),
+    ("Arrangement", "Расположение"),
     ("Rows first", "Сначала строки"),
     ("Columns first", "Сначала столбцы"),
     ("Column spacing", "Интервал между столбцами"),
