@@ -1,7 +1,7 @@
-use super::{DesignApp, Layout, Node, cancel_gesture, json, valid};
-use crate::panel_docking::{
-    area_id, close_visible, default_layout, dock_columns, hit_id, icon_column, in_iconic_column, layout_of, modal_open, open_window_drops,
-    panel_menu, set_iconic, showing, tab_group, tab_id, window_groups,
+use super::{
+    CANVAS, Column, DOCK_LABELS, DesignApp, Floating, ICON_GROUPS, Layout, Node, PanelContent, Placed, Side, Value, area_id, cancel_gesture,
+    close_visible, default_layout, dock_columns, hit_id, icon_column, in_iconic_column, json, layout_of, modal_open, open_window_drops, panel_menu,
+    set_iconic, showing, tab_group, tab_id, valid, window_groups,
 };
 use egui::{Event, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::{Harness, kittest::Queryable};
