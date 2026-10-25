@@ -1043,16 +1043,6 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let raise = app.ui.docking_raise.take();
     let mut blocked = Vec::new();
     let modal = modal_open(app);
-    // A modal opened from a floating panel's window (a double-click, a shortcut typed there)
-    // leaves the OS keyboard focus on that window, which takes no input while the modal is open.
-    let was_open_id = egui::Id::new("modal-was-open");
-    let was_open = ui.ctx().data(|d| d.get_temp::<bool>(was_open_id)).unwrap_or(false);
-    ui.ctx().data_mut(|d| d.insert_temp(was_open_id, modal));
-    let floats = native_viewports(app, ui.ctx());
-    let float_focused = ui.ctx().input(|i| floats.iter().any(|v| i.raw.viewports.get(v).and_then(|v| v.focused) == Some(true)));
-    if focus_main_for_modal(was_open, modal, float_focused) {
-        ui.ctx().send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-    }
     if modal || egui::Popup::is_any_open(ui.ctx()) {
         blocked.push(ui.ctx().content_rect());
     } else if crate::story_editor::visible(app) {
@@ -1115,13 +1105,6 @@ fn open_window_drops(app: &mut DesignApp, windows: &[craft_ui::docking::WindowFi
 /// windows take no input then, as the main window behind the modal doesn't.
 pub(crate) fn modal_open(app: &DesignApp) -> bool {
     app.ui.dialog.is_some() || app.ui.about || app.ui.palette.is_some()
-}
-
-/// Whether to focus the main window: on the frame a modal opens (`was_open` false, `open`
-/// true) while one of the floating panels' own windows has the keyboard. With the app in the
-/// background nothing is focused, so a modal that opens on its own doesn't pull the app forward.
-pub(crate) fn focus_main_for_modal(was_open: bool, open: bool, float_focused: bool) -> bool {
-    open && !was_open && float_focused
 }
 
 /// What the control channel reports: the layout in use (craft-ui's serialized `Layout`),
