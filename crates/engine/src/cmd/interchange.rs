@@ -53,9 +53,9 @@ pub(crate) fn has_applicable_pdf_layer_overrides(doc: &Document) -> bool {
 /// choose different layers. The live document and original linked bytes stay untouched.
 ///
 /// Parent-page and anchored placements count too, so a page that inherits the placement does not
-/// quietly fall back to the file's defaults. A choice anchored inside a table cell's or a note's
-/// text is not carried yet: this walk does not follow the stories nested there (see
-/// `docs/pdf-layer-visibility.md`).
+/// quietly fall back to the file's defaults. Choices inside table-cell and note text are found
+/// by the read walk, but the legacy update_items write pass below cannot apply their variants
+/// yet (see `docs/pdf-layer-visibility.md`).
 fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Document>> {
     let choices: Vec<_> = doc
         .placed_items()
