@@ -60,6 +60,8 @@ fn separations(s: &mut Session, p: &Value) -> Result<Value> {
         craft_prepress::Conversion::OutputIntent { profile, .. } => format!("output intent: {profile}"),
         craft_prepress::Conversion::Fallback { profile } => profile.clone(),
         craft_prepress::Conversion::DeviceFormulas => "device formulas".into(),
+        // `Conversion` is non-exhaustive; a later craft-prepress conversion reports its debug form.
+        other => format!("{other:?}"),
     };
     let pt = |x: u32, y: u32| {
         let p = sheet.to_spread(x, y);
