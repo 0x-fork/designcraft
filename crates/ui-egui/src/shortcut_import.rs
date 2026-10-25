@@ -186,7 +186,7 @@ fn foreign(set: &ParsedSet) -> ForeignSet {
             entry
         })
         .collect();
-    ForeignSet { name: Some(set.name.clone()), entries }
+    ForeignSet::new(entries).with_name(set.name.clone())
 }
 
 /// Imports a set: every matched command takes the set's shortcuts (or none, when every item
