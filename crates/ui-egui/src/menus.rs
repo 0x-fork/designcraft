@@ -348,6 +348,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         None,
         "{open?: true, tab?: \"about\"|\"contributors\"|\"models\"} — the About window: splash with community links, contributor and model credits (open: false closes it)",
     ),
+    ("help.checkForUpdates", "Check for Updates…", None, "{} — checks for newer releases and offers to update"),
     ("window.toolsDoubleColumn", "Tools: Double Column", None, "{}"),
     (
         "window.workspace",
@@ -990,6 +991,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "-",
             "cmd:file.newSample",
             "-",
+            "ui:help.checkForUpdates",
             "ui:help.about",
         ],
     ),
@@ -1911,6 +1913,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.about = p.get("open").and_then(Value::as_bool).unwrap_or(true);
             Ok(json!(app.ui.about))
         }
+        "help.checkForUpdates" => crate::updates_ui::check(app),
         "help.app" => match p.get("app").and_then(Value::as_str) {
             Some(slug) if !slug.is_empty() && slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') => {
                 let url = format!("{}/apps/{slug}", designcraft_engine::links::WEBSITE);
@@ -2418,6 +2421,7 @@ pub enum AppMenuItem {
 /// The macOS application menu. Settings… is `app.preferences`, which `native_menu_tree` leaves out of Edit.
 pub const MAC_APP_MENU: &[AppMenuItem] = &[
     AppMenuItem::Cmd { id: "dc-about", label: "About DesignCraft", command: "help.about" },
+    AppMenuItem::Cmd { id: "dc-updates", label: "Check for Updates…", command: "help.checkForUpdates" },
     AppMenuItem::Cmd { id: "dc-discord", label: "Join the ArtCraft Discord…", command: "help.discord" },
     AppMenuItem::Sep,
     AppMenuItem::Cmd { id: "dc-settings", label: "Settings…", command: "app.preferences" },
