@@ -1411,8 +1411,8 @@ fn file_info_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     });
 }
 
-/// File Info's OK: every field as typed (an empty one clears it); the keywords only when they
-/// were edited. The fields go to the document the dialog was opened for, even when another one
+/// File Info's OK: every field the dialog holds, as typed (an empty one clears it); the keywords
+/// only when they were edited. The fields go to the document the dialog was opened for, even when another one
 /// became active meanwhile, and the active document stays active; when the dialog's document has
 /// closed, nothing is stored.
 fn confirm_file_info(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
@@ -1423,6 +1423,7 @@ fn confirm_file_info(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     };
     let p: Map<String, Value> = FILE_INFO_FIELDS
         .iter()
+        .filter(|(key, _)| d.fields.contains_key(*key))
         .filter(|(key, _)| *key != "keywords" || keywords_edited)
         .map(|(key, _)| {
             let v = if *key == "keywords" {
@@ -1440,10 +1441,15 @@ fn confirm_file_info(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     }
     let index = |app: &DesignApp, uid: Option<u64>| app.session.documents().iter().position(|doc| Some(doc.uid) == uid);
     let Some(i) = index(app, uid) else { return Ok(Value::Null) };
+    // Switching documents ends the active document's Data Merge preview; it is shown again after.
+    let preview = app.session.active().and_then(|doc| doc.preview_record);
     app.run("file.activate", json!({"index": i}))?;
     let r = app.run("file.info", Value::Object(p));
     if let Some(back) = index(app, active) {
         app.run("file.activate", json!({"index": back}))?;
+        if let Some(record) = preview {
+            app.run("data.preview", json!({"record": record}))?;
+        }
     }
     r
 }
@@ -7608,6 +7614,39 @@ mod tests {
         setup_fields(&mut app, json!({"author": "Studio"}));
         confirm(&mut app).unwrap();
         assert!(app.session.documents().iter().all(|d| d.doc.file_info.author != "Studio"), "the dialog's document closed");
+    }
+
+    /// File Info opened through `ui.dialog.open` with only some fields stores only those fields;
+    /// the others keep what the document holds.
+    #[test]
+    fn file_info_opened_with_some_fields_keeps_the_others() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("file.info", json!({"documentTitle": "Spring Catalog", "keywords": ["spring", "shoes"]})).unwrap();
+        assert_eq!(ctl(&mut app, "ui.dialog.open", json!({"id": "fileInfo", "fields": {"author": "Ana Ruiz", "description": ""}}))["ok"], true);
+        confirm(&mut app).unwrap();
+        let info = app.session.active().unwrap().doc.file_info.clone();
+        assert_eq!((info.document_title.as_str(), info.author.as_str(), info.description.as_str()), ("Spring Catalog", "Ana Ruiz", ""));
+        assert_eq!(info.keywords, ["spring", "shoes"]);
+    }
+
+    /// File Info's OK for a document that is not the active one leaves the active document's
+    /// Data Merge preview showing the record it showed.
+    #[test]
+    fn file_info_for_another_document_keeps_the_active_preview() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"title": "first"})).unwrap();
+        crate::menus::activate(&mut app, "file.info", &Value::Null);
+        app.run("file.new", json!({"title": "second"})).unwrap();
+        let csv = designcraft_engine::cmd::base64_encode(b"Name\nAda\nGrace\n");
+        app.run("data.source.select", json!({"bytes": csv, "name": "people.csv"})).unwrap();
+        app.run("data.preview", json!({"record": 2})).unwrap();
+        setup_fields(&mut app, json!({"author": "Ana Ruiz"}));
+        confirm(&mut app).unwrap();
+        let active = app.session.active().unwrap();
+        assert_eq!((active.doc.title.as_str(), active.preview_record), ("second", Some(2)), "the preview still shows record 2");
+        let first = app.session.documents().iter().find(|d| d.doc.title == "first").map(|d| d.doc.file_info.author.clone());
+        assert_eq!(first.as_deref(), Some("Ana Ruiz"));
     }
 
     #[test]
