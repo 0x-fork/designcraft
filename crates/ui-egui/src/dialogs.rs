@@ -32,6 +32,7 @@ impl Dialog {
         let defaults = match id {
             "newDocument" => crate::new_document::defaults(),
             "goToPage" => json!({"page": "1"}),
+            "epubExport" => json!({"split": false, "mode": "style", "style": designcraft_doc::BASIC_PARAGRAPH}),
             "qrCode" => json!({"type": "url", "content": "https://", "color": "[Black]"}),
             "insertTable" => json!({"bodyRows": 4, "columns": 4, "headerRows": 0, "footerRows": 0}),
             "insertXref" => json!({"linkTo": "paragraph", "style": "", "target": "", "format": ""}),
@@ -351,6 +352,63 @@ pub fn open_pdf_export(app: &mut DesignApp) {
         }
     }
     app.ui.dialog = Some(Dialog::new("pdfExport", fields));
+}
+
+/// File › Export EPUB…: the EPUB Export Options dialog, seeded from the document's Split
+/// Document setting.
+pub fn open_epub_export(app: &mut DesignApp) {
+    use designcraft_doc::EpubSplit;
+    let split = app.session.active().map(|st| st.doc.settings.epub_split.clone()).unwrap_or_default();
+    let fields = match split {
+        EpubSplit::Off => json!({}),
+        EpubSplit::Style(name) => json!({"split": true, "mode": "style", "style": name}),
+        EpubSplit::ExportTags => json!({"split": true, "mode": "exportTags"}),
+    };
+    app.ui.dialog = Some(Dialog::new("epubExport", fields));
+}
+
+/// The Split Document setting the EPUB Export Options dialog's fields describe.
+fn epub_export_split(d: &Dialog) -> designcraft_doc::EpubSplit {
+    use designcraft_doc::EpubSplit;
+    if !d.b("split") {
+        EpubSplit::Off
+    } else if d.s("mode") == "exportTags" {
+        EpubSplit::ExportTags
+    } else {
+        EpubSplit::Style(d.s("style"))
+    }
+}
+
+fn epub_export(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = app.ui.language.as_str();
+    let styles: Vec<String> = app
+        .session
+        .active()
+        .map(|st| st.doc.styles.paragraph.iter().map(|s| s.name.clone()).filter(|n| n != designcraft_doc::NO_PARA_STYLE).collect())
+        .unwrap_or_default();
+    check(ui, d, "split", crate::i18n::tr(lang, "Split Document"));
+    ui.add_enabled_ui(d.b("split"), |ui| {
+        ui.indent("epub_split", |ui| {
+            let mode = d.s("mode");
+            ui.horizontal(|ui| {
+                if ui.radio(mode != "exportTags", crate::rtl::widget(ui, crate::i18n::tr(lang, "Single Paragraph Style"))).clicked() {
+                    d.fields.insert("mode".into(), json!("style"));
+                }
+                let cur = d.s("style");
+                egui::ComboBox::from_id_salt("epub_split_style").selected_text(crate::rtl::widget(ui, &cur)).width(180.0).show_ui(ui, |ui| {
+                    for name in &styles {
+                        if ui.selectable_label(cur == *name, crate::rtl::widget(ui, name)).clicked() {
+                            d.fields.insert("style".into(), json!(name));
+                            d.fields.insert("mode".into(), json!("style"));
+                        }
+                    }
+                });
+            });
+            if ui.radio(mode == "exportTags", crate::rtl::widget(ui, crate::i18n::tr(lang, "Based on Paragraph Style Export Tags"))).clicked() {
+                d.fields.insert("mode".into(), json!("exportTags"));
+            }
+        });
+    });
 }
 
 fn print_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
@@ -2233,6 +2291,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "print" => crate::i18n::tr(&app.ui.language, "Print"),
         "pdfImport" => crate::i18n::tr(&app.ui.language, "Place PDF"),
         "pdfExport" => crate::i18n::tr(&app.ui.language, "Export PDF"),
+        "epubExport" => crate::i18n::tr(&app.ui.language, "EPUB Export Options"),
         "colorSettings" => crate::i18n::tr(&app.ui.language, "Color Settings"),
         "layerOptions" => crate::i18n::tr(&app.ui.language, "Object Layer Options"),
         "keyboardShortcuts" => crate::i18n::tr(&app.ui.language, "Keyboard Shortcuts"),
@@ -2972,6 +3031,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                     "fileInfo" => file_info_dialog(app, ui, &mut d),
                     "numberingSection" => crate::section_options::body(app, ui, &mut d),
                     "pdfExport" => pdf_export(app, ui, &mut d),
+                    "epubExport" => epub_export(app, ui, &mut d),
                     "alert" => {
                         let file = d.s("file");
                         if !file.is_empty() {
@@ -3505,6 +3565,15 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.status(crate::i18n::tr(&app.ui.language, "Sent {count} page(s) to {printer}").replace("{count}", &r["pages"].to_string()).replace("{printer}", printer));
             Ok(r)
         }
+        "epubExport" => {
+            let split = epub_export_split(&d);
+            let stored = app.session.active().map(|st| st.doc.settings.epub_split.clone());
+            if stored.as_ref() != Some(&split) {
+                let v = serde_json::to_value(&split).map_err(|e| e.to_string())?;
+                app.run("document.epubSplit", json!({"split": v}))?;
+            }
+            crate::menus::export_epub(app, &json!({}))
+        }
         "pdfExport" => {
             // Remember the last-used options; `pages` and `title` are per-job and not persisted.
             app.ui.pdf_export.preset = d.s("preset");
@@ -3906,9 +3975,9 @@ fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Resul
     }
     let (para, chars) = style_option_maps(d);
     let based = d.s("basedOn");
-    let rename = d.s("rename");
+    let rename = d.s("rename").trim().to_string();
     let (r, style) = if d.b("new") {
-        let mut params = json!({"name": if rename.trim().is_empty() { "Paragraph Style 1" } else { rename.trim() }, "para": para, "chars": chars});
+        let mut params = json!({"name": if rename.is_empty() { "Paragraph Style 1" } else { rename.as_str() }, "para": para, "chars": chars});
         if !based.is_empty() && based != designcraft_doc::NO_PARA_STYLE {
             params["basedOn"] = json!(based);
         }
@@ -3920,11 +3989,17 @@ fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Resul
         if !based.is_empty() {
             params["basedOn"] = if based == designcraft_doc::NO_PARA_STYLE { Value::Null } else { json!(based) };
         }
-        if !rename.is_empty() && rename != name {
+        let renaming = !rename.is_empty() && rename != name;
+        if renaming {
             params["rename"] = json!(rename);
         }
-        let style = if !rename.is_empty() && rename != name { rename } else { name };
-        (app.run("style.paragraph.edit", params)?, style)
+        let r = app.run("style.paragraph.edit", params).inspect_err(|_| {
+            // A refused name is shown next to the name field.
+            if renaming {
+                d.fields.insert("section".into(), json!("general"));
+            }
+        })?;
+        (r, if renaming { rename } else { name })
     };
     // The style now exists under `style`: if a later step fails, the dialog stays open on it and
     // a second OK edits it rather than creating another one.
@@ -3934,7 +4009,7 @@ fn confirm_paragraph_style_options(app: &mut DesignApp, d: &mut Dialog) -> Resul
     if d.fields.contains_key("x.tag") {
         let tag = d.s("x.tag");
         let tag = if tag == "[Automatic]" { String::new() } else { tag };
-        app.run("style.exportTag", json!({"style": style, "tag": tag, "class": d.s("x.class")}))?;
+        app.run("style.exportTag", json!({"style": style, "tag": tag, "class": d.s("x.class"), "split": d.b("x.split")}))?;
     }
     Ok(r)
 }
@@ -4085,6 +4160,7 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                 if !d.fields.contains_key("x.tag") {
                     d.fields.insert("x.tag".into(), json!(if et.tag.is_empty() { "[Automatic]" } else { et.tag.as_str() }));
                     d.fields.insert("x.class".into(), json!(et.class));
+                    d.fields.insert("x.split".into(), json!(et.split));
                 }
                 ui.horizontal(|ui| {
                     crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Tag:"));
@@ -4104,6 +4180,7 @@ fn paragraph_style_options(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialo
                     crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Class:"));
                     text_field(ui, d, "x.class", 160.0);
                 });
+                check(ui, d, "x.split", crate::i18n::tr(&app.ui.language, "Split Document (EPUB only)"));
             }
             "nested" => drop_caps_and_nested_styles(&app.ui.language, ui, d, &pv, &cnames),
             "grep" => grep_styles(&app.ui.language, ui, d, &pv, &cnames),
@@ -8096,6 +8173,26 @@ mod tests {
         draw(&mut app, &ctx);
     }
 
+    #[test]
+    fn paragraph_style_options_show_a_refused_rename_on_general_and_trim_a_new_name() {
+        let (mut app, _) = ruled_paragraph();
+        let ctx = egui::Context::default();
+        app.ui.dialog = Some(Dialog::new("paragraphStyleOptions", json!({"name": "Ruled", "section": "rules"})));
+        draw(&mut app, &ctx);
+        app.ui.dialog.as_mut().unwrap().fields.insert("rename".into(), json!("Ruled Child"));
+        let e = confirm(&mut app).unwrap_err();
+        let d = app.ui.dialog.clone().expect("the dialog stays open");
+        assert_eq!(d.s("section"), "general", "the name field is on General");
+        assert!(d.s("status").contains("already exists"), "{e}");
+
+        app.ui.dialog.as_mut().unwrap().fields.insert("rename".into(), json!("  Fresh "));
+        app.ui.dialog.as_mut().unwrap().fields.insert("x.tag".into(), json!("h3"));
+        confirm(&mut app).unwrap();
+        let st = &app.session.doc().unwrap().doc.styles;
+        assert!(st.para("Fresh").is_some());
+        assert_eq!(st.export_tag("Fresh", false).map(|t| t.tag.as_str()), Some("h3"));
+    }
+
     /// A frame with two paragraphs of [Basic Paragraph]; the first has a local Word Spacing minimum.
     fn two_paragraphs() -> (DesignApp, Value) {
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
@@ -10065,6 +10162,70 @@ mod tests {
         confirm(&mut app).expect("OK deletes the style with the default replacement");
         let st = app.session.active().unwrap();
         assert!(st.doc.styles.char_style(&name).is_none());
+    }
+
+    /// File › Export EPUB… opens EPUB Export Options from the document's setting; OK stores a
+    /// changed Split Document as one undo step, and an unchanged one adds none.
+    #[test]
+    fn epub_export_passes_its_options_to_the_engine() {
+        use std::io::Read;
+        use std::sync::{Arc, Mutex};
+        let mut app = test_app();
+        app.session.execute("style.paragraph.create", &json!({"name": "Chapter"})).unwrap();
+        let r = app.session.execute("frame.create", &json!({"rect": [36, 36, 300, 300], "content": "text", "text": "One\nTwo"})).unwrap();
+        let sid = r["story"].as_u64().unwrap();
+        for anchor in [0, 4] {
+            app.session.execute("text.select", &json!({"story": sid, "anchor": anchor, "focus": anchor})).unwrap();
+            app.session.execute("style.paragraph.apply", &json!({"name": "Chapter"})).unwrap();
+        }
+        let written: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = written.clone();
+        app.services.write = Some(Box::new(move |_: &str, bytes: &[u8]| {
+            *sink.lock().unwrap() = bytes.to_vec();
+            Ok(())
+        }));
+        crate::menus::export_epub(&mut app, &json!({"path": "book.epub", "split": {"style": "Chapter"}})).unwrap();
+        let bytes = written.lock().unwrap().clone();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut opf = String::new();
+        z.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut opf).unwrap();
+        assert!(opf.contains("properties=\"cover-image\""), "the first page is the cover: {opf}");
+        assert!(z.by_name("OEBPS/content2.xhtml").is_ok(), "the split override reaches the export");
+        assert_eq!(app.session.active().unwrap().doc.settings.epub_split, designcraft_doc::EpubSplit::Off, "an override is not stored");
+        crate::menus::export_epub(&mut app, &json!({"path": "book.epub", "cover": false})).unwrap();
+        let bytes = written.lock().unwrap().clone();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut opf = String::new();
+        z.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut opf).unwrap();
+        assert!(!opf.contains("cover-image"), "a caller's cover: false stays: {opf}");
+    }
+
+    #[test]
+    fn epub_export_options_store_split_document() {
+        use designcraft_doc::EpubSplit;
+        let mut app = test_app();
+        app.session.execute("style.paragraph.create", &json!({"name": "Chapter"})).unwrap();
+        let undo_steps = |app: &crate::DesignApp| app.session.active().map(|st| st.history.undo.len());
+        app.run("app.exportEpub", json!({})).unwrap();
+        let d = app.ui.dialog.as_mut().unwrap();
+        assert_eq!((d.id.as_str(), d.b("split"), d.s("style").as_str()), ("epubExport", false, designcraft_doc::BASIC_PARAGRAPH));
+        d.fields.insert("split".into(), json!(true));
+        d.fields.insert("style".into(), json!("Chapter"));
+        let before = undo_steps(&app);
+        confirm(&mut app).unwrap();
+        assert_eq!(app.session.active().unwrap().doc.settings.epub_split, EpubSplit::Style("Chapter".into()));
+        assert_eq!(undo_steps(&app), before.map(|n| n + 1));
+        open_epub_export(&mut app);
+        assert_eq!(app.ui.dialog.as_ref().map(|d| (d.b("split"), d.s("mode"), d.s("style"))), Some((true, "style".into(), "Chapter".into())));
+        confirm(&mut app).unwrap();
+        assert_eq!(undo_steps(&app), before.map(|n| n + 1), "unchanged: no undo step");
+        open_epub_export(&mut app);
+        app.ui.dialog.as_mut().unwrap().fields.insert("mode".into(), json!("exportTags"));
+        confirm(&mut app).unwrap();
+        assert_eq!(app.session.active().unwrap().doc.settings.epub_split, EpubSplit::ExportTags);
+        open_epub_export(&mut app);
+        cancel(&mut app);
+        assert_eq!(app.session.active().unwrap().doc.settings.epub_split, EpubSplit::ExportTags, "Cancel stores nothing");
     }
 
     #[test]
