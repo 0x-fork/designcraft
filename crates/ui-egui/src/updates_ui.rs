@@ -96,7 +96,6 @@ pub(crate) fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let title = crate::i18n::tr(&app.ui.language, "DesignCraft Updates");
         let ok_label = crate::i18n::tr(&app.ui.language, "OK");
         egui::Window::new(title)
-            .id(egui::Id::new("designcraft_manual_updates"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
