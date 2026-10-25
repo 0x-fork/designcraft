@@ -84,6 +84,37 @@ fn graphic_layer_options_in_cells_require_the_new_native_reader() {
 }
 
 #[test]
+fn a_graphic_layer_cell_alone_still_requires_the_new_native_reader() {
+    // The cell is the only thing carrying the settings: a save that only looked at spread items
+    // would choose format 3 and drop them.
+    let mut doc = designcraft_idml::import_idml(&fixture()).unwrap();
+    let graphic = doc.spreads[0]
+        .items
+        .iter()
+        .find_map(|i| match &i.content {
+            Content::Graphic(g) => Some(g.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let layer = doc.default_layer();
+    let (_, story) = doc
+        .add_text_frame(designcraft_doc::SpreadRef::Doc(0), designcraft_geom::Rect::new(0.0, 0.0, 80.0, 80.0), layer, "Body", Default::default())
+        .unwrap();
+    // Only the cell keeps them: the spread's own placed graphic goes away.
+    std::sync::Arc::make_mut(&mut doc.spreads[0]).items.retain(|i| i.graphic().is_none());
+    let mut table = designcraft_doc::Table::new(1, 1, 1, 0, 0, 20.0);
+    table.cells[0].graphic = Some(graphic);
+    doc.story_mut(story).unwrap().insert_table(0, table);
+    assert!(doc.has_graphic_layer_options(), "the cell alone carries the settings");
+    let saved = designcraft_format::save(&doc).unwrap();
+    let mut z = zip::ZipArchive::new(Cursor::new(&saved)).unwrap();
+    let mut meta = String::new();
+    z.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&meta).unwrap()["version"], 4, "a cell-only save needs the newer reader");
+    assert!(designcraft_format::load(&saved).unwrap().has_graphic_layer_visibility_overrides());
+}
+
+#[test]
 fn pdf_layer_warning_survives_soft_effects_and_flattening() {
     for flatten in [false, true] {
         let doc = designcraft_idml::import_idml(&fixture()).unwrap();

@@ -2547,7 +2547,14 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                                 && let Some(o) = l.as_object_mut()
                             {
                                 o.insert("visible".into(), json!(on));
+                                d.fields.insert("useDefaults".into(), json!(false));
                             }
+                        }
+                        if ui.button(crate::i18n::tr(&app.ui.language, "Use File Defaults")).clicked() {
+                            for layer in &mut layers {
+                                layer["visible"] = layer["default"].clone();
+                            }
+                            d.fields.insert("useDefaults".into(), json!(true));
                         }
                         d.fields.insert("layers".into(), json!(layers));
                     }
@@ -3424,7 +3431,12 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         }
         "layerOptions" => {
             let hidden: Vec<Value> = d.fields.get("layers").and_then(Value::as_array).map(|a| a.iter().filter(|l| l["visible"] == false).map(|l| l["name"].clone()).collect()).unwrap_or_default();
-            app.run("object.layerOptions", json!({"hidden": hidden}))
+            // A dialog opened without the menu's fields has no `useDefaults` at all: confirming it
+            // with no layer unticked resets file defaults, as it did before all-on existed, rather
+            // than making every layer explicitly visible. Only an explicit `false` means all-on.
+            let use_defaults = d.fields.get("useDefaults").and_then(Value::as_bool).unwrap_or(hidden.is_empty());
+            let hidden = if use_defaults { Vec::new() } else { hidden };
+            app.run("object.layerOptions", json!({"hidden": hidden, "useDefaults": use_defaults}))
         }
         "colorSettings" => {
             let r = app.run("color.settings", json!({"rgb": d.s("rgb"), "cmyk": d.s("cmyk"), "intent": d.s("intent"), "bpc": d.b("bpc")}))?;
@@ -7314,6 +7326,29 @@ mod tests {
         assert!(summary.contains("[Registration]") && !summary.contains("[Paper]"), "{summary}");
         assert!(summary.contains("4.5 pt"), "{summary}");
         assert_eq!(app.session.doc().unwrap().doc, doc);
+    }
+
+    /// A dialog opened without the menu's fields has no `useDefaults` field at all. Confirming it
+    /// with no layer unticked must keep the file's defaults, not choose every layer explicitly:
+    /// an implicit all-on choice is rejected for a PDF without layers, so the command's error
+    /// tells the two apart.
+    #[test]
+    fn layer_options_confirm_without_the_menu_fields_keeps_file_defaults() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 100, "height": 100, "pages": 1})).unwrap();
+        let pdf = app.run("file.exportPdf", json!({})).unwrap()["base64"].clone();
+        let placed = app.run("file.place", json!({"base64": pdf, "name": "plain.pdf", "x": 0, "y": 0, "width": 100})).unwrap();
+        let id = designcraft_doc::ItemId(placed["id"].as_u64().unwrap());
+        app.run("selection.set", json!({"ids": [placed["id"]]})).unwrap();
+        app.ui.dialog = Some(Dialog::new("layerOptions", json!({})));
+        confirm(&mut app).unwrap();
+        assert!(!app.session.doc().unwrap().doc.item(id).unwrap().has_pdf_layer_override(), "an untouched dialog keeps the file defaults");
+        // The menu's own dialog still asks for an explicit all-on choice when that is the state
+        // it was opened in; a layerless PDF refuses it rather than accepting an empty override.
+        app.ui.dialog = Some(Dialog::new("layerOptions", json!({"useDefaults": false, "layers": []})));
+        let err = confirm(&mut app).unwrap_err();
+        assert!(err.contains("could not be changed"), "{err}");
+        assert!(!app.session.doc().unwrap().doc.item(id).unwrap().has_pdf_layer_override(), "a layerless PDF never takes an explicit choice");
     }
 
     #[test]

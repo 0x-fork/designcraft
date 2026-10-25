@@ -206,10 +206,15 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
 
 ### 19. Placed graphics depth (FF)
 - **Have:** per-placement IDML graphic-layer settings survive IDML/native round trips; native format 4 guards older readers. Unsupported layer visibility is reported by import, preflight and PDF export. See [graphic-layer-options.md](graphic-layer-options.md).
-- **Still missing:** applying the retained layer visibility to the rendered/PDF appearance; layer-comp choices and the layer-options UI. Metadata preservation does not establish visual fidelity.
+- **Still missing:** DesignCraft does not apply retained IDML graphic-layer visibility to raster or PDF output; layer-comp choices and the layer-options UI are also missing. Metadata preservation does not establish visual fidelity. Placed-PDF layer choices are applied (see **Layer choices** below).
 - **Safety:** PDF visibility variants preserve catalog/configuration entries and nonzero-generation
   references, redefining the existing catalog rather than choosing an arbitrary object number.
   Encrypted, hybrid-reference and over-budget rewrites are rejected; no print-fidelity claim.
+- **Layer choices:** placed PDFs distinguish explicit all-on visibility from file defaults;
+  choices survive native saves, raster/PDF output and embedded IDML export for the placements the
+  export walks reach: document and parent spreads, groups, and objects anchored in a story. A
+  placement anchored inside table-cell or footnote/endnote text is not reached yet. IDML layer
+  variants are embedded copies; external-only export is rejected when choices would be lost.
 - **Missing:** EPS is shown through its preview only (no PostScript interpreter); PSD layer
   comps beyond visibility; the Clipping Path Options dialog (tracing into a clip that keeps the
   frame, Threshold/Tolerance/Inset Frame preview, picking an alpha channel or a path saved in a
