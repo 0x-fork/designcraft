@@ -87,7 +87,7 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
     }
     // Anchored objects live in stories, and parent pages outside the document-spread walk, so
     // the choice is cleared where the placement actually is.
-    out.update_placed_items(
+    let applied = out.update_placed_items(
         |it| variants.contains_key(&it.id),
         |it| {
             if let designcraft_doc::Content::Graphic(g) = &mut it.content
@@ -99,6 +99,12 @@ fn with_pdf_layer_variants(doc: &Document, embed: bool) -> Result<Option<Documen
             it.pdf_hidden_layers.clear();
         },
     );
+    if applied != variants.len() {
+        return Err(EngineError::Other(format!(
+            "PDF layer choices could not be applied to every placement (updated {applied}, expected {})",
+            variants.len()
+        )));
+    }
     Ok(Some(out))
 }
 
@@ -750,9 +756,10 @@ mod nested_layer_tests {
             );
             let mut single = Session::new();
             single.add_document(DocState::new(one, None));
+            let before = single.doc().unwrap().doc.clone();
             let err = single.execute("file.exportIdml", &json!({"embedImages": false})).unwrap_err().to_string();
             assert!(err.contains("embedded images"), "{location}: {err}");
-            assert!(Arc::ptr_eq(&original, &session.doc().unwrap().doc));
+            assert!(Arc::ptr_eq(&before, &single.doc().unwrap().doc));
         }
         Arc::make_mut(&mut session.doc_mut().unwrap().doc).update_placed_items(
             |i| ids.contains(&i.id),
@@ -762,6 +769,17 @@ mod nested_layer_tests {
             },
         );
         session.execute("file.exportIdml", &json!({"embedImages": false})).unwrap();
+    }
+
+    #[test]
+    fn nested_idml_variant_mapping_mismatch_is_rejected() {
+        let (mut session, _, ids) = fixture("cell");
+        let source = Arc::make_mut(&mut session.doc_mut().unwrap().doc);
+        source.update_placed_items(|i| i.id == ids[1], |i| i.id = ids[0]);
+        // Both nested placements now use one id: the mapping has one entry, the write walk
+        // updates two items. A malformed document must not silently assign one choice to both.
+        let err = with_pdf_layer_variants(source, true).err().unwrap().to_string();
+        assert!(err.contains("every placement") && err.contains("updated 2, expected 1"), "{err}");
     }
 
     #[test]
