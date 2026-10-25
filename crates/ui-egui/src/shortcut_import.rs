@@ -189,7 +189,7 @@ fn foreign(set: &ParsedSet) -> ForeignSet {
             entry
         })
         .collect();
-    ForeignSet { name: Some(set.name.clone()), entries, truncated: set.dropped }
+    ForeignSet::new(entries).with_name(set.name.clone()).with_truncated(set.dropped)
 }
 
 /// What DesignCraft's contexts take from a set: Default keys bind in the command's home scope; an
@@ -222,8 +222,7 @@ pub fn import(app: &mut DesignApp, text: &str) -> Result<Value, String> {
     app.sync_keymap();
     let options = import_options(app.shortcut_answers.clone());
     let plan = craft_keymap::plan(&set, &app.keymap, &options);
-    let (name, report) =
-        app.ui.shortcut_sets.import_plan(&plan, &app.keymap, None, &crate::shortcuts_dialog::BUILTINS).map_err(|e| e.to_string())?;
+    let (name, report) = app.ui.shortcut_sets.import_plan(&plan, &app.keymap, None, &crate::shortcuts_dialog::BUILTINS).map_err(|e| e.to_string())?;
     crate::shortcuts_dialog::load_active_set(app);
     let mut out = report_json(&report);
     out["shortcutSet"] = json!(name);

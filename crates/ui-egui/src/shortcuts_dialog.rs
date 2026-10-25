@@ -86,10 +86,6 @@ impl Text for DcText<'_> {
     fn rtl(&self) -> bool {
         crate::i18n::is_rtl(self.lang)
     }
-
-    fn visual(&self, s: &str) -> String {
-        crate::rtl::visual_text(s)
-    }
 }
 
 /// Edit › Keyboard Shortcuts…; with `select`, the dialog opens on that command.
@@ -117,7 +113,7 @@ pub(crate) fn show(app: &mut DesignApp, ctx: &egui::Context) {
     let lang = app.ui.language.clone();
     let text = DcText { lang: &lang };
     let title = tr(&lang, "Keyboard Shortcuts");
-    let area = egui::Id::new("dialog");
+    let area = egui::Id::unique("dialog");
     let instance = area.with(DIALOG_ID);
     let body = size(ctx.content_rect().size());
     let mut out = None;
