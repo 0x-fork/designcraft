@@ -4,8 +4,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
-const REPO: &str = "https://github.com/aiongg/craft-libs";
-const REV: &str = "8fbfea8840f0a0f5a22df18901e9db324894b2ce";
+const REPO: &str = "https://github.com/storytold/craft-libs";
+const REV: &str = "e3b9e239c52c14677be462e94d8920ea243de4f3";
 const PACKAGES: &[(&str, &str)] = &[
     ("craft-pdf", "0.1.0"),
     ("krilla", "0.8.2"),
@@ -13,6 +13,8 @@ const PACKAGES: &[(&str, &str)] = &[
     ("hayro-interpret", "0.7.0"),
     ("hayro-syntax", "0.7.2"),
     ("hayro-jbig2", "0.3.0"),
+    ("hayro-cmap", "0.1.0"),
+    ("hayro-postscript", "0.1.0"),
 ];
 
 pub fn run(root: &Path) -> Result<(), String> {

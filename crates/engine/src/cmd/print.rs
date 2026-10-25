@@ -84,7 +84,10 @@ mod tests {
             assert!(command.contains(&"print-scaling=auto-fit"));
             assert!(!command.iter().any(|a| a.starts_with("sides=")));
         } else {
-            assert_eq!(command[0], "powershell");
+            assert_eq!(
+                command,
+                ["xps-print", "printer=Office", "copies=2", "collate=true", "duplex=(queue default)", "scaling=shrink-to-fit", "color=color"]
+            );
         }
         assert!(r["bytes"].as_u64().unwrap() > 500);
         assert!(s.execute("file.print", &json!({"pages": "9", "dryRun": true})).is_err());
@@ -95,35 +98,27 @@ mod tests {
     fn print_submits_the_selected_export_and_reports_refusal() {
         let mut s = Session::new();
         s.execute("file.new", &json!({"pages": 4})).unwrap();
-        let params = json!({"printer": "Office (east)", "copies": 2, "pages": "2-3", "marks": true, "bleed": true});
-        // The production export options and full bytes reach the shared spooler boundary. The
-        // creation date is in whole seconds: an attempt can straddle a second boundary.
-        let mut matched = false;
-        for _ in 0..3 {
-            let expected = super::super::export::pdf_export(&s, &params).unwrap().bytes;
-            let mut printed = Vec::new();
-            let r = print_with(&mut s, &params, |pdf, job| {
-                printed = pdf.to_vec();
-                assert!(pdf.starts_with(b"%PDF-"));
-                assert_eq!(job.printer.as_deref(), Some("Office (east)"));
-                assert_eq!(job.copies, 2);
-                assert_eq!(job.duplex, None);
-                assert_eq!(job.scaling, craft_print::Scaling::ShrinkToFit);
-                assert!(!job.title.is_empty());
-                Ok("request id is Office-1".into())
-            })
-            .unwrap();
-            assert_eq!(r["pages"], 2);
-            if printed == expected {
-                matched = true;
-                break;
-            }
-        }
-        assert!(matched, "File › Print spools the selected export's bytes");
+        // A fixed creation date: both exports would otherwise take the clock's second.
+        let params = json!({"printer": "Office (east)", "copies": 2, "pages": "2-3", "marks": true, "bleed": true, "created": 1_700_000_000});
+        let expected = super::super::export::pdf_export(&s, &params).unwrap().bytes;
+        let r = print_with(&mut s, &params, |pdf, job| {
+            // The production export options and full bytes reach the shared spooler boundary.
+            assert_eq!(pdf, expected);
+            assert!(pdf.starts_with(b"%PDF-"));
+            assert_eq!(job.printer.as_deref(), Some("Office (east)"));
+            assert_eq!(job.copies, 2);
+            assert_eq!(job.duplex, None);
+            assert_eq!(job.scaling, craft_print::Scaling::ShrinkToFit);
+            assert!(!job.title.is_empty());
+            Ok("request id is Office-1".into())
+        })
+        .unwrap();
+        assert_eq!(r["pages"], 2);
         let refusal = print_with(&mut s, &params, |_, _| Err(craft_print::Error::Spool("printer offline".into()))).unwrap_err();
         assert!(refusal.to_string().contains("printer offline"));
         print_with(&mut s, &json!({"dryRun": true}), |_, _| panic!("dry runs must not spool")).unwrap();
         assert!(print_with(&mut s, &json!({"pages": "9"}), |_, _| panic!("invalid ranges must not spool")).is_err());
+        assert!(print_with(&mut s, &json!({"created": "today"}), |_, _| panic!("an invalid date must not spool")).is_err());
     }
 
     /// File › Print spools the PDF that File › Export PDF writes with the same settings: soft
