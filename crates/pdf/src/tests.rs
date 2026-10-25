@@ -257,6 +257,7 @@ fn place(d: &mut Document, data: Vec<u8>, px: (u32, u32)) {
     let id = ItemId(d.alloc());
     let mut it = Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(72.0, 72.0, 272.0, 172.0)));
     it.content = designcraft_doc::Content::Graphic(designcraft_doc::Graphic {
+        layer_options: None,
         asset,
         size: (px.0 as f64, px.1 as f64),
         xf: designcraft_geom::Affine::translate((72.0, 72.0)) * designcraft_geom::Affine::scale(50.0),
@@ -338,6 +339,26 @@ fn cmyk_tiff_keeps_its_inks() {
         assert_eq!(images, vec![("DeviceCMYK".to_string(), px.clone())], "{standard:?}");
         assert_eq!(images[0].1[..4], [0, 0, 0, 255], "K only");
     }
+}
+
+/// A placed greyscale TIFF went into PDFs as DeviceRGB, unlike a greyscale PNG or JPEG (#1426):
+/// a page holding only a black-and-white scan declared colour.
+#[test]
+fn grey_tiff_exports_as_device_gray() {
+    let px: Vec<u8> = vec![0, 64, 128, 255, 255, 128, 64, 0];
+    let mut tif = Vec::new();
+    tiff::encoder::TiffEncoder::new(std::io::Cursor::new(&mut tif)).unwrap().write_image::<tiff::encoder::colortype::Gray8>(4, 2, &px).unwrap();
+    let mut d = doc_with_text("x");
+    place(&mut d, tif, (4, 2));
+    for standard in [Standard::None, Standard::PdfX4] {
+        let r = export_pdf_with_report(&d, &Cache::new(), &PdfOptions { standard, ..Default::default() }).unwrap();
+        assert!(r.warnings.is_empty(), "{standard:?}: {:?}", r.warnings);
+        assert_eq!(image_xobjects(&r.bytes), vec![("DeviceGray".to_string(), px.clone())], "{standard:?}");
+    }
+    // Recompressed, it stays a grey JPEG.
+    let r = export_pdf_with_report(&d, &Cache::new(), &PdfOptions { compress_images: true, compress: false, ..Default::default() }).unwrap();
+    let s = String::from_utf8_lossy(&r.bytes);
+    assert!(s.contains("/DCTDecode") && s.contains("/DeviceGray") && !s.contains("/DeviceRGB"), "a grey JPEG");
 }
 
 /// An 8×8 raster encoded as `fmt`; `alpha` gives it a transparent corner.
