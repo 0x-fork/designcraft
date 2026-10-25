@@ -1048,8 +1048,9 @@ pub(crate) fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let was_open_id = egui::Id::new("modal-was-open");
     let was_open = ui.ctx().data(|d| d.get_temp::<bool>(was_open_id)).unwrap_or(false);
     ui.ctx().data_mut(|d| d.insert_temp(was_open_id, modal));
-    let main_focused = ui.ctx().input_for(egui::ViewportId::ROOT, |i| i.viewport().focused);
-    if focus_main_for_modal(was_open, modal, main_focused) {
+    let floats = native_viewports(app, ui.ctx());
+    let float_focused = ui.ctx().input(|i| floats.iter().any(|v| i.raw.viewports.get(v).and_then(|v| v.focused) == Some(true)));
+    if focus_main_for_modal(was_open, modal, float_focused) {
         ui.ctx().send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
     }
     if modal || egui::Popup::is_any_open(ui.ctx()) {
@@ -1117,9 +1118,10 @@ pub(crate) fn modal_open(app: &DesignApp) -> bool {
 }
 
 /// Whether to focus the main window: on the frame a modal opens (`was_open` false, `open`
-/// true) while the main window doesn't have the keyboard.
-pub(crate) fn focus_main_for_modal(was_open: bool, open: bool, main_focused: Option<bool>) -> bool {
-    open && !was_open && main_focused != Some(true)
+/// true) while one of the floating panels' own windows has the keyboard. With the app in the
+/// background nothing is focused, so a modal that opens on its own doesn't pull the app forward.
+pub(crate) fn focus_main_for_modal(was_open: bool, open: bool, float_focused: bool) -> bool {
+    open && !was_open && float_focused
 }
 
 /// What the control channel reports: the layout in use (craft-ui's serialized `Layout`),

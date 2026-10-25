@@ -1277,13 +1277,12 @@ fn a_document_dropped_on_a_floating_panel_window_opens() {
 }
 
 /// A modal that opens while a floating panel's own window has the keyboard brings the main
-/// window to the front, so the modal gets the keys; once open, or with the main window already
-/// focused, nothing is sent.
+/// window to the front, so the modal gets the keys. Once open, with the main window focused or
+/// with the app in the background (no float focused), nothing is sent.
 #[test]
 fn a_modal_opening_from_a_floating_window_focuses_the_main_window() {
-    assert!(focus_main_for_modal(false, true, Some(false)));
-    assert!(focus_main_for_modal(false, true, None));
-    assert!(!focus_main_for_modal(false, true, Some(true)));
-    assert!(!focus_main_for_modal(true, true, Some(false)), "only on the frame it opens");
-    assert!(!focus_main_for_modal(false, false, Some(false)));
+    assert!(focus_main_for_modal(false, true, true));
+    assert!(!focus_main_for_modal(false, true, false), "main window focused, or the app in the background");
+    assert!(!focus_main_for_modal(true, true, true), "only on the frame it opens");
+    assert!(!focus_main_for_modal(false, false, true));
 }
