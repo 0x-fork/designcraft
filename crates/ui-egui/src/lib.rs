@@ -33,6 +33,7 @@ pub mod story_editor;
 pub mod taskbar;
 pub mod theme;
 pub mod toolbar;
+pub mod updates_ui;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -836,6 +837,7 @@ pub struct DesignApp {
     pub cursors: cursors::Images,
     /// A panel's live preview (a slider being dragged), committed when it is let go.
     live_preview: LivePreview,
+    pub(crate) updates_rt: updates_ui::Runtime,
 }
 
 /// The preview a panel opened with `edit.preview`: it stays open while a panel holds it each frame.
@@ -935,6 +937,7 @@ impl DesignApp {
             quitting: None,
             cursors: cursors::Images::default(),
             live_preview: LivePreview::default(),
+            updates_rt: updates_ui::Runtime::default(),
         }
     }
 
@@ -1384,6 +1387,7 @@ impl DesignApp {
     fn logic_tick(&mut self, ctx: &egui::Context) {
         self.update_screenshot_epoch(ctx);
         self.drain_control(ctx);
+        updates_ui::tick(self, ctx);
         if self.fonts_ready && !self.host_order_pending() {
             self.drain_inbox();
             self.open_os_documents();
@@ -2149,6 +2153,7 @@ impl DesignApp {
         story_editor::show(self, &ctx);
         dialogs::show(self, &ctx);
         about::show(self, &ctx);
+        updates_ui::show(self, &ctx);
         menus::palette(self, &ctx);
         // The IME is observed once, here: after the canvas, the floating panels, the story editor,
         // dialogs and Quick Apply have all applied this pass's commands and focus changes.
