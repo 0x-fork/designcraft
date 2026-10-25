@@ -961,7 +961,11 @@ fn confirm_text_frame_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Val
             if all || edited(d, "gridIncrement") {
                 g.insert(
                     "increment".into(),
-                    json!(d.m("gridIncrement").filter(|v| *v > 0.0).ok_or_else(|| bad("the baseline grid increment is not a measure"))?),
+                    json!(
+                        d.m("gridIncrement")
+                            .filter(|v| *v > 0.0)
+                            .ok_or_else(|| bad("the baseline grid increment must be a measure greater than zero"))?
+                    ),
                 );
             }
             if all || edited(d, "gridRelativeTo") {
@@ -8544,6 +8548,24 @@ mod tests {
         app.ui.dialog = Some(d);
         confirm(&mut app).unwrap();
         assert_eq!((opts(&app).columns_kind, opts(&app).column_width), (designcraft_doc::ColumnsKind::FixedNumber, 120.0));
+    }
+
+    #[test]
+    fn baseline_grid_increment_error_explains_the_positive_measure_rule() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let r = app.run("frame.create", json!({"rect": [36, 36, 336, 236], "content": "text", "text": "Hello"})).unwrap();
+        let id = designcraft_doc::ItemId(r["id"].as_u64().unwrap());
+        for increment in ["0", "-1 pt", "not a measure"] {
+            let mut d = Dialog::new("textFrameOptions", json!({}));
+            seed_text_frame_options(&app, &mut d);
+            d.fields.insert("customGrid".into(), json!(true));
+            d.fields.insert("gridIncrement".into(), json!(increment));
+            app.ui.dialog = Some(d);
+            let error = confirm(&mut app).unwrap_err().to_string();
+            assert!(error.contains("the baseline grid increment must be a measure greater than zero"), "{increment}: {error}");
+            assert!(app.session.doc().unwrap().doc.item(id).unwrap().text_frame().unwrap().options.baseline_grid.is_none());
+        }
     }
 
     #[test]
