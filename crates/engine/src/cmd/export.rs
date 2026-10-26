@@ -575,9 +575,7 @@ fn threaded(d: &designcraft_doc::Document, it: &designcraft_doc::Item) -> bool {
 /// Soft effects other than the gradient feather (which PDF export draws itself).
 fn raster_effects(it: &designcraft_doc::Item) -> bool {
     let e = &it.effects;
-    // Knockout groups too: PDF output here has no knockout transparency groups.
-    it.knockout
-        || e.drop_shadow.on
+    e.drop_shadow.on
         || e.feather > 0.0
         || e.inner_shadow.on
         || e.outer_glow.on
@@ -787,6 +785,20 @@ fn first_page_ref(pdf: &[u8]) -> Option<usize> {
 }
 
 fn export_pdf(s: &mut Session, p: &Value) -> Result<Value> {
+    let r = pdf_export(s, p)?;
+    match str_param(p, "path") {
+        Some(path) => {
+            write_file(path, &r.bytes)?;
+            Ok(json!({"path": path, "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings}))
+        }
+        None => Ok(json!({"base64": super::base64_encode(&r.bytes), "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings})),
+    }
+}
+
+/// The PDF that File › Export PDF writes for `p`, with its warnings: the flattener, placed PDFs
+/// with hidden layers and soft effects as images, the PDF itself and its view options, timings
+/// and transitions. File › Print prints it.
+pub(crate) fn pdf_export(s: &Session, p: &Value) -> Result<designcraft_pdf::ExportReport> {
     let st = s.doc()?;
     let opts = options(p, st.doc.page_count())?;
     // Transparency Flattener presets: High / Medium / Low Resolution, or a ppi.
@@ -814,10 +826,11 @@ fn export_pdf(s: &mut Session, p: &Value) -> Result<Value> {
     if st.doc.has_graphic_layer_visibility_overrides() && !r.warnings.iter().any(|w| w == designcraft_doc::GRAPHIC_LAYER_RENDERING_WARNING) {
         r.warnings.push(designcraft_doc::GRAPHIC_LAYER_RENDERING_WARNING.into());
     }
-    // Transparency Blend Space: the page group of pages with transparency.
+    // Transparency Blend Space: the page group of pages with transparency. CMYK print output
+    // gets its CMYK page groups from the writer.
     let spreads = designcraft_pdf::sheet_spreads(doc, &opts);
     let blended: Vec<bool> = spreads.iter().map(|si| doc.spreads.get(*si).is_some_and(|sp| sp.items.iter().any(|it| transparent(it)))).collect();
-    if blended.iter().any(|b| *b) {
+    if !designcraft_pdf::print_color(doc, &opts) && blended.iter().any(|b| *b) {
         match designcraft_pdf::add_blend_space(&r.bytes, &blended, doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk) {
             Some(b) => r.bytes = b,
             None => r.warnings.push("the transparency blend space couldn't be set".into()),
@@ -878,7 +891,7 @@ fn export_pdf(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     if fx_count > 0 {
-        r.warnings.push(format!("{fx_count} object(s) with soft effects (shadows, glows, feathers, bevels) or knockout groups exported as images"));
+        r.warnings.push(format!("{fx_count} object(s) with soft effects (shadows, glows, feathers, bevels) exported as images"));
     }
     if layer_count > 0 {
         r.warnings.push(format!("{layer_count} placed PDF(s) with hidden layers exported as images"));
@@ -888,13 +901,7 @@ fn export_pdf(s: &mut Session, p: &Value) -> Result<Value> {
     {
         r.warnings.push(format!("transparency flattened: {n} region(s) rasterised"));
     }
-    match str_param(p, "path") {
-        Some(path) => {
-            write_file(path, &r.bytes)?;
-            Ok(json!({"path": path, "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings}))
-        }
-        None => Ok(json!({"base64": super::base64_encode(&r.bytes), "bytes": r.bytes.len(), "pages": r.pages, "warnings": r.warnings})),
-    }
+    Ok(r)
 }
 
 #[cfg(test)]
@@ -1546,8 +1553,8 @@ mod print_group_tests {
         s
     }
 
-    /// The placed PDF's transparency group blended in DeviceRGB in a print document
-    /// (`/Group<</Type/Group/S/Transparency/I true/CS/DeviceRGB>>`).
+    /// A placed PDF's transparency group blends in CMYK in a print document and in RGB in a
+    /// screen one.
     #[test]
     fn print_transparency_groups_blend_in_cmyk() {
         let mut s = page_with(&logo());
@@ -1556,7 +1563,9 @@ mod print_group_tests {
             String::from_utf8_lossy(&base64_decode(r["base64"].as_str().unwrap())).into_owned()
         };
         let t = text(&mut s);
-        assert!(t.contains("/S/Transparency/I true/CS/DeviceCMYK>>"), "CMYK group");
+        // The placed page's group inherits the page group, which blends in CMYK.
+        assert!(t.contains("/Group<</Type/Group/S/Transparency/I true>>"), "placed page group without a blending space");
+        assert!(t.contains("/Group<</Type/Group/S/Transparency/CS/DeviceCMYK>>"), "CMYK page group");
         assert!(!t.contains("DeviceRGB"), "no RGB left");
         assert!(!designcraft_pdf::has_rgb_groups(t.as_bytes()));
         // The file still reads, with the same page.
