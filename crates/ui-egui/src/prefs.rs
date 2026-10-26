@@ -26,6 +26,8 @@ impl UiState {
     pub fn read_preferences(bytes: &[u8]) -> serde_json::Result<ReadPreferences> {
         let mut saved: Value = serde_json::from_slice(bytes)?;
         let mut intact = recover_docking(&mut saved);
+        // Shortcut sets this version cannot read load as none (`lenient_sets`): keep the file.
+        intact &= saved.get("shortcutSets").is_none_or(|v| v.is_null() || serde_json::from_value::<craft_keymap::Profiles>(v.clone()).is_ok());
         if let Some(workspaces) = saved.get_mut("customWorkspaces").and_then(Value::as_array_mut) {
             for workspace in workspaces {
                 intact &= recover_docking(workspace);
@@ -243,6 +245,18 @@ mod tests {
         assert!(!original.docking_hidden.is_empty());
         assert_eq!(loaded.docking_hidden, original.docking_hidden);
         assert_eq!(loaded.custom_workspaces[0].docking_hidden, original.custom_workspaces[0].docking_hidden);
+    }
+
+    #[test]
+    fn unreadable_shortcut_sets_are_reported_so_the_file_is_kept() {
+        let mut saved = serde_json::to_value(populated()).unwrap();
+        assert!(UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap().intact);
+        saved.as_object_mut().unwrap().remove("shortcutSets");
+        assert!(UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap().intact, "no sets is no loss");
+        saved["shortcutSets"] = json!("a later format");
+        let read = UiState::read_preferences(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert!(!read.intact);
+        assert!(read.ui.shortcut_sets.sets().is_empty(), "the rest of ui.json still loads");
     }
 
     #[test]
