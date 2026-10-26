@@ -472,15 +472,17 @@ fn print_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
 
 /// The presets offered by the Export PDF dialog, in display order. The stored value is the
 /// English name; the caption is translated.
-const PDF_EXPORT_PRESETS: &[&str] = &["Desktop Printing", "Commercial Printing", "Screen and Email", "PDF/X-4", "PDF/A-2b", "Custom"];
+const PDF_EXPORT_PRESETS: &[&str] =
+    &["Desktop Printing", "Commercial Printing", "Screen and Email", "PDF/X-1a:2003", "PDF/X-4", "PDF/A-2b", "Custom"];
 
-/// Apply a preset's dependent fields. Flatten is only touched by "Screen and Email"; "Custom"
-/// (and any unknown value) changes nothing.
+/// Apply a preset's dependent fields. Flatten is only touched by "Screen and Email" and
+/// "PDF/X-1a:2003" (High Resolution); "Custom" (and any unknown value) changes nothing.
 fn apply_pdf_preset(d: &mut Dialog, preset: &str) {
     let (standard, compress, crop, bleed, page_info, flatten) = match preset {
         "Desktop Printing" => ("none", false, false, false, false, None),
         "Commercial Printing" => ("none", true, true, true, false, None),
         "Screen and Email" => ("none", true, false, false, false, Some("low")),
+        "PDF/X-1a:2003" => ("x1a", false, true, true, false, Some("high")),
         "PDF/X-4" => ("x4", false, true, true, false, None),
         "PDF/A-2b" => ("a2b", false, false, false, false, None),
         _ => return,
@@ -553,7 +555,20 @@ fn pdf_export(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     head(ui, "Advanced");
     ui.horizontal(|ui| {
         crate::rtl::label(ui, crate::i18n::tr(lang, "Standard:"));
-        translated_combo(lang, ui, d, "standard", &[("none", "None"), ("x4", "PDF/X-4"), ("a2b", "PDF/A-2b")]);
+        translated_combo(lang, ui, d, "standard", &[("none", "None"), ("x1a", "PDF/X-1a:2003"), ("x4", "PDF/X-4"), ("a2b", "PDF/A-2b")]);
+    });
+    // Spreads with transparency are rasterized at the preset's resolution; in PDF/X-1a it is the
+    // resolution craft-prepress rasterizes complex transparent regions at.
+    head(ui, "Transparency Flattener");
+    ui.horizontal(|ui| {
+        crate::rtl::label(ui, crate::i18n::tr(lang, "Preset:"));
+        translated_combo(
+            lang,
+            ui,
+            d,
+            "flatten",
+            &[("", "None"), ("high", "High Resolution"), ("medium", "Medium Resolution"), ("low", "Low Resolution")],
+        );
     });
     check(ui, d, "tagged", crate::i18n::tr(lang, "Tagged PDF"));
 
@@ -4786,9 +4801,22 @@ fn border_shading(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, doc
     });
 }
 
+/// The value of dialog field `k`, or `base` when the dialog has not set it.
+fn field_or(d: &Dialog, k: &str, base: &Value) -> Value {
+    d.fields.get(k).cloned().unwrap_or_else(|| base.clone())
+}
+
 /// Drop Caps and Nested Styles: the drop cap, nested styles and nested line styles (`p.` fields).
 fn drop_caps_and_nested_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames: &[String]) {
-    let cur = |d: &Dialog, k: &str, base: &Value| d.fields.get(k).cloned().unwrap_or_else(|| base.clone());
+    drop_cap_fields(lang, ui, d, pv, cnames);
+    ui.add_space(8.0);
+    nested_style_rows(lang, ui, d, pv, cnames);
+    ui.add_space(8.0);
+    nested_line_style_rows(lang, ui, d, pv, cnames);
+}
+
+/// The drop cap's lines, characters, character style and alignment options (`p.` fields).
+fn drop_cap_fields(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames: &[String]) {
     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, "Drop Caps")).font(semibold(12.0)));
     egui::Grid::new("psdc").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
         for (label, key, max) in [
@@ -4796,14 +4824,14 @@ fn drop_caps_and_nested_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv
             ("Characters:", "dropCapChars", designcraft_compose::MAX_DROP_CAP_CHARS),
         ] {
             crate::rtl::label(ui, crate::i18n::tr(lang, label));
-            let v = cur(d, &format!("p.{key}"), &pv[key]).as_f64();
+            let v = field_or(d, &format!("p.{key}"), &pv[key]).as_f64();
             if let Some(n) = crate::widgets::number(ui, &format!("ps{key}"), v, "", 60.0, 0) {
                 d.fields.insert(format!("p.{key}"), json!((n.max(0.0) as u64).min(max as u64)));
             }
             ui.end_row();
         }
         crate::rtl::label(ui, crate::i18n::tr(lang, "Character Style:"));
-        let style = cur(d, "p.dropCapStyle", &pv["dropCapStyle"]).as_str().unwrap_or("").to_string();
+        let style = field_or(d, "p.dropCapStyle", &pv["dropCapStyle"]).as_str().unwrap_or("").to_string();
         let style = if style.is_empty() { designcraft_doc::NO_CHAR_STYLE.to_string() } else { style };
         egui::ComboBox::from_id_salt("ps_dropcap_style")
             .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style)))
@@ -4818,93 +4846,25 @@ fn drop_caps_and_nested_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv
         ui.end_row();
     });
     for (label, key) in [("Align Left Edge", "dropCapAlignLeft"), ("Scale for Descenders", "dropCapScaleDescenders")] {
-        let mut on = cur(d, &format!("p.{key}"), &pv[key]).as_bool().unwrap_or(false);
+        let mut on = field_or(d, &format!("p.{key}"), &pv[key]).as_bool().unwrap_or(false);
         if ui.checkbox(&mut on, crate::rtl::widget(ui, crate::i18n::tr(lang, label))).changed() {
             d.fields.insert(format!("p.{key}"), json!(on));
         }
     }
-    ui.add_space(8.0);
+}
+
+/// The nested styles list (`p.nestedStyles`), with its add button.
+fn nested_style_rows(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames: &[String]) {
     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, "Nested Styles")).font(semibold(12.0)));
-    let mut list: Vec<Value> = cur(d, "p.nestedStyles", &pv["nestedStyles"]).as_array().cloned().unwrap_or_default();
+    let mut list: Vec<Value> = field_or(d, "p.nestedStyles", &pv["nestedStyles"]).as_array().cloned().unwrap_or_default();
     let mut changed = false;
     let mut remove = None;
     for (i, ns) in list.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            let style = ns["style"].as_str().unwrap_or("[None]").to_string();
-            egui::ComboBox::from_id_salt(("ns_style", i))
-                .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style)))
-                .width(110.0)
-                .show_ui(ui, |ui| {
-                    for c in cnames {
-                        if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
-                            ns["style"] = json!(c);
-                            changed = true;
-                        }
-                    }
-                });
-            let through = ns["through"].as_bool().unwrap_or(true);
-            egui::ComboBox::from_id_salt(("ns_thr", i))
-                .selected_text(crate::rtl::widget(ui, crate::i18n::tr(lang, if through { "through" } else { "up to" })))
-                .width(70.0)
-                .show_ui(ui, |ui| {
-                    for (v, l) in [(true, "through"), (false, "up to")] {
-                        if ui.selectable_label(v == through, crate::rtl::widget(ui, crate::i18n::tr(lang, l))).clicked() {
-                            ns["through"] = json!(v);
-                            changed = true;
-                        }
-                    }
-                });
-            let mut n = ns["count"].as_u64().unwrap_or(1) as u32;
-            let mut count_value = |ui: &mut egui::Ui, ns: &mut Value, changed: &mut bool| {
-                if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
-                    ns["count"] = json!(n);
-                    *changed = true;
-                }
-            };
-            if !crate::i18n::category_first(lang) {
-                count_value(ui, ns, &mut changed);
-            }
-            let kind = ns["until"]["kind"].as_str().unwrap_or("words").to_string();
-            egui::ComboBox::from_id_salt(("ns_until", i))
-                .selected_text(crate::rtl::widget(
-                    ui,
-                    if crate::i18n::category_first(lang) {
-                        format!("{}:", crate::i18n::tr(lang, &kind))
-                    } else {
-                        crate::i18n::tr(lang, &kind).to_owned()
-                    },
-                ))
-                .width(100.0)
-                .show_ui(ui, |ui| {
-                    for k in
-                        ["sentences", "words", "characters", "letters", "digits", "tab", "forcedLineBreak", "emSpace", "enSpace", "dropcap", "chars"]
-                    {
-                        if ui.selectable_label(k == kind, crate::rtl::widget(ui, crate::i18n::tr(lang, k))).clicked() {
-                            ns["until"] = if k == "chars" { json!({"kind": "chars", "chars": ":"}) } else { json!({"kind": k}) };
-                            changed = true;
-                        }
-                    }
-                });
-            if crate::i18n::category_first(lang) {
-                count_value(ui, ns, &mut changed);
-            }
-            if kind == "chars" {
-                let mut c = ns["until"]["chars"].as_str().unwrap_or("").to_string();
-                if ui.add(egui::TextEdit::singleline(&mut c).desired_width(40.0)).changed() {
-                    ns["until"]["chars"] = json!(c);
-                    changed = true;
-                }
-            }
-            if ui
-                .small_button("×")
-                .on_hover_ui(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(lang, "Delete"));
-                })
-                .clicked()
-            {
-                remove = Some(i);
-            }
-        });
+        let (row_changed, delete) = ui.horizontal(|ui| nested_style_row(lang, ui, ns, i, cnames)).inner;
+        changed |= row_changed;
+        if delete {
+            remove = Some(i);
+        }
     }
     if let Some(i) = remove {
         list.remove(i);
@@ -4917,51 +4877,92 @@ fn drop_caps_and_nested_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv
     if changed {
         d.fields.insert("p.nestedStyles".into(), Value::Array(list));
     }
-    ui.add_space(8.0);
+}
+
+/// One row of the nested styles list. Returns whether the row changed and whether its delete
+/// button was pressed.
+fn nested_style_row(lang: &str, ui: &mut egui::Ui, ns: &mut Value, i: usize, cnames: &[String]) -> (bool, bool) {
+    let mut changed = false;
+    let style = ns["style"].as_str().unwrap_or("[None]").to_string();
+    egui::ComboBox::from_id_salt(("ns_style", i)).selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style))).width(110.0).show_ui(
+        ui,
+        |ui| {
+            for c in cnames {
+                if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
+                    ns["style"] = json!(c);
+                    changed = true;
+                }
+            }
+        },
+    );
+    let through = ns["through"].as_bool().unwrap_or(true);
+    egui::ComboBox::from_id_salt(("ns_thr", i))
+        .selected_text(crate::rtl::widget(ui, crate::i18n::tr(lang, if through { "through" } else { "up to" })))
+        .width(70.0)
+        .show_ui(ui, |ui| {
+            for (v, l) in [(true, "through"), (false, "up to")] {
+                if ui.selectable_label(v == through, crate::rtl::widget(ui, crate::i18n::tr(lang, l))).clicked() {
+                    ns["through"] = json!(v);
+                    changed = true;
+                }
+            }
+        });
+    let mut n = ns["count"].as_u64().unwrap_or(1) as u32;
+    let mut count_value = |ui: &mut egui::Ui, ns: &mut Value, changed: &mut bool| {
+        if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
+            ns["count"] = json!(n);
+            *changed = true;
+        }
+    };
+    if !crate::i18n::category_first(lang) {
+        count_value(ui, ns, &mut changed);
+    }
+    let kind = ns["until"]["kind"].as_str().unwrap_or("words").to_string();
+    egui::ComboBox::from_id_salt(("ns_until", i))
+        .selected_text(crate::rtl::widget(
+            ui,
+            if crate::i18n::category_first(lang) { format!("{}:", crate::i18n::tr(lang, &kind)) } else { crate::i18n::tr(lang, &kind).to_owned() },
+        ))
+        .width(100.0)
+        .show_ui(ui, |ui| {
+            for k in ["sentences", "words", "characters", "letters", "digits", "tab", "forcedLineBreak", "emSpace", "enSpace", "dropcap", "chars"] {
+                if ui.selectable_label(k == kind, crate::rtl::widget(ui, crate::i18n::tr(lang, k))).clicked() {
+                    ns["until"] = if k == "chars" { json!({"kind": "chars", "chars": ":"}) } else { json!({"kind": k}) };
+                    changed = true;
+                }
+            }
+        });
+    if crate::i18n::category_first(lang) {
+        count_value(ui, ns, &mut changed);
+    }
+    if kind == "chars" {
+        let mut c = ns["until"]["chars"].as_str().unwrap_or("").to_string();
+        if ui.add(egui::TextEdit::singleline(&mut c).desired_width(40.0)).changed() {
+            ns["until"]["chars"] = json!(c);
+            changed = true;
+        }
+    }
+    let delete = ui
+        .small_button("×")
+        .on_hover_ui(|ui| {
+            crate::rtl::label(ui, crate::i18n::tr(lang, "Delete"));
+        })
+        .clicked();
+    (changed, delete)
+}
+
+/// The nested line styles list (`p.nestedLineStyles`), with its add button.
+fn nested_line_style_rows(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv: &Value, cnames: &[String]) {
     crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(lang, "Nested Line Styles")).font(semibold(12.0)));
-    let mut lines: Vec<Value> = cur(d, "p.nestedLineStyles", &pv["nestedLineStyles"]).as_array().cloned().unwrap_or_default();
+    let mut lines: Vec<Value> = field_or(d, "p.nestedLineStyles", &pv["nestedLineStyles"]).as_array().cloned().unwrap_or_default();
     let mut changed = false;
     let mut remove = None;
     for (i, l) in lines.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            let style = l["style"].as_str().unwrap_or("").to_string();
-            egui::ComboBox::from_id_salt(("nls_style", i))
-                .selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style)))
-                .width(130.0)
-                .show_ui(ui, |ui| {
-                    for c in cnames {
-                        if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
-                            l["style"] = json!(c);
-                            changed = true;
-                        }
-                    }
-                });
-            crate::rtl::label(
-                ui,
-                if crate::i18n::category_first(lang) {
-                    format!("{}:", crate::i18n::tr(lang, "lines"))
-                } else {
-                    crate::i18n::tr(lang, "for").to_owned()
-                },
-            );
-            let mut n = l["lines"].as_u64().unwrap_or(1) as u32;
-            if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
-                l["lines"] = json!(n);
-                changed = true;
-            }
-            if !crate::i18n::category_first(lang) {
-                crate::rtl::label(ui, crate::i18n::tr(lang, if n == 1 { "line" } else { "lines" }));
-            }
-            if ui
-                .small_button("×")
-                .on_hover_ui(|ui| {
-                    crate::rtl::label(ui, crate::i18n::tr(lang, "Delete"));
-                })
-                .clicked()
-            {
-                remove = Some(i);
-            }
-        });
+        let (row_changed, delete) = ui.horizontal(|ui| nested_line_style_row(lang, ui, l, i, cnames)).inner;
+        changed |= row_changed;
+        if delete {
+            remove = Some(i);
+        }
     }
     if let Some(i) = remove {
         lines.remove(i);
@@ -4974,6 +4975,43 @@ fn drop_caps_and_nested_styles(lang: &str, ui: &mut egui::Ui, d: &mut Dialog, pv
     if changed {
         d.fields.insert("p.nestedLineStyles".into(), Value::Array(lines));
     }
+}
+
+/// One row of the nested line styles list. Returns whether the row changed and whether its delete
+/// button was pressed.
+fn nested_line_style_row(lang: &str, ui: &mut egui::Ui, l: &mut Value, i: usize, cnames: &[String]) -> (bool, bool) {
+    let mut changed = false;
+    let style = l["style"].as_str().unwrap_or("").to_string();
+    egui::ComboBox::from_id_salt(("nls_style", i)).selected_text(crate::rtl::widget(ui, crate::i18n::style_name(lang, &style))).width(130.0).show_ui(
+        ui,
+        |ui| {
+            for c in cnames {
+                if ui.selectable_label(*c == style, crate::rtl::widget(ui, crate::i18n::style_name(lang, c))).clicked() {
+                    l["style"] = json!(c);
+                    changed = true;
+                }
+            }
+        },
+    );
+    crate::rtl::label(
+        ui,
+        if crate::i18n::category_first(lang) { format!("{}:", crate::i18n::tr(lang, "lines")) } else { crate::i18n::tr(lang, "for").to_owned() },
+    );
+    let mut n = l["lines"].as_u64().unwrap_or(1) as u32;
+    if ui.add(egui::DragValue::new(&mut n).range(1..=999)).changed() {
+        l["lines"] = json!(n);
+        changed = true;
+    }
+    if !crate::i18n::category_first(lang) {
+        crate::rtl::label(ui, crate::i18n::tr(lang, if n == 1 { "line" } else { "lines" }));
+    }
+    let delete = ui
+        .small_button("×")
+        .on_hover_ui(|ui| {
+            crate::rtl::label(ui, crate::i18n::tr(lang, "Delete"));
+        })
+        .clicked();
+    (changed, delete)
 }
 
 /// GREP Styles: a character style applied to text matching each pattern (`p.` fields).
@@ -10453,6 +10491,17 @@ mod tests {
         assert!(!d.b("marksBleed"));
         assert!(!d.b("marksPageInfo"));
         assert_eq!(d.s("flatten"), "low");
+    }
+
+    /// The PDF/X-1a preset exports X-1a with the High Resolution flattener and printer's marks.
+    #[test]
+    fn pdf_export_preset_pdf_x1a_flattens_at_high_resolution() {
+        let mut d = Dialog::new("pdfExport", json!({}));
+        apply_pdf_preset(&mut d, "PDF/X-1a:2003");
+        assert_eq!(d.s("standard"), "x1a");
+        assert_eq!(d.s("flatten"), "high");
+        assert!(d.b("marksCrop") && d.b("marksBleed"));
+        assert!(PDF_EXPORT_PRESETS.contains(&"PDF/X-1a:2003"));
     }
 
     #[test]

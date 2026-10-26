@@ -1082,6 +1082,27 @@ mod tests {
         (s, sid, selected)
     }
 
+    /// Child-story scopes are rejected by every find command, leaving the document untouched.
+    fn assert_child_scope_requests_rejected(s: &mut Session) {
+        let before = s.doc().unwrap().doc.clone();
+        let selection = s.doc().unwrap().selection.clone();
+        let history = s.doc().unwrap().history.undo.len();
+        let revision = s.doc().unwrap().revision;
+        let journal = s.journal.clone();
+        for scope in ["story", "selection"] {
+            for command in ["find.find", "find.next", "find.change"] {
+                let err = s.execute(command, &json!({"find": "red", "change": "blue", "scope": scope})).unwrap_err();
+                assert!(matches!(err, crate::EngineError::BadParams { .. }), "{err}");
+                assert!(err.to_string().contains("not supported"));
+                assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc));
+                assert_eq!(s.doc().unwrap().selection, selection);
+                assert_eq!(s.doc().unwrap().history.undo.len(), history);
+                assert_eq!(s.doc().unwrap().revision, revision);
+                assert_eq!(s.journal, journal);
+            }
+        }
+    }
+
     #[test]
     fn find_scope_children_error_atomically_and_parent_requests_stay_top_level() {
         for note in [false, true] {
@@ -1090,23 +1111,8 @@ mod tests {
                 selected.anchor = 0;
                 selected.focus = child.len();
                 s.doc_mut().unwrap().selection = designcraft_doc::Selection::text(selected);
-                let before = s.doc().unwrap().doc.clone();
+                assert_child_scope_requests_rejected(&mut s);
                 let selection = s.doc().unwrap().selection.clone();
-                let history = s.doc().unwrap().history.undo.len();
-                let revision = s.doc().unwrap().revision;
-                let journal = s.journal.clone();
-                for scope in ["story", "selection"] {
-                    for command in ["find.find", "find.next", "find.change"] {
-                        let err = s.execute(command, &json!({"find": "red", "change": "blue", "scope": scope})).unwrap_err();
-                        assert!(matches!(err, crate::EngineError::BadParams { .. }), "{err}");
-                        assert!(err.to_string().contains("not supported"));
-                        assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc));
-                        assert_eq!(s.doc().unwrap().selection, selection);
-                        assert_eq!(s.doc().unwrap().history.undo.len(), history);
-                        assert_eq!(s.doc().unwrap().revision, revision);
-                        assert_eq!(s.journal, journal);
-                    }
-                }
                 for explicit in [false, true] {
                     let mut p = json!({"find": "red", "change": "blue"});
                     if explicit {

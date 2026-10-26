@@ -137,7 +137,7 @@ pub(crate) fn mark_start(opts: &PdfOptions, bleed: [f64; 4]) -> f64 {
 /// working space (which PDF/X also carries as its output intent). True when the document blends
 /// in CMYK, and always in PDF/X; PDF/A exports are RGB.
 pub fn print_color(doc: &Document, opts: &PdfOptions) -> bool {
-    opts.standard != Standard::PdfA2b && (doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk || opts.standard == Standard::PdfX4)
+    opts.standard != Standard::PdfA2b && (doc.settings.blend_space == designcraft_doc::BlendSpace::Cmyk || opts.standard.is_pdfx())
 }
 
 /// Like [`export_pdf`], also returning warnings about approximated or dropped features.
@@ -156,6 +156,7 @@ fn add_form_fields(bytes: &mut Vec<u8>, warnings: &mut Vec<String>, doc: &Docume
     }
     match opts.standard {
         Standard::PdfX4 => warnings.push("PDF/X-4: form fields and media were left out".into()),
+        Standard::PdfX1a => warnings.push("PDF/X-1a: form fields and media were left out".into()),
         Standard::PdfA2b => warnings.push("PDF/A-2b: form fields and media were left out".into()),
         _ => match crate::forms::add_fields(&*bytes, &fields, &media) {
             Some(b) => *bytes = b,
@@ -168,14 +169,15 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
     let sheets = sheets(doc, opts)?;
     let (version, archival) = match opts.standard {
         Standard::None => (PdfVersion::Pdf17, None),
-        Standard::PdfX4 => (PdfVersion::Pdf16, None),
+        // PDF/X-1a starts as the PDF/X-4 print file, then is flattened.
+        Standard::PdfX4 | Standard::PdfX1a => (PdfVersion::Pdf16, None),
         Standard::PdfA2b => (PdfVersion::Pdf17, Some(Archival::A2_B)),
     };
     let configuration = write::configuration(version, archival)?;
     let mut warnings = Vec::new();
     let base = if print_color(doc, opts) {
         // An output intent only for PDF/X, as in InDesign.
-        let (settings, warning) = crate::pdfx::print_settings(opts.standard == Standard::PdfX4)?;
+        let (settings, warning) = crate::pdfx::print_settings(opts.standard.is_pdfx())?;
         warnings.extend(warning);
         let pdfx_version = (opts.standard == Standard::PdfX4).then(|| "PDF/X-4".to_string());
         krilla::SerializeSettings { pdfx_version, ..settings }
@@ -284,8 +286,29 @@ fn export_pdf_with_report_inner(doc: &Document, cache: &Cache, opts: &PdfOptions
             warnings.push(format!("PDF/X-4: {issue}"));
         }
     }
+    if opts.standard == Standard::PdfX1a {
+        bytes = crate::pdfx1a::flatten_x1a(&bytes, opts.flatten_dpi, &page_graphics(doc, &sheets), &mut warnings)?;
+    }
     warnings.dedup();
     Ok(ExportReport { bytes, pages: sheets.len(), warnings })
+}
+
+/// Each sheet's name and the names of the graphics placed on it, for PDF/X-1a's errors.
+fn page_graphics(doc: &Document, sheets: &[Sheet]) -> Vec<crate::pdfx1a::PageGraphics> {
+    sheets
+        .iter()
+        .map(|sh| {
+            let mut graphics: Vec<String> = Vec::new();
+            for (xf, it) in exported_items(doc, sh.spread) {
+                let Some(asset) = it.graphic().and_then(|g| doc.assets.get(&g.asset)) else { continue };
+                let shown = xf.transform_rect_bbox(it.bounds()).intersect(sh.media);
+                if shown.width() > 0.0 && shown.height() > 0.0 && !graphics.contains(&asset.name) {
+                    graphics.push(asset.name.clone());
+                }
+            }
+            crate::pdfx1a::PageGraphics { label: sh.label.clone(), graphics }
+        })
+        .collect()
 }
 
 /// One PDF from several (a book's documents), every page carried over as vectors; each part
@@ -673,7 +696,7 @@ pub(crate) fn solid_fill(c: krilla::color::Color, opacity: f32) -> Fill {
 impl Exporter<'_> {
     /// A print document, or a PDF/X file (whose output intent is CMYK).
     pub(crate) fn for_print(&self) -> bool {
-        self.doc.settings.intent == designcraft_doc::Intent::Print || self.opts.standard == Standard::PdfX4
+        self.doc.settings.intent == designcraft_doc::Intent::Print || self.opts.standard.is_pdfx()
     }
 
     /// Whether a paint overprints: its own attribute, or 100% [Black] when Preferences ›
@@ -1016,8 +1039,15 @@ impl Exporter<'_> {
         if frame_art {
             s.start_tagged(ContentTag::Artifact(Artifact::new(ArtifactType::Other, None)));
         }
-        // Drop shadow (simple offset silhouette, like the renderer).
+        // Drop shadow: its coverage mask when one was rendered, else a simple offset silhouette.
         if ds.on
+            && let Some(mask) = self.opts.shadows.get(&it.id)
+            && let Some(c) = self.swatch_color(&ds.color, 1.0)
+        {
+            s.push_transform(&tf(parent));
+            draw_coverage(s, mask, c);
+            s.pop();
+        } else if ds.on
             && let Some(p) = &path
             && let Some(c) = self.swatch_color(&ds.color, 1.0)
         {
@@ -1537,116 +1567,7 @@ impl Exporter<'_> {
     }
 
     fn graphic_unclipped(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: Option<&[String]>) {
-        // Video / sound without a poster: a dark frame with a play mark.
-        if let Some(asset) = self.doc.assets.get(&g.asset)
-            && designcraft_doc::media_kind(&asset.mime).is_some()
-        {
-            let (w, h) = g.size;
-            let (cx, cy, r) = (w / 2.0, h / 2.0, w.min(h) * 0.18);
-            let mut tri = BezPath::new();
-            tri.move_to((cx - r * 0.6, cy - r));
-            tri.line_to((cx + r, cy));
-            tri.line_to((cx - r * 0.6, cy + r));
-            tri.close_path();
-            s.push_transform(&tf(g.xf));
-            s.set_stroke(None);
-            for (bp, c) in [(Rect::new(0.0, 0.0, w, h).to_path(0.1), rgb::Color::new(48, 48, 52)), (tri, rgb::Color::new(235, 235, 235))] {
-                if let Some(p) = to_path(&bp) {
-                    s.set_fill(Some(Fill { paint: c.into(), ..Default::default() }));
-                    s.draw_path(&p);
-                }
-            }
-            s.set_fill(None);
-            s.pop();
-            return;
-        }
-        // Placed PDFs go in as vectors (the page as a form XObject).
-        let doc = self.doc;
-        if let Some(asset) = doc.assets.get(&g.asset)
-            && asset.data.starts_with(b"%PDF")
-        {
-            // Cropped to a box: the whole page, placed so that the box spans graphic space.
-            let shown = asset.shown_box();
-            let [l, t, r, b] = shown.unwrap_or([0.0, 0.0, 1.0, 1.0]);
-            let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
-            let Some(size) = Size::from_wh(page_w.max(1e-3) as f32, page_h.max(1e-3) as f32) else { return };
-            let request = (g.asset, hidden.map(<[String]>::to_vec));
-            let variant = match self.variants.get(&request) {
-                Some(variant) => variant.clone(),
-                None => {
-                    #[cfg(test)]
-                    {
-                        self.pdf_preparations += 1;
-                    }
-                    match crate::optional_content::prepare(&asset.data, hidden) {
-                        Ok(variant) => {
-                            self.variants.insert(request, variant.clone());
-                            variant
-                        }
-                        Err(error) => {
-                            let message = match error {
-                                PdfError::Write(message) => message,
-                                other => other.to_string(),
-                            };
-                            self.layer_error.get_or_insert(PdfError::Write(format!("{}: {message}", asset.name)));
-                            return;
-                        }
-                    }
-                }
-            };
-            if let Some(warning) = variant.warning {
-                self.warn(format!("{}: {warning}", asset.name));
-            }
-            let key = (g.asset, variant.hidden);
-            let placed = match self.pdfs.get(&key) {
-                Some(p) => p.clone(),
-                None => {
-                    let p = self.placed_pdf(asset, variant.data);
-                    self.pdfs.insert(key, p.clone());
-                    p
-                }
-            };
-            match placed {
-                // krilla would fail the whole export at the end on a page the PDF doesn't have.
-                Some((_, pages)) if asset.page as usize >= pages => {
-                    self.warn(format!("{}: the placed PDF has no page {}", asset.name, u64::from(asset.page) + 1));
-                }
-                Some((placed, _)) => {
-                    self.has_optional_content |= variant.has_optional_content;
-                    s.push_transform(&tf(g.xf));
-                    let clip = shown.and_then(|_| to_path(&Rect::new(0.0, 0.0, g.size.0, g.size.1).to_path(0.1)));
-                    if let Some(clip) = &clip {
-                        s.push_clip_path(clip, &FillRule::NonZero);
-                    }
-                    s.push_transform(&tf(Affine::translate((-l * page_w, -t * page_h))));
-                    s.draw_pdf_page(&placed, size, asset.page as usize);
-                    s.pop();
-                    if clip.is_some() {
-                        s.pop();
-                    }
-                    s.pop();
-                }
-                None => {}
-            }
-            return;
-        }
-        // Placed SVGs go in as vectors too.
-        if let Some(asset) = self.doc.assets.get(&g.asset)
-            && designcraft_images::is_svg(&asset.data)
-        {
-            let Some(size) = Size::from_wh(g.size.0.max(1e-3) as f32, g.size.1.max(1e-3) as f32) else { return };
-            let tree = self.svgs.entry(g.asset).or_insert_with(|| designcraft_images::svg_tree(&asset.data).map(Arc::new)).clone();
-            match tree {
-                Some(tree) => {
-                    use krilla_svg::SurfaceExt;
-                    s.push_transform(&tf(g.xf));
-                    if s.draw_svg(&tree, size, krilla_svg::SvgSettings::default()).is_none() {
-                        self.warn(format!("{}: parts of the placed SVG could not be drawn", asset.name));
-                    }
-                    s.pop();
-                }
-                None => self.warn(format!("{}: can't read the placed SVG", asset.name)),
-            }
+        if self.graphic_media_placeholder(s, g) || self.graphic_placed_pdf(s, g, hidden) || self.graphic_placed_svg(s, g) {
             return;
         }
         if self.colorized(s, g) {
@@ -1657,6 +1578,121 @@ impl Exporter<'_> {
         s.push_transform(&tf(g.xf));
         s.draw_image(img, size);
         s.pop();
+    }
+
+    /// Video or sound without a poster: a dark frame with a play mark. `false` when `g` is not one.
+    fn graphic_media_placeholder(&self, s: &mut Surface, g: &designcraft_doc::Graphic) -> bool {
+        let Some(asset) = self.doc.assets.get(&g.asset) else { return false };
+        if designcraft_doc::media_kind(&asset.mime).is_none() {
+            return false;
+        }
+        let (w, h) = g.size;
+        let (cx, cy, r) = (w / 2.0, h / 2.0, w.min(h) * 0.18);
+        let mut tri = BezPath::new();
+        tri.move_to((cx - r * 0.6, cy - r));
+        tri.line_to((cx + r, cy));
+        tri.line_to((cx - r * 0.6, cy + r));
+        tri.close_path();
+        s.push_transform(&tf(g.xf));
+        s.set_stroke(None);
+        for (bp, c) in [(Rect::new(0.0, 0.0, w, h).to_path(0.1), rgb::Color::new(48, 48, 52)), (tri, rgb::Color::new(235, 235, 235))] {
+            if let Some(p) = to_path(&bp) {
+                s.set_fill(Some(Fill { paint: c.into(), ..Default::default() }));
+                s.draw_path(&p);
+            }
+        }
+        s.set_fill(None);
+        s.pop();
+        true
+    }
+
+    /// A placed PDF goes in as vectors (the page as a form XObject). `false` when `g` is not one.
+    fn graphic_placed_pdf(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: Option<&[String]>) -> bool {
+        let doc = self.doc;
+        let Some(asset) = doc.assets.get(&g.asset).filter(|asset| asset.data.starts_with(b"%PDF")) else { return false };
+        // Cropped to a box: the whole page, placed so that the box spans graphic space.
+        let shown = asset.shown_box();
+        let [l, t, r, b] = shown.unwrap_or([0.0, 0.0, 1.0, 1.0]);
+        let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
+        let Some(size) = Size::from_wh(page_w.max(1e-3) as f32, page_h.max(1e-3) as f32) else { return true };
+        let request = (g.asset, hidden.map(<[String]>::to_vec));
+        let variant = match self.variants.get(&request) {
+            Some(variant) => variant.clone(),
+            None => {
+                #[cfg(test)]
+                {
+                    self.pdf_preparations += 1;
+                }
+                match crate::optional_content::prepare(&asset.data, hidden) {
+                    Ok(variant) => {
+                        self.variants.insert(request, variant.clone());
+                        variant
+                    }
+                    Err(error) => {
+                        let message = match error {
+                            PdfError::Write(message) => message,
+                            other => other.to_string(),
+                        };
+                        self.layer_error.get_or_insert(PdfError::Write(format!("{}: {message}", asset.name)));
+                        return true;
+                    }
+                }
+            }
+        };
+        if let Some(warning) = variant.warning {
+            self.warn(format!("{}: {warning}", asset.name));
+        }
+        let key = (g.asset, variant.hidden);
+        let placed = match self.pdfs.get(&key) {
+            Some(p) => p.clone(),
+            None => {
+                let p = self.placed_pdf(asset, variant.data);
+                self.pdfs.insert(key, p.clone());
+                p
+            }
+        };
+        match placed {
+            // krilla would fail the whole export at the end on a page the PDF doesn't have.
+            Some((_, pages)) if asset.page as usize >= pages => {
+                self.warn(format!("{}: the placed PDF has no page {}", asset.name, u64::from(asset.page) + 1));
+            }
+            Some((placed, _)) => {
+                self.has_optional_content |= variant.has_optional_content;
+                s.push_transform(&tf(g.xf));
+                let clip = shown.and_then(|_| to_path(&Rect::new(0.0, 0.0, g.size.0, g.size.1).to_path(0.1)));
+                if let Some(clip) = &clip {
+                    s.push_clip_path(clip, &FillRule::NonZero);
+                }
+                s.push_transform(&tf(Affine::translate((-l * page_w, -t * page_h))));
+                s.draw_pdf_page(&placed, size, asset.page as usize);
+                s.pop();
+                if clip.is_some() {
+                    s.pop();
+                }
+                s.pop();
+            }
+            None => {}
+        }
+        true
+    }
+
+    /// A placed SVG goes in as vectors too. `false` when `g` is not one.
+    fn graphic_placed_svg(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic) -> bool {
+        let Some(asset) = self.doc.assets.get(&g.asset).filter(|asset| designcraft_images::is_svg(&asset.data)) else { return false };
+        let Some(size) = Size::from_wh(g.size.0.max(1e-3) as f32, g.size.1.max(1e-3) as f32) else { return true };
+        let tree = self.svgs.entry(g.asset).or_insert_with(|| designcraft_images::svg_tree(&asset.data).map(Arc::new)).clone();
+        match tree {
+            Some(tree) => {
+                use krilla_svg::SurfaceExt;
+                s.push_transform(&tf(g.xf));
+                if s.draw_svg(&tree, size, krilla_svg::SvgSettings::default()).is_none() {
+                    self.warn(format!("{}: parts of the placed SVG could not be drawn", asset.name));
+                }
+                s.pop();
+            }
+            None => self.warn(format!("{}: can't read the placed SVG", asset.name)),
+        }
+        true
     }
 
     /// A greyscale or bitmap image coloured by the swatch applied to it (#1094): the swatch is
@@ -1697,6 +1733,37 @@ impl Exporter<'_> {
     }
 }
 
+/// `paint` through `mask`'s coverage, a luminosity mask: the color's own inks (spot, process),
+/// never an RGB raster. The shadow multiplies with what is beneath it, as InDesign's drop shadow
+/// does by default (the shadow model has no blend mode of its own), so a spot under a black
+/// shadow keeps its full ink.
+fn draw_coverage(s: &mut Surface, mask: &crate::ShadowMask, paint: krilla::color::Color) {
+    let r = mask.rect;
+    let (Some(size), Some(rect), Some(image)) = (
+        Size::from_wh(r.width().max(1e-3) as f32, r.height().max(1e-3) as f32),
+        to_path(&r.to_path(0.1)),
+        CoverageImage::from_grey(mask.coverage.clone(), (mask.width, mask.height)),
+    ) else {
+        return;
+    };
+    let Ok(image) = Image::from_custom(image, false) else { return };
+    let mut sb = s.stream_builder();
+    let mut ms = sb.surface();
+    ms.push_transform(&tf(Affine::translate((r.x0, r.y0))));
+    ms.draw_image(image, size);
+    ms.pop();
+    ms.finish();
+    let stream = sb.finish();
+    s.push_blend_mode(krilla::blend::BlendMode::Multiply);
+    s.push_mask(krilla::mask::Mask::new(stream, krilla::mask::MaskType::Luminosity));
+    s.set_stroke(None);
+    s.set_fill(Some(Fill { paint: paint.into(), ..Default::default() }));
+    s.draw_path(&rect);
+    s.set_fill(None);
+    s.pop();
+    s.pop();
+}
+
 /// The ink coverage of a greyscale or bitmap image (255 = black, 0 = white or transparent) as a
 /// DeviceGray image, painted into a luminosity mask.
 #[derive(Clone, Hash)]
@@ -1713,6 +1780,12 @@ impl CoverageImage {
         }
         let grey = rgba.pixels().map(|p| ((u16::from(255 - p[0]) * u16::from(p[3]) + 127) / 255) as u8).collect();
         Some(Self { grey: Arc::new(grey), size })
+    }
+
+    /// Coverage given directly, one byte per pixel; `None` when the size doesn't match.
+    fn from_grey(grey: Arc<Vec<u8>>, size: (u32, u32)) -> Option<Self> {
+        let n = usize::try_from(u64::from(size.0) * u64::from(size.1)).ok()?;
+        (n > 0 && grey.len() == n).then_some(Self { grey, size })
     }
 }
 
@@ -1789,7 +1862,7 @@ struct RasterMode {
 
 impl RasterMode {
     fn for_standard(standard: Standard) -> Self {
-        Self { interpolate: standard == Standard::None, tag_rgb: standard == Standard::PdfX4 }
+        Self { interpolate: standard == Standard::None, tag_rgb: standard.is_pdfx() }
     }
 }
 
