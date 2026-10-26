@@ -273,54 +273,65 @@ fn convert_all(s: &mut Session, p: &Value) -> Result<Value> {
     };
     s.edit(|d, sel| {
         for plan in &plans {
-            // A selection in a table cell or a footnote keeps its place in that text: it is
-            // converted first, so the loop below finds nothing left there.
-            if let Some(t) = sel.text.as_mut().filter(|t| t.story == plan.sid)
-                && let Some(c) = t.cell
-            {
-                let value = match c.footnote_id() {
-                    Some(id) => d.story(plan.sid).and_then(|st| st.notes.iter().position(|n| n.id == id)).and_then(|k| plan.notes.get(k)),
-                    None => plan.tables.iter().find(|(id, _)| *id == c.table).map(|(_, v)| v),
-                };
-                if let Some(v) = value
-                    && let Some(text) = d.text_story_mut(plan.sid, Some(c))
-                {
-                    let grown = replace_nested(text, i, v, 1);
-                    t.anchor = shifted(t.anchor, &grown);
-                    t.focus = shifted(t.focus, &grown);
-                }
-            }
-            let st = d.story_mut(plan.sid).ok_or(designcraft_doc::DocError::NoStory(plan.sid))?;
-            let at: Vec<(usize, usize)> = plan.own.iter().map(|(pos, _)| (*pos, i)).collect();
-            let grown = replace_instances(st, &at, &|pos| plan.own.iter().find(|(k, _)| *k == pos).map(|(_, v)| v.clone()).unwrap_or_default());
-            let mut nested = false;
-            for (id, v) in &plan.tables {
-                if let Some(t) = st.tables.get_mut(id)
-                    && t.cells.iter().any(|c| holds(&c.text, i, 1))
-                {
-                    for c in &mut std::sync::Arc::make_mut(t).cells {
-                        replace_nested(&mut c.text, i, v, 1);
-                    }
-                    nested = true;
-                }
-            }
-            for (note, v) in st.notes.iter_mut().zip(&plan.notes).chain(st.endnotes.iter_mut().zip(&plan.endnotes)) {
-                if holds(&note.text, i, 1) {
-                    replace_nested(&mut std::sync::Arc::make_mut(note).text, i, v, 1);
-                    nested = true;
-                }
-            }
-            if nested {
-                st.rev = st.rev.wrapping_add(1);
-            }
-            // A selection in the story keeps its place in the text.
-            if let Some(t) = sel.text.as_mut().filter(|t| t.story == plan.sid && t.cell.is_none()) {
-                t.anchor = shifted(t.anchor, &grown);
-                t.focus = shifted(t.focus, &grown);
-            }
+            convert_plan(d, sel, i, plan)?;
         }
         Ok(Value::Null)
     })
+}
+
+/// Converts one story's instances of variable `i` as planned, keeping the selection in place.
+fn convert_plan(d: &mut designcraft_doc::Document, sel: &mut designcraft_doc::Selection, i: usize, plan: &StoryPlan) -> Result<()> {
+    // A selection in a table cell or a footnote keeps its place in that text: it is
+    // converted first, so the loop below finds nothing left there.
+    if let Some(t) = sel.text.as_mut().filter(|t| t.story == plan.sid)
+        && let Some(c) = t.cell
+    {
+        let value = match c.footnote_id() {
+            Some(id) => d.story(plan.sid).and_then(|st| st.notes.iter().position(|n| n.id == id)).and_then(|k| plan.notes.get(k)),
+            None => plan.tables.iter().find(|(id, _)| *id == c.table).map(|(_, v)| v),
+        };
+        if let Some(v) = value
+            && let Some(text) = d.text_story_mut(plan.sid, Some(c))
+        {
+            let grown = replace_nested(text, i, v, 1);
+            t.anchor = shifted(t.anchor, &grown);
+            t.focus = shifted(t.focus, &grown);
+        }
+    }
+    let st = d.story_mut(plan.sid).ok_or(designcraft_doc::DocError::NoStory(plan.sid))?;
+    let at: Vec<(usize, usize)> = plan.own.iter().map(|(pos, _)| (*pos, i)).collect();
+    let grown = replace_instances(st, &at, &|pos| plan.own.iter().find(|(k, _)| *k == pos).map(|(_, v)| v.clone()).unwrap_or_default());
+    if replace_in_tables_and_notes(st, i, plan) {
+        st.rev = st.rev.wrapping_add(1);
+    }
+    // A selection in the story keeps its place in the text.
+    if let Some(t) = sel.text.as_mut().filter(|t| t.story == plan.sid && t.cell.is_none()) {
+        t.anchor = shifted(t.anchor, &grown);
+        t.focus = shifted(t.focus, &grown);
+    }
+    Ok(())
+}
+
+/// Replaces variable `i` in the tables and foot/endnotes of `st` that hold it. Returns whether any did.
+fn replace_in_tables_and_notes(st: &mut designcraft_doc::Story, i: usize, plan: &StoryPlan) -> bool {
+    let mut nested = false;
+    for (id, v) in &plan.tables {
+        if let Some(t) = st.tables.get_mut(id)
+            && t.cells.iter().any(|c| holds(&c.text, i, 1))
+        {
+            for c in &mut std::sync::Arc::make_mut(t).cells {
+                replace_nested(&mut c.text, i, v, 1);
+            }
+            nested = true;
+        }
+    }
+    for (note, v) in st.notes.iter_mut().zip(&plan.notes).chain(st.endnotes.iter_mut().zip(&plan.endnotes)) {
+        if holds(&note.text, i, 1) {
+            replace_nested(&mut std::sync::Arc::make_mut(note).text, i, v, 1);
+            nested = true;
+        }
+    }
+    nested
 }
 
 /// Nesting limit for tables in cells and notes (hostile documents).

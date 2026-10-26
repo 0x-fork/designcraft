@@ -1482,6 +1482,10 @@ pub struct Item {
     /// Object › Object Layer Options: layers of a placed PDF that are hidden.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pdf_hidden_layers: Vec<String>,
+    /// Explicit placed-PDF visibility, including an all-on override with no hidden names.
+    /// False with an empty hidden list retains the file's own settings (legacy behavior).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pdf_layer_override: bool,
     /// Window › Interactive › Media: options of a placed video or sound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaOptions>,
@@ -1514,7 +1518,15 @@ fn one() -> f32 {
     1.0
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 impl Item {
+    pub fn has_pdf_layer_override(&self) -> bool {
+        self.pdf_layer_override || !self.pdf_hidden_layers.is_empty()
+    }
+
     pub fn new(id: ItemId, layer: LayerId, shape: Shape, path: PathData) -> Self {
         Item {
             id,
@@ -1541,6 +1553,7 @@ impl Item {
             xml_tag: String::new(),
             button: None,
             pdf_hidden_layers: Vec::new(),
+            pdf_layer_override: false,
             live_caption: None,
             form_field: None,
             export_options: ExportOptions::default(),

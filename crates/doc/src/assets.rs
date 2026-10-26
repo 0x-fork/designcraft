@@ -31,12 +31,41 @@ fn story_layer_options(st: &Story, depth: usize, overrides_only: bool) -> bool {
         || st.notes.iter().chain(&st.endnotes).any(|note| story_layer_options(&note.text, depth + 1, overrides_only))
 }
 
+fn item_any(it: &Item, depth: usize, f: &impl Fn(&Item) -> bool) -> bool {
+    depth > MAX_DEPTH || f(it) || it.children().iter().any(|child| item_any(child, depth + 1, f))
+}
+
+fn story_any(st: &Story, depth: usize, f: &impl Fn(&Item) -> bool) -> bool {
+    depth > MAX_DEPTH
+        || st.objects.iter().any(|object| item_any(&object.item, depth + 1, f))
+        || st.tables.values().flat_map(|table| &table.cells).any(|cell| story_any(&cell.text, depth + 1, f))
+        || st.notes.iter().chain(&st.endnotes).any(|note| story_any(&note.text, depth + 1, f))
+}
+
 impl Document {
     /// Whether saving needs a reader that retains per-placement graphic layer settings.
     /// Exceeding the traversal budget conservatively requires the newer format.
     pub fn has_graphic_layer_options(&self) -> bool {
         self.spreads.iter().chain(&self.parents).flat_map(|spread| &spread.items).any(|item| item_layer_options(item, 0, false))
             || self.stories.values().any(|story| story_layer_options(story, 0, false))
+    }
+
+    /// Whether any placed PDF, on document or parent spreads, in groups or anchored, explicitly
+    /// shows every layer (an override with an empty hidden list). Older readers would take that
+    /// for "use the file's defaults". Exceeding the traversal budget conservatively says yes.
+    pub fn has_explicit_all_on_pdf_layers(&self) -> bool {
+        let all_on = |it: &Item| it.pdf_layer_override && it.pdf_hidden_layers.is_empty();
+        self.spreads.iter().chain(&self.parents).flat_map(|spread| &spread.items).any(|item| item_any(item, 0, &all_on))
+            || self.stories.values().any(|story| story_any(story, 0, &all_on))
+    }
+
+    /// Whether any placed PDF, on document or parent spreads, in groups or anchored, has an
+    /// Object Layer Options choice (hidden layers or explicit all-on). Exceeding the traversal
+    /// budget conservatively says yes.
+    pub fn has_pdf_layer_overrides(&self) -> bool {
+        let chosen = |it: &Item| it.has_pdf_layer_override();
+        self.spreads.iter().chain(&self.parents).flat_map(|spread| &spread.items).any(|item| item_any(item, 0, &chosen))
+            || self.stories.values().any(|story| story_any(story, 0, &chosen))
     }
 
     /// Placements outside the ordinary document-spread frame walk used by preflight.

@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::{CommandSpec, bad, bool_or, cmd, has_doc, has_text, has_text_or_frames, id_param, ok, point_param, str_param};
 use crate::{Result, Session};
 
+/// Build the text command registry: caret/selection movement, insertion/deletion, release, text and paragraph formatting, story queries, ruby and OpenType commands, with their parameters and enabled predicates.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "text.placeCaret", "Place Caret", [], None, "{frame, point: [x,y] (spread coords)} — converts empty frames to text frames", has_doc, |s, p| place(s, p, false)),
@@ -72,6 +73,15 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         cmd!("text.insert", "Type", [], None, "{text, raw?: bool (no typographer's quotes)} — replaces the selected text", has_text, insert),
+        cmd!(
+            "text.deleteSurrounding",
+            "Delete Surrounding Text",
+            [],
+            None,
+            "{before?: int, after?: int, bytes?: bool, commit?: string} — removes the text around the selection (an input method's delete-surrounding), keeps the selection and its direction, and with `commit` types that text over it: one undo step",
+            has_text,
+            delete_surrounding
+        ),
         cmd!("text.delete", "Delete Text", [], None, "{forward?: bool, word?: bool}", has_text, delete),
         cmd!(noundo "text.move", "Move Caret", [], None, "{dir: left|right|up|down|lineStart|lineEnd|storyStart|storyEnd, extend?, word?}", has_text, move_caret),
         cmd!(noundo "text.exitToFrame", "Select Frame", [], None, "{}", has_doc, |s, _| {
@@ -767,6 +777,71 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     result
 }
 
+/// The input method's delete-surrounding: remove `before`/`after` characters (or bytes) around
+/// the selection, keeping the selection itself and its direction, then optionally type `commit`
+/// over it. One undo step for the whole batch, through the normal command pipeline (preview
+/// restoration, panic guard, undo, auto-size and the journal), unlike a private edit.
+fn delete_surrounding(s: &mut Session, p: &Value) -> Result<Value> {
+    let count = |key: &str| -> Result<usize> {
+        match p.get(key).and_then(Value::as_u64) {
+            Some(v) => usize::try_from(v).map_err(|_| bad("text.deleteSurrounding", format!("{key} is out of range"))),
+            None => Ok(0),
+        }
+    };
+    let before = count("before")?;
+    let after = count("after")?;
+    let bytes = p.get("bytes").and_then(Value::as_bool).unwrap_or(false);
+    let commit = designcraft_tools::ime_commit_text(p.get("commit").and_then(Value::as_str).unwrap_or(""));
+    // What the request removes, from the committed text as it is now: the ranges exclude the
+    // selection and any pre-edit (a pre-edit is only a preview, never in the story).
+    let (before_range, after_range, tracking, length_before) = {
+        let st = s.doc()?;
+        let t = st.selection.text.ok_or_else(|| bad("text.deleteSurrounding", "no text insertion point"))?;
+        let story = st.doc.text_story(t.story, t.cell).ok_or(designcraft_doc::DocError::NoStory(t.story))?;
+        let (before_range, after_range) = crate::ime_delete_ranges(&story.text, t.anchor, t.focus, before, after, bytes)
+            .ok_or_else(|| bad("text.deleteSurrounding", "the IME text selection is not on character boundaries"))?;
+        (before_range, after_range, st.doc.settings.track_changes && t.cell.is_none(), story.text.len())
+    };
+    s.edit(|d, sel| {
+        let t = sel.text.ok_or_else(|| bad("text.deleteSurrounding", "no text insertion point"))?;
+        let story = d.text_story_mut(t.story, t.cell).ok_or(designcraft_doc::DocError::NoStory(t.story))?;
+        if !after_range.is_empty() {
+            if tracking {
+                crate::cmd::changes::mark_deleted(story, after_range.clone());
+            } else {
+                story.delete(after_range.clone());
+            }
+        }
+        let mut shift = 0usize;
+        if !before_range.is_empty() {
+            if tracking {
+                // Tracked changes keep the text and mark it deleted: the selection does not move.
+                let new_end = crate::cmd::changes::mark_deleted(story, before_range.clone());
+                shift = before_range.end.saturating_sub(new_end);
+            } else {
+                shift = before_range.len();
+                story.delete(before_range.clone());
+            }
+        }
+        sel.text = Some(TextSel { anchor: t.anchor.saturating_sub(shift), focus: t.focus.saturating_sub(shift), ..t });
+        Ok(())
+    })?;
+    if !commit.is_empty() {
+        insert(s, &json!({"text": commit}))?;
+    }
+    let st = s.doc()?;
+    let (anchor, focus) = st.selection.text.map_or((0, 0), |t| (t.anchor, t.focus));
+    let length_after = st.selection.text.and_then(|t| st.doc.text_story(t.story, t.cell)).map_or(0, |story| story.text.len());
+    Ok(json!({
+        "deletedBefore": [before_range.start, before_range.end],
+        "deletedAfter": [after_range.start, after_range.end],
+        "lengthBefore": length_before,
+        "lengthAfter": length_after,
+        "anchor": anchor,
+        "focus": focus,
+    }))
+}
+
 fn smart_quotes(s: &Session, text: &str) -> String {
     if !text.contains(['"', '\'']) {
         return text.to_string();
@@ -1033,7 +1108,24 @@ fn story_options(s: &mut Session, p: &Value) -> Result<Value> {
     if on.is_none() && size.is_none() {
         return Err(bad(CMD, "nothing to set: give opticalMargin or opticalMarginSize"));
     }
-    let stories = if p.get("story").is_some() || p.get("frame").is_some() {
+    let explicit = |key| p.get(key).filter(|v| !v.is_null());
+    let stories = if explicit("story").is_some() || explicit("frame").is_some() {
+        // Explicit targets must not silently fall back to the current selection.
+        let doc = &s.doc()?.doc;
+        for key in ["story", "frame"] {
+            if let Some(value) = explicit(key) {
+                let id = value.as_u64().ok_or_else(|| bad(CMD, format!("`{key}` must be an unsigned integer")))?;
+                let sid = if key == "story" {
+                    StoryId(id)
+                } else {
+                    let item = doc.item(ItemId(id)).ok_or_else(|| bad(CMD, format!("no such frame {id}")))?;
+                    item.text_frame().ok_or_else(|| bad(CMD, format!("frame {id} holds no text")))?.story
+                };
+                if doc.story(sid).is_none() {
+                    return Err(bad(CMD, format!("no such story {}", sid.0)));
+                }
+            }
+        }
         vec![story_of(s, p).ok_or_else(|| bad(CMD, "no such story"))?]
     } else {
         selected_stories(s)?
@@ -3358,6 +3450,68 @@ mod bidi_caret_tests {
 #[cfg(test)]
 mod story_options_tests {
     use super::*;
+
+    #[test]
+    fn malformed_explicit_story_targets_do_not_change_the_selection() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [0, 0, 300, 200], "content": "text", "text": "Selected"})).unwrap();
+        let sid = StoryId(r["story"].as_u64().unwrap());
+        for target in ["story", "frame"] {
+            for invalid in [json!("invalid"), json!(-1), json!(1.5), json!(true), json!({}), json!([]), json!(999_999)] {
+                let mut params = json!({"opticalMargin": true});
+                params[target] = invalid;
+                assert!(s.execute("story.options", &params).is_err(), "{params}");
+                assert!(!story(&s, sid).on, "{params} changed the selected story");
+            }
+        }
+        // Selection fallback still works when neither explicit target is supplied.
+        s.execute("story.options", &json!({"opticalMargin": true})).unwrap();
+        assert!(story(&s, sid).on);
+        s.execute("story.options", &json!({"frame": r["id"], "opticalMargin": false})).unwrap();
+        assert!(!story(&s, sid).on);
+    }
+
+    #[test]
+    fn story_options_treat_null_targets_as_absent_and_validate_both_explicit_ids() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = s.execute("frame.create", &json!({"rect": [0, 0, 300, 200], "content": "text", "text": "Explicit"})).unwrap();
+        let b = s.execute("frame.create", &json!({"rect": [0, 300, 300, 500], "content": "text", "text": "Selected"})).unwrap();
+        let aid = StoryId(a["story"].as_u64().unwrap());
+        let bid = StoryId(b["story"].as_u64().unwrap());
+        for targets in [json!({"story": null}), json!({"frame": null}), json!({"story": null, "frame": null})] {
+            let mut p = targets;
+            p["opticalMargin"] = json!(true);
+            s.execute("story.options", &p).unwrap();
+            assert!(story(&s, bid).on);
+            assert!(!story(&s, aid).on);
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert!(!story(&s, bid).on);
+        }
+        for targets in [json!({"story": null, "frame": a["id"]}), json!({"story": a["story"], "frame": null})] {
+            let mut p = targets;
+            p["opticalMargin"] = json!(true);
+            s.execute("story.options", &p).unwrap();
+            assert!(story(&s, aid).on);
+            assert!(!story(&s, bid).on);
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
+        // Even a frame ignored by story precedence must be valid when explicitly supplied.
+        let non_text = s.execute("frame.create", &json!({"rect": [400, 0, 500, 100]})).unwrap();
+        for (targets, message) in [
+            (json!({"frame": 999_999}), "no such frame 999999".to_string()),
+            (json!({"frame": non_text["id"]}), format!("frame {} holds no text", non_text["id"])),
+            (json!({"story": 999_999}), "no such story 999999".to_string()),
+            (json!({"story": a["story"], "frame": 999_999}), "no such frame 999999".to_string()),
+        ] {
+            let mut p = targets;
+            p["opticalMargin"] = json!(true);
+            assert!(s.execute("story.options", &p).unwrap_err().to_string().contains(&message), "{p}: expected {message}");
+            assert!(!story(&s, aid).on);
+            assert!(!story(&s, bid).on);
+        }
+    }
 
     fn first_x(s: &Session, sid: StoryId) -> f64 {
         let cs = s.cache.get(&s.doc().unwrap().doc, sid, None);
