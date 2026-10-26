@@ -1014,6 +1014,16 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
 
 [[package]]
+name = "craft-keymap"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+dependencies = [
+ "egui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "craft-pdf"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
@@ -1538,6 +1548,7 @@ dependencies = [
 name = "designcraft-ui-egui"
 version = "0.13.0"
 dependencies = [
+ "craft-keymap",
  "craft-prepress",
  "craft-ui",
  "craft-update",

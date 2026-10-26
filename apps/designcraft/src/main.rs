@@ -188,6 +188,7 @@ fn load_prefs(app: &mut DesignApp) {
             }
             Err(_) => keep_unreadable_prefs(&p, &bytes),
         }
+        app.sync_keymap();
     }
     // Engine preferences (Preferences dialog, favourites…) live beside the UI state.
     if let Some(p) = prefs_path().map(|p| p.with_file_name("prefs.json"))
