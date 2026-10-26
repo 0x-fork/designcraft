@@ -86,7 +86,18 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.palette", "Quick Apply…", Some("Cmd+Return"), "{} — search styles and commands"),
     ("app.preferences", "Preferences…", Some("Cmd+K"), "{}"),
     ("window.uiScale", "UI Scaling", None, "{scale: 0.5–3 (1 = 100%)} — the size of the whole interface"),
-    ("app.keyboardShortcuts", "Keyboard Shortcuts…", None, "{} — view and change the shortcut of any command"),
+    (
+        "app.keyboardShortcuts",
+        "Keyboard Shortcuts…",
+        None,
+        "{command?, params?} — view and change the shortcut of any command, and the shortcut sets; with command, the dialog opens on it",
+    ),
+    (
+        "window.shortcutSets",
+        "Shortcut Sets",
+        None,
+        "{select?: name} — the shortcut sets (Default is built in; Edit › Keyboard Shortcuts makes the others); select makes one active → {active, sets, builtIn}",
+    ),
     ("window.richBlack", "Appearance of Black", None, "{on: bool} — show 100% black as rich black on screen (off: accurately)"),
     (
         "window.setShortcut",
@@ -94,12 +105,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         None,
         "{id, params?, shortcut: \"Cmd+Alt+J\" | \"\" (none) | null (default), steal?} — id is a command; a panel is id \"window.panel\" with params {panel: \"layers\"}, a tool is id \"tool.select\" with params {tool: \"pen\"} (or its tool id, \"pen\"); steal: true takes the keys from the commands holding them → {shortcut, conflicts: [command keys: ids, or `window.panel {\"panel\":\"layers\"}`]}",
     ),
-    ("window.resetShortcuts", "Reset Shortcuts", None, "{} — every command back to its default shortcut"),
+    ("window.resetShortcuts", "Reset Shortcuts", None, "{} — every command of the active shortcut set back to its default shortcut"),
     (
         "window.importShortcuts",
         "Import InDesign Shortcut Set",
         None,
-        "{path | text} — a set saved by InDesign's Show Set (.txt): matched commands, panels (Window menu items) and tools (Tools items) take its Default shortcuts (an item without Default keys takes its Text keys), or none when every item matched to them has none; other commands lose keys it takes unless they share them as defaults → {set, imported, changed [{id, label, item, line, from, to}], conflictsCleared [{id, label, shortcut}], skipped [{id, item, line, shortcut, takenBy, reason}] (an earlier item whose keys a later one took, or a reserved key), failed [{id, label, change, shortcuts}], unmatched [{item, line, keys, reason: noMatch | ambiguous | tool | context}], unmatchedWithoutShortcut, unreadable [{item, line, keys, reason}], approximated [{item, line, keys, note}] (numeric keypad keys bound as the main keys), suggestions [{item, line, candidates}] (never applied), matchedWithoutChange [{id, label, item, line, reason}] (a keyless panel-menu item that clears nothing), truncated}; ids are command keys (`window.panel {\"panel\":\"layers\"}`)",
+        "{path | text} — a set saved by InDesign's Show Set (.txt), imported as a new shortcut set, which becomes active: matched commands, panels (Window menu items) and tools (Tools items) take its Default shortcuts (an item without Default keys takes its Text keys), or none when every item matched to them has none; other commands lose keys it takes unless they share them as defaults → {set, imported, changed [{id, label, item, line, from, to}], conflictsCleared [{id, label, shortcut}], skipped [{id, item, line, shortcut, takenBy, reason}] (an earlier item whose keys a later one took, or a reserved key), failed [{id, label, change, shortcuts}], unmatched [{item, line, keys, reason: noMatch | ambiguous | tool | context}], unmatchedWithoutShortcut, unreadable [{item, line, keys, reason}], approximated [{item, line, keys, note}] (numeric keypad keys bound as the main keys), suggestions [{item, line, candidates}] (never applied), matchedWithoutChange [{id, label, item, line, reason}] (a keyless panel-menu item that clears nothing), truncated, shortcutSet (the new set's name)}; ids are command keys (`window.panel {\"panel\":\"layers\"}`)",
     ),
     ("app.findChange", "Find/Change…", Some("Cmd+F"), "{}"),
     ("app.insertTableDialog", "Create Table…", None, "{} — Insert Table dialog (body/header/footer rows, columns)"),
@@ -1775,8 +1786,25 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.run("object.fit", json!({"mode": mode}))
         }
         "app.keyboardShortcuts" => {
-            app.ui.dialog = Some(crate::dialogs::Dialog::new("keyboardShortcuts", json!({"query": "", "recording": ""})));
+            let select = p.get("command").and_then(Value::as_str).map(|id| crate::keys::command_ref(id, p.get("params").unwrap_or(&Value::Null)));
+            crate::shortcuts_dialog::open(app, select.as_ref());
             Ok(Value::Null)
+        }
+        "window.shortcutSets" => {
+            let builtins = &crate::shortcuts_dialog::BUILTINS;
+            if let Some(name) = p.get("select").and_then(Value::as_str) {
+                if app.shortcut_dialog.is_some() {
+                    return Some(Err("close the Keyboard Shortcuts dialog first".into()));
+                }
+                if let Err(e) = app.ui.shortcut_sets.select(name, builtins) {
+                    return Some(Err(format!("{name}: {e}")));
+                }
+                crate::shortcuts_dialog::load_active_set(app);
+            }
+            let sets = &app.ui.shortcut_sets;
+            Ok(
+                json!({"active": sets.active_name(builtins), "sets": sets.names(builtins), "builtIn": builtins.iter().map(|(n, _)| *n).collect::<Vec<_>>()}),
+            )
         }
         "window.setShortcut" => {
             let Some(id) = p.get("id").and_then(Value::as_str) else { return Some(Err("missing id".into())) };
@@ -3268,14 +3296,16 @@ fn take_keys(app: &mut DesignApp, input: &mut egui::InputState, typing: bool) ->
     let active = craft_keymap::Active { panel: None, contexts, typing };
     let native = &app.native_shortcuts;
     // Presses the dispatcher leaves alone: Clear (the active tool deletes) and the keys the
-    // native menu's accelerators already handled. The native menu bar carries the shortcuts in
-    // effect, the user's included, and an accelerator fires only for its shortcut exactly: the
-    // Plus key standing in for = never reaches it.
+    // native menu's accelerators already handled. An item holds one key equivalent, its
+    // command's first shortcut in effect, and fires only for it exactly: the Plus key standing
+    // in for = never reaches it, and a command's other bindings run here.
     // Copy, Cut and Paste stay too (the dispatcher's default): the canvas and text tools
     // handle them, and Paste carries the text.
     let accept = |hit: &craft_keymap::egui::Hit| {
         let c = &hit.command;
-        let leave = hit.exact && hit.cycle.is_empty() && (c.id == "edit.clear" || (c.params.is_null() && native.contains(&c.id)));
+        let on_bar =
+            || c.params.is_null() && native.get(&c.id).and_then(|sc| craft_keymap::Binding::parse(sc).ok()).is_some_and(|b| b.trigger == hit.trigger);
+        let leave = hit.exact && hit.cycle.is_empty() && (c.id == "edit.clear" || on_bar());
         !leave
     };
     let hits = app.key_dispatcher.dispatch_filtered(input, &app.keymap, &active, accept);
@@ -5017,7 +5047,7 @@ mod tests {
         }
         // With a native menu (macOS) its accelerator takes Cmd+= itself, but never sees the Plus key
         // standing in for = (#781).
-        app.native_shortcuts.insert("view.zoomIn".to_string());
+        app.native_shortcuts.insert("view.zoomIn".to_string(), shortcut_of(&app, "view.zoomIn").unwrap());
         for (k, m, zooms_in) in [
             (egui::Key::Plus, egui::Modifiers::COMMAND, true),
             (egui::Key::Plus, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, true),
@@ -5032,16 +5062,23 @@ mod tests {
         // A shortcut the user set runs here until the native menu bar carries it as its key
         // equivalent; then only the bar runs it, once.
         run_ui(&mut app, "window.setShortcut", &json!({"id": "view.zoomOut", "shortcut": "Cmd+9"})).unwrap().unwrap();
-        for (native, zooms_out) in [(false, true), (true, false)] {
-            if native {
-                app.native_shortcuts.insert("view.zoomOut".to_string());
-            }
+        let zooms_out = |app: &mut crate::DesignApp, k: egui::Key| {
             let z0 = app.view().unwrap().zoom;
-            frame(&mut app, key(egui::Key::Num9, egui::Modifiers::COMMAND));
-            frame(&mut app, vec![]);
-            let z = app.view().unwrap().zoom;
-            assert_eq!(z < z0, zooms_out, "native {native}: {z0} -> {z}");
-        }
+            frame(app, key(k, egui::Modifiers::COMMAND));
+            frame(app, vec![]);
+            app.view().unwrap().zoom < z0
+        };
+        assert!(zooms_out(&mut app, egui::Key::Num9), "no native bar: the app runs it");
+        app.native_shortcuts.insert("view.zoomOut".to_string(), "Cmd+9".to_string());
+        assert!(!zooms_out(&mut app, egui::Key::Num9), "the bar's key equivalent runs only there");
+        // A second binding of a command whose first the bar holds runs here.
+        let cmd = craft_keymap::CommandRef::new("view.zoomOut");
+        let bindings = ["Cmd+F11", "Cmd+9"].map(|s| craft_keymap::Binding::parse(s).unwrap()).to_vec();
+        app.keymap.set_bindings(&cmd, bindings, craft_keymap::Policy::Steal).unwrap();
+        app.ui.shortcuts = app.keymap.overrides().clone();
+        app.native_shortcuts.insert("view.zoomOut".to_string(), "Cmd+F11".to_string());
+        assert!(!zooms_out(&mut app, egui::Key::F11), "the bar runs its own key");
+        assert!(zooms_out(&mut app, egui::Key::Num9), "the second binding runs in the app");
     }
 
     #[test]
