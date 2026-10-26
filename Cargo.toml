@@ -15,6 +15,8 @@ repository = "https://github.com/storytold/designcraft"
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "495e5971bc024aa96e6ed318cb6e7cd3a0103184", version = "=0.1.0", default-features = false }
 # Shared keyboard bindings: chords, overrides, conflicts, egui dispatch.
 craft-keymap = { git = "https://github.com/storytold/craft-libs", rev = "495e5971bc024aa96e6ed318cb6e7cd3a0103184", version = "=0.1.0", features = ["egui"] }
+# Separations, ink coverage and the ink manager; same revision as craft-pdf and the krilla patch.
+craft-prepress = { git = "https://github.com/storytold/craft-libs", rev = "495e5971bc024aa96e6ed318cb6e7cd3a0103184", version = "=0.1.0", features = ["flatten"] }
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "495e5971bc024aa96e6ed318cb6e7cd3a0103184", features = ["egui"] }
 # internal
 designcraft-geom = { path = "crates/geom" }
