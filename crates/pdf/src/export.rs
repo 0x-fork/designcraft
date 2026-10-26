@@ -1451,116 +1451,7 @@ impl Exporter<'_> {
     }
 
     fn graphic_unclipped(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: Option<&[String]>) {
-        // Video / sound without a poster: a dark frame with a play mark.
-        if let Some(asset) = self.doc.assets.get(&g.asset)
-            && designcraft_doc::media_kind(&asset.mime).is_some()
-        {
-            let (w, h) = g.size;
-            let (cx, cy, r) = (w / 2.0, h / 2.0, w.min(h) * 0.18);
-            let mut tri = BezPath::new();
-            tri.move_to((cx - r * 0.6, cy - r));
-            tri.line_to((cx + r, cy));
-            tri.line_to((cx - r * 0.6, cy + r));
-            tri.close_path();
-            s.push_transform(&tf(g.xf));
-            s.set_stroke(None);
-            for (bp, c) in [(Rect::new(0.0, 0.0, w, h).to_path(0.1), rgb::Color::new(48, 48, 52)), (tri, rgb::Color::new(235, 235, 235))] {
-                if let Some(p) = to_path(&bp) {
-                    s.set_fill(Some(Fill { paint: c.into(), ..Default::default() }));
-                    s.draw_path(&p);
-                }
-            }
-            s.set_fill(None);
-            s.pop();
-            return;
-        }
-        // Placed PDFs go in as vectors (the page as a form XObject).
-        let doc = self.doc;
-        if let Some(asset) = doc.assets.get(&g.asset)
-            && asset.data.starts_with(b"%PDF")
-        {
-            // Cropped to a box: the whole page, placed so that the box spans graphic space.
-            let shown = asset.shown_box();
-            let [l, t, r, b] = shown.unwrap_or([0.0, 0.0, 1.0, 1.0]);
-            let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
-            let Some(size) = Size::from_wh(page_w.max(1e-3) as f32, page_h.max(1e-3) as f32) else { return };
-            let request = (g.asset, hidden.map(<[String]>::to_vec));
-            let variant = match self.variants.get(&request) {
-                Some(variant) => variant.clone(),
-                None => {
-                    #[cfg(test)]
-                    {
-                        self.pdf_preparations += 1;
-                    }
-                    match crate::optional_content::prepare(&asset.data, hidden) {
-                        Ok(variant) => {
-                            self.variants.insert(request, variant.clone());
-                            variant
-                        }
-                        Err(error) => {
-                            let message = match error {
-                                PdfError::Write(message) => message,
-                                other => other.to_string(),
-                            };
-                            self.layer_error.get_or_insert(PdfError::Write(format!("{}: {message}", asset.name)));
-                            return;
-                        }
-                    }
-                }
-            };
-            if let Some(warning) = variant.warning {
-                self.warn(format!("{}: {warning}", asset.name));
-            }
-            let key = (g.asset, variant.hidden);
-            let placed = match self.pdfs.get(&key) {
-                Some(p) => p.clone(),
-                None => {
-                    let p = self.placed_pdf(asset, variant.data);
-                    self.pdfs.insert(key, p.clone());
-                    p
-                }
-            };
-            match placed {
-                // krilla would fail the whole export at the end on a page the PDF doesn't have.
-                Some((_, pages)) if asset.page as usize >= pages => {
-                    self.warn(format!("{}: the placed PDF has no page {}", asset.name, u64::from(asset.page) + 1));
-                }
-                Some((placed, _)) => {
-                    self.has_optional_content |= variant.has_optional_content;
-                    s.push_transform(&tf(g.xf));
-                    let clip = shown.and_then(|_| to_path(&Rect::new(0.0, 0.0, g.size.0, g.size.1).to_path(0.1)));
-                    if let Some(clip) = &clip {
-                        s.push_clip_path(clip, &FillRule::NonZero);
-                    }
-                    s.push_transform(&tf(Affine::translate((-l * page_w, -t * page_h))));
-                    s.draw_pdf_page(&placed, size, asset.page as usize);
-                    s.pop();
-                    if clip.is_some() {
-                        s.pop();
-                    }
-                    s.pop();
-                }
-                None => {}
-            }
-            return;
-        }
-        // Placed SVGs go in as vectors too.
-        if let Some(asset) = self.doc.assets.get(&g.asset)
-            && designcraft_images::is_svg(&asset.data)
-        {
-            let Some(size) = Size::from_wh(g.size.0.max(1e-3) as f32, g.size.1.max(1e-3) as f32) else { return };
-            let tree = self.svgs.entry(g.asset).or_insert_with(|| designcraft_images::svg_tree(&asset.data).map(Arc::new)).clone();
-            match tree {
-                Some(tree) => {
-                    use krilla_svg::SurfaceExt;
-                    s.push_transform(&tf(g.xf));
-                    if s.draw_svg(&tree, size, krilla_svg::SvgSettings::default()).is_none() {
-                        self.warn(format!("{}: parts of the placed SVG could not be drawn", asset.name));
-                    }
-                    s.pop();
-                }
-                None => self.warn(format!("{}: can't read the placed SVG", asset.name)),
-            }
+        if self.graphic_media_placeholder(s, g) || self.graphic_placed_pdf(s, g, hidden) || self.graphic_placed_svg(s, g) {
             return;
         }
         if self.colorized(s, g) {
@@ -1571,6 +1462,121 @@ impl Exporter<'_> {
         s.push_transform(&tf(g.xf));
         s.draw_image(img, size);
         s.pop();
+    }
+
+    /// Video or sound without a poster: a dark frame with a play mark. `false` when `g` is not one.
+    fn graphic_media_placeholder(&self, s: &mut Surface, g: &designcraft_doc::Graphic) -> bool {
+        let Some(asset) = self.doc.assets.get(&g.asset) else { return false };
+        if designcraft_doc::media_kind(&asset.mime).is_none() {
+            return false;
+        }
+        let (w, h) = g.size;
+        let (cx, cy, r) = (w / 2.0, h / 2.0, w.min(h) * 0.18);
+        let mut tri = BezPath::new();
+        tri.move_to((cx - r * 0.6, cy - r));
+        tri.line_to((cx + r, cy));
+        tri.line_to((cx - r * 0.6, cy + r));
+        tri.close_path();
+        s.push_transform(&tf(g.xf));
+        s.set_stroke(None);
+        for (bp, c) in [(Rect::new(0.0, 0.0, w, h).to_path(0.1), rgb::Color::new(48, 48, 52)), (tri, rgb::Color::new(235, 235, 235))] {
+            if let Some(p) = to_path(&bp) {
+                s.set_fill(Some(Fill { paint: c.into(), ..Default::default() }));
+                s.draw_path(&p);
+            }
+        }
+        s.set_fill(None);
+        s.pop();
+        true
+    }
+
+    /// A placed PDF goes in as vectors (the page as a form XObject). `false` when `g` is not one.
+    fn graphic_placed_pdf(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic, hidden: Option<&[String]>) -> bool {
+        let doc = self.doc;
+        let Some(asset) = doc.assets.get(&g.asset).filter(|asset| asset.data.starts_with(b"%PDF")) else { return false };
+        // Cropped to a box: the whole page, placed so that the box spans graphic space.
+        let shown = asset.shown_box();
+        let [l, t, r, b] = shown.unwrap_or([0.0, 0.0, 1.0, 1.0]);
+        let (page_w, page_h) = (g.size.0 / (r - l), g.size.1 / (b - t));
+        let Some(size) = Size::from_wh(page_w.max(1e-3) as f32, page_h.max(1e-3) as f32) else { return true };
+        let request = (g.asset, hidden.map(<[String]>::to_vec));
+        let variant = match self.variants.get(&request) {
+            Some(variant) => variant.clone(),
+            None => {
+                #[cfg(test)]
+                {
+                    self.pdf_preparations += 1;
+                }
+                match crate::optional_content::prepare(&asset.data, hidden) {
+                    Ok(variant) => {
+                        self.variants.insert(request, variant.clone());
+                        variant
+                    }
+                    Err(error) => {
+                        let message = match error {
+                            PdfError::Write(message) => message,
+                            other => other.to_string(),
+                        };
+                        self.layer_error.get_or_insert(PdfError::Write(format!("{}: {message}", asset.name)));
+                        return true;
+                    }
+                }
+            }
+        };
+        if let Some(warning) = variant.warning {
+            self.warn(format!("{}: {warning}", asset.name));
+        }
+        let key = (g.asset, variant.hidden);
+        let placed = match self.pdfs.get(&key) {
+            Some(p) => p.clone(),
+            None => {
+                let p = self.placed_pdf(asset, variant.data);
+                self.pdfs.insert(key, p.clone());
+                p
+            }
+        };
+        match placed {
+            // krilla would fail the whole export at the end on a page the PDF doesn't have.
+            Some((_, pages)) if asset.page as usize >= pages => {
+                self.warn(format!("{}: the placed PDF has no page {}", asset.name, u64::from(asset.page) + 1));
+            }
+            Some((placed, _)) => {
+                self.has_optional_content |= variant.has_optional_content;
+                s.push_transform(&tf(g.xf));
+                let clip = shown.and_then(|_| to_path(&Rect::new(0.0, 0.0, g.size.0, g.size.1).to_path(0.1)));
+                if let Some(clip) = &clip {
+                    s.push_clip_path(clip, &FillRule::NonZero);
+                }
+                s.push_transform(&tf(Affine::translate((-l * page_w, -t * page_h))));
+                s.draw_pdf_page(&placed, size, asset.page as usize);
+                s.pop();
+                if clip.is_some() {
+                    s.pop();
+                }
+                s.pop();
+            }
+            None => {}
+        }
+        true
+    }
+
+    /// A placed SVG goes in as vectors too. `false` when `g` is not one.
+    fn graphic_placed_svg(&mut self, s: &mut Surface, g: &designcraft_doc::Graphic) -> bool {
+        let Some(asset) = self.doc.assets.get(&g.asset).filter(|asset| designcraft_images::is_svg(&asset.data)) else { return false };
+        let Some(size) = Size::from_wh(g.size.0.max(1e-3) as f32, g.size.1.max(1e-3) as f32) else { return true };
+        let tree = self.svgs.entry(g.asset).or_insert_with(|| designcraft_images::svg_tree(&asset.data).map(Arc::new)).clone();
+        match tree {
+            Some(tree) => {
+                use krilla_svg::SurfaceExt;
+                s.push_transform(&tf(g.xf));
+                if s.draw_svg(&tree, size, krilla_svg::SvgSettings::default()).is_none() {
+                    self.warn(format!("{}: parts of the placed SVG could not be drawn", asset.name));
+                }
+                s.pop();
+            }
+            None => self.warn(format!("{}: can't read the placed SVG", asset.name)),
+        }
+        true
     }
 
     /// A greyscale or bitmap image coloured by the swatch applied to it (#1094): the swatch is
