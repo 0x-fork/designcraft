@@ -68,8 +68,8 @@ fn code_outside_tests(text: &str) -> Vec<(usize, &str)> {
     let mut i = 0;
     while i < lines.len() {
         let attr = lines[i].trim();
-        let module = lines.get(i + 1).map(|l| l.trim_start().trim_start_matches("pub "));
-        if attr.starts_with("#[cfg(") && attr.contains("test") && module.is_some_and(|m| m.starts_with("mod ")) {
+        let module = lines.get(i + 1).map(|l| without_visibility(l.trim_start()));
+        if attr.starts_with("#[cfg(") && attr.replace("not(test)", "").contains("test") && module.is_some_and(|m| m.starts_with("mod ")) {
             let header = lines[i + 1];
             i += 2;
             if header.trim_end().ends_with('{') {
@@ -86,6 +86,14 @@ fn code_outside_tests(text: &str) -> Vec<(usize, &str)> {
         i += 1;
     }
     code
+}
+
+/// `item` without a leading `pub`, `pub(crate)`, `pub(super)` or `pub(in …)`: a test module
+/// that sibling modules share is still a test module.
+fn without_visibility(item: &str) -> &str {
+    let Some(rest) = item.strip_prefix("pub") else { return item };
+    let rest = if rest.starts_with('(') { rest.find(')').map_or(rest, |close| &rest[close + 1..]) } else { rest };
+    if rest.starts_with(char::is_whitespace) { rest.trim_start() } else { item }
 }
 
 /// `line` without its `//` comment (a `//` inside a string or char is rare enough in this code
@@ -131,7 +139,7 @@ fn imports_fs(text: &str) -> Vec<usize> {
     for (n, line) in code_outside_tests(text) {
         let line = without_comment(line);
         if statement.is_empty() {
-            if !line.trim_start().starts_with("use ") && !line.trim_start().starts_with("pub use ") {
+            if !without_visibility(line.trim_start()).starts_with("use ") {
                 continue;
             }
             start = n;
@@ -247,4 +255,6 @@ fn the_scan_sees_every_spelling() {
     }
     assert!(imports_fs("use std::io::Read;\nuse std::path::Path;").is_empty());
     assert!(imports_fs("#[cfg(test)]\nmod tests {\n    use std::fs;\n}\n").is_empty(), "test modules are skipped");
+    assert!(imports_fs("#[cfg(test)]\npub(super) mod shared {\n    use std::fs;\n}\n").is_empty(), "shared test modules are skipped");
+    assert!(!imports_fs("#[cfg(not(test))]\npub(crate) mod real {\n    use std::fs;\n}\n").is_empty(), "cfg(not(test)) modules are scanned");
 }
