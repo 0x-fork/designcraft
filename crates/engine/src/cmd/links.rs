@@ -858,7 +858,7 @@ mod tests {
         assert_eq!(a.pixels, Some((60, 20)));
         assert_eq!(a.mime, "application/postscript");
         assert_eq!(a.data.as_slice(), eps(30).as_bytes());
-        let moved = dir.join("new/replacement.eps");
+        let moved = dir.join("new").join("replacement.eps");
         std::fs::rename(&replacement, &moved).unwrap();
         assert_eq!(s.execute("links.relinkFolder", &json!({"dir": dir.join("new").to_string_lossy()})).unwrap()["relinked"], 1);
         assert_eq!(s.doc().unwrap().doc.assets[&aid].link.as_deref(), moved.to_str());
@@ -1168,6 +1168,7 @@ mod shared_asset_tests {
             designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(0.0, 0.0, 9.0, 9.0)),
         );
         it.content = Content::Graphic(Graphic {
+            layer_options: None,
             asset: sid,
             size: (4.0, 4.0),
             xf: designcraft_geom::Affine::IDENTITY,
@@ -1213,6 +1214,7 @@ mod shared_asset_tests {
             designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(0.0, 0.0, 9.0, 9.0)),
         );
         it.content = Content::Graphic(Graphic {
+            layer_options: None,
             asset: missing,
             size: (4.0, 4.0),
             xf: designcraft_geom::Affine::IDENTITY,
@@ -1249,6 +1251,7 @@ mod shared_asset_tests {
             designcraft_geom::shapes::rectangle(designcraft_geom::Rect::new(0.0, 0.0, 9.0, 9.0)),
         );
         it.content = Content::Graphic(Graphic {
+            layer_options: None,
             asset: missing,
             size: (4.0, 4.0),
             xf: designcraft_geom::Affine::IDENTITY,
