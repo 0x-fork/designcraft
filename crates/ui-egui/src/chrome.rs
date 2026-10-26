@@ -840,6 +840,64 @@ fn control_paragraph(
     tr: &dyn Fn(&str) -> String,
 ) {
     let cur: Align = serde_json::from_value(para["align"].clone()).unwrap_or_default();
+    if let Some(a) = align_buttons(ui, cur, tr) {
+        let _ = app.run("type.para", json!({"attrs": {"align": a}}));
+    }
+    vsep(ui);
+    let units = app.session.active().map(|d| d.doc.settings.horizontal_units).unwrap_or(Unit::Picas);
+    if let Some((k, v)) = indent_space_fields(ui, para, units, tr) {
+        let _ = app.run("type.para", json!({"attrs": {k: v}}));
+    }
+    if let Some((k, v)) = drop_cap_fields(ui, para, tr) {
+        let _ = app.run("type.para", json!({"attrs": {k: v.max(0.0) as u64}}));
+    }
+    vsep(ui);
+    // Bulleted List over Numbered List, as InDesign's (a list with the default hanging indent, or,
+    // pressed, none). Pressed when every selected paragraph has it, as Type › Apply Bullets shows.
+    use designcraft_doc::ListType;
+    let pressed = [ListType::Bullets, ListType::Numbers].map(|k| app.session.selection_has_list(k));
+    let mut list = None;
+    rows(ui, |ui, row| {
+        let (icon, cmd, tip) = if row == 0 { ("bullets", "list.bullets", "Bulleted List") } else { ("numbering", "list.numbers", "Numbered List") };
+        let on = pressed.get(row).copied().unwrap_or(false);
+        if crate::widgets::icon_toggle(ui, icon, on, &tr(tip)).clicked() {
+            list = Some((cmd, !on));
+        }
+    });
+    if let Some((cmd, on)) = list {
+        let _ = app.run(cmd, json!({"on": on}));
+    }
+    vsep(ui);
+    let (shade, dialog) = shading_buttons(app, ui, para, tr);
+    if let Some(attrs) = shade {
+        let _ = app.run("type.para", json!({ "attrs": attrs }));
+    }
+    if let Some(tab) = dialog {
+        let _ = app.run("app.paragraphBordersDialog", json!({ "tab": tab }));
+    }
+    vsep(ui);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 3.0;
+        let ps = attrs.as_ref().and_then(|a| a["paragraphStyle"].as_str()).unwrap_or("").to_string();
+        let ov = attrs.as_ref().and_then(|a| a["paraOverrides"].as_u64()).unwrap_or(0)
+            + attrs.as_ref().and_then(|a| a["charOverrides"].as_u64()).unwrap_or(0);
+        panels::para_style_picker(app, ui, &ps, ov > 0, 170.0);
+        ui.horizontal(|ui| {
+            let mut h = para["hyphenate"].as_bool().unwrap_or(true);
+            if crate::widgets::checkbox(ui, &mut h, &tr("Hyphenate")).changed() {
+                let _ = app.run("type.para", json!({"attrs": {"hyphenate": h}}));
+            }
+            // First Line Only is aligned too: the button shows it pressed, and a click turns alignment off.
+            let grid = matches!(para["gridAlign"].as_str(), Some("allLines" | "firstLineOnly"));
+            if crate::widgets::icon_toggle(ui, "grid-baseline", grid, &tr("Align to Baseline Grid")).clicked() {
+                let _ = app.run("type.para", json!({"attrs": {"gridAlign": if grid { "none" } else { "allLines" }}}));
+            }
+        });
+    });
+}
+
+/// The paragraph alignment buttons, in two rows: the alignment picked this frame, if any.
+fn align_buttons(ui: &mut egui::Ui, cur: Align, tr: &dyn Fn(&str) -> String) -> Option<Align> {
     let mut align = None;
     rows(ui, |ui, row| {
         if row == 0 {
@@ -867,11 +925,12 @@ fn control_paragraph(
             }
         }
     });
-    if let Some(a) = align {
-        let _ = app.run("type.para", json!({"attrs": {"align": a}}));
-    }
-    vsep(ui);
-    let units = app.session.active().map(|d| d.doc.settings.horizontal_units).unwrap_or(Unit::Picas);
+    align
+}
+
+/// The indents and space before and after, two per column. Returns the one field changed this
+/// frame, with its paragraph attribute and value.
+fn indent_space_fields(ui: &mut egui::Ui, para: &serde_json::Value, units: Unit, tr: &dyn Fn(&str) -> String) -> Option<(&'static str, f64)> {
     let mut set = None;
     for ((ia, ta, ka), (ib, tb, kb)) in [
         (("indent-left", "Left Indent", "leftIndent"), ("indent-first", "First Line Left Indent", "firstLineIndent")),
@@ -892,9 +951,12 @@ fn control_paragraph(
         });
         vsep(ui);
     }
-    if let Some((k, v)) = set {
-        let _ = app.run("type.para", json!({"attrs": {k: v}}));
-    }
+    set
+}
+
+/// The drop cap's line and character counts. Returns the one changed this frame, with its
+/// paragraph attribute and value.
+fn drop_cap_fields(ui: &mut egui::Ui, para: &serde_json::Value, tr: &dyn Fn(&str) -> String) -> Option<(&'static str, f64)> {
     let mut drop = None;
     rows(ui, |ui, row| {
         if row == 0 {
@@ -919,28 +981,18 @@ fn control_paragraph(
             }
         }
     });
-    if let Some((k, v)) = drop {
-        let _ = app.run("type.para", json!({"attrs": {k: v.max(0.0) as u64}}));
-    }
-    vsep(ui);
-    // Bulleted List over Numbered List, as InDesign's (a list with the default hanging indent, or,
-    // pressed, none). Pressed when every selected paragraph has it, as Type › Apply Bullets shows.
-    use designcraft_doc::ListType;
-    let pressed = [ListType::Bullets, ListType::Numbers].map(|k| app.session.selection_has_list(k));
-    let mut list = None;
-    rows(ui, |ui, row| {
-        let (icon, cmd, tip) = if row == 0 { ("bullets", "list.bullets", "Bulleted List") } else { ("numbering", "list.numbers", "Numbered List") };
-        let on = pressed.get(row).copied().unwrap_or(false);
-        if crate::widgets::icon_toggle(ui, icon, on, &tr(tip)).clicked() {
-            list = Some((cmd, !on));
-        }
-    });
-    if let Some((cmd, on)) = list {
-        let _ = app.run(cmd, json!({"on": on}));
-    }
-    vsep(ui);
-    // Shading over Border: on or off, the Paragraph Borders and Shading dialog on its tab, and the
-    // colour, as InDesign's.
+    drop
+}
+
+/// Shading over Border: the on/off checkboxes, the colour swatches and the Paragraph Borders and
+/// Shading buttons. Returns the attributes to set and the dialog tab to open, if any.
+fn shading_buttons(
+    app: &DesignApp,
+    ui: &mut egui::Ui,
+    para: &serde_json::Value,
+    tr: &dyn Fn(&str) -> String,
+) -> (Option<serde_json::Value>, Option<&'static str>) {
+    // On or off, the Paragraph Borders and Shading dialog on its tab, and the colour, as InDesign's.
     let doc = app.session.active().map(|d| d.doc.clone());
     let mut shade = None;
     let mut dialog = None;
@@ -973,31 +1025,7 @@ fn control_paragraph(
             }
         }
     });
-    if let Some(attrs) = shade {
-        let _ = app.run("type.para", json!({ "attrs": attrs }));
-    }
-    if let Some(tab) = dialog {
-        let _ = app.run("app.paragraphBordersDialog", json!({ "tab": tab }));
-    }
-    vsep(ui);
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 3.0;
-        let ps = attrs.as_ref().and_then(|a| a["paragraphStyle"].as_str()).unwrap_or("").to_string();
-        let ov = attrs.as_ref().and_then(|a| a["paraOverrides"].as_u64()).unwrap_or(0)
-            + attrs.as_ref().and_then(|a| a["charOverrides"].as_u64()).unwrap_or(0);
-        panels::para_style_picker(app, ui, &ps, ov > 0, 170.0);
-        ui.horizontal(|ui| {
-            let mut h = para["hyphenate"].as_bool().unwrap_or(true);
-            if crate::widgets::checkbox(ui, &mut h, &tr("Hyphenate")).changed() {
-                let _ = app.run("type.para", json!({"attrs": {"hyphenate": h}}));
-            }
-            // First Line Only is aligned too: the button shows it pressed, and a click turns alignment off.
-            let grid = matches!(para["gridAlign"].as_str(), Some("allLines" | "firstLineOnly"));
-            if crate::widgets::icon_toggle(ui, "grid-baseline", grid, &tr("Align to Baseline Grid")).clicked() {
-                let _ = app.run("type.para", json!({"attrs": {"gridAlign": if grid { "none" } else { "allLines" }}}));
-            }
-        });
-    });
+    (shade, dialog)
 }
 
 /// A swatch field of the Control panel (Shading and Border colours): the swatch's chip and name,
