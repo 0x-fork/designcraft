@@ -358,6 +358,28 @@ mod tests {
     }
 
     #[test]
+    fn assign_takes_a_held_shortcut_in_one_step_for_the_menus_and_the_keys() {
+        let mut app = app();
+        super::open(&mut app, Some(&CommandRef::new("app.paragraphStylesPanel")));
+        let mut h = harness(app);
+        click(&mut h, "New shortcut: None");
+        press(&mut h, Modifiers::COMMAND, Key::P);
+        assert!(has(&h, "⚠ Print…"), "Print is listed as holding the chord");
+        click(&mut h, "Assign");
+        click(&mut h, "OK");
+        assert!(!open(&h));
+        let app = h.state();
+        assert_eq!(shortcut_of(app, "file.print"), None, "the menus no longer show it on Print");
+        let bindings: Vec<String> = app.keymap.bindings(&CommandRef::new("app.paragraphStylesPanel")).iter().map(|b| b.trigger.to_string()).collect();
+        assert_eq!(bindings, ["Cmd+F11", "Cmd+P"]);
+        // The macOS menu bar holds Paragraph Styles' first shortcut; its new one runs in the app.
+        h.state_mut().native_shortcuts = [("app.paragraphStylesPanel".to_string(), "Cmd+F11".to_string())].into();
+        assert!(!crate::panel_docking::showing(h.state(), "paragraphStyles"));
+        press(&mut h, Modifiers::COMMAND, Key::P);
+        assert!(crate::panel_docking::showing(h.state(), "paragraphStyles"), "Cmd+P opens Paragraph Styles");
+    }
+
+    #[test]
     fn cancel_puts_the_keys_and_the_sets_back() {
         let mut h = opened();
         let quick_apply = row(&mut h, "Quick Apply…", "app.palette");

@@ -1001,7 +1001,7 @@ dependencies = [
 [[package]]
 name = "craft-atomic"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "rustix 1.1.5",
 ]
@@ -1009,7 +1009,7 @@ dependencies = [
 [[package]]
 name = "craft-cms"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "rayon",
 ]
@@ -1017,12 +1017,12 @@ dependencies = [
 [[package]]
 name = "craft-docpath"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 
 [[package]]
 name = "craft-i18n"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "fixed_decimal",
  "icu_decimal",
@@ -1045,7 +1045,7 @@ dependencies = [
 [[package]]
 name = "craft-keymap"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "craft-i18n",
  "craft-ui",
@@ -1057,7 +1057,7 @@ dependencies = [
 [[package]]
 name = "craft-pdf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "bytemuck",
  "hayro",
@@ -1070,11 +1070,11 @@ dependencies = [
 [[package]]
 name = "craft-print"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "craft-winprint-gdi",
- "miniz_oxide 0.8.9",
- "roxmltree 0.20.0",
+ "miniz_oxide 0.9.1",
+ "roxmltree 0.21.2",
  "tempfile",
  "winprint",
  "winsafe",
@@ -1083,7 +1083,7 @@ dependencies = [
 [[package]]
 name = "craft-ui"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "egui",
  "log",
@@ -1096,7 +1096,7 @@ dependencies = [
 [[package]]
 name = "craft-update"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "chrono",
  "dunce",
@@ -1121,7 +1121,7 @@ dependencies = [
 [[package]]
 name = "craft-window"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "egui",
  "objc2 0.6.5",
@@ -2602,7 +2602,7 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -2622,7 +2622,7 @@ checksum = "9f4d0e94ddd48749f06bbe4e5389fb9799a0c45bcaf00495042076ef05e3241a"
 [[package]]
 name = "hayro-cmap"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "brotli",
  "hayro-postscript",
@@ -2631,7 +2631,7 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -2649,7 +2649,7 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -2667,12 +2667,12 @@ dependencies = [
 [[package]]
 name = "hayro-postscript"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -3267,7 +3267,7 @@ dependencies = [
 [[package]]
 name = "krilla"
 version = "0.8.2"
-source = "git+https://github.com/storytold/craft-libs?rev=495e5971bc024aa96e6ed318cb6e7cd3a0103184#495e5971bc024aa96e6ed318cb6e7cd3a0103184"
+source = "git+https://github.com/storytold/craft-libs?rev=1deaba523eaf9388750e7a07e3253e7ee7568c32#1deaba523eaf9388750e7a07e3253e7ee7568c32"
 dependencies = [
  "base64 0.22.1",
  "bumpalo",
