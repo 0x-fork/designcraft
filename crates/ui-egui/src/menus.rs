@@ -3260,6 +3260,29 @@ fn keys_taken(app: &DesignApp, ctx: &egui::Context) -> bool {
         || crate::chrome::search_had_focus(ctx)
 }
 
+/// The command whose shortcut `key` with `modifiers` stands for, and whether the modifiers match
+/// that shortcut exactly.
+fn command_shortcut(app: &DesignApp, key: egui::Key, modifiers: egui::Modifiers, typing: bool) -> Option<(String, bool)> {
+    for (id, sc) in &effective_shortcuts(app) {
+        let id = id.as_str();
+        if let Some((m, k)) = parse_shortcut(sc)
+            && let Some(exact) = key_matches(m, k, key, modifiers)
+            && (m.command || m.alt || !typing)
+            && !(id == "edit.clear" && typing)
+        {
+            // Single-key shortcuts (W) only when not typing.
+            if !m.command && !m.alt && !m.shift && typing {
+                continue;
+            }
+            if id == "edit.clear" || (typing && matches!(id, "edit.copy" | "edit.cut" | "edit.paste" | "edit.pasteInPlace")) {
+                continue; // Handled by the active tool / text clipboard events.
+            }
+            return Some((id.to_string(), exact));
+        }
+    }
+    None
+}
+
 /// Runs the presentation key, command shortcut or tool shortcut a key press stands for. `consume`
 /// takes the press from the input where nothing else may see it. Returns whether the press was used.
 fn shortcut_key(app: &mut DesignApp, key: egui::Key, modifiers: egui::Modifiers, typing: bool, consume: &mut dyn FnMut()) -> bool {
@@ -3285,28 +3308,7 @@ fn shortcut_key(app: &mut DesignApp, key: egui::Key, modifiers: egui::Modifiers,
             return true;
         }
     }
-    // Command shortcuts.
-    let mut fired: Option<(String, bool)> = None;
-    let all = effective_shortcuts(app);
-    for (id, sc) in &all {
-        let id = id.as_str();
-        if let Some((m, k)) = parse_shortcut(sc)
-            && let Some(exact) = key_matches(m, k, key, modifiers)
-            && (m.command || m.alt || !typing)
-            && !(id == "edit.clear" && typing)
-        {
-            // Single-key shortcuts (W) only when not typing.
-            if !m.command && !m.alt && !m.shift && typing {
-                continue;
-            }
-            if id == "edit.clear" || (typing && matches!(id, "edit.copy" | "edit.cut" | "edit.paste" | "edit.pasteInPlace")) {
-                continue; // Handled by the active tool / text clipboard events.
-            }
-            fired = Some((id.to_string(), exact));
-            break;
-        }
-    }
-    if let Some((id, exact)) = fired {
+    if let Some((id, exact)) = command_shortcut(app, key, modifiers, typing) {
         // The native menu bar carries the shortcuts in effect, the user's included, and its
         // accelerator fires only for the shortcut's own key and modifiers; the Plus key standing
         // in for = never reaches it.
