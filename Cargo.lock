@@ -1335,6 +1335,7 @@ dependencies = [
  "caseless",
  "craft-atomic",
  "craft-docpath",
+ "craft-prepress",
  "craft-print",
  "designcraft-color",
  "designcraft-compose",
@@ -1548,6 +1549,7 @@ name = "designcraft-ui-egui"
 version = "0.13.0"
 dependencies = [
  "craft-keymap",
+ "craft-prepress",
  "craft-ui",
  "craft-update",
  "craft-window",
