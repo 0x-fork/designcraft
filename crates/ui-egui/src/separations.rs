@@ -27,8 +27,10 @@ pub struct Separations {
     pub ink_limit: Option<f32>,
 }
 
-/// Sheets kept at most (each holds one plane per ink).
+/// Sheets kept when few spreads are visible (each holds one plane per ink).
 const MAX_SHEETS: usize = 6;
+/// Visible spreads separated at most: beyond this many the rest show without plates.
+const MAX_VISIBLE: usize = 4 * MAX_SHEETS;
 /// The highest resolution the web build separates at (on the UI thread).
 #[cfg(target_arch = "wasm32")]
 const WEB_MAX_DPI: f32 = 72.0;
@@ -113,6 +115,9 @@ fn separate(job: Job) -> Done {
 pub struct Preview {
     entries: Vec<Entry>,
     pending: Vec<Key>,
+    /// The spreads the canvas last drew: every one keeps its sheet, so a visible sheet is never
+    /// evicted only to be separated again next frame.
+    visible: usize,
     #[cfg(not(target_arch = "wasm32"))]
     worker: Option<Worker>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -134,10 +139,18 @@ impl Preview {
             Some(e) => *e = Entry { key, sheet, texture: None, used: frame },
             None => self.entries.push(Entry { key, sheet, texture: None, used: frame }),
         }
-        if self.entries.len() > MAX_SHEETS {
+        let limit = self.visible.clamp(MAX_SHEETS, MAX_VISIBLE);
+        if self.entries.len() > limit {
             self.entries.sort_by_key(|e| std::cmp::Reverse(e.used));
-            self.entries.truncate(MAX_SHEETS);
+            self.entries.truncate(limit);
         }
+    }
+
+    /// Notes `key` as sent to the worker. The worker keeps only the newest waiting job of a
+    /// spread and drops the rest unanswered, so an older key of the spread is no longer pending.
+    fn queued(&mut self, key: Key) {
+        self.pending.retain(|k| k.spread != key.spread);
+        self.pending.push(key);
     }
 
     /// Collects finished separations.
@@ -169,11 +182,11 @@ impl Preview {
                 self.worker = Worker::spawn(ctx.clone());
             }
             if let Some(w) = &self.worker {
-                self.pending.push(job.key.clone());
+                let key = job.key.clone();
                 if w.tx.send(job).is_ok() {
+                    self.queued(key);
                     return;
                 }
-                self.pending.pop();
                 self.worker = None;
                 return;
             }
@@ -298,12 +311,19 @@ pub fn paint(app: &mut DesignApp, ctx: &egui::Context, painter: &egui::Painter, 
     app.canvas.separations.pointer = None;
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
-    for slot in &layout.slots {
-        let SpreadRef::Doc(si) = slot.spread else { continue };
+    let visible: Vec<(usize, &designcraft_tools::SpreadSlot)> = layout
+        .slots
+        .iter()
+        .filter_map(|slot| {
+            let SpreadRef::Doc(si) = slot.spread else { return None };
+            let sp = doc.spreads.get(si)?;
+            xf.rect(slot.xf.transform_rect_bbox(sp.bounds())).intersects(screen).then_some((si, slot))
+        })
+        .take(MAX_VISIBLE)
+        .collect();
+    app.canvas.separations.visible = visible.len();
+    for (si, slot) in visible {
         let Some(sp) = doc.spreads.get(si) else { continue };
-        if !xf.rect(slot.xf.transform_rect_bbox(sp.bounds())).intersects(screen) {
-            continue;
-        }
         if let Some(c) = hover {
             let p = slot.xf.inverse() * c;
             if sp.bounds().contains(p) {
@@ -353,6 +373,24 @@ mod tests {
     use serde_json::{Value, json};
 
     use crate::menus::run_ui;
+
+    #[test]
+    fn every_visible_sheet_stays_and_a_superseded_job_is_not_pending() {
+        let key = |spread, dpi| super::Key { uid: 1, revision: 1, spread, dpi, print: Default::default(), cms: 0 };
+        let mut p = super::Preview { visible: 10, ..Default::default() };
+        for si in 0..10 {
+            p.insert(key(si, 72.0), Err("unseparated".into()));
+        }
+        assert_eq!(p.entries.len(), 10, "ten visible spreads keep ten sheets");
+        p.visible = 1;
+        p.insert(key(10, 72.0), Err("unseparated".into()));
+        assert_eq!(p.entries.len(), super::MAX_SHEETS);
+        // The worker drops a spread's older waiting job, so only the newest stays pending.
+        p.queued(key(3, 72.0));
+        p.queued(key(3, 288.0));
+        p.queued(key(4, 72.0));
+        assert_eq!(p.pending.iter().map(|k| (k.spread, k.dpi)).collect::<Vec<_>>(), [(3, 288.0), (4, 72.0)]);
+    }
 
     #[test]
     fn view_separations_lists_the_spot_plate_and_shows_it_alone() {
