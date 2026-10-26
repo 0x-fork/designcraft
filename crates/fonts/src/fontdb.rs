@@ -2194,19 +2194,7 @@ impl OutlinePen for FlipPen {
 }
 
 #[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "tests_sysfonts.rs"]
-mod tests_sysfonts;
-
-#[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "tests_fallback.rs"]
-mod tests_fallback;
-
-#[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "tests_docfonts.rs"]
-mod tests_docfonts;
+mod tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod native_gui_document_fonts_tests {
@@ -2273,10 +2261,6 @@ mod native_gui_document_fonts_tests {
         assert_eq!(scope.face("Unavailable Native GUI Family", "Regular").family, FALLBACK_FAMILY);
     }
 }
-
-#[cfg(test)]
-#[path = "tests_vertical.rs"]
-mod tests_vertical;
 
 #[cfg(test)]
 mod tests_heights {
