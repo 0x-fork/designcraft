@@ -26,8 +26,8 @@ use std::sync::OnceLock;
 pub use dict::Dictionary;
 pub use patterns::Patterns;
 
-static EN_US_DIC: &[u8] = include_bytes!("../../../../assets/hyphenation/en-us.dic");
-static EN_US_PAT: &str = include_str!("../../../../assets/hyphenation/en-us.pat");
+static EN_US_DIC: &[u8] = include_bytes!("../../../assets/hyphenation/en-us.dic");
+static EN_US_PAT: &str = include_str!("../../../assets/hyphenation/en-us.pat");
 
 impl Dictionary {
     /// The bundled US English dictionary (decoded on first use).
