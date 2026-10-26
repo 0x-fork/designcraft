@@ -398,6 +398,11 @@ fn control_port_from(source: &str, value: Option<String>) -> Option<u16> {
 }
 
 fn main() -> std::process::ExitCode {
+    // Windows: the update helper is a copy of this program started with `--finish-update`.
+    #[cfg(windows)]
+    if let Some(result) = craft_update::self_update::finish(&craft_update::suite::DESIGNCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(i32::from(result.is_err()));
+    }
     // First, so every start-up record (and the engine's panic hook, installed with the first
     // Session) is captured; see `logging`.
     let logger = logging::install();
@@ -553,6 +558,7 @@ fn main() -> std::process::ExitCode {
                 session.recovery_dir = profile::recovery_dir();
                 let recovered = session.execute("file.recovery.open", &serde_json::json!({})).ok();
                 let mut app = DesignApp::new(session, services());
+                app.set_startup_update_check(true);
                 if let Some(line) = restarted.or_else(|| created.status_line()) {
                     app.status(line);
                 }
