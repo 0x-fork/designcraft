@@ -77,6 +77,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         .frame(egui::Frame::NONE)
                         .show(ui);
                     let r = out.response;
+                    let changed = r.changed();
                     let starts = paragraph_start_offsets(out.galley.rows.iter().map(|row| (row.pos.y, row.ends_with_newline)));
                     for (i, y) in starts.into_iter().enumerate() {
                         let Some(para) = story.paras.get(i) else { break };
@@ -86,11 +87,11 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                             crate::rtl::label(ui, egui::RichText::new(name).size(11.0).color(t.text_dim));
                         });
                     }
-                    let overset_y = overset.map(|o| {
+                    let overset_y = overset.filter(|_| !changed).map(|o| {
                         let ci = char_offsets(&story.text, std::iter::once(o));
                         out.galley_pos.y + start_rows(&out.galley, &ci).first().map_or(0.0, |row| row.0)
                     });
-                    if let (Some(ruler), Some(depths)) = (ruler, &depths) {
+                    if let (Some(ruler), Some(depths)) = (ruler, depths.as_ref().filter(|_| !changed)) {
                         let bottom = overset_y.unwrap_or(out.galley_pos.y + out.galley.size().y);
                         let bar = egui::Rect::from_min_max(pos2(ruler.min.x, out.galley_pos.y), pos2(ruler.min.x + RULER_WIDTH, bottom));
                         ui.painter().rect_filled(bar, 0.0, t.ruler);
@@ -113,7 +114,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         let x0 = ruler.map_or(r.rect.min.x, |rr| rr.min.x);
                         ui.painter().line_segment([pos2(x0, y), pos2(r.rect.max.x, y)], egui::Stroke::new(1.5, OVERSET_RED));
                     }
-                    if r.changed() {
+                    if changed {
                         // Minimal diff: common prefix and suffix.
                         let old = &story.text;
                         let pre = old.bytes().zip(text.bytes()).take_while(|(a, b)| a == b).count();
@@ -468,6 +469,44 @@ mod tests {
         assert_eq!(crate::menus::checked(app, "view.storyEditorDepthRuler", &json!({})), Some(false));
         let saved = serde_json::to_vec(&app.ui).unwrap();
         assert!(!crate::UiState::from_preferences_json(&saved).unwrap().story_editor_depth_ruler);
+    }
+
+    #[test]
+    fn depth_marks_wait_for_composition_after_editing() {
+        fn marks(shape: &egui::epaint::Shape, tick: egui::Color32) -> usize {
+            match shape {
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().map(|s| marks(s, tick)).sum(),
+                egui::epaint::Shape::LineSegment { points, stroke }
+                    if stroke.color == super::OVERSET_RED || (stroke.color == tick && (points[1].x - points[0].x - 8.0).abs() < 0.01) =>
+                {
+                    1
+                }
+                _ => 0,
+            }
+        }
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Default::default());
+        app.run("file.new", json!({})).unwrap();
+        let text = "First line\nSecond line\nThird line\n".repeat(4);
+        let r = app.run("frame.create", json!({"rect": [72, 72, 372, 172], "content": "text", "text": text, "caret": false})).unwrap();
+        app.run("app.storyEditor", json!({"story": r["story"].as_u64().unwrap()})).unwrap();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(900.0, 700.0))
+            .with_accessibility_check(false)
+            .build_ui_state(|ui, app| super::show(app, ui.ctx()), app);
+        h.run_steps(3);
+        let tick = crate::theme::Tokens::get(&h.ctx).ruler_tick;
+        let count = |h: &egui_kittest::Harness<'_, DesignApp>| h.output().shapes.iter().map(|s| marks(&s.shape, tick)).sum::<usize>();
+        assert!(count(&h) >= 2, "the fixture paints ruler ticks and an overset line");
+        h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput).focus();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Home);
+        h.run_steps(2);
+        h.event(egui::Event::Text("Inserted line\n".into()));
+        h.step();
+        assert_eq!(story_text(h.state(), 0), format!("Inserted line\n{text}"));
+        assert_eq!(count(&h), 0, "the edit frame must not map old composition offsets to new text");
+        h.step();
+        assert!(count(&h) >= 2, "the next frame paints the updated composition");
     }
 
     /// The Show/Hide Depth Ruler menu label is translated in every interface language.
