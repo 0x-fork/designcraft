@@ -890,3 +890,30 @@ fn a_swatch_colours_a_greyscale_image() {
     let (s, _) = export(&rgb, Some("PANTONE Test"));
     assert!(!s.contains("PANTONE#20Test"), "a colour image keeps its colours");
 }
+
+/// The export asks for each story's composition once per page it is shown on: a parent page's
+/// page number still reads its own page everywhere, and a story threaded across pages shows each
+/// frame's own lines.
+#[test]
+fn each_page_shows_its_own_composition() {
+    use designcraft_doc::story::PAGE_NUMBER;
+    let mut d = Document::new(&NewDocument { pages: 3, facing_pages: false, ..NewDocument::default() });
+    let lid = d.default_layer();
+    d.add_text_frame(SpreadRef::Parent(0), Rect::new(36.0, 700.0, 300.0, 740.0), lid, &format!("Folio{PAGE_NUMBER}"), ParaFormat::default()).unwrap();
+    let (first, _) =
+        d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 56.0), lid, "Alpha\nBravo\nCharlie", ParaFormat::default()).unwrap();
+    let mut prev = first;
+    for si in 1..3 {
+        let id = ItemId(d.alloc());
+        let it = Item::new(id, lid, designcraft_doc::Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(36.0, 36.0, 300.0, 56.0)));
+        d.insert_item(SpreadRef::Doc(si), it, None).unwrap();
+        d.thread(prev, id).unwrap();
+        prev = id;
+    }
+    let cache = Cache::new();
+    let opts = PdfOptions { created: Some(0), ..PdfOptions::default() };
+    let bytes = export_pdf(&d, &cache, &opts).unwrap();
+    // Parent items first, then the page's own.
+    assert_eq!(extract_text(&bytes), ["Folio1Alpha", "Folio2Bravo", "Folio3Charlie"]);
+    assert_eq!(export_pdf(&d, &cache, &opts).unwrap(), bytes, "a warm cache exports the same bytes");
+}
